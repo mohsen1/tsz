@@ -390,11 +390,6 @@ try {
   assert.match(inferPage.source_files[0].source, /type ComplexInfer<T>/);
   assert.match(inferPage.detail_focus, /infer/i);
 
-  const typeChallengesPage = pages.find((page) => page.name === "type-challenges-project");
-  assert.ok(typeChallengesPage, "expected compile-canary type-challenges page");
-  assert.equal(typeChallengesPage.failed, true);
-  assert.match(typeChallengesPage.status_label, /compile canary/i);
-
   const typeChallengesSolutionsPage = pages.find((page) => page.name === "type-challenges-solutions-project");
   assert.ok(typeChallengesSolutionsPage, "expected compile-canary type-challenges solutions page");
   assert.equal(typeChallengesSolutionsPage.failed, true);
@@ -422,7 +417,6 @@ try {
   assert.match(charts, /External libraries/);
   assert.match(charts, /Utility types project/);
   assert.match(charts, /Compile canaries and incomplete project timings/);
-  assert.match(charts, /type-challenges project/);
   assert.match(charts, /type-challenges solutions project/);
   assert.match(charts, /type-challenges assertion candidates/);
   assert.match(charts, /type-challenges tsc-clean assertions/);

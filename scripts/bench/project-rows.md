@@ -18,7 +18,7 @@ A row currently includes:
 - `fixture_dir`: fixture directory name
 - `source_dir`: logical source root used for file counting
 - `guard_set`: `"required"`, `"canary"`, or `null`
-- `benchmark_set`: `"required"` or `"canary"`
+- `benchmark_set`: `"required"`, `"canary"`, or `null`
 - `category`: `external` or `generated`
 - `readme_candidates`: ordered list of README file candidates (fallback: `README.md`)
 
@@ -51,6 +51,7 @@ To add a new row:
 
 1. Add one object to `PROJECT_ROW_DEFINITIONS` in [`project-rows.mjs`](./project-rows.mjs).
    - Set `guard_set` / `benchmark_set` to control which runners pick it up.
+   - Use `null` for support-only fixtures that provide pins/generated artifacts but should not be benchmarked or shown as project rows.
    - For external (git clone) rows, add `repo`, `ref`, `repo_env`, and `ref_env`.
    - For rows with a fixed number of generated files, add `expected_generated` / `expected_generated_env`.
 2. If the row is handled in the compile guard, add a case in `run_project_row` inside

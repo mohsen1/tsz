@@ -116,7 +116,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     label: "type-challenges",
     readme_candidates: ["README.md"],
     owner: "Tracks 2, 3, 5",
-    family: "advanced type-level challenge templates",
+    family: "support-only Type Challenges question templates",
     fixture_dir: "type-challenges",
     source_dir: "questions",
     repo_env: "TYPE_CHALLENGES_REPO",
@@ -127,8 +127,8 @@ export const PROJECT_ROW_DEFINITIONS = [
     expected_generated_env: "TYPE_CHALLENGES_EXPECTED_GENERATED",
     expected_test_cases: 190,
     expected_test_cases_env: "TYPE_CHALLENGES_EXPECTED_TEST_CASES",
-    guard_set: "canary",
-    benchmark_set: "canary",
+    guard_set: null,
+    benchmark_set: null,
     category: "generated",
   },
   {
@@ -277,10 +277,12 @@ export const REQUIRED_COMPATIBILITY_FIELDS = [
   "dts_status",
 ];
 
-export const COMPATIBILITY_CORPUS_ROWS = PROJECT_ROW_DEFINITIONS.map((row) => ({
-  name: row.name,
-  label: row.label,
-  owner: row.owner,
-  family: row.family,
-  readme_candidates: row.readme_candidates,
-}));
+export const COMPATIBILITY_CORPUS_ROWS = PROJECT_ROW_DEFINITIONS
+  .filter((row) => row.guard_set || row.benchmark_set)
+  .map((row) => ({
+    name: row.name,
+    label: row.label,
+    owner: row.owner,
+    family: row.family,
+    readme_candidates: row.readme_candidates,
+  }));

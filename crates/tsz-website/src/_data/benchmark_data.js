@@ -624,7 +624,6 @@ const PROJECT_README_PATHS = {
   "utility-types-project": [".target-bench/external/utility-types/README.md"],
   "ts-toolbelt-project": [".target-bench/external/ts-toolbelt/README.md"],
   "ts-essentials-project": [".target-bench/external/ts-essentials/README.md"],
-  "type-challenges-project": [".target/project-compile-guard/type-challenges/README.md"],
   "type-challenges-solutions-project": [".target/project-compile-guard/type-challenges-solutions/README.md"],
 };
 
@@ -635,7 +634,6 @@ const PROJECT_README_URLS = {
   "utility-types-project": "https://raw.githubusercontent.com/piotrwitek/utility-types/2ee1f6ecb241651ab22390fee7ee5349942efda2/README.md",
   "ts-toolbelt-project": "https://raw.githubusercontent.com/millsp/ts-toolbelt/b8a49285e3ed3a7d8bb8e0b433389eac46a5f140/README.md",
   "ts-essentials-project": "https://raw.githubusercontent.com/ts-essentials/ts-essentials/5abe8700b42068048bd3c368e0531b6defe56558/README.md",
-  "type-challenges-project": "https://raw.githubusercontent.com/type-challenges/type-challenges/0b0b0b18bcb7ac42dc22ce26ffb438231d4754b1/README.md",
   "type-challenges-solutions-project": "https://raw.githubusercontent.com/ghaiklor/type-challenges-solutions/91a6d2986650475f29eeb3bd18ebd025128aa07e/README.md",
 };
 
@@ -772,7 +770,6 @@ function categoryFor(name, lines) {
     name === "ts-toolbelt-project" ||
     name === "zod-project" ||
     name === "kysely-project" ||
-    name === "type-challenges-project" ||
     name === "type-challenges-solutions-project" ||
     name === "type-challenges-assertion-candidates" ||
     name === "type-challenges-assertions-tsc-clean"
@@ -880,7 +877,6 @@ function displayName(name) {
   if (name === "nextjs-fresh-app") return "Fresh Next.js app";
   if (name === "vite-vanilla-ts-app") return "Fresh Vite app";
   if (name === "kysely-project") return "Kysely project";
-  if (name === "type-challenges-project") return "type-challenges project";
   if (name === "type-challenges-solutions-project") return "type-challenges solutions project";
   if (name === "type-challenges-assertion-candidates") return "type-challenges assertion candidates";
   if (name === "type-challenges-assertions-tsc-clean") return "type-challenges tsc-clean assertions";

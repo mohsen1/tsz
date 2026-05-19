@@ -15,6 +15,7 @@ const requiredFields = [
 ];
 
 const allowedGuardSets = new Set(["required", "canary", null]);
+const allowedBenchmarkSets = new Set(["required", "canary", null]);
 const failures = [];
 const seen = new Set();
 
@@ -63,8 +64,8 @@ for (const row of PROJECT_ROW_DEFINITIONS) {
     }
   }
 
-  if (typeof row.benchmark_set !== "string" || row.benchmark_set.length === 0) {
-    failures.push(`${row.name}: invalid benchmark_set`);
+  if (!allowedBenchmarkSets.has(row.benchmark_set)) {
+    failures.push(`${row.name}: invalid benchmark_set ${String(row.benchmark_set)}`);
   }
 
   if (!allowedGuardSets.has(row.guard_set)) {

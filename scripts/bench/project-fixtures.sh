@@ -30,7 +30,6 @@ TSZ_COMPILE_GUARD_CANARY_ROWS=(
   "ts-toolbelt-project"
   "zod-project"
   "kysely-project"
-  "type-challenges-project"
   "type-challenges-solutions-project"
 )
 
