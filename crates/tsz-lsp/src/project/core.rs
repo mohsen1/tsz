@@ -1621,6 +1621,11 @@ pub struct Project {
     /// Open files are never evicted under memory pressure. The eviction module
     /// uses this set to skip actively-edited files.
     pub(crate) open_files: FxHashSet<String>,
+    /// File the editor most recently focused (opened, edited, or asked a
+    /// position-bearing request for). Workspace-symbol fuzzy ranking uses
+    /// this to tie-break by file proximity. `None` when the editor has not
+    /// yet announced any focus.
+    pub(crate) focused_file: Option<String>,
 }
 
 /// Assigns stable `u32` file indices to file names.
@@ -1811,6 +1816,7 @@ impl Project {
             file_id_allocator: FileIdAllocator::new(),
             fingerprint_cache: SkeletonFingerprintCache::new(),
             open_files: FxHashSet::default(),
+            focused_file: None,
         }
     }
 
@@ -1835,6 +1841,7 @@ impl Project {
             file_id_allocator: FileIdAllocator::new(),
             fingerprint_cache: SkeletonFingerprintCache::new(),
             open_files: FxHashSet::default(),
+            focused_file: None,
         }
     }
 
