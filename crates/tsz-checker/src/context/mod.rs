@@ -9,7 +9,8 @@ mod compiler_options;
 mod cross_file_delegation_cache;
 mod cross_file_type_params_cache;
 pub use caches::{
-    NarrowableIdentifierCache, NodeTypeCache, SymbolTypeCache, TypeReferenceValidationCaches,
+    EnvEvalCache, NarrowableIdentifierCache, NodeTypeCache, SymbolTypeCache,
+    TypeReferenceValidationCaches,
 };
 pub(crate) use compiler_options::is_declaration_file_name;
 pub(crate) use compiler_options::is_js_file_name;
@@ -618,7 +619,7 @@ pub struct CheckerContext<'a> {
     ///
     /// The cache also preserves whether evaluation exceeded the solver recursion
     /// limit so follow-up validation passes can still surface TS2589 from a cache hit.
-    pub(crate) env_eval_cache: RefCell<FxHashMap<TypeId, EnvEvalCacheEntry>>,
+    pub(crate) env_eval_cache: RefCell<EnvEvalCache>,
 
     /// Cache class symbol -> class declaration node lookups used in inheritance queries.
     /// Stores misses as `None` to avoid repeated declaration scans on hot paths.
