@@ -392,7 +392,6 @@ fn test_json_value_type_text_object() {
 #[test]
 fn test_json_value_type_text_nested_object() {
     use serde_json::json;
-    // Depth-aware indentation: different key name proves this is structural, not hardcoded
     let val = json!({"a": {"b": 1}});
     let text = json_value_type_text(&val, 0);
     assert_eq!(text, "{\n    a: {\n        b: number;\n    };\n}");

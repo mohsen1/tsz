@@ -14,6 +14,7 @@ use tsz::enums::evaluator::{EnumEvaluator, EnumValue};
 use tsz::parallel::{BoundFile, MergedProgram};
 use tsz_common::common::ModuleKind;
 use tsz_common::diagnostics::{Diagnostic, DiagnosticCategory};
+use tsz_common::file_extensions::is_json_file;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
@@ -433,7 +434,7 @@ pub(crate) fn emit_outputs(
             {
                 // JSON modules get a synthetic declaration file rather than running
                 // through the full DeclarationEmitter (which expects an AST).
-                if input_path.extension().and_then(|e| e.to_str()) == Some("json") {
+                if is_json_file(&input_path) {
                     if let Some(contents) = json_module_dts(&input_path, new_line)
                         && declaration_bundle_path.is_none()
                     {
