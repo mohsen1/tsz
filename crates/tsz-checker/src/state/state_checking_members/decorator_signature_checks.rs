@@ -50,7 +50,11 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        let this_type = self.decorator_node_receiver_type(decorator_node);
+        let this_type = if self.decorator_callee_has_explicit_this(resolved) {
+            self.decorator_node_receiver_type(decorator_node)
+        } else {
+            None
+        };
         let (result, _, _) = self.resolve_call_with_checker_adapter(
             resolved,
             &[first_arg, TypeId::ANY],
@@ -226,7 +230,11 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or_else(|| vec![TypeId::ANY, TypeId::OBJECT])
         };
 
-        let this_type = self.decorator_expression_receiver_type(decorator_expr);
+        let this_type = if self.decorator_callee_has_explicit_this(resolved) {
+            self.decorator_expression_receiver_type(decorator_expr)
+        } else {
+            None
+        };
         let (result, _, _) =
             self.resolve_call_with_checker_adapter(resolved, &arg_types, false, None, this_type);
 
@@ -606,7 +614,11 @@ impl<'a> CheckerState<'a> {
         } else {
             &[TypeId::ANY, TypeId::STRING]
         };
-        let this_type = self.decorator_node_receiver_type(decorator_node);
+        let this_type = if self.decorator_callee_has_explicit_this(resolved) {
+            self.decorator_node_receiver_type(decorator_node)
+        } else {
+            None
+        };
         let (result, _, _) =
             self.resolve_call_with_checker_adapter(resolved, arg_types, false, None, this_type);
 
@@ -730,7 +742,11 @@ impl<'a> CheckerState<'a> {
             TypeId::STRING
         };
 
-        let this_type = self.decorator_node_receiver_type(decorator_node);
+        let this_type = if self.decorator_callee_has_explicit_this(resolved) {
+            self.decorator_node_receiver_type(decorator_node)
+        } else {
+            None
+        };
         let (result, _, _) = self.resolve_call_with_checker_adapter(
             resolved,
             &[TypeId::ANY, key_arg, TypeId::NUMBER],
@@ -801,5 +817,33 @@ impl<'a> CheckerState<'a> {
     fn decorator_node_receiver_type(&mut self, decorator_node: NodeIndex) -> Option<TypeId> {
         let expr = self.ctx.arena.get_decorator_at(decorator_node)?.expression;
         self.decorator_expression_receiver_type(expr)
+    }
+
+    /// `true` when the resolved decorator callee carries an explicit
+    /// `this: T` parameter on any call signature.
+    ///
+    /// Used to gate the receiver-binding helpers so that
+    /// `decorator_node_receiver_type` / `decorator_expression_receiver_type`
+    /// only contribute an `actual_this_type` when the call-resolution path
+    /// would otherwise reject the receiver mismatch. Decorators without an
+    /// explicit `this:` constraint continue to use the prior
+    /// no-`this`-binding behavior — preserving conformance and project-corpus
+    /// rows that previously type-checked without receiver propagation.
+    fn decorator_callee_has_explicit_this(&self, decorator_type: TypeId) -> bool {
+        let db = self.ctx.types;
+        if let Some(shape) = crate::query_boundaries::class_type::function_shape(db, decorator_type)
+            && shape.this_type.is_some()
+        {
+            return true;
+        }
+        if let Some(callable) =
+            crate::query_boundaries::class_type::callable_shape_for_type(db, decorator_type)
+        {
+            return callable
+                .call_signatures
+                .iter()
+                .any(|sig| sig.this_type.is_some());
+        }
+        false
     }
 }
