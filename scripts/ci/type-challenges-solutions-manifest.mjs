@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { semanticFamiliesForText } from "./type-challenges-semantic-families.mjs";
@@ -119,6 +120,7 @@ function readOutputMetadata(outputPath) {
   return {
     declarations: names,
     semanticFamilies: semanticFamiliesForText(text),
+    outputSha256: crypto.createHash("sha256").update(text).digest("hex"),
   };
 }
 
@@ -209,7 +211,11 @@ const entries = lines
       process.exit(1);
     }
 
-    const { declarations, semanticFamilies } = readOutputMetadata(outputPath);
+    const {
+      declarations,
+      semanticFamilies,
+      outputSha256,
+    } = readOutputMetadata(outputPath);
     if (declarations.length === 0) {
       console.error(`error: manifest output has no declarations: ${output}`);
       process.exit(1);
@@ -225,6 +231,7 @@ const entries = lines
       },
       declarations,
       semanticFamilies,
+      outputSha256,
     };
   });
 

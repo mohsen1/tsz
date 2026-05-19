@@ -109,6 +109,7 @@ tsz_write_type_challenges_solutions_config ${shellQuote(sourceDir)} ${shellQuote
       entry.challenge.id,
       entry.declarations,
       entry.semanticFamilies,
+      entry.outputSha256,
     ]),
     [
       [
@@ -117,6 +118,7 @@ tsz_write_type_challenges_solutions_config ${shellQuote(sourceDir)} ${shellQuote
         "1",
         ["Alpha"],
         ["unclassified"],
+        "387b4bcfd901b7e11dfd6b3021e15427fa59c7b9a15708c5f4f72078e35534f1",
       ],
       [
         "solutions/beta.ts",
@@ -124,6 +126,7 @@ tsz_write_type_challenges_solutions_config ${shellQuote(sourceDir)} ${shellQuote
         "2",
         ["Beta", "beta"],
         ["unclassified"],
+        "1319ba2703438e218b6516c23040532ae7faf9398b78ad176e522fbb9f44ce15",
       ],
     ],
   );
@@ -198,6 +201,7 @@ withTempDir((dir) => {
     "mapped/key-remapped types",
     "indexed access",
   ]);
+  assert.match(manifest.entries[0].outputSha256, /^[0-9a-f]{64}$/);
 });
 
 withTempDir((dir) => {
