@@ -198,6 +198,9 @@ impl<'a> CheckerState<'a> {
         let Some(type_id) = cached else {
             return true;
         };
+        if self.ctx.file_local_type_shadow_for_lib_name(name) {
+            return false;
+        }
         if !crate::query_boundaries::common::type_id_is_known_to_db(self.ctx.types, type_id) {
             return false;
         }
@@ -208,7 +211,10 @@ impl<'a> CheckerState<'a> {
                 .type_env
                 .try_borrow()
                 .is_ok_and(|env| env.get_def(def_id).is_some());
-            if !has_body_in_env && self.ctx.definition_store.get_body(def_id).is_none() {
+            if !has_body_in_env
+                && self.ctx.definition_store.get_body(def_id).is_none()
+                && !self.cached_lib_lazy_body_can_be_deferred(def_id)
+            {
                 return false;
             }
         }
@@ -222,5 +228,85 @@ impl<'a> CheckerState<'a> {
         }
 
         crate::query_boundaries::common::has_construct_signatures(self.ctx.types, type_id)
+    }
+
+    fn cached_lib_lazy_body_can_be_deferred(&self, def_id: tsz_solver::DefId) -> bool {
+        // Re-lowering the parent lib type leaves these actual-lib edges lazy too;
+        // accepting the cache avoids re-walking the parent without changing when
+        // the dependency body is materialized.
+        let Some(name_atom) = self.ctx.definition_store.get_name(def_id) else {
+            return false;
+        };
+        let name = self.ctx.types.resolve_atom(name_atom);
+        self.ctx.actual_lib_def_id_for_bare_name(name.as_str()) == Some(def_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::{CheckerOptions, LibContext};
+    use crate::query_boundaries::type_construction::TypeInterner;
+    use crate::test_utils::load_lib_files;
+    use std::sync::Arc;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+
+    #[test]
+    fn cached_lib_type_allows_deferred_actual_lib_lazy_dependencies() {
+        let lib_files = load_lib_files(&["es5.d.ts"]);
+        let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+        let arena = Arc::new(parser.get_arena().clone());
+        let binder = Arc::new(binder);
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            arena.as_ref(),
+            binder.as_ref(),
+            &types,
+            "fixture.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        let lib_contexts: Vec<LibContext> = lib_files
+            .iter()
+            .map(|lib| LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        checker.ctx.set_lib_contexts(lib_contexts);
+        checker.ctx.set_actual_lib_file_count(lib_files.len());
+
+        let array_def = checker
+            .ctx
+            .actual_lib_def_id_for_bare_name("Array")
+            .expect("Array should be available from es5 lib");
+        assert!(
+            checker.ctx.definition_store.get_body(array_def).is_none(),
+            "fixture should start with an unresolved actual-lib lazy dependency"
+        );
+        let cached_actual_lib_lazy = checker.ctx.types.lazy(array_def);
+        assert!(
+            checker.cached_lib_type_is_usable("Array", Some(cached_actual_lib_lazy)),
+            "actual-lib lazy dependencies can be resolved later on demand"
+        );
+
+        let local_name = checker.ctx.types.intern_string("LocalOnly");
+        let local_def =
+            checker
+                .ctx
+                .definition_store
+                .register(tsz_solver::def::DefinitionInfo::interface(
+                    local_name,
+                    Vec::new(),
+                    Vec::new(),
+                ));
+        let cached_local_lazy = checker.ctx.types.lazy(local_def);
+        assert!(
+            !checker.cached_lib_type_is_usable("LocalOnly", Some(cached_local_lazy)),
+            "non-lib lazy dependencies still require a materialized body"
+        );
     }
 }
