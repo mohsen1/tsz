@@ -1069,3 +1069,215 @@ impl<'a> NarrowingContext<'a> {
         resolved_a == resolved_b
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::def::DefId;
+    use crate::intern::TypeInterner;
+    use crate::narrowing::NarrowingContext;
+    use crate::types::{
+        CallSignature, CallableShape, FunctionShape, ParamInfo, PropertyInfo, TypeId,
+        TypeParamInfo, TypePredicate, TypePredicateTarget, Visibility,
+    };
+
+    fn make_constructor_with_has_instance(
+        db: &TypeInterner,
+        predicate_type: TypeId,
+        construct_sigs: Vec<CallSignature>,
+    ) -> TypeId {
+        let value_atom = db.intern_string("value");
+        let has_instance_atom = db.intern_string("[Symbol.hasInstance]");
+        let fn_id = db.function(FunctionShape {
+            type_params: vec![],
+            params: vec![ParamInfo {
+                name: Some(value_atom),
+                type_id: TypeId::UNKNOWN,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: TypeId::BOOLEAN,
+            type_predicate: Some(TypePredicate {
+                asserts: false,
+                target: TypePredicateTarget::Identifier(value_atom),
+                type_id: Some(predicate_type),
+                parameter_index: Some(0),
+            }),
+            is_constructor: false,
+            is_method: true,
+        });
+        db.callable(CallableShape {
+            call_signatures: vec![],
+            construct_signatures: construct_sigs,
+            properties: vec![PropertyInfo {
+                name: has_instance_atom,
+                type_id: fn_id,
+                write_type: fn_id,
+                optional: false,
+                readonly: false,
+                is_method: true,
+                is_class_prototype: false,
+                visibility: Visibility::Public,
+                parent_id: None,
+                declaration_order: 0,
+                is_string_named: false,
+                is_symbol_named: false,
+                single_quoted_name: false,
+            }],
+            string_index: None,
+            number_index: None,
+            symbol: None,
+            is_abstract: false,
+        })
+    }
+
+    fn make_constructor_with_construct_sig(db: &TypeInterner, instance_type: TypeId) -> TypeId {
+        db.callable(CallableShape {
+            call_signatures: vec![],
+            construct_signatures: vec![CallSignature::new(vec![], instance_type)],
+            properties: vec![],
+            string_index: None,
+            number_index: None,
+            symbol: None,
+            is_abstract: false,
+        })
+    }
+
+    /// True branch: `[Symbol.hasInstance](v): v is NUMBER` narrows `STRING | NUMBER` to `NUMBER`.
+    /// The predicate type overrides the instance type from construct signatures.
+    #[test]
+    fn narrow_by_instanceof_uses_has_instance_predicate_true_branch() {
+        let db = TypeInterner::new();
+        let source = db.union(vec![TypeId::STRING, TypeId::NUMBER]);
+        let constructor = make_constructor_with_has_instance(&db, TypeId::NUMBER, vec![]);
+        let ctx = NarrowingContext::new(&db);
+        let narrowed = ctx.narrow_by_instanceof(source, constructor, true);
+        assert_eq!(
+            narrowed,
+            TypeId::NUMBER,
+            "hasInstance predicate must narrow union to predicate type"
+        );
+    }
+
+    /// False branch: `[Symbol.hasInstance](v): v is NUMBER` on `STRING | NUMBER`
+    /// keeps `STRING` (excludes `NUMBER`).
+    #[test]
+    fn narrow_by_instanceof_uses_has_instance_predicate_false_branch() {
+        let db = TypeInterner::new();
+        let source = db.union(vec![TypeId::STRING, TypeId::NUMBER]);
+        let constructor = make_constructor_with_has_instance(&db, TypeId::NUMBER, vec![]);
+        let ctx = NarrowingContext::new(&db);
+        let narrowed = ctx.narrow_by_instanceof(source, constructor, false);
+        assert_eq!(
+            narrowed,
+            TypeId::STRING,
+            "false branch must exclude predicate type from union"
+        );
+    }
+
+    /// No `[Symbol.hasInstance]`: falls back to construct-signature instance type.
+    #[test]
+    fn narrow_by_instanceof_falls_back_to_construct_sig_when_no_has_instance() {
+        let db = TypeInterner::new();
+        let source = db.union(vec![TypeId::STRING, TypeId::NUMBER]);
+        let constructor = make_constructor_with_construct_sig(&db, TypeId::NUMBER);
+        let ctx = NarrowingContext::new(&db);
+        let narrowed = ctx.narrow_by_instanceof(source, constructor, true);
+        assert_eq!(
+            narrowed,
+            TypeId::NUMBER,
+            "without hasInstance, construct-sig instance type must be used"
+        );
+    }
+
+    /// Union constructor: each member can carry its own `[Symbol.hasInstance]`.
+    /// `(CtorA | CtorB)` where both carry predicates → union of predicate types.
+    #[test]
+    fn narrow_by_instanceof_union_constructor_both_have_has_instance() {
+        let db = TypeInterner::new();
+        let ctor_a = make_constructor_with_has_instance(&db, TypeId::STRING, vec![]);
+        let ctor_b = make_constructor_with_has_instance(&db, TypeId::NUMBER, vec![]);
+        let union_ctor = db.union(vec![ctor_a, ctor_b]);
+        let source = db.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN]);
+        let ctx = NarrowingContext::new(&db);
+        let narrowed = ctx.narrow_by_instanceof(source, union_ctor, true);
+        let expected = db.union(vec![TypeId::STRING, TypeId::NUMBER]);
+        assert_eq!(
+            narrowed, expected,
+            "union ctor: each member's hasInstance predicate type must be unioned (STRING | NUMBER, not BOOLEAN)"
+        );
+    }
+
+    /// `[Symbol.hasInstance]` with predicate type `STRING` on a constructor whose
+    /// construct sig returns `NUMBER` — the predicate wins over construct sig.
+    #[test]
+    fn narrow_by_instanceof_has_instance_overrides_construct_sig() {
+        let db = TypeInterner::new();
+        // Constructor: { new(): NUMBER; [Symbol.hasInstance](v): v is STRING }
+        let constructor = make_constructor_with_has_instance(
+            &db,
+            TypeId::STRING,
+            vec![CallSignature::new(vec![], TypeId::NUMBER)],
+        );
+        let source = db.union(vec![TypeId::STRING, TypeId::NUMBER]);
+        let ctx = NarrowingContext::new(&db);
+        // Predicate says STRING — must override construct-sig's NUMBER
+        let narrowed = ctx.narrow_by_instanceof(source, constructor, true);
+        assert_eq!(
+            narrowed,
+            TypeId::STRING,
+            "hasInstance predicate STRING must override construct-sig instance type NUMBER"
+        );
+    }
+
+    /// If `[Symbol.hasInstance]` erases to `any`, the generic construct signature
+    /// still provides a concrete erased instance type (`Box<any>`).
+    #[test]
+    fn narrow_by_instanceof_uses_generic_construct_when_has_instance_predicate_collapses_to_any() {
+        let db = TypeInterner::new();
+        let t_info = TypeParamInfo::simple(db.intern_string("T"));
+        let t_type = db.type_param(t_info);
+        let box_base = db.lazy(DefId(4244));
+        let box_t = db.application(box_base, vec![t_type]);
+        let box_any = db.application(box_base, vec![TypeId::ANY]);
+        let constructor = make_constructor_with_has_instance(
+            &db,
+            TypeId::ANY,
+            vec![CallSignature {
+                type_params: vec![t_info],
+                params: vec![],
+                this_type: None,
+                return_type: box_t,
+                type_predicate: None,
+                is_method: false,
+            }],
+        );
+        let source = db.union(vec![box_any, TypeId::STRING]);
+        let ctx = NarrowingContext::new(&db);
+
+        assert_eq!(
+            ctx.narrow_by_instanceof(source, constructor, true),
+            box_any,
+            "collapsed-any hasInstance predicate must not hide the generic construct instance"
+        );
+        assert_eq!(
+            ctx.narrow_by_instanceof(source, constructor, false),
+            TypeId::STRING,
+            "false branch should exclude the concrete generic construct instance, not all values"
+        );
+    }
+
+    /// Absence of `[Symbol.hasInstance]` on a non-constructor → source unchanged.
+    #[test]
+    fn narrow_by_instanceof_non_constructor_no_has_instance_returns_source() {
+        let db = TypeInterner::new();
+        let source = TypeId::STRING;
+        let non_ctor = db.object(vec![]);
+        let ctx = NarrowingContext::new(&db);
+        let narrowed = ctx.narrow_by_instanceof(source, non_ctor, true);
+        assert_eq!(
+            narrowed, source,
+            "non-constructor without hasInstance must leave source unchanged"
+        );
+    }
+}
