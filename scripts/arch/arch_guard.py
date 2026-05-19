@@ -487,7 +487,7 @@ REGEX_LINE_COUNT_CHECKS = [
             r"RelationFlags::from_bits_truncate\s*\(|"
             r"CachedAnyMode::from_legacy_u8\s*\()"
         ),
-        1,
+        0,
     ),
 ]
 
