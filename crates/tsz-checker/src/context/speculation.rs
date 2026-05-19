@@ -144,6 +144,18 @@ pub(crate) struct ReturnTypeSnapshot {
     pub cache: CacheSnapshot,
 }
 
+impl ReturnTypeSnapshot {
+    /// The diagnostic checkpoint embedded in this return-type snapshot.
+    pub(crate) const fn diagnostic_snapshot(&self) -> &DiagnosticSnapshot {
+        &self.full.diag
+    }
+
+    /// Roll back return-type inference state through the speculation boundary.
+    pub(crate) fn rollback(&self, speculation: &mut SpeculationState<'_, '_>) {
+        speculation.ctx.rollback_return_type(self);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // CheckerContext snapshot methods
 // ---------------------------------------------------------------------------
@@ -286,7 +298,7 @@ impl<'a> CheckerContext<'a> {
 
     /// Roll back to a return-type snapshot, discarding speculative diagnostics,
     /// dedup state, and cache entries added during speculation.
-    pub(crate) fn rollback_return_type(&mut self, snap: &ReturnTypeSnapshot) {
+    fn rollback_return_type(&mut self, snap: &ReturnTypeSnapshot) {
         self.rollback_full(&snap.full);
         self.node_types.clone_from(&snap.cache.node_types);
         self.request_node_types
