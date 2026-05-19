@@ -70,6 +70,31 @@ function writeJson(file, value) {
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
+function writeCompatibleManifestFiles(dir) {
+  const templates = path.join(dir, "templates.json");
+  const testCases = path.join(dir, "test-cases.json");
+  const solutions = path.join(dir, "solutions.json");
+
+  writeJson(
+    templates,
+    manifest("questions/**/template.ts", [
+      { id: "13", source: "questions/00013-warm-hello-world/template.ts" },
+    ]),
+  );
+  writeJson(
+    testCases,
+    manifest("questions/**/test-cases.ts", [
+      { id: "13", source: "questions/00013-warm-hello-world/test-cases.ts" },
+    ]),
+  );
+  writeJson(
+    solutions,
+    manifest("en/*.md", [{ id: "13", source: "en/hello-world.md" }]),
+  );
+
+  return { templates, testCases, solutions };
+}
+
 withTempDir((dir) => {
   const templates = path.join(dir, "templates.json");
   const testCases = path.join(dir, "test-cases.json");
@@ -166,6 +191,64 @@ withTempDir((dir) => {
       ],
     ],
   );
+});
+
+withTempDir((dir) => {
+  const { templates, testCases, solutions } = writeCompatibleManifestFiles(dir);
+  const output = path.join(
+    path.dirname(dir),
+    `${path.basename(dir)}-outside-pairing.json`,
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [REPORT_SCRIPT, templates, testCases, solutions, output],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /pairing report output must stay inside the fixture root/,
+  );
+  assert.equal(fs.existsSync(output), false);
+});
+
+withTempDir((dir) => {
+  const { templates, testCases, solutions } = writeCompatibleManifestFiles(dir);
+
+  const result = spawnSync(
+    process.execPath,
+    [REPORT_SCRIPT, templates, testCases, solutions, templates],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /pairing report output must not overwrite an input manifest/,
+  );
+});
+
+withTempDir((dir) => {
+  const { templates, testCases, solutions } = writeCompatibleManifestFiles(dir);
+  const output = path.join(dir, "pairing-output");
+  fs.mkdirSync(output);
+
+  const result = spawnSync(
+    process.execPath,
+    [REPORT_SCRIPT, templates, testCases, solutions, output],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /pairing report output is not a file/);
 });
 
 withTempDir((dir) => {
