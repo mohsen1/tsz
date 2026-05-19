@@ -1377,6 +1377,9 @@ impl<'a> CheckerState<'a> {
         if crate::query_boundaries::common::is_template_literal_type(self.ctx.types, target) {
             return true;
         }
+        if self.object_shape_has_literal_sensitive_property_target(target) {
+            return true;
+        }
         if let Some(list) = crate::query_boundaries::common::union_list_id(self.ctx.types, target)
             .or_else(|| {
                 crate::query_boundaries::common::intersection_list_id(self.ctx.types, target)
