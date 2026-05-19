@@ -898,7 +898,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             &request.read().normal_origin().contextual_opt(None),
                         );
                         self.checker.ctx.in_const_assertion = prev_in_const_assertion;
-                        crate::query_boundaries::common::apply_const_assertion(
+                        crate::query_boundaries::widening::apply_const_assertion(
                             self.checker.ctx.types,
                             expr_type,
                         )
