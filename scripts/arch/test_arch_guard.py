@@ -141,8 +141,18 @@ class ArchGuardSolverRelationBoundaryTests(unittest.TestCase):
                 return pattern, excludes
         self.fail("solver relation boundary check is missing from CHECKS")
 
+    def _solver_relation_policy_check(self):
+        for name, _base, pattern, excludes in self.arch_guard.CHECKS:
+            if (
+                name
+                == "Checker boundary: direct RelationPolicy/RelationContext usage outside query boundaries/tests"
+            ):
+                return pattern, excludes
+        self.fail("solver relation policy boundary check is missing from CHECKS")
+
     def test_rule_exists(self):
         self._solver_relation_check()
+        self._solver_relation_policy_check()
 
     def test_rule_flags_non_boundary_file(self):
         pattern, excludes = self._solver_relation_check()
@@ -152,6 +162,21 @@ class ArchGuardSolverRelationBoundaryTests(unittest.TestCase):
         )
         self.assertEqual(hits, [1])
 
+    def test_rule_flags_relation_policy_and_context_usage(self):
+        pattern, excludes = self._solver_relation_policy_check()
+        text = (
+            "let policy = tsz_solver::RelationPolicy::diagnostic_default();\n"
+            "let ctx = tsz_solver::RelationContext::default();\n"
+            "use tsz_solver::{RelationPolicy, TypeId};\n"
+        )
+        hits = self.arch_guard.find_matches(
+            text,
+            pattern,
+            "crates/tsz-checker/src/error_reporter/diagnostic.rs",
+            excludes,
+        )
+        self.assertEqual(hits, [1, 2, 3])
+
     def test_rule_ignores_query_boundaries_and_tests(self):
         pattern, excludes = self._solver_relation_check()
         text = "let ok = tsz_solver::is_assignable_to(db, source, target);"
@@ -160,6 +185,17 @@ class ArchGuardSolverRelationBoundaryTests(unittest.TestCase):
         )
         test_hits = self.arch_guard.find_matches(
             text, pattern, "crates/tsz-checker/tests/foo.rs", excludes
+        )
+        self.assertEqual(query_boundary_hits, [])
+        self.assertEqual(test_hits, [])
+
+        pattern, excludes = self._solver_relation_policy_check()
+        text = "let policy = tsz_solver::RelationPolicy::diagnostic_default();"
+        query_boundary_hits = self.arch_guard.find_matches(
+            text, pattern, "crates/tsz-checker/src/query_boundaries/assignability.rs", excludes
+        )
+        test_hits = self.arch_guard.find_matches(
+            text, pattern, "crates/tsz-checker/tests/relation_policy.rs", excludes
         )
         self.assertEqual(query_boundary_hits, [])
         self.assertEqual(test_hits, [])

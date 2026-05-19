@@ -128,6 +128,13 @@ exclude_dirs = ["query_boundaries", "tests"]
 ignore_comment_lines = true
 
 [[pattern_checks]]
+name = "Checker boundary: direct RelationPolicy/RelationContext usage outside query boundaries/tests"
+base = "crates/tsz-checker"
+pattern = '\btsz_solver::Relation(?:Policy|Context)\b|\buse\s+tsz_solver::.*Relation(?:Policy|Context)\b'
+exclude_dirs = ["query_boundaries", "tests"]
+ignore_comment_lines = true
+
+[[pattern_checks]]
 name = "Checker boundary: direct CallEvaluator usage outside query boundaries/tests"
 base = "crates/tsz-checker"
 pattern = '\btsz_solver::CallEvaluator\b|\bCallEvaluator::new\s*\('
