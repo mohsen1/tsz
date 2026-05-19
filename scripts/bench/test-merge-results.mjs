@@ -285,3 +285,44 @@ withTempDir((dir) => {
     ["cpu_count", "total_memory_bytes", "cloud_build_machine_type"],
   );
 });
+
+// artifact_missing rows: accepted by merge step without a compatibility object
+// or without all required compatibility fields. They must not block the merge.
+withTempDir((dir) => {
+  const canaryRow = COMPILE_ONLY_CANARY_PROJECT_ROWS[0];
+  const rows = [
+    ...REQUIRED_PROJECT_ROWS.map((name) => projectRow(name)),
+    { name: canaryRow, lines: 1, kb: 1, tsz_ms: null, tsgo_ms: null, winner: "error", ratio: null, artifact_missing: true },
+  ];
+  const result = runMerge(dir, rows);
+  assert.equal(result.status, 0, result.stderr);
+});
+
+withTempDir((dir) => {
+  const canaryRow = COMPILE_ONLY_CANARY_PROJECT_ROWS[0];
+  const rows = [
+    ...REQUIRED_PROJECT_ROWS.map((name) => projectRow(name)),
+    {
+      name: canaryRow,
+      lines: 1,
+      kb: 1,
+      tsz_ms: null,
+      tsgo_ms: null,
+      winner: "error",
+      ratio: null,
+      artifact_missing: true,
+      compatibility: { exit_class: "timeout" },
+    },
+  ];
+  const result = runMerge(dir, rows);
+  assert.equal(result.status, 0, result.stderr);
+});
+
+// Non-artifact_missing rows must still fail if they have missing required fields.
+withTempDir((dir) => {
+  const canaryRow = COMPILE_ONLY_CANARY_PROJECT_ROWS[0];
+  const { peak_memory_bytes: _peak, ...compatibility } = REQUIRED_COMPATIBILITY_FIELDS;
+  const result = runMerge(dir, [projectRow(canaryRow, compatibility)]);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, new RegExp(`${canaryRow}: missing compatibility\\.peak_memory_bytes`));
+});
