@@ -452,8 +452,13 @@ pub(crate) fn emit_outputs(
                     emitter
                 } else {
                     let mut emitter = DeclarationEmitter::new(&file.arena);
-                    // Still set binder even without cache for consistency
+                    // Still set binder and current file context without cache for
+                    // declaration paths that consult program-level export facts.
                     emitter.set_binder(Some(&binder));
+                    emitter.set_current_arena(
+                        std::sync::Arc::clone(&file.arena),
+                        file.file_name.clone(),
+                    );
                     emitter.set_arena_to_path(arena_to_path.clone());
                     emitter.set_file_idx_to_path(file_idx_to_path.clone());
                     emitter.set_global_symbol_arenas(global_symbol_arenas.clone());
