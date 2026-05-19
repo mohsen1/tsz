@@ -475,6 +475,24 @@ REGEX_LINE_COUNT_CHECKS = [
         135,
     ),
     (
+        "Checker residency boundary: with_parent_cache_attributed migration callsites (Track 10)",
+        [ROOT / "crates" / "tsz-checker" / "src"],
+        re.compile(
+            r"^(?!\s*(?:pub(?:\([^)]*\))?\s+)?fn\b)"
+            r".*\bwith_parent_cache_attributed\s*\("
+        ),
+        33,
+    ),
+    (
+        "Checker residency boundary: copy_symbol_file_targets_to_attributed migration callsites (Track 10)",
+        [ROOT / "crates" / "tsz-checker" / "src"],
+        re.compile(
+            r"^(?!\s*(?:pub(?:\([^)]*\))?\s+)?fn\b)"
+            r".*\bcopy_symbol_file_targets_to_attributed\s*\("
+        ),
+        23,
+    ),
+    (
         "Checker relation boundary: diagnostic-local RelationRequest constructors (#8227)",
         [
             ROOT
@@ -522,6 +540,7 @@ BRANCH_LOCAL_VISITED_CLONE_CHECKS = [
         [
             ROOT / "crates" / "tsz-checker" / "src",
             ROOT / "crates" / "tsz-lsp" / "src",
+            ROOT / "crates" / "tsz-solver" / "src",
         ],
         (
             (
@@ -543,6 +562,14 @@ BRANCH_LOCAL_VISITED_CLONE_CHECKS = [
             (
                 "crates/tsz-lsp/src/completions/member.rs",
                 "let mut member_visited = visited.clone();",
+            ),
+            (
+                "crates/tsz-solver/src/evaluation/evaluate_rules/infer_pattern.rs",
+                "let mut alias_visited = visited.clone();",
+            ),
+            (
+                "crates/tsz-solver/src/evaluation/evaluate_rules/infer_pattern_helpers.rs",
+                "let mut alias_visited = visited.clone();",
             ),
         ),
     ),
