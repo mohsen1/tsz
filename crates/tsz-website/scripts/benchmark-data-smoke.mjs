@@ -414,6 +414,8 @@ try {
   assert.match(charts, /type-challenges tsc-clean assertions/);
 
   const compatibilityDashboard = getProjectCompatibilityDashboard();
+  assert.match(compatibilityDashboard, /owner track: Tracks 1, 2, 5/);
+  assert.match(compatibilityDashboard, /owner: baseline utility mapped\/conditional surface/);
   assert.match(compatibilityDashboard, /type-challenges assertions/);
   assert.match(compatibilityDashboard, /paired solutions: 78/);
   assert.match(compatibilityDashboard, /assertions generated: 78/);
@@ -484,6 +486,9 @@ try {
   assert.match(failedOnlyCompatibility, /owner track: Track 4 relation diagnostics\/compatibility/);
   assert.match(failedOnlyCompatibility, /repro: src\/operators\/map\.ts/);
   assert.match(failedOnlyCompatibility, /source: rxjs @ rxjs-ref/);
+  assert.match(failedOnlyCompatibility, /owner track: Tracks 1, 2, 5/);
+  assert.match(failedOnlyCompatibility, /compatibility metadata malformed/);
+  assert.match(failedOnlyCompatibility, /owner family: mapped\/conditional\/key-space utility surface/);
   assert.equal(
     [...failedOnlyCompatibility.matchAll(/fixture sources missing\/malformed\/unpinned/g)].length,
     3,
