@@ -332,6 +332,107 @@ fn apply_to_sets_deprecation_diagnostics() {
 }
 
 #[test]
+fn lib_context_resets_clear_lib_name_caches() {
+    let interner = TypeInterner::new();
+    let query_cache = QueryCache::new(&interner);
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
+    let mut checker = make_checker(&arena, &binder, &query_cache);
+
+    checker
+        .ctx
+        .lib_delegation_cache
+        .insert_actual_lib_def_id("Array".to_string(), None);
+    checker
+        .ctx
+        .lib_delegation_cache
+        .insert_file_local_type_shadow("Array".to_string(), false);
+    assert!(
+        !checker
+            .ctx
+            .lib_delegation_cache
+            .actual_lib_def_ids_is_empty()
+    );
+    assert!(
+        !checker
+            .ctx
+            .lib_delegation_cache
+            .file_local_type_shadows_is_empty()
+    );
+
+    checker.ctx.set_lib_contexts(Vec::new());
+    assert!(
+        checker
+            .ctx
+            .lib_delegation_cache
+            .actual_lib_def_ids_is_empty()
+    );
+    assert!(
+        checker
+            .ctx
+            .lib_delegation_cache
+            .file_local_type_shadows_is_empty()
+    );
+
+    checker
+        .ctx
+        .lib_delegation_cache
+        .insert_actual_lib_def_id("Object".to_string(), None);
+    checker
+        .ctx
+        .lib_delegation_cache
+        .insert_file_local_type_shadow("Object".to_string(), false);
+    assert!(
+        !checker
+            .ctx
+            .lib_delegation_cache
+            .actual_lib_def_ids_is_empty()
+    );
+    assert!(
+        !checker
+            .ctx
+            .lib_delegation_cache
+            .file_local_type_shadows_is_empty()
+    );
+
+    checker.ctx.set_lib_contexts_shared(Arc::new(vec![]));
+    assert!(
+        checker
+            .ctx
+            .lib_delegation_cache
+            .actual_lib_def_ids_is_empty()
+    );
+    assert!(
+        checker
+            .ctx
+            .lib_delegation_cache
+            .file_local_type_shadows_is_empty()
+    );
+
+    checker
+        .ctx
+        .lib_delegation_cache
+        .insert_actual_lib_def_id("ReadonlyArray".to_string(), None);
+    checker
+        .ctx
+        .lib_delegation_cache
+        .insert_file_local_type_shadow("ReadonlyArray".to_string(), false);
+    checker.ctx.set_actual_lib_file_count(1);
+    assert!(
+        checker
+            .ctx
+            .lib_delegation_cache
+            .actual_lib_def_ids_is_empty()
+    );
+    assert!(
+        checker
+            .ctx
+            .lib_delegation_cache
+            .file_local_type_shadows_is_empty()
+    );
+}
+
+#[test]
 fn build_global_indices_if_changed_rebuilds_on_first_call() {
     let mut env = empty_program_context();
     assert!(env.last_skeleton_fingerprint.is_none());
