@@ -542,6 +542,18 @@ impl<'a> DeclarationEmitter<'a> {
         let binder = self.binder?;
         let current_path = self.current_file_path.as_deref()?;
 
+        for module_path in
+            self.matching_module_export_paths(binder, current_path, &module_specifier)
+        {
+            let Some(exports) = binder.module_exports.get(module_path) else {
+                continue;
+            };
+            let Some(exported) = exports.get(first_name.as_str()) else {
+                continue;
+            };
+            return Some(self.resolve_portability_symbol(exported, binder));
+        }
+
         binder
             .symbols
             .iter()
@@ -2424,7 +2436,7 @@ impl<'a> DeclarationEmitter<'a> {
         binder: &BinderState,
         current_file_path: &str,
     ) -> Option<String> {
-        let source_path = self.get_symbol_source_path(sym_id, binder)?;
+        let source_path = self.get_symbol_source_path(sym_id, binder);
 
         binder
             .module_exports
@@ -2438,7 +2450,7 @@ impl<'a> DeclarationEmitter<'a> {
                 let exported = self
                     .resolve_alias_in_source_context(exported_raw, binder)
                     .unwrap_or_else(|| self.resolve_portability_symbol(exported_raw, binder));
-                if module_path == &source_path || exported != sym_id {
+                if exported != sym_id {
                     return None;
                 }
 
@@ -2455,6 +2467,14 @@ impl<'a> DeclarationEmitter<'a> {
                     slash_count == 0
                 };
                 if !is_root_specifier {
+                    return None;
+                }
+                if source_path.as_deref() == Some(module_path.as_str())
+                    && self
+                        .package_specifier_for_package_json_path(current_file_path, module_path)
+                        .as_deref()
+                        != Some(specifier.as_str())
+                {
                     return None;
                 }
 
