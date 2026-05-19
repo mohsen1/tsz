@@ -1042,6 +1042,14 @@ impl PropertyInfo {
         }
     }
 
+    /// Returns true when getter and setter have distinct types (TypeScript 4.3+
+    /// split accessor). A non-NONE write_type that differs from the read type
+    /// is the canonical encoding: `write_type == NONE` means readonly (lowering
+    /// pass), and `write_type == type_id` means a uniform read/write property.
+    pub fn has_split_accessor(&self) -> bool {
+        self.write_type != TypeId::NONE && self.write_type != self.type_id
+    }
+
     /// Find a property by name in a slice of properties.
     pub fn find_in_slice(props: &[Self], name: Atom) -> Option<&Self> {
         props.iter().find(|p| p.name == name)

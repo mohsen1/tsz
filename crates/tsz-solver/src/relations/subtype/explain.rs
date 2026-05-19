@@ -1020,8 +1020,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
                 if !t_prop.readonly
                     && !sp.readonly
-                    && (sp.write_type != TypeId::NONE && sp.write_type != sp.type_id
-                        || t_prop.write_type != TypeId::NONE && t_prop.write_type != t_prop.type_id)
+                    && (sp.has_split_accessor() || t_prop.has_split_accessor())
                 {
                     let source_write = self.optional_property_write_type(sp);
                     let target_write = self.optional_property_write_type(t_prop);
@@ -1282,8 +1281,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
                 if !t_prop.readonly
                     && !sp.readonly
-                    && (sp.write_type != TypeId::NONE && sp.write_type != sp.type_id
-                        || t_prop.write_type != TypeId::NONE && t_prop.write_type != t_prop.type_id)
+                    && (sp.has_split_accessor() || t_prop.has_split_accessor())
                 {
                     let source_write = self.optional_property_write_type(sp);
                     let target_write = self.optional_property_write_type(t_prop);

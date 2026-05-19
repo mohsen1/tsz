@@ -367,6 +367,13 @@ impl<'a> TypePrinter<'a> {
             return true;
         }
 
+        // Type-literal and interface accessors have no parent class symbol, so
+        // the parent_id check below cannot detect them; use the structural
+        // split-accessor encoding instead.
+        if property.has_split_accessor() {
+            return true;
+        }
+
         let Some(parent_id) = property.parent_id else {
             return false;
         };

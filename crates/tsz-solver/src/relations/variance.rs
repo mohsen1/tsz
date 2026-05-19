@@ -592,7 +592,7 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
             // (set accessors with different types) contribute contravariant position.
             self.visit_with_polarity(prop.type_id, current_polarity);
 
-            if prop.write_type != TypeId::NONE && prop.write_type != prop.type_id {
+            if prop.has_split_accessor() {
                 self.visit_with_polarity(prop.write_type, !current_polarity);
             }
         }
