@@ -14,7 +14,7 @@ use tsz_solver::{TypeDatabase, TypeId};
 /// types would produce types incompatible with the original argument under
 /// strict-function-types.
 pub(crate) fn widen_type_for_inference(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    tsz_solver::widen_type_for_inference(db, type_id)
+    tsz_solver::operations::widening::widen_type_for_inference(db, type_id)
 }
 
 /// Apply a `const` assertion to a type, recursively converting mutable literals
