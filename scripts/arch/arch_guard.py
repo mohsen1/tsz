@@ -442,7 +442,7 @@ REGEX_LINE_COUNT_CHECKS = [
             r"diagnostic\.message_text|raw|evaluated)"
             r"\.(?:contains|starts_with|ends_with|as_str)\s*\("
         ),
-        16,
+        15,
     ),
     (
         "Emitter boundary: source_text.contains recovery decisions (Track 9/10)",
