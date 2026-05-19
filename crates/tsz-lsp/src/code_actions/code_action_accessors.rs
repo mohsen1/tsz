@@ -25,7 +25,7 @@ impl<'a> CodeActionProvider<'a> {
     /// Returns up to three `CodeAction` entries when the cursor sits on a
     /// `PropertyDeclaration` inside a class body.
     pub fn generate_accessors(&self, root: NodeIndex, range: Range) -> Vec<CodeAction> {
-        let mut actions = Vec::new();
+        let mut actions = Vec::with_capacity(3);
 
         let Some(info) = self.find_property_declaration_info(root, range) else {
             return actions;
