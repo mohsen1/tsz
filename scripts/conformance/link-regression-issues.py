@@ -150,7 +150,7 @@ class InputResult:
 class SnapshotIndex:
     timestamp: str
     git_sha: str
-    summary: dict
+    summary: dict[str, object]
     failures: set[str]
     accepted: set[str]
     baseline_pass: set[str]
@@ -189,8 +189,6 @@ def load_snapshot_index(conformance_dir: Path) -> SnapshotIndex:
             continue
         if head == "PASS":
             baseline_pass.add(path)
-        # First occurrence wins; basename collisions across directories are
-        # rare and a deterministic policy is enough for reporting.
         basename_to_path.setdefault(_strip_test_ext(basename(path)), path)
 
     return SnapshotIndex(
@@ -335,11 +333,10 @@ def render_json(results: list[InputResult], index: SnapshotIndex) -> str:
 def _collect_inputs(args: argparse.Namespace) -> list[str]:
     inputs: list[str] = list(args.inputs)
     if args.from_file:
-        path = Path(args.from_file)
-        if not path.exists():
-            raise SystemExit(f"--from-file path does not exist: {path}")
         inputs.extend(
-            line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
+            line
+            for line in Path(args.from_file).read_text(encoding="utf-8").splitlines()
+            if line.strip()
         )
     if args.stdin:
         inputs.extend(line for line in sys.stdin.read().splitlines() if line.strip())

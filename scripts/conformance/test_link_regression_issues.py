@@ -150,26 +150,23 @@ class TestClassifyPath(unittest.TestCase):
 
 
 class TestLooksLikeTestToken(unittest.TestCase):
-    def test_test_extension_always_matches(self) -> None:
-        self.assertTrue(helper._looks_like_test_token("emit.ts"))
-        self.assertTrue(helper._looks_like_test_token("foo.tsx"))
+    def test_recognized_tokens(self) -> None:
+        recognized = [
+            "emit.ts",
+            "foo.tsx",
+            "TypeScript/tests/cases/compiler/x.ts",
+            "tsxGenericAttributesType6",
+            "excessPropertyCheckIntersectionWithRecursiveType",
+        ]
+        for token in recognized:
+            with self.subTest(token=token):
+                self.assertTrue(helper._looks_like_test_token(token))
 
-    def test_typescript_path_always_matches(self) -> None:
-        self.assertTrue(
-            helper._looks_like_test_token("TypeScript/tests/cases/compiler/x.ts")
-        )
-
-    def test_mixed_case_long_token_matches(self) -> None:
-        self.assertTrue(helper._looks_like_test_token("tsxGenericAttributesType6"))
-        self.assertTrue(
-            helper._looks_like_test_token("excessPropertyCheckIntersectionWithRecursiveType")
-        )
-
-    def test_short_or_lowercase_token_rejected(self) -> None:
-        self.assertFalse(helper._looks_like_test_token("emit"))
-        self.assertFalse(helper._looks_like_test_token("index"))
-        self.assertFalse(helper._looks_like_test_token("failures"))
-        self.assertFalse(helper._looks_like_test_token("PR"))
+    def test_rejected_tokens(self) -> None:
+        rejected = ["emit", "index", "failures", "PR"]
+        for token in rejected:
+            with self.subTest(token=token):
+                self.assertFalse(helper._looks_like_test_token(token))
 
 
 class TestResolveInputs(unittest.TestCase):
