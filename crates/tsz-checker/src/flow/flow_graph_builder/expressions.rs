@@ -460,7 +460,7 @@ impl<'a> FlowGraphBuilder<'a> {
     }
 
     pub(super) const fn is_assignment_operator_token(operator_token: u16) -> bool {
-        crate::query_boundaries::common::is_assignment_operator(operator_token)
+        crate::query_boundaries::operator_wrappers::is_assignment_operator(operator_token)
     }
 
     // =============================================================================

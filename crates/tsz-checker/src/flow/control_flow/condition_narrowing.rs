@@ -1845,7 +1845,9 @@ impl<'a> FlowAnalyzer<'a> {
         // - RHS (y): For &&= only, the TRUE branch also guarantees y is truthy,
         //   because &&= evaluates y only when x is truthy, and the result IS y.
         //   For ||= and ??=, the TRUE branch doesn't guarantee y was evaluated.
-        if crate::query_boundaries::common::is_logical_compound_assignment_operator(operator) {
+        if crate::query_boundaries::operator_wrappers::is_logical_compound_assignment_operator(
+            operator,
+        ) {
             let matches_lhs = self.is_matching_reference(bin.left, target);
             let matches_rhs = operator == SyntaxKind::AmpersandAmpersandEqualsToken as u16
                 && self.is_matching_reference(bin.right, target);
