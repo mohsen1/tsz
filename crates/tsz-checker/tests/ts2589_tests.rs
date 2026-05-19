@@ -661,6 +661,32 @@ function foo(arg: Circular<tup>): tup {
     );
 }
 
+#[test]
+fn homomorphic_self_mapped_tuple_return_anchors_ts2589_at_parameter_annotation() {
+    let source = r#"
+type Circular<T> = { [P in keyof T]: Circular<T> };
+type tup = [number, number, number, number];
+function foo(arg: Circular<tup>): tup {
+    return arg;
+}
+"#;
+    let diags = check_source_diagnostics(source);
+    let ts2589: Vec<_> = diags.iter().filter(|d| d.code == 2589).collect();
+    assert_eq!(
+        ts2589.len(),
+        1,
+        "Should emit exactly one TS2589 for Circular<tup> vs tup; got: {diags:?}"
+    );
+    let diag = ts2589[0];
+    let start = diag.start as usize;
+    let end = start + diag.length as usize;
+    assert_eq!(
+        &source[start..end],
+        "Circular<tup>",
+        "TS2589 should anchor at the source declaration annotation, got: {diag:?}"
+    );
+}
+
 /// The cycle detection must not depend on the alias spelling.
 /// Renaming `Circular` to `Loop` and `tup` to `Pair` must produce the same result.
 #[test]
@@ -680,6 +706,31 @@ function bar(arg: Loop<Pair>): Pair {
     assert!(
         !diags.iter().any(|d| d.0 == 2322),
         "Should NOT emit TS2322 when TS2589 fires; got: {diags:?}"
+    );
+}
+
+#[test]
+fn homomorphic_self_mapped_tuple_variable_anchors_ts2589_at_variable_annotation() {
+    let source = r#"
+type Loop<X> = { [K in keyof X]: Loop<X> };
+type Pair = [string, boolean];
+let local: Loop<Pair> = null as any;
+let assigned: Pair = local;
+"#;
+    let diags = check_source_diagnostics(source);
+    let ts2589: Vec<_> = diags.iter().filter(|d| d.code == 2589).collect();
+    assert_eq!(
+        ts2589.len(),
+        1,
+        "Should emit exactly one TS2589 for Loop<Pair> vs Pair; got: {diags:?}"
+    );
+    let diag = ts2589[0];
+    let start = diag.start as usize;
+    let end = start + diag.length as usize;
+    assert_eq!(
+        &source[start..end],
+        "Loop<Pair>",
+        "TS2589 should anchor at the source declaration annotation, got: {diag:?}"
     );
 }
 

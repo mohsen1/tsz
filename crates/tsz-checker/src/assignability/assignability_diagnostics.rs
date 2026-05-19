@@ -781,6 +781,13 @@ impl<'a> CheckerState<'a> {
         // can detect fresh depth exceedance from this particular relation.
         self.ctx.relation_depth_exceeded.set(false);
         let assignable = self.diagnostic_relation_boolean_guard(source, target);
+        if !assignable
+            && self.try_report_homomorphic_self_mapped_tuple_depth(
+                source, target, source_idx, diag_idx,
+            )
+        {
+            return false;
+        }
         // TS2859: if the solver hit its recursion/complexity limit and could
         // not establish assignability, emit "Excessive complexity comparing
         // types". A successful relation may still set the sticky depth flag
@@ -1022,17 +1029,9 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // TS2589: A homomorphic self-referential mapped-type alias applied to a tuple
-        // argument and checked against a tuple target causes infinite instantiation.
-        // tsc detects the depth limit during instantiation and emits TS2589 here
-        // instead of letting the structural check fall through to TS2322.
-        if self.source_is_homomorphic_self_mapped_tuple_arg_vs_tuple_target(source, target) {
-            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-            self.error_at_node(
-                source_idx,
-                diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
-                diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
-            );
+        if self
+            .try_report_homomorphic_self_mapped_tuple_depth(source, target, source_idx, source_idx)
+        {
             return false;
         }
 
@@ -1058,6 +1057,72 @@ impl<'a> CheckerState<'a> {
         }
         self.error_type_not_assignable_with_reason_at_anchor(source, target, diag_idx);
         false
+    }
+
+    /// TS2589: A homomorphic self-referential mapped-type alias applied to a
+    /// tuple argument and checked against the tuple target causes an infinite
+    /// instantiation chain. `tsc` reports that depth failure at the declaration
+    /// annotation that introduced the source type when one is available.
+    fn try_report_homomorphic_self_mapped_tuple_depth(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        source_idx: NodeIndex,
+        fallback_anchor: NodeIndex,
+    ) -> bool {
+        if !self.source_is_homomorphic_self_mapped_tuple_arg_vs_tuple_target(source, target) {
+            return false;
+        }
+
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        let anchor_idx = self
+            .declared_type_annotation_anchor_for_source(source_idx, source)
+            .unwrap_or(fallback_anchor);
+        self.error_at_node(
+            anchor_idx,
+            diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+            diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+        );
+        true
+    }
+
+    fn declared_type_annotation_anchor_for_source(
+        &mut self,
+        source_idx: NodeIndex,
+        source: TypeId,
+    ) -> Option<NodeIndex> {
+        let source_idx = self.ctx.arena.skip_parenthesized_and_assertions(source_idx);
+        let source_node = self.ctx.arena.get(source_idx)?;
+        if source_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let sym_id = self.resolve_identifier_symbol(source_idx)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let mut decl_idx = symbol.value_declaration;
+        if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+            && decl_node.kind == SyntaxKind::Identifier as u16
+            && let Some(ext) = self.ctx.arena.get_extended(decl_idx)
+            && ext.parent.is_some()
+        {
+            decl_idx = ext.parent;
+        }
+
+        let decl_node = self.ctx.arena.get(decl_idx)?;
+        let annotation = if decl_node.kind == syntax_kind_ext::PARAMETER {
+            let param = self.ctx.arena.get_parameter(decl_node)?;
+            param.type_annotation
+        } else if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+            decl.type_annotation
+        } else {
+            return None;
+        };
+        if annotation == NodeIndex::NONE {
+            return None;
+        }
+
+        (self.get_type_from_type_node(annotation) == source).then_some(annotation)
     }
 
     /// Like `check_assignable_or_report_at_exact_anchor`, but skips
