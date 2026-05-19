@@ -739,7 +739,7 @@ impl Project {
         result.insert((file.file_name().to_string(), symbol_id));
 
         // Upward search: Find base class members using sub_to_bases
-        if let Some(base_members) = self.find_base_class_members(file, parent_name, member_name) {
+        if let Some(base_members) = self.find_base_class_members(parent_name, member_name) {
             result.extend(base_members);
         }
 
@@ -769,70 +769,51 @@ impl Project {
         result
     }
 
-    /// Find base class members by walking up the heritage chain.
+    /// Find members named `member_name` in every transitive base of `type_name`.
     ///
-    /// This searches for members with the same name in base classes/interfaces
-    /// that the parent class extends or implements, using the new `sub_to_bases` mapping.
-    ///
-    /// # Arguments
-    /// * `file` - The file containing the derived class
-    /// * `class_name` - The name of the class/interface
-    /// * `member_name` - The member name to search for
-    ///
-    /// # Returns
-    /// A set of (`file_path`, `symbol_id`) pairs representing base class members, or None if
-    /// no base members were found
+    /// Iterative BFS with a path-wide `visited` set so a heritage cycle
+    /// (e.g. `class C extends D {}; class D extends C {}`) terminates after
+    /// each class is processed once. Bases are always enqueued — even when
+    /// they don't declare the member themselves — so further-up declarations
+    /// in a chain like `interface B extends A {}` (where `A` declares it)
+    /// are still discovered.
     fn find_base_class_members(
         &self,
-        _file: &ProjectFile,
-        class_name: &str,
+        type_name: &str,
         member_name: &str,
     ) -> Option<FxHashSet<(String, tsz_binder::SymbolId)>> {
-        // Use SymbolIndex to find base types efficiently
-        let base_types = self.symbol_index.get_bases_for_class(class_name);
-
-        if base_types.is_empty() {
-            return None;
-        }
-
         let mut result = FxHashSet::default();
-        let mut visited_classes = FxHashSet::default();
-        visited_classes.insert(class_name.to_string());
+        let mut visited: FxHashSet<String> = FxHashSet::default();
+        let mut queue: VecDeque<String> = VecDeque::new();
 
-        // For each base type, search for the member
-        for base_type_name in base_types {
-            // Prevent infinite loops in case of circular heritage
-            if visited_classes.contains(&base_type_name) {
-                continue;
-            }
-            visited_classes.insert(base_type_name.clone());
+        visited.insert(type_name.to_string());
+        queue.push_back(type_name.to_string());
 
-            // Find files that define this base type
-            let base_files = self.symbol_index.get_files_with_symbol(&base_type_name);
+        while let Some(current) = queue.pop_front() {
+            let base_types = self.symbol_index.get_bases_for_class(&current);
+            for base_type_name in base_types {
+                if !visited.insert(base_type_name.clone()) {
+                    continue;
+                }
 
-            for base_file_path in base_files {
-                if let Some(base_file) = self.files.get(&base_file_path) {
-                    // Search for the base type symbol in this file
-                    if let Some(base_type_symbol_id) =
+                let base_files = self.symbol_index.get_files_with_symbol(&base_type_name);
+                for base_file_path in base_files {
+                    let Some(base_file) = self.files.get(&base_file_path) else {
+                        continue;
+                    };
+                    let Some(base_type_symbol_id) =
                         self.find_class_symbol(base_file, &base_type_name)
+                    else {
+                        continue;
+                    };
+                    if let Some(base_member_symbol_id) =
+                        self.find_member_in_class(base_file, base_type_symbol_id, member_name)
                     {
-                        // Search for the member in the base type
-                        if let Some(base_member_symbol_id) =
-                            self.find_member_in_class(base_file, base_type_symbol_id, member_name)
-                        {
-                            result.insert((base_file_path, base_member_symbol_id));
-
-                            // Recursively search up the hierarchy
-                            if let Some(ancestors) = self.find_base_class_members(
-                                base_file,
-                                &base_type_name,
-                                member_name,
-                            ) {
-                                result.extend(ancestors);
-                            }
-                        }
+                        result.insert((base_file_path, base_member_symbol_id));
                     }
                 }
+
+                queue.push_back(base_type_name);
             }
         }
 
@@ -1688,5 +1669,127 @@ impl Project {
             .record(ProjectRequestKind::Rename, start.elapsed(), scope_stats);
 
         Ok(workspace_edit)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tsz_common::position::LineMap;
+
+    /// Position of the Nth (0-based) occurrence of `needle` in `source`,
+    /// as a 0-based `(line, character)` LSP position. Panics if not
+    /// found, so fixture drift is loud rather than silently changing a
+    /// test's cursor target.
+    ///
+    /// Delegates byte-offset -> `Position` conversion to the canonical
+    /// `LineMap` so column counts match LSP's UTF-16 semantics and
+    /// non-`\n` line terminators (matching the rest of the LSP crate).
+    fn position_of_nth(source: &str, needle: &str, n: usize) -> Position {
+        let byte_offset = source
+            .match_indices(needle)
+            .nth(n)
+            .map(|(idx, _)| idx)
+            .unwrap_or_else(|| panic!("test fixture missing occurrence {n} of {needle:?}"));
+        LineMap::build(source).offset_to_position(byte_offset as u32, source)
+    }
+
+    fn position_of(source: &str, needle: &str) -> Position {
+        position_of_nth(source, needle, 0)
+    }
+
+    /// Regression for issue #8527: two-class heritage cycle.
+    #[test]
+    fn find_references_terminates_on_circular_class_heritage() {
+        let source = r#"class C extends D {
+    prop0: string;
+    prop1: string;
+}
+
+class D extends C {
+    prop0: string;
+    prop1: string;
+}
+
+var d: D;
+d.prop1;
+"#;
+        let mut project = Project::new();
+        project.set_file("/file1.ts".to_string(), source.to_string());
+
+        let position = position_of(source, "prop1");
+        let result = project.find_references("/file1.ts", position);
+        assert!(
+            result.is_some(),
+            "find_references must terminate on circular heritage and return references"
+        );
+    }
+
+    /// Regression for issue #8527: interface-cycle variant. We only require
+    /// termination — interface symbol classification is handled elsewhere.
+    #[test]
+    fn find_references_terminates_on_circular_interface_heritage() {
+        let source = r#"interface A extends B {
+    prop: string;
+}
+
+interface B extends A {
+    prop: string;
+}
+
+let a: A;
+a.prop;
+"#;
+        let mut project = Project::new();
+        project.set_file("/file1.ts".to_string(), source.to_string());
+
+        let position = position_of(source, "prop");
+        let _ = project.find_references("/file1.ts", position);
+    }
+
+    /// Three-way heritage cycle. Forces the `visited` set to span the whole
+    /// walk rather than just the previous frame.
+    #[test]
+    fn find_references_terminates_on_three_way_heritage_cycle() {
+        let source = r#"class A extends B { member: string; }
+class B extends C { member: string; }
+class C extends A { member: string; }
+var c: C;
+c.member;
+"#;
+        let mut project = Project::new();
+        project.set_file("/file1.ts".to_string(), source.to_string());
+
+        let position = position_of(source, "member");
+        let result = project.find_references("/file1.ts", position);
+        assert!(
+            result.is_some(),
+            "find_references must terminate on a heritage cycle of length 3"
+        );
+    }
+
+    /// Non-cyclic heritage chain: confirms the BFS walker still reaches
+    /// transitive ancestors. `Child extends Mid extends Base`.
+    #[test]
+    fn find_references_visits_transitive_base_class_members() {
+        let source = r#"class Base { member: string; }
+class Mid extends Base {}
+class Child extends Mid { member: string; }
+var c: Child;
+c.member;
+"#;
+        let mut project = Project::new();
+        project.set_file("/file1.ts".to_string(), source.to_string());
+
+        // The second `member` occurrence is the `Child` declaration —
+        // the same anchor the original Position::new(2, 26) cursor used.
+        let position = position_of_nth(source, "member", 1);
+        let refs = project
+            .find_references("/file1.ts", position)
+            .expect("must find references for a normal heritage chain");
+        assert!(
+            !refs.is_empty(),
+            "expected at least the declaration to be returned"
+        );
     }
 }
