@@ -215,6 +215,11 @@ pub trait NodeAccess {
 
     /// Get children of a node (for traversal)
     fn get_children(&self, index: NodeIndex) -> Vec<NodeIndex>;
+
+    /// Append children of a node into an existing buffer.
+    fn get_children_into(&self, index: NodeIndex, children: &mut Vec<NodeIndex>) {
+        children.extend(self.get_children(index));
+    }
 }
 
 /// Implementation of `NodeAccess` for `NodeArena`
@@ -256,31 +261,64 @@ impl NodeAccess for NodeArena {
     }
 
     fn get_children(&self, index: NodeIndex) -> Vec<NodeIndex> {
+        let mut children = Vec::new();
+        self.get_children_into(index, &mut children);
+        children
+    }
+
+    fn get_children_into(&self, index: NodeIndex, children: &mut Vec<NodeIndex>) {
         if index.is_none() {
-            return Vec::new();
+            return;
         }
 
         let Some(node) = self.nodes.get(index.0 as usize) else {
-            return Vec::new();
+            return;
         };
 
-        let mut children = Vec::new();
+        let _ = self.collect_name_children(node, children)
+            || self.collect_expression_children(node, children)
+            || self.collect_statement_children(node, children)
+            || self.collect_declaration_children(node, children)
+            || self.collect_import_export_children(node, children)
+            || self.collect_type_children(node, children)
+            || self.collect_member_children(node, children)
+            || self.collect_pattern_children(node, children)
+            || self.collect_jsx_children(node, children)
+            || self.collect_signature_children(node, children)
+            || self.collect_source_children(node, children);
+    }
+}
 
-        if self.collect_name_children(node, &mut children)
-            || self.collect_expression_children(node, &mut children)
-            || self.collect_statement_children(node, &mut children)
-            || self.collect_declaration_children(node, &mut children)
-            || self.collect_import_export_children(node, &mut children)
-            || self.collect_type_children(node, &mut children)
-            || self.collect_member_children(node, &mut children)
-            || self.collect_pattern_children(node, &mut children)
-            || self.collect_jsx_children(node, &mut children)
-            || self.collect_signature_children(node, &mut children)
-            || self.collect_source_children(node, &mut children)
-        {
-            return children;
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::ParserState;
 
-        children
+    #[test]
+    fn get_children_into_matches_get_children_and_appends() {
+        let mut parser = ParserState::new(
+            "children.ts".to_string(),
+            "const x = 1; function f() { return x; }".to_string(),
+        );
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+        let expected = arena.get_children(root);
+
+        let sentinel = root;
+        let mut actual = vec![sentinel];
+        arena.get_children_into(root, &mut actual);
+
+        assert_eq!(actual[0], sentinel);
+        assert_eq!(&actual[1..], expected.as_slice());
+    }
+
+    #[test]
+    fn get_children_into_ignores_missing_nodes() {
+        let mut parser = ParserState::new("empty.ts".to_string(), String::new());
+        parser.parse_source_file();
+        let arena = parser.get_arena();
+        let mut actual = Vec::new();
+        arena.get_children_into(NodeIndex::NONE, &mut actual);
+        assert!(actual.is_empty());
     }
 }
