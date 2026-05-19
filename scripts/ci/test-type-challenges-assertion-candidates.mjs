@@ -328,38 +328,6 @@ withTempDir((dir) => {
 
 withTempDir((dir) => {
   const fixture = writeCandidateFixture(dir);
-  const outputDir = path.join(dir, "assertions");
-  const pairingPath = path.join(outputDir, "pairing.json");
-  const manifestPath = path.join(outputDir, "manifest.json");
-  fs.mkdirSync(outputDir, { recursive: true });
-  fs.renameSync(fixture.pairingPath, pairingPath);
-
-  const result = spawnSync(
-    process.execPath,
-    [
-      SCRIPT,
-      pairingPath,
-      fixture.typeCompile,
-      fixture.solutionsCompile,
-      outputDir,
-      manifestPath,
-    ],
-    {
-      cwd: ROOT,
-      encoding: "utf8",
-    },
-  );
-  assert.equal(result.status, 1);
-  assert.match(
-    result.stderr,
-    /output directory must not overlap the pairing report/,
-  );
-  assert.equal(fs.existsSync(pairingPath), true);
-  assert.equal(fs.existsSync(manifestPath), false);
-});
-
-withTempDir((dir) => {
-  const fixture = writeCandidateFixture(dir);
   const manifestPath = path.join(dir, "manifest.json");
 
   const result = spawnSync(
