@@ -193,6 +193,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: TypeId,
         target: TypeId,
     ) -> Option<SubtypeFailureReason> {
+        // `S[T1]` vs `S[T2]` where T1/T2 are distinct type parameters:
+        // surface the tsc-parity TS2322 + TS5075 elaboration chain. Done
+        // before any resolution/evaluation so the user-written types
+        // appear verbatim and the IndexAccess shape isn't collapsed by
+        // evaluate_type into an opaque defer. This is the defense-in-depth
+        // path; in the common checker pipeline the inputs are evaluated
+        // before reaching here and the same elaboration is surfaced from
+        // the checker boundary.
+        if let Some(reason) = self.explain_index_access_distinct_type_param_keys(source, target) {
+            return Some(reason);
+        }
+
         // Resolve lazy types (interfaces, type aliases) to their structural forms.
         // Without this, interface types (TypeData::Lazy) won't match the object_shape_id
         // check below, causing TS2322 instead of TS2741/TS2739/TS2740.
@@ -688,6 +700,41 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         if let Some(members) = union_list_id(self.interner, resolved_target) {
             let members = self.interner.type_list(members);
+            let application_shaped_comparison = application_id(self.interner, source).is_some()
+                || application_id(self.interner, target).is_some();
+            let source_members = union_list_id(self.interner, resolved_source)
+                .map(|list_id| self.interner.type_list(list_id).as_ref().to_vec())
+                .unwrap_or_else(|| vec![resolved_source]);
+            for &member in members.iter() {
+                if self.check_subtype(resolved_source, member).is_true() {
+                    continue;
+                }
+                for &source_member in &source_members {
+                    if self.check_subtype(source_member, member).is_true() {
+                        continue;
+                    }
+                    let member_reason = self.explain_failure_guarded(source_member, member);
+                    let missing_property = match member_reason {
+                        Some(SubtypeFailureReason::MissingProperty { property_name, .. }) => {
+                            Some(property_name)
+                        }
+                        Some(SubtypeFailureReason::MissingProperties {
+                            property_names, ..
+                        }) => property_names.first().copied(),
+                        _ => None,
+                    };
+                    if let Some(property_name) = missing_property {
+                        if application_shaped_comparison {
+                            return Some(SubtypeFailureReason::MissingProperty {
+                                property_name,
+                                source_type: source,
+                                target_type: target,
+                            });
+                        }
+                        break;
+                    }
+                }
+            }
             return Some(SubtypeFailureReason::NoUnionMemberMatches {
                 source_type: source,
                 target_union_members: members.as_ref().to_vec(),
@@ -748,6 +795,33 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             source_type: source,
             target_type: target,
         })
+    }
+
+    /// Detect `S[T1]` vs `S[T2]` where T1/T2 are distinct type parameters
+    /// and the object types resolve to the same underlying shape. Returns
+    /// the failure reason that elaborates the TS2322 + TS5075 chain.
+    ///
+    /// Independent of identifier names by construction: operates over
+    /// TypeId shapes, not surface text. Two object halves are accepted
+    /// as "the same object" when they share a TypeId, share their
+    /// resolved Lazy unwrap, or when `source <: target` holds — the
+    /// elaboration is the right shape whenever the source object is
+    /// assignable to the target object, even if `target <: source`
+    /// does not also hold.
+    fn explain_index_access_distinct_type_param_keys(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<SubtypeFailureReason> {
+        let (s_obj, s_idx) = crate::visitor::index_access_parts(self.interner, source)?;
+        let (t_obj, t_idx) = crate::visitor::index_access_parts(self.interner, target)?;
+        let same_object = s_obj == t_obj
+            || self.resolve_lazy_type(s_obj) == self.resolve_lazy_type(t_obj)
+            || self.check_subtype(s_obj, t_obj).is_true();
+        if !same_object {
+            return None;
+        }
+        self.index_access_distinct_type_param_keys_failure_reason(s_idx, t_idx)
     }
 
     /// Explain why an object type assignment failed.

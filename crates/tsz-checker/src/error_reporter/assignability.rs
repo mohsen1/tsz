@@ -1790,6 +1790,18 @@ impl<'a> CheckerState<'a> {
             {
                 src_str = display;
             }
+            if self.ctx.compiler_options.exact_optional_property_types
+                && let Some(expr_idx) = source_expr_idx
+                && let Some(annotation_text) =
+                    self.declared_type_annotation_text_for_expression(expr_idx)
+                && annotation_text.contains("?:")
+                && annotation_text.contains("=>")
+            {
+                let display = self.format_declared_annotation_for_diagnostic(&annotation_text);
+                if display != tgt_str {
+                    src_str = display;
+                }
+            }
             if !source_is_direct_type_query_primitive
                 && let Some(display) = self.nonmissing_ts2739_alias_source_display_text(source)
             {
@@ -1853,9 +1865,14 @@ impl<'a> CheckerState<'a> {
             // the regular TS2322 path instead of TS2719.
             let pair_is_literal_value =
                 display_is_literal_value(&src_str) && display_is_literal_value(&tgt_str);
+            let exact_optional_structural_pair =
+                self.ctx.compiler_options.exact_optional_property_types
+                    && src_str.contains("?:")
+                    && tgt_str.contains("?:");
             let (message, code) = if src_str == tgt_str
                 && !authoritative_names_differ
                 && !pair_is_literal_value
+                && !exact_optional_structural_pair
             {
                 (
                     format_message(

@@ -27,6 +27,117 @@ function readJson(file) {
   return JSON.parse(fs.readFileSync(file, "utf8"));
 }
 
+function commonDirectory(paths) {
+  if (paths.length === 0) return "";
+
+  const splitPaths = paths.map((entry) =>
+    path.resolve(entry).split(path.sep).filter(Boolean),
+  );
+  const root = path.parse(path.resolve(paths[0])).root;
+  const first = splitPaths[0];
+  const common = [];
+  for (const [index, segment] of first.entries()) {
+    if (splitPaths.every((parts) => parts[index] === segment)) {
+      common.push(segment);
+    } else {
+      break;
+    }
+  }
+
+  return path.join(root, ...common);
+}
+
+function isInsideOrSame(root, candidate) {
+  return candidate === root || candidate.startsWith(`${root}${path.sep}`);
+}
+
+function overlapsDirectory(left, right) {
+  return isInsideOrSame(left, right) || isInsideOrSame(right, left);
+}
+
+function validateOutputDestinations(
+  pairingReportPath,
+  typeChallengesCompileDir,
+  solutionsCompileDir,
+  outputDir,
+  manifestPath,
+) {
+  const pairingReport = path.resolve(pairingReportPath);
+  const typeChallengesRoot = path.resolve(typeChallengesCompileDir);
+  const solutionsRoot = path.resolve(solutionsCompileDir);
+  const outputRoot = path.resolve(outputDir);
+  const resolvedManifestPath = path.resolve(manifestPath);
+  const fixtureRoot = commonDirectory([
+    path.dirname(pairingReport),
+    typeChallengesRoot,
+    solutionsRoot,
+  ]);
+
+  if (outputRoot === fixtureRoot || !isInsideOrSame(fixtureRoot, outputRoot)) {
+    console.error(
+      `error: Type Challenges assertion candidate output directory must stay inside the fixture root: ${outputDir}`,
+    );
+    process.exit(1);
+  }
+
+  for (const [label, root] of [
+    ["official Type Challenges compile directory", typeChallengesRoot],
+    ["solution compile directory", solutionsRoot],
+  ]) {
+    if (overlapsDirectory(outputRoot, root)) {
+      console.error(
+        `error: Type Challenges assertion candidate output directory must not overlap the ${label}: ${outputDir}`,
+      );
+      process.exit(1);
+    }
+  }
+
+  if (!isInsideOrSame(outputRoot, resolvedManifestPath) || resolvedManifestPath === outputRoot) {
+    console.error(
+      `error: Type Challenges assertion candidate manifest path must stay inside the output directory: ${manifestPath}`,
+    );
+    process.exit(1);
+  }
+
+  const reservedOutputs = [
+    path.join(outputRoot, "tsconfig.tsz-guard.json"),
+    path.join(outputRoot, "utils", "index.d.ts"),
+  ];
+  if (
+    reservedOutputs.includes(resolvedManifestPath) ||
+    isInsideOrSame(path.join(outputRoot, "assertions"), resolvedManifestPath)
+  ) {
+    console.error(
+      `error: Type Challenges assertion candidate manifest path must not clobber generated outputs: ${manifestPath}`,
+    );
+    process.exit(1);
+  }
+
+  if (fs.existsSync(outputRoot) && !fs.statSync(outputRoot).isDirectory()) {
+    console.error(
+      `error: Type Challenges assertion candidate output directory exists but is not a directory: ${outputDir}`,
+    );
+    process.exit(1);
+  }
+
+  if (
+    fs.existsSync(resolvedManifestPath) &&
+    !fs.statSync(resolvedManifestPath).isFile()
+  ) {
+    console.error(
+      `error: Type Challenges assertion candidate manifest path is not a file: ${manifestPath}`,
+    );
+    process.exit(1);
+  }
+
+  return {
+    outputRoot,
+    manifestPath: resolvedManifestPath,
+    typeChallengesRoot,
+    solutionsRoot,
+  };
+}
+
 function readRequiredFile(file, label) {
   if (!fs.existsSync(file)) {
     console.error(`error: ${label} does not exist: ${file}`);
@@ -336,22 +447,34 @@ function validatePairs(pairs) {
 const report = readJson(pairingReportPath);
 ensurePairingReportShape(report);
 const pairs = validatePairs(report.pairedSolutions ?? []);
-fs.rmSync(outputDir, { recursive: true, force: true });
-fs.mkdirSync(path.join(outputDir, "assertions"), { recursive: true });
-fs.mkdirSync(path.join(outputDir, "utils"), { recursive: true });
+const {
+  outputRoot,
+  manifestPath: resolvedManifestPath,
+  typeChallengesRoot,
+  solutionsRoot,
+} = validateOutputDestinations(
+  pairingReportPath,
+  typeChallengesCompileDir,
+  solutionsCompileDir,
+  outputDir,
+  manifestPath,
+);
+fs.rmSync(outputRoot, { recursive: true, force: true });
+fs.mkdirSync(path.join(outputRoot, "assertions"), { recursive: true });
+fs.mkdirSync(path.join(outputRoot, "utils"), { recursive: true });
 
-const typeChallengesUtils = path.join(typeChallengesCompileDir, "utils", "index.d.ts");
+const typeChallengesUtils = path.join(typeChallengesRoot, "utils", "index.d.ts");
 const utilsText = readRequiredFile(typeChallengesUtils, "Type Challenges utils");
-fs.writeFileSync(path.join(outputDir, "utils", "index.d.ts"), utilsText);
+fs.writeFileSync(path.join(outputRoot, "utils", "index.d.ts"), utilsText);
 
 const entries = [];
 
 for (const pair of pairs) {
   const declarations = pair.solution.declarations ?? [];
-  const solutionPath = path.join(solutionsCompileDir, pair.solution.output);
-  const templatePath = path.join(typeChallengesCompileDir, pair.template.output);
+  const solutionPath = path.join(solutionsRoot, pair.solution.output);
+  const templatePath = path.join(typeChallengesRoot, pair.template.output);
   const testCasePath = path.join(
-    typeChallengesCompileDir,
+    typeChallengesRoot,
     "test-cases",
     pair.testCase.output,
   );
@@ -363,7 +486,7 @@ for (const pair of pairs) {
   );
 
   const output = path.join("assertions", candidateFileName(pair));
-  const outputPath = path.join(outputDir, output);
+  const outputPath = path.join(outputRoot, output);
   fs.writeFileSync(
     outputPath,
     [
@@ -407,9 +530,10 @@ const manifest = {
   entries,
 };
 
-fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+fs.mkdirSync(path.dirname(resolvedManifestPath), { recursive: true });
+fs.writeFileSync(resolvedManifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 
-const tsconfigPath = path.join(outputDir, "tsconfig.tsz-guard.json");
+const tsconfigPath = path.join(outputRoot, "tsconfig.tsz-guard.json");
 fs.writeFileSync(
   tsconfigPath,
   `${JSON.stringify(

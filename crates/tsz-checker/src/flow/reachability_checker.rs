@@ -5,7 +5,7 @@ use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{NarrowingContext, TypeId};
+use tsz_solver::TypeId;
 
 // =============================================================================
 // Reachability Checking Methods
@@ -387,11 +387,15 @@ impl<'a> CheckerState<'a> {
         ];
 
         let env = self.ctx.type_environment.borrow();
-        let narrowing = NarrowingContext::new(self.ctx.types).with_resolver(&*env);
 
         let mut possible = Vec::with_capacity(TYPEOF_RESULTS.len());
         for typeof_result in TYPEOF_RESULTS {
-            if narrowing.narrow_by_typeof(operand_type, typeof_result) != TypeId::NEVER {
+            if query::type_has_typeof_result(
+                self.ctx.types,
+                Some(&env),
+                operand_type,
+                typeof_result,
+            ) {
                 possible.push(self.ctx.types.literal_string(typeof_result));
             }
         }
@@ -404,22 +408,8 @@ impl<'a> CheckerState<'a> {
     }
 
     fn switch_exhaustive_with_types(&self, switch_type: TypeId, case_types: &[TypeId]) -> bool {
-        let switch_type = query::enum_member_domain(self.ctx.types, switch_type);
-        if matches!(switch_type, TypeId::ERROR | TypeId::ANY | TypeId::UNKNOWN)
-            || case_types.is_empty()
-        {
-            return false;
-        }
-        if case_types
-            .iter()
-            .any(|&ty| matches!(ty, TypeId::ERROR | TypeId::ANY | TypeId::UNKNOWN))
-        {
-            return false;
-        }
-
         let env = self.ctx.type_environment.borrow();
-        let narrowing = NarrowingContext::new(self.ctx.types).with_resolver(&*env);
-        narrowing.narrow_excluding_types(switch_type, case_types) == TypeId::NEVER
+        query::cases_exhaust_type(self.ctx.types, Some(&env), switch_type, case_types)
     }
 
     /// Cache-backed exhaustiveness probe used from immutable analysis paths.

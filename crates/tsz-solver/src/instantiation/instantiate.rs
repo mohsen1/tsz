@@ -1237,8 +1237,11 @@ impl<'a> TypeInstantiator<'a> {
                             }
                             let mut member_subst = self.substitution.clone();
                             member_subst.insert(info.name, member);
-                            let instantiated =
-                                instantiate_type(self.interner, cond_type, &member_subst);
+                            let instantiated = if self.preserve_unsubstituted_type_params {
+                                instantiate_type_preserving(self.interner, cond_type, &member_subst)
+                            } else {
+                                instantiate_type(self.interner, cond_type, &member_subst)
+                            };
                             if instantiated == TypeId::ERROR {
                                 self.depth_exceeded = true;
                                 return TypeId::ERROR;
@@ -1282,8 +1285,11 @@ impl<'a> TypeInstantiator<'a> {
                             }
                             let mut member_subst = self.substitution.clone();
                             member_subst.insert(info.name, member);
-                            let instantiated =
-                                instantiate_type(self.interner, cond_type, &member_subst);
+                            let instantiated = if self.preserve_unsubstituted_type_params {
+                                instantiate_type_preserving(self.interner, cond_type, &member_subst)
+                            } else {
+                                instantiate_type(self.interner, cond_type, &member_subst)
+                            };
                             // Check if instantiation hit depth limit
                             if instantiated == TypeId::ERROR {
                                 self.depth_exceeded = true;
@@ -1344,6 +1350,13 @@ impl<'a> TypeInstantiator<'a> {
                         let members: Vec<TypeId> =
                             self.interner.type_list(list_id).to_vec();
                         let mut results = Vec::with_capacity(members.len());
+                        // The iteration variable is a fresh local of this
+                        // mapped type; without shadowing it during per-member
+                        // splicing, the constraint-resolution fallback in
+                        // `instantiate_key` rewrites `K` to its instantiated
+                        // constraint and produces `<member>[keyof <member>]`
+                        // where the source said `<member>[K]`.
+                        let iter_var_shadow = [mapped.type_param.name];
                         for &member in &members {
                             if crate::visitors::visitor_predicates::is_primitive_type(
                                 self.interner,
@@ -1354,28 +1367,21 @@ impl<'a> TypeInstantiator<'a> {
                             }
                             let mut member_subst = self.substitution.clone();
                             member_subst.insert(tp_info.name, member);
-                            let new_constraint =
-                                instantiate_type(self.interner, mapped.constraint, &member_subst);
-                            let new_template =
-                                instantiate_type(self.interner, mapped.template, &member_subst);
-                            let new_name_type = mapped
-                                .name_type
-                                .map(|t| instantiate_type(self.interner, t, &member_subst));
-                            let new_param_constraint = mapped
-                                .type_param
-                                .constraint
-                                .map(|c| instantiate_type(self.interner, c, &member_subst));
-                            let new_param_default = mapped
-                                .type_param
-                                .default
-                                .map(|d| instantiate_type(self.interner, d, &member_subst));
+                            let inst = |t| {
+                                instantiate_type_with_shadowed(
+                                    self.interner,
+                                    t,
+                                    &member_subst,
+                                    &iter_var_shadow,
+                                )
+                            };
                             results.push(self.interner.mapped(MappedType {
-                                constraint: new_constraint,
-                                template: new_template,
-                                name_type: new_name_type,
+                                constraint: inst(mapped.constraint),
+                                template: inst(mapped.template),
+                                name_type: mapped.name_type.map(&inst),
                                 type_param: TypeParamInfo {
-                                    constraint: new_param_constraint,
-                                    default: new_param_default,
+                                    constraint: mapped.type_param.constraint.map(&inst),
+                                    default: mapped.type_param.default.map(&inst),
                                     ..mapped.type_param
                                 },
                                 ..mapped
@@ -1655,12 +1661,17 @@ impl<'a> TypeInstantiator<'a> {
                     subst = ?self.substitution.map.iter().map(|(k, v)| (self.interner.resolve_atom_ref(*k), v.0)).collect::<Vec<_>>(),
                     "instantiate Mapped: about to instantiate constraint"
                 );
+                let saved_preserve_unsubstituted = self.preserve_unsubstituted_type_params;
+                self.preserve_unsubstituted_type_params = true;
+
                 let new_constraint = self.instantiate(mapped.constraint);
                 let new_template = self.instantiate(mapped.template);
                 let new_name_type = mapped.name_type.map(|t| self.instantiate(t));
                 let new_param_constraint =
                     mapped.type_param.constraint.map(|c| self.instantiate(c));
                 let new_param_default = mapped.type_param.default.map(|d| self.instantiate(d));
+
+                self.preserve_unsubstituted_type_params = saved_preserve_unsubstituted;
 
                 self.exit_shadowing_scope(shadowed_len, saved_visiting);
 
@@ -1718,11 +1729,14 @@ impl<'a> TypeInstantiator<'a> {
                 // `undefined extends T[P] ? never : P` where the extends_type is an
                 // IndexAccess that may contain Lazy internally but can be evaluated.
                 let mapped_type = self.interner.mapped(instantiated);
-                let has_lazy_extends = if let Some(cond) =
+                let has_lazy_conditional_boundary = if let Some(cond) =
                     crate::type_queries::get_conditional_type(self.interner, new_template)
                 {
                     matches!(
                         self.interner.lookup(cond.extends_type),
+                        Some(crate::types::TypeData::Lazy(_))
+                    ) || matches!(
+                        self.interner.lookup(cond.check_type),
                         Some(crate::types::TypeData::Lazy(_))
                     )
                 } else {
@@ -1744,7 +1758,7 @@ impl<'a> TypeInstantiator<'a> {
                 let resolver_dependent_constraint =
                     mapped_constraint_needs_resolver(self.interner, new_constraint);
                 if self.preserve_meta_types
-                    || has_lazy_extends
+                    || has_lazy_conditional_boundary
                     || has_lazy_application
                     || name_type_has_lazy_application
                     || resolver_dependent_constraint
@@ -1997,6 +2011,32 @@ pub fn instantiate_type(
     substitution: &TypeSubstitution,
 ) -> TypeId {
     instantiate_type_cached(interner, None, type_id, substitution)
+}
+
+/// Like [`instantiate_type`], but treats `shadowed_params` as locally bound.
+/// Type parameters in that list are returned unchanged even when their
+/// constraints reference substituted outer type parameters, so a fresh local
+/// binding such as a mapped type's iteration variable cannot be rewritten
+/// into its constraint by the forward-reference fallback in `instantiate_key`.
+pub(crate) fn instantiate_type_with_shadowed(
+    interner: &dyn TypeDatabase,
+    type_id: TypeId,
+    substitution: &TypeSubstitution,
+    shadowed_params: &[Atom],
+) -> TypeId {
+    if type_id.is_intrinsic() {
+        return type_id;
+    }
+    if substitution.is_empty() || substitution.is_identity(interner) {
+        return type_id;
+    }
+    let mut instantiator = TypeInstantiator::new(interner, substitution);
+    instantiator.shadowed.extend_from_slice(shadowed_params);
+    let result = instantiator.instantiate(type_id);
+    if instantiator.depth_exceeded {
+        return TypeId::ERROR;
+    }
+    result
 }
 
 /// Cache-aware variant of [`instantiate_type`].

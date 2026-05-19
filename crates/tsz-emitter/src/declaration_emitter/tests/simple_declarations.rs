@@ -638,6 +638,44 @@ export function j() {}
 }
 
 #[test]
+fn test_js_local_renamed_export_function_with_jsdoc_emits_before_alias_group() {
+    let source = r#"
+export function i() {}
+/**
+ * @param {number} x
+ */
+function hh(x) {
+    return x;
+}
+export { hh as h };
+export function j() {}
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    let i_pos = output
+        .find("export function i(): void;")
+        .unwrap_or_else(|| panic!("missing i declaration: {output}"));
+    let j_pos = output
+        .find("export function j(): void;")
+        .unwrap_or_else(|| panic!("missing j declaration: {output}"));
+    let hh_pos = output
+        .find("declare function hh(x: number): number;")
+        .unwrap_or_else(|| panic!("missing deferred hh declaration: {output}"));
+    let alias_pos = output
+        .find("export { hh as h };")
+        .unwrap_or_else(|| panic!("missing alias group: {output}"));
+
+    assert!(
+        i_pos < j_pos && j_pos < hh_pos && hh_pos < alias_pos,
+        "Expected JSDoc-typed local export alias function to emit before the trailing alias group: {output}"
+    );
+    assert!(
+        output.contains("/**\n * @param {number} x\n */\ndeclare function hh"),
+        "Expected deferred local function to keep its JSDoc comment: {output}"
+    );
+}
+
+#[test]
 fn test_js_local_enum_exports_are_deferred_before_alias_group() {
     let source = r#"
 export enum A {}
@@ -686,6 +724,25 @@ module.exports.j = function j() {}
         output.matches("export {").count(),
         1,
         "Expected exactly one CJS export alias statement: {output}"
+    );
+}
+
+#[test]
+fn test_js_cjs_synthetic_function_export_with_jsdoc_is_not_alias_deferred() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @param {number} value
+ */
+module.exports.map = function map(value) {
+    return value;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export function map(value: number): number;"),
+        "Expected CJS synthetic function export to emit at its own statement: {output}"
     );
 }
 
@@ -1912,8 +1969,8 @@ module.exports = make;
         .expect("Expected local typedef alias");
 
     assert!(
-        comment_pos < export_pos && export_pos < function_pos && function_pos < alias_pos,
-        "Expected commented export= function declaration and local alias after it: {output}"
+        export_pos < comment_pos && comment_pos < function_pos && function_pos < alias_pos,
+        "Expected export= first, source typedef comment on the function, and local alias after it: {output}"
     );
     assert!(
         !output.contains("export type Value"),
@@ -3126,6 +3183,38 @@ module.exports = x;
     assert!(
         output.contains("type Item = {\n    x: number;\n};"),
         "Expected local JSDoc typedef dependency to remain available: {output}"
+    );
+}
+
+#[test]
+fn test_js_module_exports_function_emits_before_hoisted_jsdoc() {
+    let source = r#"
+/**
+ * @param {number} timeout
+ */
+function Timer(timeout) {
+    this.timeout = timeout;
+}
+module.exports = Timer;
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.starts_with("export = Timer;\n/**"),
+        "Expected JS module.exports export= to precede hoisted function JSDoc: {output}"
+    );
+    assert!(
+        output.contains("declare function Timer(timeout: number): void;"),
+        "Expected hoisted function declaration to keep its JSDoc signature: {output}"
+    );
+    assert_eq!(
+        output.matches("export = Timer;").count(),
+        1,
+        "Did not expect duplicate JS export= statements: {output}"
     );
 }
 

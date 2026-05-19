@@ -35,6 +35,79 @@ function writeJson(file, value) {
   writeFile(file, `${JSON.stringify(value, null, 2)}\n`);
 }
 
+function writeCleanSubsetFixture(dir) {
+  const candidateDir = path.join(dir, "candidates");
+  const outputDir = path.join(dir, "clean");
+  const candidateManifestPath = path.join(candidateDir, "type-challenges-assertions-manifest.json");
+  const classificationPath = path.join(candidateDir, "type-challenges-assertions-classification.json");
+  const subsetManifestPath = path.join(outputDir, "type-challenges-assertions-tsc-clean-manifest.json");
+
+  writeFile(path.join(candidateDir, "utils", "index.d.ts"), "export {};\n");
+  writeFile(path.join(candidateDir, "assertions", "14-easy-first.ts"), "export {};\n");
+  writeJson(candidateManifestPath, {
+    fixture: "type-challenges-assertion-candidates",
+    sources: {
+      templates: { repository: "type", ref: "type-ref" },
+      testCases: { repository: "type", ref: "type-ref" },
+      solutions: { repository: "solutions", ref: "solutions-ref" },
+    },
+    counts: { generatedAssertions: 1 },
+    entries: [
+      {
+        id: "14",
+        output: "assertions/14-easy-first.ts",
+        solution: { output: "solutions/easy-first.ts", source: "en/easy-first.md" },
+        template: {
+          output: "questions/00014-easy-first/template.ts",
+          source: "questions/00014-easy-first/template.ts",
+        },
+        testCase: {
+          output: "questions/00014-easy-first/test-cases.ts",
+          source: "questions/00014-easy-first/test-cases.ts",
+        },
+        assertion: {
+          hasReferencedSolutionDeclaration: false,
+          referencedSolutionDeclarations: [],
+        },
+      },
+    ],
+  });
+  writeJson(classificationPath, {
+    fixture: "type-challenges-assertion-classification",
+    candidateManifest: {
+      fixture: "type-challenges-assertion-candidates",
+      sources: {
+        templates: { repository: "type", ref: "type-ref" },
+        testCases: { repository: "type", ref: "type-ref" },
+        solutions: { repository: "solutions", ref: "solutions-ref" },
+      },
+      counts: { generatedAssertions: 1 },
+    },
+    compilers: {
+      tsc: {
+        status: "pass",
+        candidateDiagnostics: {
+          totalCandidates: 1,
+          candidatesWithDiagnostics: 0,
+          candidatesWithoutDiagnostics: 1,
+          filesWithDiagnostics: [],
+          filesWithoutDiagnostics: ["assertions/14-easy-first.ts"],
+        },
+      },
+      tsz: { status: "pass" },
+    },
+    comparison: { status: "both-pass" },
+  });
+
+  return {
+    candidateDir,
+    outputDir,
+    candidateManifestPath,
+    classificationPath,
+    subsetManifestPath,
+  };
+}
+
 withTempDir((dir) => {
   const candidateDir = path.join(dir, "candidates");
   const outputDir = path.join(dir, "clean");
@@ -170,6 +243,107 @@ withTempDir((dir) => {
   );
   assert.equal(fs.existsSync(path.join(outputDir, "utils", "index.d.ts")), true);
   assert.equal(fs.existsSync(path.join(outputDir, "tsconfig.tsz-guard.json")), true);
+});
+
+withTempDir((dir) => {
+  const fixture = writeCleanSubsetFixture(dir);
+  const outputDir = path.join(path.dirname(dir), `${path.basename(dir)}-outside-clean`);
+  const subsetManifestPath = path.join(outputDir, "manifest.json");
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      SCRIPT,
+      fixture.candidateDir,
+      fixture.candidateManifestPath,
+      fixture.classificationPath,
+      outputDir,
+      subsetManifestPath,
+    ],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /output directory must stay inside the assertion fixture root/);
+  assert.equal(fs.existsSync(outputDir), false);
+});
+
+withTempDir((dir) => {
+  const fixture = writeCleanSubsetFixture(dir);
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      SCRIPT,
+      fixture.candidateDir,
+      fixture.candidateManifestPath,
+      fixture.classificationPath,
+      fixture.candidateDir,
+      path.join(fixture.candidateDir, "manifest.json"),
+    ],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /output directory must not overlap the assertion candidate directory/,
+  );
+  assert.equal(
+    fs.existsSync(path.join(fixture.candidateDir, "utils", "index.d.ts")),
+    true,
+  );
+});
+
+withTempDir((dir) => {
+  const fixture = writeCleanSubsetFixture(dir);
+  const subsetManifestPath = path.join(dir, "manifest.json");
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      SCRIPT,
+      fixture.candidateDir,
+      fixture.candidateManifestPath,
+      fixture.classificationPath,
+      fixture.outputDir,
+      subsetManifestPath,
+    ],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /subset manifest path must stay inside the output directory/);
+  assert.equal(fs.existsSync(subsetManifestPath), false);
+});
+
+withTempDir((dir) => {
+  const fixture = writeCleanSubsetFixture(dir);
+  fs.mkdirSync(fixture.subsetManifestPath, { recursive: true });
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      SCRIPT,
+      fixture.candidateDir,
+      fixture.candidateManifestPath,
+      fixture.classificationPath,
+      fixture.outputDir,
+      fixture.subsetManifestPath,
+    ],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /subset manifest path is not a file/);
 });
 
 withTempDir((dir) => {

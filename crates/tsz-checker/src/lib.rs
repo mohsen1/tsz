@@ -25,6 +25,7 @@ pub mod error_reporter;
 pub mod expr;
 pub mod module_resolution;
 mod query_boundaries;
+pub mod recovery;
 pub mod statements;
 pub mod triple_slash_validator;
 
@@ -170,6 +171,9 @@ mod jsdoc_this_arrow_tests;
 #[cfg(test)]
 #[path = "../tests/jsx_component_attribute_tests.rs"]
 mod jsx_component_attribute_tests;
+#[cfg(test)]
+#[path = "tests/lib_abstract_member_ts2515_tests.rs"]
+mod lib_abstract_member_ts2515_tests;
 #[cfg(test)]
 #[path = "../tests/literal_application_alias_display_tests.rs"]
 mod literal_application_alias_display_tests;
@@ -686,6 +690,7 @@ pub use flow_analyzer::{
     merge_assignment_states,
 };
 pub use flow_graph_builder::{FlowGraph, FlowGraphBuilder};
+pub use recovery::RecoveryReason;
 pub use state::{CheckerState, MAX_CALL_DEPTH, MAX_INSTANTIATION_DEPTH};
 pub use statements::{StatementCheckCallbacks, StatementChecker};
 pub use tsz_solver::Visibility;

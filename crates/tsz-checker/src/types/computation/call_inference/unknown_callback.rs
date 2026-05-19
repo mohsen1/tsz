@@ -84,20 +84,8 @@ impl<'a> CheckerState<'a> {
             }) else {
                 continue;
             };
-            let callback_shape = call_checker::get_contextual_signature(self.ctx.types, param_type)
-                .or_else(|| {
-                    let evaluated = self.evaluate_type_with_env(param_type);
-                    (evaluated != param_type).then(|| {
-                        call_checker::get_contextual_signature(self.ctx.types, evaluated)
-                    })?
-                })
-                .or_else(|| {
-                    let evaluated = self.evaluate_application_type(param_type);
-                    (evaluated != param_type).then(|| {
-                        call_checker::get_contextual_signature(self.ctx.types, evaluated)
-                    })?
-                });
-            let Some(callback_shape) = callback_shape else {
+            let Some(callback_shape) = self.resolved_callback_contextual_signature(param_type)
+            else {
                 continue;
             };
 
@@ -180,7 +168,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn argument_provides_type_param_evidence(
-        &self,
+        &mut self,
         shape: &FunctionShape,
         arg_types: &[TypeId],
         current_index: usize,
@@ -221,14 +209,38 @@ impl<'a> CheckerState<'a> {
         if !self.is_callback_like_argument(other_arg_idx) {
             return true;
         }
-        call_checker::get_contextual_signature(self.ctx.types, other_param_type).is_some_and(
-            |other_callback| {
+        // Only the return position of the sibling callback's contextual
+        // signature counts as inference evidence. Parameter positions are
+        // contravariant and supply context TO the lambda's parameters from
+        // `T`, not inference FROM the lambda back to `T`.
+        self.resolved_callback_contextual_signature(other_param_type)
+            .is_some_and(|other_callback| {
                 common::contains_type_parameter_named(
                     self.ctx.types,
                     other_callback.return_type,
                     type_param_name,
                 )
-            },
-        )
+            })
+    }
+
+    /// Resolve a callback parameter slot to its contextual `FunctionShape`,
+    /// falling through `evaluate_type_with_env` and then
+    /// `evaluate_application_type` so aliased callable interfaces (e.g.
+    /// `Make<T>`, stored as `Application`) are not seen as opaque.
+    fn resolved_callback_contextual_signature(&mut self, ty: TypeId) -> Option<FunctionShape> {
+        if let Some(shape) = call_checker::get_contextual_signature(self.ctx.types, ty) {
+            return Some(shape);
+        }
+        let evaluated = self.evaluate_type_with_env(ty);
+        if evaluated != ty
+            && let Some(shape) = call_checker::get_contextual_signature(self.ctx.types, evaluated)
+        {
+            return Some(shape);
+        }
+        let evaluated = self.evaluate_application_type(ty);
+        if evaluated != ty {
+            return call_checker::get_contextual_signature(self.ctx.types, evaluated);
+        }
+        None
     }
 }

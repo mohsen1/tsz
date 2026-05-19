@@ -35,7 +35,6 @@ env:
   BENCH_COLD: "1"
   BENCH_PGO: "1"
   BENCH_REQUIRE_PGO: "1"
-  TSC_NPM_SPEC: "6.0.2"
   GITHUB_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
   BENCH_TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
   CARGO_HOME: ${{ github.workspace }}/.ci-cache/cargo-home
@@ -93,7 +92,7 @@ jobs:
           fi
 
           if [[ "$should_run" == "true" && "$release_only" != "true" ]]; then
-            active_runs="$(
+            active_runs_raw="$(
               {
                 gh run list --repo "${{ github.repository }}" --workflow bench.yml --branch main --status in_progress --limit 20 \
                   --json databaseId,headSha,url \
@@ -103,8 +102,19 @@ jobs:
                   --jq '.[] | select(.databaseId != ${{ github.run_id }}) | [.databaseId, .headSha, .url] | @tsv'
               } | sort -u
             )"
+            active_runs=""
+            while IFS=$'\t' read -r run_id run_sha run_url; do
+              [[ -n "${run_id:-}" ]] || continue
+              if [[ "${run_sha}" != "${target_sha}" ]]; then
+                echo "Cancelling stale Bench run ${run_id} for ${run_sha}; target is ${target_sha}."
+                gh run cancel --repo "${{ github.repository }}" "${run_id}" || true
+                gh api -X POST "repos/${{ github.repository }}/actions/runs/${run_id}/force-cancel" --silent || true
+                continue
+              fi
+              active_runs+="${run_id}"$'\t'"${run_sha}"$'\t'"${run_url}"$'\n'
+            done <<< "$active_runs_raw"
             if [[ -n "$active_runs" ]]; then
-              echo "Another Bench run is already active; skipping this benchmark instead of queuing or canceling."
+              echo "Another Bench run for ${target_sha} is already active; skipping this benchmark instead of queuing."
               printf '%s\n' "$active_runs"
               should_run=false
             fi
@@ -125,6 +135,7 @@ jobs:
     timeout-minutes: 30
     outputs:
       should_run: ${{ steps.prepare-gate.outputs.should_run }}
+      build_id: ${{ steps.cloudbuild-submit.outputs.build_id }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -136,7 +147,8 @@ jobs:
         shell: bash
         run: echo "should_run=true" >> "$GITHUB_OUTPUT"
 
-      - name: Submit benchmark prep to Cloud Build pool
+      - id: cloudbuild-submit
+        name: Submit benchmark prep to Cloud Build pool
         if: steps.prepare-gate.outputs.should_run == 'true'
         shell: bash
         run: |
@@ -170,14 +182,23 @@ jobs:
             echo "Existing Cloud Build PGO prep artifact is incomplete or stale; submitting a fresh build."
           fi
 
-          gcloud builds submit \
+          submit_output="$(gcloud builds submit \
             --async \
             --project=tsz-ci \
             --region=us-central1 \
             --config=cloudbuild-bench-prepare.yaml \
             --gcs-source-staging-dir=gs://tsz-ci_cloudbuild/cb-source-staging \
             --substitutions=_BENCH_TARGET_SHA="${target_sha}" \
-            .
+            --format='value(id)' \
+            .)"
+          build_id="$(grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' <<<"$submit_output" | tail -n 1 || true)"
+          if [[ -z "$build_id" ]]; then
+            printf '%s\n' "$submit_output"
+            echo "Cloud Build submit did not return a build id." >&2
+            exit 1
+          fi
+          echo "Submitted Cloud Build benchmark prep ${build_id}."
+          echo "build_id=${build_id}" >> "$GITHUB_OUTPUT"
 
   bench-prepare-cloudbuild:
     name: bench-prepare-cloudbuild
@@ -192,6 +213,7 @@ jobs:
     timeout-minutes: 120
     outputs:
       should_run: ${{ steps.prepare-gate.outputs.should_run }}
+      build_id: ${{ steps.cloudbuild-submit.outputs.build_id }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -205,7 +227,8 @@ jobs:
           # The bench-gate job handles supersession before Cloud Build submit.
           echo "should_run=true" >> "$GITHUB_OUTPUT"
 
-      - name: Submit benchmark prep to Cloud Build pool
+      - id: cloudbuild-submit
+        name: Submit benchmark prep to Cloud Build pool
         shell: bash
         run: |
           set -euo pipefail
@@ -228,14 +251,23 @@ jobs:
             fi
           fi
 
-          gcloud builds submit \
+          submit_output="$(gcloud builds submit \
             --async \
             --project=tsz-ci \
             --region=us-central1 \
             --config=cloudbuild-bench-prepare.yaml \
             --gcs-source-staging-dir=gs://tsz-ci_cloudbuild/cb-source-staging \
             --substitutions=_BENCH_TARGET_SHA="${BENCH_TARGET_SHA}" \
-            .
+            --format='value(id)' \
+            .)"
+          build_id="$(grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' <<<"$submit_output" | tail -n 1 || true)"
+          if [[ -z "$build_id" ]]; then
+            printf '%s\n' "$submit_output"
+            echo "Cloud Build submit did not return a build id." >&2
+            exit 1
+          fi
+          echo "Submitted Cloud Build benchmark prep ${build_id}."
+          echo "build_id=${build_id}" >> "$GITHUB_OUTPUT"
 
   publish-latest-pgo:
     name: publish-latest-pgo
@@ -266,12 +298,16 @@ jobs:
             wait_seconds=360
           fi
 
+          storage_cp() {
+            timeout 45s gcloud storage cp "$1" "$2" >/dev/null 2>&1
+          }
+
           deadline=$((SECONDS + wait_seconds))
           while true; do
             rm -f latest-bench-prep.env bench-prep.env bench-prep.tar
-            if gcloud storage cp \
+            if storage_cp \
               "gs://tsz-ci_cloudbuild/bench-prep/latest/bench-prep.env" \
-              latest-bench-prep.env >/dev/null 2>&1; then
+              latest-bench-prep.env; then
               # shellcheck disable=SC1091
               source latest-bench-prep.env
               latest_target_sha="${BENCH_TARGET_SHA:-}"
@@ -286,12 +322,12 @@ jobs:
               elif [[ "${{ github.event_name }}" == "schedule" &&
                       "${latest_build_date}" != "$(date -u +%F)" ]]; then
                 echo "Cloud Build artifact is from ${latest_build_date:-unknown}; waiting for today's build."
-              elif gcloud storage cp \
+              elif storage_cp \
                 "gs://tsz-ci_cloudbuild/bench-prep/${latest_target_sha}/bench-prep.env" \
-                bench-prep.env >/dev/null 2>&1 && \
-                gcloud storage cp \
+                bench-prep.env && \
+                storage_cp \
                   "gs://tsz-ci_cloudbuild/bench-prep/${latest_target_sha}/bench-prep.tar" \
-                  bench-prep.tar >/dev/null 2>&1; then
+                  bench-prep.tar; then
                 # shellcheck disable=SC1091
                 source bench-prep.env
                 if [[ "${BENCH_TARGET_SHA:-}" != "${latest_target_sha}" ]]; then
@@ -509,7 +545,7 @@ jobs:
       !contains(needs.*.result, 'failure') &&
       !contains(needs.*.result, 'cancelled')
     runs-on: [self-hosted, tsz-cloud-run]
-    timeout-minutes: 130
+    timeout-minutes: 170
     outputs:
       should_run: ${{ steps.ready.outputs.should_run }}
     steps:
@@ -532,16 +568,28 @@ jobs:
               END { print value }
             ' bench-prep.env
           }
+          storage_cp() {
+            timeout 45s gcloud storage cp "$1" "$2" >/dev/null 2>&1
+          }
+          cloudbuild_status() {
+            local build_id="$1"
+            [[ -n "$build_id" ]] || return 0
+            gcloud builds describe "$build_id" \
+              --project=tsz-ci \
+              --region=us-central1 \
+              --format='value(status)' 2>/dev/null || true
+          }
+          cloudbuild_id="${{ needs.bench-prepare.outputs.build_id }}"
 
-          deadline=$((SECONDS + 7200))
+          deadline=$((SECONDS + 9000))
           while true; do
             rm -f bench-prep.env bench-prep.tar
-            if gcloud storage cp \
+            if storage_cp \
               "gs://tsz-ci_cloudbuild/bench-prep/${target_sha}/bench-prep.env" \
-              bench-prep.env >/dev/null 2>&1 && \
-              gcloud storage cp \
+              bench-prep.env && \
+              storage_cp \
                 "gs://tsz-ci_cloudbuild/bench-prep/${target_sha}/bench-prep.tar" \
-                bench-prep.tar >/dev/null 2>&1; then
+                bench-prep.tar; then
               tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
               tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null
               manifest_target_sha="$(manifest_value BENCH_TARGET_SHA)"
@@ -553,8 +601,17 @@ jobs:
               echo "Cloud Build prep artifact is for ${manifest_target_sha:-unknown} / PGO=${manifest_pgo_optimized:-0}; waiting for ${target_sha}."
             fi
 
+            status="$(cloudbuild_status "$cloudbuild_id")"
+            case "$status" in
+              FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
+                echo "Cloud Build benchmark prep ${cloudbuild_id} ended with status ${status}; artifact is unavailable."
+                exit 1
+                ;;
+            esac
+
             if (( SECONDS >= deadline )); then
-              echo "No finished Cloud Build PGO prep artifact is available for ${target_sha}."
+              echo "No finished Cloud Build PGO prep artifact is available for ${target_sha} after 150 minutes."
+              [[ -z "$status" ]] || echo "Last Cloud Build benchmark prep status: ${status} (${cloudbuild_id})."
               exit 1
             fi
 
@@ -570,14 +627,27 @@ jobs:
         run: |
           set -euo pipefail
 
-          deadline=$((SECONDS + 7200))
+          storage_cp() {
+            timeout 45s gcloud storage cp "$1" "$2" >/dev/null 2>&1
+          }
+          cloudbuild_status() {
+            local build_id="$1"
+            [[ -n "$build_id" ]] || return 0
+            gcloud builds describe "$build_id" \
+              --project=tsz-ci \
+              --region=us-central1 \
+              --format='value(status)' 2>/dev/null || true
+          }
+          cloudbuild_id="${{ needs.bench-prepare-cloudbuild.outputs.build_id }}"
+
+          deadline=$((SECONDS + 9000))
           while true; do
-            if gcloud storage cp \
+            if storage_cp \
               "gs://tsz-ci_cloudbuild/bench-prep/${BENCH_TARGET_SHA}/bench-prep.env" \
-              bench-prep.env >/dev/null 2>&1 && \
-              gcloud storage cp \
+              bench-prep.env && \
+              storage_cp \
                 "gs://tsz-ci_cloudbuild/bench-prep/${BENCH_TARGET_SHA}/bench-prep.tar" \
-                bench-prep.tar >/dev/null 2>&1; then
+                bench-prep.tar; then
               tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
               tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null
               # shellcheck disable=SC1091
@@ -588,8 +658,17 @@ jobs:
               echo "Cloud Build prep artifact is for ${BENCH_TARGET_SHA:-unknown}; waiting for ${{ env.BENCH_TARGET_SHA }}."
             fi
 
+            status="$(cloudbuild_status "$cloudbuild_id")"
+            case "$status" in
+              FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
+                echo "Cloud Build benchmark prep ${cloudbuild_id} ended with status ${status}; artifact is unavailable."
+                exit 1
+                ;;
+            esac
+
             if (( SECONDS >= deadline )); then
-              echo "No finished Cloud Build benchmark prep artifact is available for ${{ env.BENCH_TARGET_SHA }}."
+              echo "No finished Cloud Build benchmark prep artifact is available for ${{ env.BENCH_TARGET_SHA }} after 150 minutes."
+              [[ -z "$status" ]] || echo "Last Cloud Build benchmark prep status: ${status} (${cloudbuild_id})."
               exit 1
             fi
 
@@ -706,35 +785,39 @@ jobs:
           fi
           pnpm config set store-dir "$PNPM_STORE_DIR"
 
+      - name: Bench shard prelude (cleanup + headroom check)
+        shell: bash
+        run: scripts/ci/bench-shard-prelude.sh prelude --label '${{ matrix.label }}'
+
       - name: Run benchmark shard
         shell: bash
         run: |
-          set -uo pipefail
-
-          (
-            while true; do
-              echo "::group::resource snapshot $(date -Is)"
-              echo "load:"; uptime || true
-              echo "memory:"; free -h || true
-              echo "disk:"; df -h || true
-              echo "top processes:"; ps -eo pid,ppid,%cpu,%mem,rss,cmd --sort=-rss 2>/dev/null | head -20 || true
-              echo "::endgroup::"
-              sleep 30
-            done
-          ) &
-          _monitor_pid=$!
-          trap 'kill "$_monitor_pid" 2>/dev/null || true' EXIT
+          set -euo pipefail
 
           export TSZ="$GITHUB_WORKSPACE/.target-bench/dist/tsz"
           if [[ '${{ matrix.label }}' == 'projects' ]]; then
             export NEXTJS_BENCHMARK_ENABLED=1
           fi
           echo "Using prepared benchmark TSZ binary: $TSZ"
-          ./scripts/bench/bench-vs-tsgo.sh \
-            --filter '${{ matrix.filter }}' \
-            --json \
-            --json-file "$GITHUB_WORKSPACE/bench-results-${{ matrix.label }}.json" \
+
+          # Wrap the bench in safe-run.sh so a runaway shard is killed before
+          # the OS OOM-killer reaches the runner agent (issue #7601). 85%
+          # leaves ~15% headroom for the runner agent and sshd; 30s sampling
+          # is plenty for multi-minute shards.
+          scripts/safe-run.sh --limit "${TSZ_BENCH_MEMORY_LIMIT:-85%}" --interval 30 -- \
+            ./scripts/bench/bench-vs-tsgo.sh \
+              --filter '${{ matrix.filter }}' \
+              --json \
+              --json-file "$GITHUB_WORKSPACE/bench-results-${{ matrix.label }}.json" \
             2>&1 | tee "$GITHUB_WORKSPACE/bench-run-${{ matrix.label }}.log"
+
+      - name: Capture shard failure diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          scripts/ci/bench-shard-prelude.sh postmortem \
+            --label '${{ matrix.label }}' \
+            --output "$GITHUB_WORKSPACE/bench-postmortem-${{ matrix.label }}.log"
 
       - name: Upload benchmark shard artifacts
         if: always()
@@ -744,6 +827,7 @@ jobs:
           path: |
             bench-results-${{ matrix.label }}.json
             bench-run-${{ matrix.label }}.log
+            bench-postmortem-${{ matrix.label }}.log
           retention-days: 7
           if-no-files-found: warn
           compression-level: 1

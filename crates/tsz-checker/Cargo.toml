@@ -30,6 +30,10 @@ dashmap = { workspace = true }
 stacker = "0.1.23"
 
 [[test]]
+name = "extract_alias_distributive_mapped_tests"
+path = "tests/extract_alias_distributive_mapped_tests.rs"
+
+[[test]]
 name = "generic_multi_prop_object_literal_tests"
 path = "tests/generic_multi_prop_object_literal_tests.rs"
 
@@ -466,6 +470,10 @@ name = "ts2353_generic_constraint_excess_property_tests"
 path = "tests/ts2353_generic_constraint_excess_property_tests.rs"
 
 [[test]]
+name = "relational_operator_type_display_tests"
+path = "tests/relational_operator_type_display_tests.rs"
+
+[[test]]
 name = "ts2677_intersection_predicate_tests"
 path = "tests/ts2677_intersection_predicate_tests.rs"
 
@@ -570,8 +578,20 @@ name = "nonnull_contextual_type_arg_inference_tests"
 path = "tests/nonnull_contextual_type_arg_inference_tests.rs"
 
 [[test]]
-name = "conformance_issues"
-path = "tests/conformance_issues.rs"
+name = "conformance_issues_errors"
+path = "tests/conformance_issues_errors.rs"
+
+[[test]]
+name = "conformance_issues_features"
+path = "tests/conformance_issues_features.rs"
+
+[[test]]
+name = "conformance_issues_modules"
+path = "tests/conformance_issues_modules.rs"
+
+[[test]]
+name = "conformance_issues_types"
+path = "tests/conformance_issues_types.rs"
 
 [[test]]
 name = "export_equals_display_order_tests"
@@ -624,6 +644,10 @@ path = "tests/generic_call_inference_tests.rs"
 [[test]]
 name = "issue_3768_generic_callback_outer_inference_tests"
 path = "tests/issue_3768_generic_callback_outer_inference_tests.rs"
+
+[[test]]
+name = "issue_7653_parameterless_lambda_inference_tests"
+path = "tests/issue_7653_parameterless_lambda_inference_tests.rs"
 
 [[test]]
 name = "tuple_type_assertion_inference_tests"
@@ -690,8 +714,16 @@ name = "typeof_instantiation_expression_tests"
 path = "tests/typeof_instantiation_expression_tests.rs"
 
 [[test]]
-name = "ts2344_class_constructor_constraint"
-path = "tests/ts2344_class_constructor_constraint.rs"
+name = "ts2344_class_constructor_constraint_call"
+path = "tests/ts2344_class_constructor_constraint_call.rs"
+
+[[test]]
+name = "ts2344_class_constructor_constraint_expr"
+path = "tests/ts2344_class_constructor_constraint_expr.rs"
+
+[[test]]
+name = "ts2344_class_constructor_constraint_visibility"
+path = "tests/ts2344_class_constructor_constraint_visibility.rs"
 
 [[test]]
 name = "ts2344_accessor_constraint"
@@ -834,6 +866,10 @@ name = "cross_file_intrinsic_identifier_tests"
 path = "tests/cross_file_intrinsic_identifier_tests.rs"
 
 [[test]]
+name = "cross_file_type_params_cache_tests"
+path = "tests/cross_file_type_params_cache_tests.rs"
+
+[[test]]
 name = "cross_file_lib_interface_identity_tests"
 path = "tests/cross_file_lib_interface_identity_tests.rs"
 
@@ -916,6 +952,10 @@ path = "tests/ts2490_unique_symbol_iterator_tests.rs"
 [[test]]
 name = "ts2506_cross_file_cycle_tests"
 path = "tests/ts2506_cross_file_cycle_tests.rs"
+
+[[test]]
+name = "ts2527_unique_symbol_via_reexport_tests"
+path = "tests/ts2527_unique_symbol_via_reexport_tests.rs"
 
 [[test]]
 name = "intersection_primitive_member_assignability_tests"
@@ -1338,6 +1378,10 @@ name = "static_readonly_unique_symbol_tests"
 path = "tests/static_readonly_unique_symbol_tests.rs"
 
 [[test]]
+name = "issue_7681_super_decorator_tests"
+path = "tests/issue_7681_super_decorator_tests.rs"
+
+[[test]]
 name = "index_signature_argument_assignability_tests"
 path = "tests/index_signature_argument_assignability_tests.rs"
 
@@ -1346,8 +1390,24 @@ name = "operator_literal_annotation_display_tests"
 path = "tests/operator_literal_annotation_display_tests.rs"
 
 [[test]]
+name = "operator_literal_annotation_widen_tests"
+path = "tests/operator_literal_annotation_widen_tests.rs"
+
+[[test]]
+name = "flow_dp_memoization_tests"
+path = "tests/flow_dp_memoization_tests.rs"
+
+[[test]]
 name = "public_package_unique_symbol_emit_tests"
 path = "tests/public_package_unique_symbol_emit_tests.rs"
+
+[[test]]
+name = "ts2536_keyof_string_index_signature_tests"
+path = "tests/ts2536_keyof_string_index_signature_tests.rs"
+
+[[test]]
+name = "recovery_any_sites_tests"
+path = "tests/recovery_any_sites_tests.rs"
 
 [lints]
 workspace = true

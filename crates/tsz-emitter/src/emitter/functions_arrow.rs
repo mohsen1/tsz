@@ -64,7 +64,7 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        self.emit_arrow_function_native(func);
+        self.emit_arrow_function_native(node, func);
     }
 
     fn emit_static_block_await_arrow_recovery(
@@ -123,7 +123,11 @@ impl<'a> Printer<'a> {
 
     /// Emit native ES6+ arrow function syntax
     #[tracing::instrument(level = "trace", skip(self, func), fields(param_count = func.parameters.nodes.len()))]
-    fn emit_arrow_function_native(&mut self, func: &tsz_parser::parser::node::FunctionData) {
+    fn emit_arrow_function_native(
+        &mut self,
+        node: &Node,
+        func: &tsz_parser::parser::node::FunctionData,
+    ) {
         // For ES2015/ES2016, lower async arrows: () => __awaiter(this, void 0, void 0, function* () { ... })
         if func.is_async && self.ctx.needs_async_lowering {
             self.push_temp_scope();
@@ -258,6 +262,7 @@ impl<'a> Printer<'a> {
                 self.emit_arrow_concise_body_leading_comments(body_node.pos);
             }
             self.parenthesized(|emitter| emitter.emit(func.body));
+            self.emit_arrow_concise_body_trailing_comments(func.body, node.end);
         } else {
             // Emit comments between => and the body expression (e.g. triple-slash comments)
             // tsc preserves these and places the body on a new line when comments exist.
@@ -277,6 +282,9 @@ impl<'a> Printer<'a> {
                 || !self.emit_arrow_concise_body_with_stripped_type_erasure_parens(func.body)
             {
                 self.emit(func.body);
+            }
+            if !body_is_block {
+                self.emit_arrow_concise_body_trailing_comments(func.body, node.end);
             }
             self.declared_namespace_names = prev_declared;
             self.arrow_function_scope_depth -= 1;
@@ -306,6 +314,22 @@ impl<'a> Printer<'a> {
             self.write_line();
         }
         self.emit_comments_before_pos(body_pos);
+    }
+
+    fn emit_arrow_concise_body_trailing_comments(
+        &mut self,
+        body_idx: tsz_parser::parser::NodeIndex,
+        arrow_end: u32,
+    ) {
+        if self.ctx.options.remove_comments {
+            return;
+        }
+        let Some(body_node) = self.arena.get(body_idx) else {
+            return;
+        };
+        let body_token_end = self.find_token_end_before_trivia(body_node.pos, body_node.end);
+        let comment_end = std::cmp::max(body_node.end, arrow_end);
+        self.emit_comments_in_range(body_token_end, comment_end, true, false);
     }
 
     pub(in crate::emitter) fn pending_comment_before_pos_starts_after_newline(
@@ -1019,7 +1043,9 @@ impl<'a> Printer<'a> {
                     && let Some(ident) = self.arena.get_identifier(name_node)
                     && !ident.escaped_text.is_empty()
                 {
-                    return Some(self.make_unique_name_from_base(&ident.escaped_text));
+                    return Some(
+                        self.make_unique_name_from_base_in_temp_scope(&ident.escaped_text),
+                    );
                 }
                 Some(self.make_unique_name())
             })
@@ -1435,6 +1461,7 @@ impl<'a> Printer<'a> {
         func: &tsz_parser::parser::node::FunctionData,
         this_arg: &str,
     ) {
+        self.push_temp_scope();
         let first_default_param_idx = func
             .parameters
             .nodes
@@ -1449,7 +1476,7 @@ impl<'a> Printer<'a> {
         let leading_names = self.async_arrow_forwarded_parameter_names(
             &func.parameters.nodes[..first_default_param_idx],
         );
-        let args_name = self.make_unique_name_from_base("args");
+        let args_name = self.make_unique_name_from_base_in_temp_scope("args");
         let captures_arguments = !self.ctx.rewrite_arguments_to_arguments_1
             && contains_arguments_reference(self.arena, func.body);
         let existing_arguments_capture_name = self.ctx.arguments_capture_name.clone();
@@ -1576,6 +1603,7 @@ impl<'a> Printer<'a> {
             self.decrease_indent();
             self.write("}");
         }
+        self.pop_temp_scope();
     }
 
     fn emit_async_arrow_await_param_recovery(
@@ -1589,7 +1617,7 @@ impl<'a> Printer<'a> {
         ) else {
             return;
         };
-        let args_name = self.make_unique_name_from_base("args");
+        let args_name = self.make_unique_name_from_base_in_temp_scope("args");
 
         self.write("(...");
         self.write(&args_name);

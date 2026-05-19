@@ -2,6 +2,7 @@
 use super::queries::lib_resolution::keyword_syntax_to_type_id;
 use super::type_node_helpers::{
     check_duplicate_parameters_in_type, check_parameter_initializers_in_type,
+    type_node_includes_explicit_undefined,
 };
 use crate::context::CheckerContext;
 use tsz_binder::SymbolId;
@@ -1148,10 +1149,26 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             } else {
                                 TypeId::ANY
                             };
+                            let write_type =
+                                if self.ctx.compiler_options.exact_optional_property_types
+                                    && sig.question_token
+                                    && sig.type_annotation.is_some()
+                                    && !type_node_includes_explicit_undefined(
+                                        self.ctx.arena,
+                                        sig.type_annotation,
+                                    )
+                                {
+                                    crate::query_boundaries::common::remove_undefined(
+                                        self.ctx.types.as_type_database(),
+                                        type_id,
+                                    )
+                                } else {
+                                    type_id
+                                };
                             properties.push(PropertyInfo {
                                 name: name_atom,
                                 type_id,
-                                write_type: type_id,
+                                write_type,
                                 optional: sig.question_token,
                                 readonly: self.ctx.arena.has_modifier(
                                     &sig.modifiers,
