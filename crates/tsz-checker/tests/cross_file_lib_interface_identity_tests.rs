@@ -161,9 +161,6 @@ const n: Node = bp;
     assert!(codes.is_empty(), "Diagnostics: {codes:?}");
 }
 
-// Known-failing cases tracked by issue #7690 — drop the `#[ignore]` when fixed.
-
-#[ignore = "tsz issue #7690: local `declare function` + cross-file import emits TS2345/TS2349 instead of resolving to lib Node"]
 #[test]
 fn local_declare_function_after_import_is_callable_with_cross_file_element() {
     let exporter = "export const blogPost: Element;";
@@ -180,7 +177,6 @@ takeNode(blogPost);
     assert!(codes.is_empty(), "Diagnostics: {codes:?}");
 }
 
-#[ignore = "tsz issue #7690: subclass of lib HTMLElement declared in another module loses heritage chain to Element/Node"]
 #[test]
 fn imported_element_class_extension_unifies_with_lib_html_element() {
     let leaf = r#"

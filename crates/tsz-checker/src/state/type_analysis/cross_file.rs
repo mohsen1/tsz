@@ -104,11 +104,35 @@ impl<'a> CheckerState<'a> {
     /// Get a symbol from the current binder, lib binders, or other file binders.
     /// This ensures we can resolve symbols from lib.d.ts and other files.
     pub(crate) fn get_symbol_globally(&self, sym_id: SymbolId) -> Option<&tsz_binder::Symbol> {
+        // SymbolId collision guard. Each file's binder numbers symbols from 0,
+        // so a local symbol can share an integer with an exported symbol in
+        // another file. The local symbol must win in two cases:
+        //
+        //  1. Non-alias local symbols (functions, variables, classes,
+        //     interfaces, …) are uniquely owned by the current file.
+        //     Returning a cross-file collision would misidentify a local
+        //     `declare function` as an imported constant, producing spurious
+        //     TS2349/TS2345 errors.
+        //
+        //  2. Named import aliases (ALIAS + `import_module` set) are also
+        //     owned by the current file: the sym_id is the local alias
+        //     handle, not the target export. A cross-file lookup at a
+        //     colliding integer would return the wrong export symbol.
+        //
+        // Non-named alias symbols (ALIAS without `import_module`) are
+        // intentionally allowed to fall through to cross-file resolution.
+        let local_sym = self.ctx.binder.get_symbol(sym_id);
+        if let Some(sym) = local_sym {
+            let is_alias = sym.flags & symbol_flags::ALIAS != 0;
+            if !is_alias || sym.import_module.is_some() {
+                return Some(sym);
+            }
+        }
+
         // If the import/export resolver has already tied this raw SymbolId to a
-        // specific source file, use that binder before the current file. Raw
-        // SymbolIds are only file-local; checking the current binder first can
-        // accidentally pick an unrelated same-id symbol while resolving
-        // cross-file aliases.
+        // specific source file, use that binder (cross-file alias resolution).
+        // The guard above ensures we only reach here when the local lookup
+        // produced nothing or found an alias (whose target lives elsewhere).
         if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
             && file_idx != self.ctx.current_file_idx
             && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
@@ -117,8 +141,9 @@ impl<'a> CheckerState<'a> {
             return Some(sym);
         }
 
-        // 1. Check current file
-        if let Some(sym) = self.ctx.binder.get_symbol(sym_id) {
+        // 1. Return the local symbol if one was found above (a non-named alias
+        //    that fell through the guard but has no cross-file resolution).
+        if let Some(sym) = local_sym {
             return Some(sym);
         }
         // 2. Check lib files (lib.d.ts, etc.)
@@ -129,14 +154,11 @@ impl<'a> CheckerState<'a> {
         }
         // 3. O(1) fast-path: if this SymbolId was already resolved to a specific
         //    file via resolve_symbol_file_index, go directly to that binder.
+        if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
+            && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
+            && let Some(sym) = binder.get_symbol(sym_id)
         {
-            let file_idx = self.ctx.resolve_symbol_file_index(sym_id);
-            if let Some(file_idx) = file_idx
-                && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
-                && let Some(sym) = binder.get_symbol(sym_id)
-            {
-                return Some(sym);
-            }
+            return Some(sym);
         }
         // 4. Fallback: O(N) scan over all binders
         if let Some(binders) = &self.ctx.all_binders {
@@ -384,6 +406,44 @@ impl<'a> CheckerState<'a> {
         &mut self,
         sym_id: SymbolId,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+        // SymbolId collision guard: per-file binders all start numbering at 0,
+        // so a local symbol can share a SymbolId integer with an exported
+        // symbol in another file recorded in cross_file_symbol_targets.
+        //
+        // Two kinds of local symbols must NOT be delegated cross-arena:
+        //
+        //  1. Non-alias symbols (function, variable, class, …) that have a
+        //     declaration in the current arena — they are exclusively owned
+        //     by this checker context.
+        //
+        //  2. Named import aliases (ALIAS + `import_module` set) — their
+        //     type is computed by following the import chain via
+        //     `compute_type_of_symbol_type_alias_variable_alias`, which
+        //     navigates to the source file itself. Delegating through a
+        //     colliding cross_file_symbol_targets entry would return the
+        //     wrong target symbol and bypass the import chain.
+        //
+        // Non-named alias symbols (ALIAS without `import_module`) are
+        // intentionally allowed through: they are genuine cross-file
+        // references whose target lives in another arena.
+        if let Some(local_sym) = self.ctx.binder.get_symbol(sym_id) {
+            let is_alias = local_sym.flags & symbol_flags::ALIAS != 0;
+            // The two branches are mutually exclusive on `is_alias`:
+            //   - non-alias: must own a declaration in the current arena
+            //   - alias:     must be a named import (has `import_module`)
+            let must_stay_local = if is_alias {
+                local_sym.import_module.is_some()
+            } else {
+                local_sym
+                    .declarations
+                    .iter()
+                    .any(|&d| d.is_some() && self.ctx.arena.get(d).is_some())
+            };
+            if must_stay_local {
+                return None;
+            }
+        }
+
         // Fast path: if this is a known cross-file symbol, skip the namespace guard
         // (which would check the wrong symbol in the current binder) and go straight
         // to cross-file delegation.
@@ -1145,6 +1205,219 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    /// Resolve the type of a known cross-file export symbol by creating a
+    /// child checker that uses the target file's arena and binder directly.
+    ///
+    /// Unlike `get_type_of_symbol`, which can be confused when the same SymbolId
+    /// integer names a locally-declared symbol in this file AND an exported
+    /// symbol in another file (per-file binders both start at 0), this function
+    /// explicitly delegates to `file_idx`'s context. The collision-guarded paths
+    /// in `delegate_cross_arena_symbol_resolution` and `get_type_of_symbol_inner`
+    /// can therefore remain conservative for local symbols without breaking alias
+    /// resolution.
+    ///
+    /// The result is cached in the cross-file symbol-type cache keyed by
+    /// `(sym_id, file_idx)` but is NOT written to the parent's `symbol_types[sym_id]`
+    /// cache, preventing a locally-declared symbol from inheriting the cross-file
+    /// export's type.
+    pub(crate) fn resolve_type_of_cross_file_export_symbol(
+        &mut self,
+        sym_id: SymbolId,
+        file_idx: usize,
+    ) -> TypeId {
+        // Cross-file cache hit: avoid re-creating the child checker.
+        if let Some((cached, _)) = self
+            .ctx
+            .cached_cross_file_symbol_type(sym_id, file_idx as u32)
+        {
+            return cached;
+        }
+
+        let Some(symbol_arena_arc) = self
+            .ctx
+            .all_arenas
+            .as_ref()
+            .and_then(|a| a.get(file_idx))
+            .cloned()
+        else {
+            return TypeId::UNKNOWN;
+        };
+        let symbol_arena = symbol_arena_arc.as_ref();
+
+        // Same arena — no delegation needed; caller should use get_type_of_symbol.
+        if std::ptr::eq(symbol_arena, self.ctx.arena) {
+            return self.get_type_of_symbol(sym_id);
+        }
+
+        if !Self::enter_cross_arena_delegation() {
+            return TypeId::UNKNOWN;
+        }
+        if !self.ctx.enter_recursion() {
+            Self::leave_cross_arena_delegation();
+            return TypeId::UNKNOWN;
+        }
+
+        let delegate_binder = self
+            .ctx
+            .get_binder_for_file(file_idx)
+            .unwrap_or(self.ctx.binder);
+        let file_name = symbol_arena
+            .source_files
+            .first()
+            .map(|sf| sf.file_name.clone())
+            .unwrap_or_else(|| self.ctx.file_name.clone());
+
+        let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
+            symbol_arena,
+            delegate_binder,
+            self.ctx.types,
+            file_name,
+            self.ctx.compiler_options.clone(),
+            self,
+            tsz_common::perf_counters::CheckerCreationReason::DelegateCrossArenaSymbol,
+        ));
+        checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+        checker.ctx.copy_cross_file_state_from(&self.ctx);
+        self.ctx.copy_symbol_file_targets_to_attributed(
+            &mut checker.ctx,
+            tsz_common::perf_counters::CheckerCreationReason::DelegateCrossArenaSymbol,
+        );
+        checker.ctx.current_file_idx = file_idx;
+        // Remove any stale cache entry for sym_id so the child resolves it
+        // against the target file's binder rather than inheriting a colliding
+        // value from the parent context.
+        checker.ctx.symbol_types.remove(&sym_id);
+        checker.ctx.symbol_instance_types.remove(&sym_id);
+        for &id in &self.ctx.symbol_resolution_set {
+            if id != sym_id {
+                checker.ctx.symbol_resolution_set.insert(id);
+            }
+        }
+        for &id in &self.ctx.class_instance_resolution_set {
+            checker.ctx.class_instance_resolution_set.insert(id);
+        }
+        for &id in &self.ctx.class_constructor_resolution_set {
+            checker.ctx.class_constructor_resolution_set.insert(id);
+        }
+        checker.ctx.ensure_type_env_has_definition_store();
+
+        let result = checker.get_type_of_symbol(sym_id);
+
+        // Collect child data before dropping (child borrows self.ctx.types).
+        //
+        // Exclude sym_id from the symbol_types merge-back: writing the cross-file
+        // export's type under the same integer would overwrite (or pre-fill) the
+        // local symbol's cache entry, causing subsequent lookups for the local
+        // symbol to return the wrong type.
+        let child_symbol_types: Vec<(SymbolId, TypeId)> = checker
+            .ctx
+            .symbol_types
+            .iter()
+            .filter(|(k, _)| *k != sym_id)
+            .collect();
+        if let Ok(child_env) = checker.ctx.type_env.try_borrow() {
+            self.merge_child_type_env_snapshots(
+                &child_env,
+                "resolve_type_of_cross_file_export_symbol",
+            );
+        }
+        let child_lib_type_cache: Vec<(String, Option<TypeId>)> =
+            std::mem::take(&mut checker.ctx.lib_type_resolution_cache)
+                .into_iter()
+                .collect();
+        let child_instance_types: Vec<(SymbolId, TypeId)> = checker
+            .ctx
+            .symbol_instance_types
+            .iter()
+            .filter(|(k, _)| *k != sym_id)
+            .collect();
+        let child_namespace_names: rustc_hash::FxHashMap<TypeId, String> =
+            std::mem::take(&mut checker.ctx.namespace_module_names);
+        drop(checker);
+
+        // Merge collected data into the parent.
+        for (k, v) in child_symbol_types {
+            self.ctx.symbol_types.entry_or_insert(k, v);
+        }
+        for (name, type_id) in child_lib_type_cache {
+            self.ctx
+                .lib_type_resolution_cache
+                .entry(name)
+                .or_insert(type_id);
+        }
+        for (k, v) in child_instance_types {
+            self.ctx.symbol_instance_types.entry_or_insert(k, v);
+        }
+        self.ctx
+            .namespace_module_names
+            .extend(child_namespace_names);
+
+        // Cache in the cross-file cache (NOT in parent symbol_types[sym_id]).
+        self.ctx
+            .cache_cross_file_symbol_type(sym_id, file_idx as u32, result, Vec::new());
+
+        self.ctx.leave_recursion();
+        Self::leave_cross_arena_delegation();
+        result
+    }
+
+    /// Resolve the type of a cross-file export `SymbolId`, handling the case where
+    /// the same integer also names a locally-declared symbol in this file (SymbolId
+    /// collision).
+    ///
+    /// When no collision exists, delegates to `get_type_of_symbol`. When a collision
+    /// is detected, uses `resolve_type_of_cross_file_export_symbol` to create a
+    /// child checker for the owning file directly, bypassing the collision guards
+    /// in `delegate_cross_arena_symbol_resolution` that would otherwise force local
+    /// resolution and return the wrong type.
+    pub(crate) fn get_type_of_symbol_for_cross_file_export(
+        &mut self,
+        export_sym_id: SymbolId,
+    ) -> TypeId {
+        let has_collision = self.ctx.binder.get_symbol(export_sym_id).is_some_and(|s| {
+            s.flags & symbol_flags::ALIAS == 0
+                && s.declarations
+                    .iter()
+                    .any(|&d| d.is_some() && self.ctx.arena.get(d).is_some())
+        });
+
+        tracing::debug!(
+            sym_id = export_sym_id.0,
+            has_collision,
+            file = self.ctx.file_name.as_str(),
+            "get_type_of_symbol_for_cross_file_export"
+        );
+
+        if !has_collision {
+            let result = self.get_type_of_symbol(export_sym_id);
+            tracing::debug!(
+                sym_id = export_sym_id.0,
+                result = result.0,
+                "get_type_of_symbol_for_cross_file_export: no collision"
+            );
+            return result;
+        }
+
+        let Some(file_idx) = self.ctx.resolve_symbol_file_index(export_sym_id) else {
+            let result = self.get_type_of_symbol(export_sym_id);
+            tracing::debug!(
+                sym_id = export_sym_id.0,
+                result = result.0,
+                "get_type_of_symbol_for_cross_file_export: no file_idx"
+            );
+            return result;
+        };
+
+        let result = self.resolve_type_of_cross_file_export_symbol(export_sym_id, file_idx);
+        tracing::debug!(
+            sym_id = export_sym_id.0,
+            file_idx,
+            result = result.0,
+            "get_type_of_symbol_for_cross_file_export: resolved"
+        );
+        result
     }
 
     /// Delegate class instance type resolution to a child checker with the correct arena.

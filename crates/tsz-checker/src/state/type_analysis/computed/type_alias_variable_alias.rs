@@ -1690,7 +1690,7 @@ impl<'a> CheckerState<'a> {
                     if let Some(alias_id) =
                         self.ctx.alias_partner_for(self.ctx.binder, export_sym_id)
                     {
-                        let ta_type = self.get_type_of_symbol(export_sym_id);
+                        let ta_type = self.get_type_of_symbol_for_cross_file_export(export_sym_id);
                         self.ctx.import_type_alias_types.insert(sym_id, ta_type);
                         self.record_cross_file_symbol_if_needed(alias_id, export_name, module_name);
                         let mut result = self.get_type_of_symbol(alias_id);
@@ -1698,8 +1698,17 @@ impl<'a> CheckerState<'a> {
                         if export_name == "default" {
                             result = self.widen_type_for_display(result);
                         }
-                        let should_cache_on_export_symbol =
-                            self.get_symbol_globally(export_sym_id).is_none_or(|sym| {
+                        // Do not write to symbol_types[export_sym_id] when a local
+                        // non-alias symbol shares that SymbolId (SymbolId collision).
+                        let has_local_collision =
+                            self.ctx.binder.get_symbol(export_sym_id).is_some_and(|s| {
+                                s.flags & symbol_flags::ALIAS == 0
+                                    && s.declarations
+                                        .iter()
+                                        .any(|&d| d.is_some() && self.ctx.arena.get(d).is_some())
+                            });
+                        let should_cache_on_export_symbol = !has_local_collision
+                            && self.get_symbol_globally(export_sym_id).is_none_or(|sym| {
                                 !sym.has_any_flags(symbol_flags::TYPE)
                                     || !sym.has_any_flags(symbol_flags::VALUE)
                             });
@@ -1738,7 +1747,9 @@ impl<'a> CheckerState<'a> {
                             };
                             if value_decl.is_none() {
                                 self.local_value_type_for_same_name_symbol(export_sym_id, &sym_name)
-                                    .unwrap_or_else(|| self.get_type_of_symbol(export_sym_id))
+                                    .unwrap_or_else(|| {
+                                        self.get_type_of_symbol_for_cross_file_export(export_sym_id)
+                                    })
                             } else {
                                 let vd_type = if self.ctx.arena.get(value_decl).is_some() {
                                     self.type_of_value_declaration_for_symbol(
@@ -1755,17 +1766,19 @@ impl<'a> CheckerState<'a> {
                                 if vd_type != TypeId::UNKNOWN && vd_type != TypeId::ERROR {
                                     vd_type
                                 } else {
-                                    self.get_type_of_symbol(export_sym_id)
+                                    self.get_type_of_symbol_for_cross_file_export(export_sym_id)
                                 }
                             }
                         } else if has_interface {
                             self.local_value_type_for_same_name_symbol(export_sym_id, &sym_name)
-                                .unwrap_or_else(|| self.get_type_of_symbol(export_sym_id))
+                                .unwrap_or_else(|| {
+                                    self.get_type_of_symbol_for_cross_file_export(export_sym_id)
+                                })
                         } else {
-                            self.get_type_of_symbol(export_sym_id)
+                            self.get_type_of_symbol_for_cross_file_export(export_sym_id)
                         }
                     } else {
-                        self.get_type_of_symbol(export_sym_id)
+                        self.get_type_of_symbol_for_cross_file_export(export_sym_id)
                     };
                     result = self.apply_module_augmentations(module_name, export_name, result);
                     if export_name == "default" {
@@ -1775,8 +1788,17 @@ impl<'a> CheckerState<'a> {
                         );
                         result = self.widen_fresh_object_literal_properties_for_display(result);
                     }
-                    let should_cache_on_export_symbol =
-                        self.get_symbol_globally(export_sym_id).is_none_or(|sym| {
+                    // Do not write to symbol_types[export_sym_id] when a local non-alias
+                    // symbol shares that SymbolId (SymbolId collision across files).
+                    let has_local_collision =
+                        self.ctx.binder.get_symbol(export_sym_id).is_some_and(|s| {
+                            s.flags & symbol_flags::ALIAS == 0
+                                && s.declarations
+                                    .iter()
+                                    .any(|&d| d.is_some() && self.ctx.arena.get(d).is_some())
+                        });
+                    let should_cache_on_export_symbol = !has_local_collision
+                        && self.get_symbol_globally(export_sym_id).is_none_or(|sym| {
                             !sym.has_any_flags(symbol_flags::TYPE)
                                 || !sym.has_any_flags(symbol_flags::VALUE)
                         });

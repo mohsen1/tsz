@@ -2276,7 +2276,23 @@ impl<'a> CheckerState<'a> {
         let cross_file_owner_idx = self
             .ctx
             .resolve_symbol_file_index(sym_id)
-            .filter(|&file_idx| file_idx != self.ctx.current_file_idx);
+            .filter(|&file_idx| file_idx != self.ctx.current_file_idx)
+            // SymbolId collision guard: per-file binders all start numbering at 0,
+            // so the same integer can appear as a locally-declared non-alias symbol
+            // HERE and as an exported symbol in another file recorded in
+            // cross_file_symbol_targets.  When the local binder owns a non-alias
+            // symbol at sym_id with a declaration in this arena, it holds that
+            // SymbolId — the cross_file_symbol_targets entry belongs to a different
+            // symbol and must not shadow local resolution or pollute the cross-file
+            // type cache for this checker context.
+            .filter(|_| {
+                !self.ctx.binder.get_symbol(sym_id).is_some_and(|s| {
+                    s.flags & tsz_binder::symbol_flags::ALIAS == 0
+                        && s.declarations
+                            .iter()
+                            .any(|&d| d.is_some() && self.ctx.arena.get(d).is_some())
+                })
+            });
         if let Some(file_idx) = cross_file_owner_idx
             && let Some((cached, _params)) = self
                 .ctx
