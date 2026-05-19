@@ -222,8 +222,21 @@ impl<'a> Printer<'a> {
         match self.cjs_live_export_kind(local_name) {
             CjsLiveExportKind::NotExported => false,
             CjsLiveExportKind::Inline(aliases) => {
-                if is_statement || aliases.is_empty() {
-                    self.write_export_property_chain(&aliases);
+                if is_statement {
+                    if aliases.is_empty() {
+                        self.write_export_property_access(local_name);
+                    } else {
+                        self.write_export_property_chain(&aliases);
+                        self.write("(");
+                        self.write_export_property_access(local_name);
+                        self.write(get_operator_text(operator));
+                        self.write(", ");
+                        self.write_export_property_access(local_name);
+                        self.write(")");
+                    }
+                    return true;
+                }
+                if aliases.is_empty() {
                     self.write_export_property_access(local_name);
                     self.write(get_operator_text(operator));
                     return true;

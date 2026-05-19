@@ -255,6 +255,42 @@ fn postfix_increment_stmt_updates_renamed_clause_export() {
     );
 }
 
+/// Postfix-unary statement on an inline export that is also clause-aliased must
+/// assign aliases from the updated export value, not from the stale postfix
+/// result.
+#[test]
+fn postfix_increment_stmt_updates_inline_export_alias() {
+    let source = "export let x = 0;\nexport { x as y };\nx++;\n";
+    let output = parse_lower_emit(source, cjs_es2015());
+    assert!(
+        output.contains("exports.y = (exports.x++, exports.x)"),
+        "`x++` statement must update aliased export from the post-increment value.\nOutput:\n{output}"
+    );
+}
+
+/// Same rule for postfix decrement on inline exports with a clause alias.
+#[test]
+fn postfix_decrement_stmt_updates_inline_export_alias() {
+    let source = "export let count = 3;\nexport { count as total };\ncount--;\n";
+    let output = parse_lower_emit(source, cjs_es2015());
+    assert!(
+        output.contains("exports.total = (exports.count--, exports.count)"),
+        "`count--` statement must update aliased export from the post-decrement value.\nOutput:\n{output}"
+    );
+}
+
+/// Expression context still returns the pre-update value while refreshing the
+/// alias from the updated inline export.
+#[test]
+fn postfix_increment_expr_returns_previous_value_and_updates_inline_export_alias() {
+    let source = "export let x = 0;\nexport { x as y };\nlet before = x++;\n";
+    let output = parse_lower_emit(source, cjs_es2015());
+    assert!(
+        output.contains("exports.y = (_a = exports.x++, exports.x), _a"),
+        "`x++` expression must return the previous value while updating the alias.\nOutput:\n{output}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Full mix: the original bug repro
 // ---------------------------------------------------------------------------

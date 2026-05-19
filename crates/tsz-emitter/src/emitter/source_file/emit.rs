@@ -1947,7 +1947,6 @@ impl<'a> Printer<'a> {
                 }
                 let use_deferred_nested_cjs_exports = is_top_level_cjs
                     && !cjs_deferred_export_names.is_empty()
-                    && stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT
                     && stmt_node.kind != syntax_kind_ext::CLASS_DECLARATION;
                 let prev_deferred_local_export_bindings = if use_deferred_nested_cjs_exports {
                     self.deferred_local_export_bindings
@@ -2028,7 +2027,11 @@ impl<'a> Printer<'a> {
                         // is a syntax error.
                         self.write_export_property_access(export_name);
                         self.write(" = ");
-                        self.write(&name);
+                        if self.commonjs_exported_var_names.contains(&name) {
+                            self.write_export_property_access(&name);
+                        } else {
+                            self.write(&name);
+                        }
                         self.write(";");
                         self.ctx
                             .module_state
