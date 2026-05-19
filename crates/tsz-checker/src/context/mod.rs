@@ -3,14 +3,6 @@
 //! Holds the shared state used throughout the type checking process.
 //! This separates state from logic, allowing specialized checkers (expressions, statements)
 //! to borrow the context mutably.
-//!
-//! Sub-modules:
-//! - `constructors` - `CheckerContext` constructor methods
-//! - `resolver` - `TypeResolver` trait implementation
-//! - `def_mapping` - DefId migration helpers
-//! - `compiler_options` - Compiler option accessors and solver config derivation
-//! - `lib_queries` - Library/global type availability queries
-//! - `module_entity` - Module entity resolution (`module_resolves_to_non_module_entity`)
 mod aliases;
 mod caches;
 mod compiler_options;
