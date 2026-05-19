@@ -1178,8 +1178,7 @@ impl<'a> Printer<'a> {
                         // Has both default and binding pattern: use ternary in a single var statement.
                         // TypeScript: var _b = _a === void 0 ? default : _a, _c = _b[1], ...
                         let hoisted_start = self.hoisted_assignment_temps.len();
-                        let hoist_offset = self.writer.len();
-                        let hoist_line = self.writer.current_line();
+                        let hoist_anchor = self.capture_hoist_anchor();
                         let mut started = false;
                         let temp = self.get_temp_var_name();
                         self.emit_param_assignment_prefix(&mut started);
@@ -1196,11 +1195,7 @@ impl<'a> Printer<'a> {
                             self.write(";");
                             self.write_line();
                         }
-                        self.insert_param_binding_hoisted_temps(
-                            hoisted_start,
-                            hoist_offset,
-                            hoist_line,
-                        );
+                        self.insert_param_binding_hoisted_temps(hoisted_start, hoist_anchor);
                     }
                 } else {
                     // Only default, no pattern: use if statement
@@ -1208,15 +1203,14 @@ impl<'a> Printer<'a> {
                 }
             } else if let Some(pattern) = param.pattern {
                 let hoisted_start = self.hoisted_assignment_temps.len();
-                let hoist_offset = self.writer.len();
-                let hoist_line = self.writer.current_line();
+                let hoist_anchor = self.capture_hoist_anchor();
                 let mut started = false;
                 self.emit_param_binding_assignments(pattern, &param.name, &mut started);
                 if started {
                     self.write(";");
                     self.write_line();
                 }
-                self.insert_param_binding_hoisted_temps(hoisted_start, hoist_offset, hoist_line);
+                self.insert_param_binding_hoisted_temps(hoisted_start, hoist_anchor);
             }
         }
     }
@@ -1224,8 +1218,7 @@ impl<'a> Printer<'a> {
     fn insert_param_binding_hoisted_temps(
         &mut self,
         hoisted_start: usize,
-        hoist_offset: usize,
-        hoist_line: u32,
+        anchor: super::super::hoist_anchor::HoistAnchor,
     ) {
         let hoisted: Vec<_> = self
             .hoisted_assignment_temps
@@ -1234,10 +1227,10 @@ impl<'a> Printer<'a> {
         if hoisted.is_empty() {
             return;
         }
-        let indent = " ".repeat(self.writer.indent_width() as usize);
+        let indent = self.writer.indent_string_at(anchor.indent_level);
         let var_decl = format!("{}var {};", indent, hoisted.join(", "));
         self.writer
-            .insert_line_at(hoist_offset, hoist_line, &var_decl);
+            .insert_line_at(anchor.byte_offset, anchor.line_no, &var_decl);
     }
 
     pub(in crate::emitter) fn emit_rest_param_prologue(&mut self, transforms: &ParamTransformPlan) {

@@ -1,4 +1,6 @@
-use super::super::{Printer, get_trailing_comment_ranges};
+use super::super::Printer;
+use super::super::get_trailing_comment_ranges;
+use super::super::hoist_anchor::HoistAnchor;
 use crate::safe_slice;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::node_flags;
@@ -294,10 +296,13 @@ impl<'a> Printer<'a> {
         let static_super_scope =
             self.enter_pending_lowered_async_arrow_super_capture_scope(is_function_body_block);
 
-        let block_scoped_private_byte_offset =
-            Some((self.writer.len(), self.writer.current_line()));
-        let hoisted_var_byte_offset = if is_function_body_block {
-            block_scoped_private_byte_offset
+        // The function-body hoist and the block-scoped private temp
+        // insertion share this anchor; both write at the surrounding
+        // block's indent regardless of whether a block-level `using` try
+        // wrapper later increases `indent_level`.
+        let block_scoped_private_anchor = Some(self.capture_hoist_anchor());
+        let hoisted_var_anchor = if is_function_body_block {
+            block_scoped_private_anchor
         } else {
             None
         };
@@ -509,20 +514,21 @@ impl<'a> Printer<'a> {
         }
         self.recovered_module_syntax_block_depth = prev_recovered_module_syntax_block_depth;
 
-        if let Some((byte_offset, line_no)) = hoisted_var_byte_offset {
-            self.insert_function_body_hoisted_temps_at(byte_offset, line_no);
+        if let Some(anchor) = hoisted_var_anchor {
+            self.insert_function_body_hoisted_temps_at(anchor);
         }
 
-        if let Some((byte_offset, line_no)) = block_scoped_private_byte_offset
+        if let Some(anchor) = block_scoped_private_anchor
             && !self.block_scoped_private_temps.is_empty()
         {
-            let indent = " ".repeat(self.writer.indent_width() as usize);
+            let indent = self.writer.indent_string_at(anchor.indent_level);
             let let_decl = format!(
                 "{}let {};",
                 indent,
                 self.block_scoped_private_temps.join(", ")
             );
-            self.writer.insert_line_at(byte_offset, line_no, &let_decl);
+            self.writer
+                .insert_line_at(anchor.byte_offset, anchor.line_no, &let_decl);
             self.block_scoped_private_temps.clear();
         }
 
@@ -637,17 +643,17 @@ impl<'a> Printer<'a> {
 
     pub(in crate::emitter) fn insert_function_body_hoisted_temps_at(
         &mut self,
-        byte_offset: usize,
-        line_no: u32,
+        anchor: HoistAnchor,
     ) {
-        let indent = " ".repeat(self.writer.indent_width() as usize);
+        let indent = self.writer.indent_string_at(anchor.indent_level);
         let mut ref_vars = Vec::new();
         ref_vars.extend(self.hoisted_assignment_temps.iter().cloned());
         ref_vars.extend(self.hoisted_for_of_temps.iter().cloned());
 
         if !ref_vars.is_empty() {
             let var_decl = format!("{}var {};", indent, ref_vars.join(", "));
-            self.writer.insert_line_at(byte_offset, line_no, &var_decl);
+            self.writer
+                .insert_line_at(anchor.byte_offset, anchor.line_no, &var_decl);
         }
 
         if !self.hoisted_assignment_value_temps.is_empty() {
@@ -656,7 +662,8 @@ impl<'a> Printer<'a> {
                 indent,
                 self.hoisted_assignment_value_temps.join(", ")
             );
-            self.writer.insert_line_at(byte_offset, line_no, &var_decl);
+            self.writer
+                .insert_line_at(anchor.byte_offset, anchor.line_no, &var_decl);
         }
     }
 
