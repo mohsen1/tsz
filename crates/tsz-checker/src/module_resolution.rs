@@ -78,6 +78,48 @@ fn is_arbitrary_extension_declaration_file(file_name: &str) -> bool {
         .any(|tail| without_ts.ends_with(tail))
 }
 
+/// For a file with the shape `<base>.d.<ext>.ts` where `<ext>` is *not* a
+/// recognized TS/JS/JSON inner extension (e.g. `.html`, `.css`, `.svelte`,
+/// `.vue`), return the `(base, ext)` parts of the user-written import
+/// specifier `<base>.<ext>` the user is expected to type. Returns `None` for
+/// every other shape, including:
+/// - plain `.ts` / `.tsx` / `.d.ts` files,
+/// - TS/JS/JSON-wrapped declaration files (`foo.d.ts.ts`, `foo.d.json.ts`):
+///   those are intentionally dropped from the target index by
+///   `is_arbitrary_extension_declaration_file`,
+/// - files with a slash, dot, or empty segment in the inner extension
+///   (defensive — keeps the helper a pure shape check).
+fn arbitrary_ext_decl_user_parts(file_name: &str) -> Option<(&str, &str)> {
+    let without_ts = file_name.strip_suffix(".ts")?;
+    arbitrary_ext_decl_stem_parts(without_ts)
+}
+
+/// Same shape check as `arbitrary_ext_decl_user_parts` but on the
+/// TS-extension-stripped form (`<base>.d.<ext>`, no trailing `.ts`). Useful
+/// when the caller already has a stem, e.g. the fast resolver computing
+/// candidates from a user-written specifier.
+fn arbitrary_ext_decl_stem_parts(stem: &str) -> Option<(&str, &str)> {
+    let (base, ext) = stem.rsplit_once(".d.")?;
+    if base.is_empty() || ext.is_empty() || ext.contains('/') || ext.contains('.') {
+        return None;
+    }
+    if is_recognized_inner_module_ext(ext) {
+        return None;
+    }
+    Some((base, ext))
+}
+
+/// True when `ext` (no leading dot) is a TS/JS/JSON module extension that has
+/// its own canonical resolution path. Used by `arbitrary_ext_decl_user_parts`
+/// and the fast resolver's arbitrary-extension probe to gate them off normal
+/// TypeScript surfaces.
+fn is_recognized_inner_module_ext(ext: &str) -> bool {
+    matches!(
+        ext,
+        "ts" | "tsx" | "mts" | "cts" | "js" | "jsx" | "mjs" | "cjs" | "json" | "d"
+    )
+}
+
 // ---------------------------------------------------------------------------
 // CanonicalSpecifier
 // ---------------------------------------------------------------------------
@@ -273,12 +315,12 @@ pub fn build_target_index(file_names: &[String]) -> TargetIndex<'_> {
 ///
 /// The returned string:
 /// - always starts with `./` or `../`,
-/// - has its known TS/JS extension stripped,
+/// - has its known TS/JS extension stripped, or for arbitrary-extension
+///   declaration files (`<base>.d.<ext>.ts`, `<ext>` outside TS/JS/JSON),
+///   the user-written `<base>.<ext>` form,
 /// - uses `/` separators.
 fn relative_specifier_for_file(from_dir: &Path, to_file: &Path) -> Option<String> {
-    let (prefix, rel_str) = walk_relative(from_dir, to_file)?;
-    let stem = strip_ts_extension(&rel_str);
-    Some(format!("{prefix}{stem}"))
+    relative_file_specifier(from_dir, to_file).map(|r| r.stem)
 }
 
 /// Both canonical spellings of a relative file specifier: with and without the
@@ -294,6 +336,20 @@ struct RelativeFileSpecifier {
 /// Compute both relative forms in a single walk of the directory path chain.
 fn relative_file_specifier(from_dir: &Path, to_file: &Path) -> Option<RelativeFileSpecifier> {
     let (prefix, rel_str) = walk_relative(from_dir, to_file)?;
+
+    // Arbitrary-extension declaration files (`<base>.d.<ext>.ts` with `<ext>`
+    // outside TS/JS/JSON) are addressable only through the user-written
+    // `<base>.<ext>` specifier. The naive `strip_ts_extension` form
+    // (`<base>.d.<ext>`) is intentionally NOT registered: TS does not accept
+    // it and the legacy fan-out would shadow real `.d.<ext>` declaration
+    // imports if any existed.
+    if let Some((base, ext)) = arbitrary_ext_decl_user_parts(&rel_str) {
+        return Some(RelativeFileSpecifier {
+            stem: format!("{prefix}{base}.{ext}"),
+            with_extension: None,
+        });
+    }
+
     let stripped = strip_ts_extension(&rel_str);
     let stem = format!("{prefix}{stripped}");
     let with_extension = if stripped.len() == rel_str.len() {
@@ -817,12 +873,39 @@ pub fn resolve_specifier_via_file_index(
     // same ext fan-out. If no known extension is present, `stem` equals
     // `base`.
     let stem = strip_ts_extension(&base);
-
     let mut buf = String::with_capacity(stem.len() + 8);
-    for ext in TS_EXTENSIONS {
+
+    // Gate: when the stem itself looks like `<X>.d.<arbitrary_ext>`, the only
+    // legitimate user spelling for the underlying `<X>.d.<arbitrary_ext>.ts`
+    // file is `<X>.<arbitrary_ext>` — registered separately via the
+    // arbitrary-ext probe below. Skipping the `.ts` fan-out here keeps
+    // `./component.d.html` from claiming `/proj/component.d.html.ts`.
+    let stem_is_arbitrary_ext_naive_form = arbitrary_ext_decl_stem_parts(stem).is_some();
+    if !stem_is_arbitrary_ext_naive_form {
+        for ext in TS_EXTENSIONS {
+            buf.clear();
+            buf.push_str(stem);
+            buf.push_str(ext);
+            if let Some(&idx) = filename_idx.get(&buf) {
+                return Some(idx);
+            }
+        }
+    }
+
+    // Arbitrary-extension declaration file probe (`./foo.html` →
+    // `/proj/foo.d.html.ts`). Only fires when `base` carries a non-TS/JS/JSON
+    // trailing extension; otherwise the canonical TS/JS surfaces above have
+    // already had their shot.
+    if let Some((stem_base, ext)) = base.rsplit_once('.')
+        && !ext.is_empty()
+        && !ext.contains('/')
+        && !is_recognized_inner_module_ext(ext)
+    {
         buf.clear();
-        buf.push_str(stem);
+        buf.push_str(stem_base);
+        buf.push_str(".d.");
         buf.push_str(ext);
+        buf.push_str(".ts");
         if let Some(&idx) = filename_idx.get(&buf) {
             return Some(idx);
         }
