@@ -1215,10 +1215,9 @@ impl<'a> CheckerContext<'a> {
                 if !specifier.starts_with("./")
                     && !specifier.starts_with("../")
                     && !specifier.starts_with('/')
+                    && let Some(result) = probe_file_name_index(specifier, idx)
                 {
-                    if let Some(result) = probe_file_name_index(specifier, idx) {
-                        return Some(result);
-                    }
+                    return Some(result);
                 }
             }
         }
