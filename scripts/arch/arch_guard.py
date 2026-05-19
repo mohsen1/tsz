@@ -701,6 +701,21 @@ REGEX_LINE_COUNT_CHECKS = [
         re.compile(r'"is_(?:subtype_of|assignable_to)_with_flags"'),
         0,
     ),
+    (
+        "Solver relation boundary: query cache legacy flag overrides (#8207)",
+        [ROOT / "crates" / "tsz-solver" / "src" / "caches" / "query_cache.rs"],
+        re.compile(r"\bfn\s+is_(?:subtype_of|assignable_to)_with_flags\s*\("),
+        0,
+    ),
+    (
+        "Solver relation boundary: query database legacy flag methods (#8207)",
+        [
+            ROOT / "crates" / "tsz-solver" / "src" / "caches" / "db.rs",
+            ROOT / "crates" / "tsz-solver" / "src" / "caches" / "query_cache.rs",
+        ],
+        re.compile(r"\bfn\s+is_(?:subtype_of|assignable_to)_with_flags\s*\("),
+        2,
+    ),
 ]
 
 # Track 10 performance guardrail: branch-local `visited.clone()` traversal

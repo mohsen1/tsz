@@ -2814,6 +2814,43 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertIn("query_cache.rs:2", hits[1])
         self.assertIn("total matching lines: 2", hits[2])
 
+    def test_query_cache_legacy_flag_override_guard(self):
+        pattern, _max_lines = self._check_by_name("legacy flag overrides")
+        root = self._make_tree(
+            {
+                "crates/tsz-solver/src/caches/query_cache.rs": (
+                    "fn is_subtype_of_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool { true }\n"
+                    "fn is_assignable_to_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool { true }\n"
+                    "fn is_subtype_of_with_policy(&self, source: TypeId, target: TypeId, policy: RelationPolicy) -> bool { true }\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 3, f"unexpected hits: {hits!r}")
+        self.assertIn("query_cache.rs:1", hits[0])
+        self.assertIn("query_cache.rs:2", hits[1])
+        self.assertIn("total matching lines: 2", hits[2])
+
+    def test_query_database_legacy_flag_method_cap(self):
+        pattern, max_lines = self._check_by_name("query database legacy flag methods")
+        root = self._make_tree(
+            {
+                "crates/tsz-solver/src/caches/db.rs": (
+                    "fn is_subtype_of_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool { true }\n"
+                    "fn is_assignable_to_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool { true }\n"
+                ),
+                "crates/tsz-solver/src/caches/query_cache.rs": (
+                    "fn is_assignable_to_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool { true }\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, max_lines)
+        self.assertEqual(len(hits), 4, f"unexpected hits: {hits!r}")
+        self.assertIn("db.rs:1", hits[0])
+        self.assertIn("db.rs:2", hits[1])
+        self.assertIn("query_cache.rs:1", hits[2])
+        self.assertIn("total matching lines: 3", hits[3])
+
     def test_flags_checker_migration_with_parent_cache_callsite(self):
         pattern, _max_lines = self._check_by_name("with_parent_cache_attributed")
         root = self._make_tree(

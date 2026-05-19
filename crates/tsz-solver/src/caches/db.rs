@@ -1383,10 +1383,6 @@ impl QueryDatabase for TypeInterner {
         self.is_assignable_to_with_policy(source, target, RelationPolicy::unflagged_compatibility())
     }
 
-    fn is_assignable_to_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
-        self.is_assignable_to_with_policy(source, target, RelationPolicy::from_flags(flags))
-    }
-
     fn resolve_property_access(
         &self,
         object_type: TypeId,
