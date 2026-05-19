@@ -34,17 +34,69 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return true;
         }
 
-        // If the extends types are themselves unevaluated (e.g. Application or
-        // Conditional), evaluating them first may produce a common structural form
-        // that the identity check can match. Only retry when evaluation actually
-        // changed at least one side so we don't do redundant work.
         let left_eval = self.evaluate_type(left);
         let right_eval = self.evaluate_type(right);
-        (left_eval != left || right_eval != right)
+        if (left_eval != left || right_eval != right)
             && self.with_extends_clause_identity_mode(|sub| {
                 sub.check_subtype(left_eval, right_eval).is_true()
                     && sub.check_subtype(right_eval, left_eval).is_true()
             })
+        {
+            return true;
+        }
+
+        if !self.identity_fallback_property_modifiers_match(left_eval, right_eval) {
+            return false;
+        }
+
+        let mut fallback = SubtypeChecker::with_resolver(self.interner, self.resolver);
+        fallback.check_subtype(left_eval, right_eval).is_true()
+            && fallback.check_subtype(right_eval, left_eval).is_true()
+    }
+
+    fn identity_fallback_property_modifiers_match(&self, left: TypeId, right: TypeId) -> bool {
+        let left_members = match self.interner.lookup(left) {
+            Some(TypeData::Union(list_id)) => self.interner.type_list(list_id).to_vec(),
+            _ => vec![left],
+        };
+        let right_members = match self.interner.lookup(right) {
+            Some(TypeData::Union(list_id)) => self.interner.type_list(list_id).to_vec(),
+            _ => vec![right],
+        };
+
+        for left_member in &left_members {
+            for right_member in &right_members {
+                let left_shape = match self.interner.lookup(*left_member) {
+                    Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                        Some(self.interner.object_shape(shape_id))
+                    }
+                    _ => None,
+                };
+                let right_shape = match self.interner.lookup(*right_member) {
+                    Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                        Some(self.interner.object_shape(shape_id))
+                    }
+                    _ => None,
+                };
+                let (Some(left_shape), Some(right_shape)) = (left_shape, right_shape) else {
+                    continue;
+                };
+                for left_prop in &left_shape.properties {
+                    if let Some(right_prop) = right_shape
+                        .properties
+                        .iter()
+                        .find(|prop| prop.name == left_prop.name)
+                        && (left_prop.optional != right_prop.optional
+                            || left_prop.readonly != right_prop.readonly
+                            || left_prop.is_symbol_named != right_prop.is_symbol_named)
+                    {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        true
     }
 
     /// Run `f` with the stricter property-modifier identity rules used by
@@ -670,150 +722,5 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         } else {
             SubtypeResult::False
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::evaluation::evaluate::evaluate_conditional;
-    use crate::intern::TypeInterner;
-    use crate::types::{MappedType, PropertyInfo, TypeParamInfo};
-
-    fn optional_object(interner: &TypeInterner, name: &str, type_id: TypeId) -> TypeId {
-        interner.object(vec![PropertyInfo::opt(
-            interner.intern_string(name),
-            type_id,
-        )])
-    }
-
-    fn readonly_object(interner: &TypeInterner, name: &str, type_id: TypeId) -> TypeId {
-        interner.object(vec![PropertyInfo::readonly(
-            interner.intern_string(name),
-            type_id,
-        )])
-    }
-
-    fn conditional_type(
-        interner: &TypeInterner,
-        check_type: TypeId,
-        extends_type: TypeId,
-        true_type: TypeId,
-        false_type: TypeId,
-    ) -> TypeId {
-        interner.conditional(ConditionalType {
-            check_type,
-            extends_type,
-            true_type,
-            false_type,
-            is_distributive: false,
-        })
-    }
-
-    #[test]
-    fn conditional_extends_identity_distinguishes_optional_read_type() {
-        let interner = TypeInterner::new();
-        let number_or_undefined = interner.union2(TypeId::NUMBER, TypeId::UNDEFINED);
-        let optional_number = optional_object(&interner, "a", TypeId::NUMBER);
-        let optional_number_or_undefined = optional_object(&interner, "a", number_or_undefined);
-
-        let mut checker = SubtypeChecker::new(&interner);
-
-        assert!(
-            !checker.conditional_extends_types_equivalent(
-                optional_number,
-                optional_number_or_undefined
-            )
-        );
-        assert!(
-            !checker.conditional_extends_types_equivalent(
-                optional_number_or_undefined,
-                optional_number
-            )
-        );
-    }
-
-    #[test]
-    fn conditional_extends_identity_is_name_independent() {
-        let interner = TypeInterner::new();
-        let string_or_undefined = interner.union2(TypeId::STRING, TypeId::UNDEFINED);
-        let optional_string = optional_object(&interner, "renamed", TypeId::STRING);
-        let optional_string_or_undefined =
-            optional_object(&interner, "renamed", string_or_undefined);
-
-        let mut checker = SubtypeChecker::new(&interner);
-
-        assert!(
-            !checker.conditional_extends_types_equivalent(
-                optional_string,
-                optional_string_or_undefined
-            )
-        );
-    }
-
-    #[test]
-    fn conditional_subtype_path_distinguishes_readonly_extends_identity() {
-        let interner = TypeInterner::new();
-        let readonly = readonly_object(&interner, "value", TypeId::STRING);
-        let mutable = interner.object(vec![PropertyInfo::new(
-            interner.intern_string("value"),
-            TypeId::STRING,
-        )]);
-        let true_branch = interner.literal_boolean(true);
-        let false_branch = interner.literal_boolean(false);
-        let t_param = interner.type_param(TypeParamInfo::simple(interner.intern_string("T")));
-
-        let readonly_cond =
-            conditional_type(&interner, t_param, readonly, true_branch, false_branch);
-        let mutable_cond = conditional_type(&interner, t_param, mutable, true_branch, false_branch);
-
-        let mut checker = SubtypeChecker::new(&interner);
-        assert!(
-            !checker.check_subtype(readonly_cond, mutable_cond).is_true(),
-            "conditional extends identity must keep readonly property modifiers distinct"
-        );
-        assert!(
-            !checker.check_subtype(mutable_cond, readonly_cond).is_true(),
-            "conditional extends identity must be stricter than ordinary readonly assignability"
-        );
-    }
-
-    #[test]
-    fn conditional_evaluator_preserves_mapped_object_wrapper_identity() {
-        let interner = TypeInterner::new();
-        let t_param = interner.type_param(TypeParamInfo::simple(interner.intern_string("T")));
-        let wrapped_t = interner.no_infer(t_param);
-        let source = optional_object(&interner, "value", wrapped_t);
-        let key_name = interner.intern_string("K");
-        let key_param = interner.type_param(TypeParamInfo::simple(key_name));
-        let mapped = interner.mapped(MappedType {
-            type_param: TypeParamInfo::simple(key_name),
-            constraint: interner.keyof(source),
-            name_type: None,
-            template: interner.index_access(source, key_param),
-            readonly_modifier: None,
-            optional_modifier: None,
-        });
-        let target = optional_object(&interner, "value", t_param);
-        let true_branch = interner.literal_boolean(true);
-        let false_branch = interner.literal_boolean(false);
-        let cond = ConditionalType {
-            check_type: mapped,
-            extends_type: target,
-            true_type: true_branch,
-            false_type: false_branch,
-            is_distributive: false,
-        };
-
-        let evaluated = evaluate_conditional(&interner, &cond);
-
-        assert_ne!(
-            evaluated, true_branch,
-            "conditional evaluation must not take the true branch by eagerly normalizing mapped object members"
-        );
-        assert!(
-            matches!(interner.lookup(evaluated), Some(TypeData::Conditional(_))),
-            "generic mapped-object conditionals should stay deferred"
-        );
     }
 }

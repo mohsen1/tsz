@@ -199,7 +199,7 @@ fn apply_to_uses_global_index_skips_local_copy() {
 }
 
 #[test]
-fn register_symbol_file_target_skips_global_index_duplicates() {
+fn register_symbol_file_target_keeps_dynamic_global_provenance() {
     let interner = TypeInterner::new();
     let query_cache = QueryCache::new(&interner);
     let arena = NodeArena::new();
@@ -213,14 +213,11 @@ fn register_symbol_file_target_skips_global_index_duplicates() {
 
     checker.ctx.register_symbol_file_target(SymbolId(1), 0);
 
-    assert!(
-        checker.ctx.cross_file_symbol_targets.borrow().is_empty(),
-        "dynamic overlay should not duplicate an identical global symbol-file mapping"
-    );
     assert_eq!(checker.ctx.resolve_symbol_file_index(SymbolId(1)), Some(0));
     assert_eq!(
         checker.ctx.resolve_dynamic_symbol_file_index(SymbolId(1)),
-        None
+        Some(0),
+        "a dynamically-discovered owner must remain visible even when it matches the global index"
     );
 }
 
@@ -248,7 +245,7 @@ fn register_symbol_file_target_keeps_dynamic_override() {
 }
 
 #[test]
-fn register_symbol_file_target_removes_override_returning_to_global() {
+fn register_symbol_file_target_keeps_dynamic_returning_to_global() {
     let interner = TypeInterner::new();
     let query_cache = QueryCache::new(&interner);
     let arena = NodeArena::new();
@@ -266,7 +263,8 @@ fn register_symbol_file_target_removes_override_returning_to_global() {
     assert_eq!(checker.ctx.resolve_symbol_file_index(SymbolId(1)), Some(0));
     assert_eq!(
         checker.ctx.resolve_dynamic_symbol_file_index(SymbolId(1)),
-        None
+        Some(0),
+        "returning to the global owner is still a dynamic ownership discovery"
     );
 }
 

@@ -131,11 +131,9 @@ impl<'a> CheckerContext<'a> {
 
     /// Register a dynamically-discovered `SymbolId` → file index mapping in the local overlay.
     pub fn register_symbol_file_target(&self, sym_id: SymbolId, file_idx: usize) {
-        let global = self.global_symbol_file_index.as_ref();
-        let global_idx = global.and_then(|map| map.get(&sym_id)).copied();
         self.cross_file_symbol_targets
             .borrow_mut()
-            .register(sym_id, file_idx, global_idx);
+            .register(sym_id, file_idx);
     }
 
     pub fn register_symbol_file_index(&self, sym_id: SymbolId, file_idx: usize) {
