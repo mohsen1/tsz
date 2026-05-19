@@ -2553,14 +2553,13 @@ impl<'a> ES5ClassTransformer<'a> {
                     &instance_props,
                 );
             }
-            if self.constructor_contains_new_target(ctor.body, &ctor.parameters) {
-                ctor_body.insert(
-                    0,
-                    IRNode::var_decl("_newTarget", Some(IRNode::Raw("this.constructor".into()))),
-                );
+            if self.constructor_contains_new_target(ctor.body, &ctor.parameters, &instance_props) {
+                self.insert_class_new_target_capture(&mut ctor_body);
             }
         } else {
             // Default constructor
+            let instance_props_contain_new_target =
+                self.instance_props_contain_new_target(&instance_props);
             if self.has_extends && !self.extends_null {
                 if instance_props.is_empty() && !has_private_fields {
                     // Simple: return _super !== null && _super.apply(this, arguments) || this;
@@ -2597,6 +2596,9 @@ impl<'a> ES5ClassTransformer<'a> {
                             IRNode::this(),
                         )),
                     ));
+                    if instance_props_contain_new_target {
+                        ctor_body.push(Self::class_constructor_new_target_capture_ir());
+                    }
 
                     // Private field initializations
                     self.emit_private_field_initializations_ir(&mut ctor_body, true);
@@ -2619,6 +2621,9 @@ impl<'a> ES5ClassTransformer<'a> {
                 // Check if instance property initializers need _this capture
                 if self.instance_props_need_this_capture(&instance_props) {
                     ctor_body.push(IRNode::var_decl("_this", Some(IRNode::this())));
+                }
+                if instance_props_contain_new_target {
+                    ctor_body.push(Self::class_constructor_new_target_capture_ir());
                 }
 
                 // Emit private field initializations
@@ -3921,7 +3926,12 @@ impl<'a> ES5ClassTransformer<'a> {
         false
     }
 
-    fn constructor_contains_new_target(&self, body_idx: NodeIndex, params: &NodeList) -> bool {
+    fn constructor_contains_new_target(
+        &self,
+        body_idx: NodeIndex,
+        params: &NodeList,
+        instance_props: &[NodeIndex],
+    ) -> bool {
         (body_idx.is_some() && contains_new_target_reference(self.arena, body_idx))
             || params.nodes.iter().any(|&param_idx| {
                 self.arena
@@ -3932,6 +3942,74 @@ impl<'a> ES5ClassTransformer<'a> {
                             && contains_new_target_reference(self.arena, param.initializer)
                     })
             })
+            || self.instance_props_contain_new_target(instance_props)
+    }
+
+    fn class_constructor_new_target_capture_ir() -> IRNode {
+        IRNode::var_decl("_newTarget", Some(IRNode::Raw("this.constructor".into())))
+    }
+
+    fn insert_class_new_target_capture(&self, body: &mut Vec<IRNode>) {
+        let capture = Self::class_constructor_new_target_capture_ir();
+        if self.has_extends
+            && !self.extends_null
+            && let Some(super_capture_idx) = body
+                .iter()
+                .position(|node| self.is_generated_derived_super_capture(node))
+        {
+            body.insert(super_capture_idx + 1, capture);
+            return;
+        }
+
+        body.insert(0, capture);
+    }
+
+    fn is_generated_derived_super_capture(&self, node: &IRNode) -> bool {
+        let IRNode::VarDecl {
+            name,
+            initializer: Some(initializer),
+        } = node
+        else {
+            return false;
+        };
+        if name.as_ref() != "_this" {
+            return false;
+        }
+
+        matches!(
+            initializer.as_ref(),
+            IRNode::LogicalOr { left, right }
+                if matches!(right.as_ref(), IRNode::This { captured: false })
+                    && matches!(
+                        left.as_ref(),
+                        IRNode::CallExpr { callee, arguments }
+                            if arguments
+                                .first()
+                                .is_some_and(|arg| matches!(arg, IRNode::This { captured: false }))
+                                && matches!(
+                                    callee.as_ref(),
+                                    IRNode::PropertyAccess { object, property }
+                                        if property.as_ref() == "call"
+                                            && matches!(
+                                                object.as_ref(),
+                                                IRNode::Identifier(super_name)
+                                                    if super_name.as_ref() == self.super_name
+                                            )
+                                )
+                    )
+        )
+    }
+
+    fn instance_props_contain_new_target(&self, instance_props: &[NodeIndex]) -> bool {
+        instance_props.iter().any(|&prop_idx| {
+            self.arena
+                .get(prop_idx)
+                .and_then(|prop_node| self.arena.get_property_decl(prop_node))
+                .is_some_and(|prop| {
+                    prop.initializer.is_some()
+                        && contains_new_target_reference(self.arena, prop.initializer)
+                })
+        })
     }
 
     /// Check if instance property initializers contain arrow functions that capture `this`.
