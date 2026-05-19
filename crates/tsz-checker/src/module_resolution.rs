@@ -106,9 +106,9 @@ fn arbitrary_ext_decl_user_parts(file_name: &str) -> Option<(&str, &str)> {
 /// and the fast resolver's arbitrary-extension probe to gate them off normal
 /// TypeScript surfaces.
 //
-// NOTE: this list mirrors `tsz_core::module_resolver::is_arbitrary_extension_declaration`
-// and `tsz_core::resolution::helpers::KNOWN_EXTENSIONS`. Keep the three in
-// sync; promoting to a shared crate is out of scope for this fix (issue #7690).
+// Keep in sync with `tsz_core::module_resolver::is_arbitrary_extension_declaration`
+// and `tsz_core::resolution::helpers::KNOWN_EXTENSIONS` until they are unified
+// in a shared crate.
 fn is_recognized_inner_module_ext(ext: &str) -> bool {
     matches!(
         ext,
@@ -871,27 +871,14 @@ pub fn resolve_specifier_via_file_index(
     let stem = strip_ts_extension(&base);
     let mut buf = String::with_capacity(stem.len() + 8);
 
-    // Inspect the trailing extension of `base` once. Three cases drive the
-    // probes below:
-    //   1. Recognized TS/JS/JSON ext or no ext: standard TS fan-out covers
-    //      `./foo` and `./foo.ts`.
-    //   2. Arbitrary user-form ext (`./component.html`): no TS fan-out needed
-    //      — only the arbitrary-ext probe (`./component.html` →
-    //      `/proj/component.d.html.ts`) can match.
-    //   3. Naive arbitrary-ext form (`./component.d.html`): nothing should
-    //      match; the user must instead type `./component.html`. Both
-    //      probes are skipped — leaving the naive form unresolved keeps it
-    //      from shadowing the legitimate user-form.
-    let trailing_arbitrary_ext = match base.rsplit_once('.') {
-        Some((b, e)) if !e.is_empty() && !e.contains('/') && !is_recognized_inner_module_ext(e) => {
-            Some((b, e))
-        }
-        _ => None,
-    };
-    let base_is_arbitrary_ext_naive_form = matches!(
-        trailing_arbitrary_ext,
-        Some((b, _)) if b.ends_with(".d") && b.len() > 2,
-    );
+    // Skip the TS fan-out when `base` has an arbitrary user-form ext, and
+    // skip the arbitrary-ext probe for the naive `.d.<arbitrary_ext>` form
+    // so the naive spelling cannot shadow the legitimate user-form.
+    let trailing_arbitrary_ext = base
+        .rsplit_once('.')
+        .filter(|(_, e)| !e.is_empty() && !e.contains('/') && !is_recognized_inner_module_ext(e));
+    let base_is_arbitrary_ext_naive_form =
+        trailing_arbitrary_ext.is_some_and(|(b, _)| b.ends_with(".d"));
 
     if trailing_arbitrary_ext.is_none() {
         for ext in TS_EXTENSIONS {
@@ -904,9 +891,6 @@ pub fn resolve_specifier_via_file_index(
         }
     }
 
-    // Arbitrary-extension declaration file probe (`./foo.html` →
-    // `/proj/foo.d.html.ts`). Skipped for the naive form so it cannot
-    // accidentally shadow legitimate user-form spellings.
     if let Some((stem_base, ext)) = trailing_arbitrary_ext
         && !base_is_arbitrary_ext_naive_form
     {
