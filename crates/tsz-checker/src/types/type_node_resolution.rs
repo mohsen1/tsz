@@ -882,13 +882,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             self.ctx
                                 .register_def_with_params_in_envs(def_id, type_id, type_params);
                         }
-                        // Register symbol mapping in both envs
-                        if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
-                            env.register_def_symbol_mapping(def_id, sym_id);
-                        }
-                        if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
-                            env.register_def_symbol_mapping(def_id, sym_id);
-                        }
+                        self.ctx.register_def_symbol_mapping_in_envs(def_id, sym_id);
                         return;
                     }
                 }
@@ -1365,12 +1359,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 self.ctx
                     .register_def_with_params_in_envs(def_id, body, params);
             }
-            if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
-                env.register_def_symbol_mapping(def_id, sym_id);
-            }
-            if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
-                env.register_def_symbol_mapping(def_id, sym_id);
-            }
+            self.ctx.register_def_symbol_mapping_in_envs(def_id, sym_id);
         }
     }
 

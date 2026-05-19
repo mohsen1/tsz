@@ -11,18 +11,13 @@ use crate::module_resolver_helpers::PackageJson;
 impl ModuleResolver {
     /// Get the package type for a directory by walking up to find package.json
     pub(super) fn get_package_type_for_dir(&self, dir: &Path) -> Option<PackageType> {
-        // Check cache first
-        let cached_dir_type = self.package_type_cache.borrow().get(dir).copied();
-        if let Some(cached) = cached_dir_type {
-            return cached;
-        }
-
         let mut current = dir.to_path_buf();
         let mut visited = Vec::new();
 
         loop {
             let cached_current_type = self.package_type_cache.borrow().get(&current).copied();
             if let Some(result) = cached_current_type {
+                Self::increment_counter(&self.package_type_cache_hits);
                 // Cache all visited paths with this result
                 let mut cache = self.package_type_cache.borrow_mut();
                 for path in visited {
@@ -30,6 +25,7 @@ impl ModuleResolver {
                 }
                 return result;
             }
+            Self::increment_counter(&self.package_type_cache_misses);
 
             visited.push(current.clone());
 
@@ -82,8 +78,10 @@ impl ModuleResolver {
     /// with appropriate span/file information at the call site.
     pub(super) fn read_package_json(&self, path: &Path) -> Result<PackageJson, String> {
         if let Some(cached) = self.package_json_cache.borrow().get(path) {
+            Self::increment_counter(&self.package_json_cache_hits);
             return cached.clone();
         }
+        Self::increment_counter(&self.package_json_cache_misses);
         let result = std::fs::read_to_string(path)
             .map_err(|e| format!("Failed to read {}: {}", path.display(), e))
             .and_then(|content| {

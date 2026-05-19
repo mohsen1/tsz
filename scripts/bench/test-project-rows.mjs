@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   COMPILE_CANARY_PROJECT_ROWS,
   COMPATIBILITY_CORPUS_ROWS,
+  PROJECT_ROW_DEFINITIONS,
   REQUIRED_PROJECT_ROWS,
 } from "./project-rows.mjs";
 
@@ -13,15 +14,13 @@ const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
 
 const BENCH_RUNNER_EXCLUDED_ROWS = new Set([
-  "type-challenges-project",
   "type-challenges-solutions-project",
-  "type-challenges-assertion-candidates",
-  "type-challenges-assertions-tsc-clean",
 ]);
 const PROJECT_COMPILE_GUARD_EXCLUDED_ROWS = new Set([
   "large-ts-repo",
   "nextjs",
 ]);
+const GENERATED_ROWS_WITH_FIXTURE_SOURCES = new Set();
 const ROADMAP_REQUIRED_PROJECT_ROW_BY_LABEL = new Map([
   ["utility-types", "utility-types-project"],
   ["rxjs", "rxjs-project"],
@@ -91,6 +90,10 @@ function roadmapRequiredProjectRows() {
 const requiredRows = sortedUnique(REQUIRED_PROJECT_ROWS);
 const compileCanaryRows = sortedUnique(COMPILE_CANARY_PROJECT_ROWS);
 const allTrackedRows = sortedUnique([...requiredRows, ...compileCanaryRows]);
+const projectRowsByName = new Map(PROJECT_ROW_DEFINITIONS.map((row) => [row.name, row]));
+const pinnedSourceRows = PROJECT_ROW_DEFINITIONS
+  .filter((row) => row.repo !== undefined || row.ref !== undefined)
+  .map((row) => row.name);
 const compatibilityRows = COMPATIBILITY_CORPUS_ROWS.map((row) => row.name);
 const roadmapRequiredRows = roadmapRequiredProjectRows();
 const mappedRoadmapRequiredRows = roadmapRequiredRows.map((label) => (
@@ -108,8 +111,8 @@ assert.deepEqual(
 );
 assert.deepEqual(
   sortedUnique(mappedRoadmapRequiredRows),
-  sortedUnique(mappedRoadmapRequiredRows.filter((row) => allTrackedRows.includes(row))),
-  "docs/plan/ROADMAP.md required project rows must be tracked in scripts/bench/project-rows.mjs",
+  sortedUnique(mappedRoadmapRequiredRows.filter((row) => requiredRows.includes(row))),
+  "docs/plan/ROADMAP.md required project rows must be benchmark_set: required in scripts/bench/project-rows.mjs",
 );
 assert.deepEqual(
   sortedUnique(compatibilityRows),
@@ -123,10 +126,22 @@ const benchRows = sortedUnique(
     /run_project_benchmark\s+"([^"]+)"/g,
   ),
 );
+const compileCanaryGatedBenchmarkRows = sortedUnique(
+  [...readRepoFile("scripts/bench/bench-vs-tsgo.sh").matchAll(
+    /run_[a-z0-9_]+_project_benchmarks\(\)\s*\{([\s\S]*?)\n\}/g,
+  )]
+    .filter((match) => match[1].includes("should_run_compile_canary_project"))
+    .flatMap((match) => extractAll(match[1], /run_project_benchmark\s+"([^"]+)"/g)),
+);
 assert.deepEqual(
   benchRows,
   sortedUnique(without(allTrackedRows, BENCH_RUNNER_EXCLUDED_ROWS)),
   "bench-vs-tsgo project rows drifted from scripts/bench/project-rows.mjs",
+);
+assert.deepEqual(
+  compileCanaryGatedBenchmarkRows,
+  sortedUnique(compileCanaryGatedBenchmarkRows.filter((row) => compileCanaryRows.includes(row))),
+  "bench-vs-tsgo required project rows must not be hidden behind compile-canary gating",
 );
 
 const projectCompileGuardRows = sortedUnique(
@@ -145,4 +160,21 @@ assert.deepEqual(
   projectCompileGuardRows,
   sortedUnique(without(allTrackedRows, PROJECT_COMPILE_GUARD_EXCLUDED_ROWS)),
   "project-compile-guard rows drifted from scripts/bench/project-rows.mjs",
+);
+
+const fixtureSourceRows = sortedUnique(
+  extractAll(
+    readRepoFile("scripts/bench/project-fixtures.sh"),
+    /^\s{4}([a-z0-9-]+(?:\|[a-z0-9-]+)*)\)\s*$/gm,
+  ).flatMap((row) => row.split("|")),
+);
+assert.deepEqual(
+  fixtureSourceRows,
+  sortedUnique([...pinnedSourceRows, ...GENERATED_ROWS_WITH_FIXTURE_SOURCES]),
+  "project-fixtures.sh fixture source rows drifted from scripts/bench/project-rows.mjs",
+);
+assert.deepEqual(
+  sortedUnique([...fixtureSourceRows].filter((row) => !projectRowsByName.has(row))),
+  [],
+  "project-fixtures.sh fixture source rows must be defined in scripts/bench/project-rows.mjs",
 );

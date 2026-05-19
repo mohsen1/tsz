@@ -1513,6 +1513,30 @@ impl<'a> Printer<'a> {
             rustc_hash::FxHashMap::default()
         };
 
+        // Re-exports appearing before their enum declaration consult these
+        // entries to suppress the would-be `exports.<alias> = local;` line
+        // that otherwise reads `local` in its TDZ window.
+        if is_top_level_cjs {
+            for (local_name, aliases) in self.transforms.cjs_iife_folded_bindings() {
+                if aliases.is_empty() {
+                    continue;
+                }
+                self.ctx
+                    .module_state
+                    .iife_exported_names
+                    .insert(local_name.clone());
+                let entry = self
+                    .ctx
+                    .module_state
+                    .iife_exported_bindings
+                    .entry(local_name.clone())
+                    .or_default();
+                for alias in aliases {
+                    entry.insert(alias.clone());
+                }
+            }
+        }
+
         let mut last_erased_stmt_end: Option<u32> = None;
         let mut last_erased_was_shorthand_module = false;
         let mut deferred_commonjs_export_equals: Vec<NodeIndex> = Vec::new();

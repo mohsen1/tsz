@@ -403,6 +403,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - uses: actions/checkout@v4
       - name: Require project corpus impact fields for semantic PRs
         env:
           GH_TOKEN: ${{ github.token }}
@@ -427,15 +428,7 @@ jobs:
             if [[ "$page" -gt 30 ]]; then break; fi
           done
 
-          title=$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '.title // ""')
-          wip_label_count=$(gh api \
-            "repos/${REPOSITORY}/pulls/${PR_NUMBER}" \
-            --jq '[.labels[]?.name | select(. == "WIP")] | length')
-          if [[ "${wip_label_count}" != "0" ]] || [[ "${title}" =~ (^|[[:space:]])\[WIP\]([[:space:]]|$) ]]; then
-            echo "Ready PRs must not carry WIP status."
-            echo "Remove the WIP label/title marker only after implementation and verification are complete."
-            exit 1
-          fi
+          node scripts/ci/check-pr-ready-state.mjs
 
           body=$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '.body // ""')
           if ! grep -Eq '^[[:space:]]*AgentName:[[:space:]]*[^[:space:]]+' <<<"$body"; then
@@ -683,6 +676,7 @@ jobs:
         run: scripts/ci/project-compile-guard.sh
       - name: Upload project compile compatibility
         if: always()
+        id: project_compile_compatibility_artifact
         uses: actions/upload-artifact@v4
         with:
           name: project-compile-compatibility
@@ -699,6 +693,15 @@ jobs:
             .target/project-compile-guard/type-challenges-solutions/.tsz-compile/type-challenges-solutions-manifest.json
           retention-days: 7
           if-no-files-found: warn
+      - name: Summarize project compatibility artifact
+        if: always()
+        run: |
+          {
+            echo "### Project compatibility artifact"
+            echo "- Artifact: [project-compile-compatibility](${{ steps.project_compile_compatibility_artifact.outputs.artifact-url }})"
+            echo "- JSONL: \`.target/project-compile-guard/project-compatibility.jsonl\`"
+            echo "- Summary: \`.target/project-compile-guard/project-compatibility-summary.json\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
 
   project-compile-canary:
     name: project-compile-canary
@@ -728,6 +731,7 @@ jobs:
         run: scripts/ci/project-compile-guard.sh
       - name: Upload compile canary logs
         if: always()
+        id: project_compile_canary_artifact
         uses: actions/upload-artifact@v4
         with:
           name: project-compile-canary-logs
@@ -745,6 +749,15 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
           compression-level: 1
+      - name: Summarize compile canary compatibility artifact
+        if: always()
+        run: |
+          {
+            echo "### Compile canary compatibility artifact"
+            echo "- Artifact: [project-compile-canary-logs](${{ steps.project_compile_canary_artifact.outputs.artifact-url }})"
+            echo "- JSONL: \`.target/project-compile-guard/project-compatibility.jsonl\`"
+            echo "- Summary: \`.target/project-compile-guard/project-compatibility-summary.json\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
 
   wasm:
     name: wasm
@@ -925,6 +938,67 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
+      - name: Wait for conformance shard artifacts to be indexed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          EXPECTED=6
+          MAX_WAIT=180
+          INTERVAL=10
+          elapsed=0
+          count=0
+          echo "Polling for all ${EXPECTED} conformance-shard-* artifacts (max ${MAX_WAIT}s)..."
+          while [ "$elapsed" -lt "$MAX_WAIT" ]; do
+            # Fetch artifact count and shard job statuses in parallel
+            api_response=$(curl -sf \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${REPO}/actions/runs/${RUN_ID}/artifacts?per_page=100" \
+              2>/dev/null || echo '{}')
+            count=$(echo "$api_response" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          c = sum(1 for a in data.get('artifacts', []) if a['name'].startswith('conformance-shard-'))
+          print(c)
+          " 2>/dev/null || echo 0)
+            echo "  ${count}/${EXPECTED} shard artifacts indexed (${elapsed}s elapsed)"
+            if [ "${count}" -ge "${EXPECTED}" ]; then
+              echo "All ${EXPECTED} shard artifacts indexed after ${elapsed}s."
+              break
+            fi
+            # If shard jobs have all finished but artifacts are still missing,
+            # check for failed shard jobs (runner disconnect) to fail fast.
+            jobs_response=$(curl -sf \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${REPO}/actions/runs/${RUN_ID}/jobs?per_page=100" \
+              2>/dev/null || echo '{}')
+            shard_summary=$(echo "$jobs_response" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          jobs = [j for j in data.get('jobs', []) if j.get('name','').startswith('conformance-')]
+          done = [j for j in jobs if j.get('status') == 'completed']
+          failed = [j['name'] for j in done if j.get('conclusion') not in ('success','skipped')]
+          print(f'done={len(done)} failed={len(failed)} names={failed}')
+          " 2>/dev/null || echo 'done=0 failed=0 names=[]')
+            echo "  shard jobs: ${shard_summary}"
+            # If all shards are done and we still don't have all artifacts, a shard
+            # failed without uploading (infra kill). Stop waiting and let the
+            # aggregate script report the exact shard count it collected.
+            done_count=$(echo "$shard_summary" | grep -oP 'done=\K[0-9]+' || echo 0)
+            failed_count=$(echo "$shard_summary" | grep -oP 'failed=\K[0-9]+' || echo 0)
+            if [ "${done_count}" -ge "${EXPECTED}" ] && [ "${failed_count}" -gt 0 ]; then
+              echo "warning: ${failed_count} shard job(s) failed (runner issue); artifact(s) will not appear — proceeding with ${count} available" >&2
+              break
+            fi
+            sleep "${INTERVAL}"
+            elapsed=$(( elapsed + INTERVAL ))
+          done
+          if [ "${count}" -lt "${EXPECTED}" ]; then
+            echo "warning: only ${count}/${EXPECTED} shard artifacts indexed after ${elapsed}s; proceeding" >&2
+          fi
       - name: Download conformance shard results
         uses: actions/download-artifact@v4
         with:

@@ -82,7 +82,7 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        for source_prop in source_shape.properties.clone() {
+        for source_prop in &source_shape.properties {
             let prop_name = self.ctx.types.resolve_atom(source_prop.name).to_owned();
             let Some(target_prop_type) = self
                 .contextual_object_literal_property_type(target_param, &prop_name)

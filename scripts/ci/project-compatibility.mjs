@@ -33,9 +33,7 @@ const OWNER_TRACK_BY_SUBSYSTEM = new Map([
 ]);
 
 const TYPE_CHALLENGES_PROJECT_ROWS = new Set([
-  "type-challenges-project",
   "type-challenges-solutions-project",
-  "type-challenges-assertions-tsc-clean",
 ]);
 
 function ownerTrackForSubsystem(subsystem) {
@@ -65,6 +63,46 @@ function toExitCodes(value) {
     codes.push(parsed);
   }
   return codes;
+}
+
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    const normalized = String(value ?? "").trim();
+    if (normalized) return normalized;
+  }
+  return null;
+}
+
+function githubRunUrl(env, runId) {
+  if (!runId || runId === "local") return null;
+  const serverUrl = firstNonEmpty(env.GITHUB_SERVER_URL, "https://github.com");
+  const repository = firstNonEmpty(env.GITHUB_REPOSITORY);
+  if (!repository) return null;
+  return `${serverUrl}/${repository}/actions/runs/${runId}`;
+}
+
+function artifactMetadata(env, prefix, generatedAt) {
+  const runId = firstNonEmpty(env[`${prefix}_WORKFLOW_RUN_ID`], env.GITHUB_RUN_ID, "local");
+  const runStatus = firstNonEmpty(
+    env[`${prefix}_RUN_STATUS`],
+    env.GITHUB_ACTIONS === "true" ? "completed" : "local",
+  );
+  return {
+    generated_at: firstNonEmpty(env[`${prefix}_GENERATED_AT`], generatedAt),
+    source_commit: firstNonEmpty(env[`${prefix}_SOURCE_COMMIT`], env.BENCH_TARGET_SHA, env.GITHUB_SHA, "local"),
+    workflow_name: firstNonEmpty(env[`${prefix}_WORKFLOW_NAME`], env.GITHUB_WORKFLOW, "local"),
+    workflow_run_id: runId,
+    workflow_run_url: firstNonEmpty(
+      env[`${prefix}_WORKFLOW_RUN_URL`],
+      githubRunUrl(env, runId),
+    ),
+    workflow_run_attempt: firstNonEmpty(env[`${prefix}_WORKFLOW_RUN_ATTEMPT`], env.GITHUB_RUN_ATTEMPT),
+    run_status: runStatus,
+  };
+}
+
+function isProjectRowName(value) {
+  return typeof value === "string" && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value);
 }
 
 function fixtureSourcesFrom(value) {
@@ -428,48 +466,8 @@ function resolveWritableFile({ value, label, root, forbidden = [] }) {
   return resolved;
 }
 
-function typeChallengesCleanAssertionMetadata(projectName) {
-  if (projectName !== "type-challenges-assertions-tsc-clean") return null;
-
-  const manifestPath = process.env.COMPAT_TYPE_CHALLENGES_CLEAN_MANIFEST || "";
-  const classificationPath =
-    process.env.COMPAT_TYPE_CHALLENGES_CLEAN_CLASSIFICATION || "";
-  const manifest = readOptionalJson(manifestPath);
-  if (!manifest) return null;
-
-  const classification = readOptionalJson(classificationPath);
-  const counts = manifest.counts || {};
-  const tsc = classification?.compilers?.tsc || {};
-  const tsz = classification?.compilers?.tsz || {};
-
-  return {
-    manifest_path: relativeToFixture(manifestPath),
-    classification_path: classification ? relativeToFixture(classificationPath) : null,
-    source_candidate_manifest: manifest.sourceCandidateManifest || null,
-    source_classification: manifest.sourceClassification || null,
-    total_candidates: counts.totalCandidates ?? null,
-    generated_assertions: counts.tscAcceptedAssertions ?? null,
-    assertions_referencing_solution_declaration:
-      counts.tscAcceptedAssertionsReferencingSolutionDeclaration ?? null,
-    assertions_missing_solution_declaration_reference:
-      counts.tscAcceptedAssertionsMissingSolutionDeclarationReference ?? null,
-    rejected_from_full_corpus: counts.tscRejectedAssertions ?? null,
-    missing_accepted_manifest_entries:
-      counts.missingAcceptedManifestEntries ?? null,
-    tsc_status: tsc.status ?? manifest.sourceClassification?.tscStatus ?? null,
-    tsz_status: tsz.status ?? manifest.sourceClassification?.tszStatus ?? null,
-    comparison_status:
-      classification?.comparison?.status ??
-      manifest.sourceClassification?.comparisonStatus ??
-      null,
-    tsc_diagnostic_free:
-      tsc.candidateDiagnostics?.candidatesWithoutDiagnostics ?? null,
-    tsz_diagnostic_free:
-      tsz.candidateDiagnostics?.candidatesWithoutDiagnostics ?? null,
-  };
-}
-
 function record() {
+  const generatedAt = new Date().toISOString();
   const delta = process.env.COMPAT_DIAGNOSTIC_DELTA || "";
   const diagnosticDeltas = delta
     .split(/\r?\n/)
@@ -478,6 +476,11 @@ function record() {
     .slice(0, 20);
 
   const projectName = process.env.COMPAT_NAME || "";
+  if (!isProjectRowName(projectName)) {
+    console.error("error: COMPAT_NAME must be a lowercase hyphenated project row slug");
+    process.exit(1);
+  }
+
   const diagnosticSubsystems = diagnosticSubsystemsForProject(projectName, diagnosticDeltas);
   const diagnosticCodes = diagnosticCodesFrom(diagnosticDeltas);
   const exitClass = process.env.COMPAT_EXIT_CLASS || "unknown";
@@ -505,6 +508,7 @@ function record() {
   }
 
   const row = {
+    ...artifactMetadata(process.env, "COMPAT", generatedAt),
     name: projectName,
     state,
     exit_class: exitClass,
@@ -531,15 +535,11 @@ function record() {
     peak_memory_bytes: toNumber(process.env.COMPAT_PEAK_MEMORY_BYTES),
     fixture_sources: fixtureSources,
   };
-  const assertionMetadata = typeChallengesCleanAssertionMetadata(projectName);
-  if (assertionMetadata) {
-    row.assertion_clean_subset = assertionMetadata;
-  }
-
   fs.appendFileSync(outputFile, `${JSON.stringify(row)}\n`, "utf8");
 }
 
 function summarize() {
+  const generatedAt = new Date().toISOString();
   const { rows, malformedLineCount, malformedExamples } = readRows(process.env.SUMMARY_JSONL_FILE || "");
   let outputFile;
   try {
@@ -563,7 +563,7 @@ function summarize() {
   }, {});
 
   const summary = {
-    generated_at: new Date().toISOString(),
+    ...artifactMetadata(process.env, "SUMMARY", generatedAt),
     project_set: process.env.SUMMARY_PROJECT_SET || "required",
     project_filter: process.env.SUMMARY_PROJECT_FILTER || "",
     allow_failures: process.env.SUMMARY_ALLOW_FAILURES === "1",

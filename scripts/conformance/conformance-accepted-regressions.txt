@@ -1,7 +1,6 @@
 # Temporary accepted conformance regressions for the 2026-05-16 aggregate runway.
 # The aggregate gate treats this as a set, not a budget: any failing test that
 # is not listed here fails CI, even if the total deficit does not grow.
-TypeScript/tests/cases/compiler/builtinIterator.ts
 TypeScript/tests/cases/compiler/coAndContraVariantInferences2.ts
 TypeScript/tests/cases/compiler/coAndContraVariantInferences3.ts
 TypeScript/tests/cases/compiler/coAndContraVariantInferences4.ts
@@ -12,7 +11,6 @@ TypeScript/tests/cases/compiler/crossFileOverloadModifierConsistency.ts
 TypeScript/tests/cases/compiler/declarationEmitMappedPrivateTypeTypeParameter.ts
 TypeScript/tests/cases/compiler/declarationsWithRecursiveInternalTypesProduceUniqueTypeParams.ts
 TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
-TypeScript/tests/cases/compiler/destructuringAssignmentWithDefault2.ts
 TypeScript/tests/cases/compiler/divideAndConquerIntersections.ts
 TypeScript/tests/cases/compiler/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts
 TypeScript/tests/cases/compiler/excessPropertyCheckIntersectionWithRecursiveType.ts
@@ -23,7 +21,6 @@ TypeScript/tests/cases/compiler/instantiationExpressionErrorNoCrash.ts
 TypeScript/tests/cases/compiler/interfaceWithMultipleDeclarations.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions2.ts
-TypeScript/tests/cases/compiler/iterableTReturnTNext.ts
 TypeScript/tests/cases/compiler/jsxComplexSignatureHasApplicabilityError.tsx
 TypeScript/tests/cases/compiler/jsxElementType.tsx
 TypeScript/tests/cases/compiler/jsxExcessPropsAndAssignability.tsx
@@ -31,6 +28,7 @@ TypeScript/tests/cases/compiler/mappedTypeInferenceFromApparentType.ts
 TypeScript/tests/cases/compiler/noExcessiveStackDepthError.ts
 TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
 TypeScript/tests/cases/compiler/reactHOCSpreadprops.tsx
+TypeScript/tests/cases/compiler/recursiveMappedTypes.ts
 TypeScript/tests/cases/compiler/recursiveReverseMappedType.ts
 TypeScript/tests/cases/compiler/relationComplexityError.ts
 TypeScript/tests/cases/compiler/reorderProperties.ts
@@ -50,10 +48,9 @@ TypeScript/tests/cases/conformance/esDecorators/esDecorators-preservesThis.ts
 TypeScript/tests/cases/conformance/externalModules/typeOnly/importEquals2.ts
 TypeScript/tests/cases/conformance/externalModules/umd-augmentation-2.ts
 TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsTypedefAndLatebound.ts
-TypeScript/tests/cases/conformance/jsx/tsxGenericAttributesType5.tsx
-TypeScript/tests/cases/conformance/jsx/tsxGenericAttributesType6.tsx
 TypeScript/tests/cases/conformance/node/esmModuleExports2.ts
 TypeScript/tests/cases/conformance/nonjsExtensions/declarationFileForHtmlFileWithinDeclarationFile.ts
+TypeScript/tests/cases/conformance/nonjsExtensions/declarationFileForHtmlImport.ts
 TypeScript/tests/cases/conformance/pedantic/noUncheckedIndexedAccessDestructuring.ts
 TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccess.ts
 TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccessErrors.ts
@@ -62,6 +59,5 @@ TypeScript/tests/cases/conformance/types/mapped/mappedTypeConstraints2.ts
 TypeScript/tests/cases/conformance/types/mapped/mappedTypes6.ts
 TypeScript/tests/cases/conformance/types/mapped/recursiveMappedTypes.ts
 TypeScript/tests/cases/conformance/types/members/indexSignatures1.ts
-TypeScript/tests/cases/conformance/types/spread/spreadUnion3.ts
 TypeScript/tests/cases/conformance/types/tuple/variadicTuples1.ts
 TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/unionAndIntersectionInference1.ts

@@ -64,6 +64,12 @@ def hit_is_ignored(metric: str, rel: str, line: str) -> bool:
         and "CheckerContext::with_parent_cache" in line
     ):
         return True
+    if (
+        metric == "with_parent_cache"
+        and rel.endswith("context/constructors.rs")
+        and "Self::with_parent_cache" in line
+    ):
+        return True
     return False
 
 
