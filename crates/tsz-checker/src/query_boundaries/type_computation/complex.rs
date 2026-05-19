@@ -52,7 +52,7 @@ pub(crate) fn instantiate_type_params_to_constraints(
     db: &dyn QueryDatabase,
     type_id: TypeId,
 ) -> TypeId {
-    tsz_solver::instantiate_type_params_to_constraints(db, type_id)
+    tsz_solver::computation::instantiate_type_params_to_constraints(db, type_id)
 }
 
 pub(crate) fn get_function_shape(

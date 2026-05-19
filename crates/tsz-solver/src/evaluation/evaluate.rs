@@ -1132,12 +1132,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     if crate::contains_this_type(self.interner, instantiated) {
                         // Use original_type_id as the app_type — it's the same
                         // Application(base, args) that was already interned.
-                        instantiated = crate::substitute_this_type_cached(
-                            self.interner,
-                            self.query_db,
-                            instantiated,
-                            original_type_id,
-                        );
+                        instantiated =
+                            crate::instantiation::instantiate::substitute_this_type_cached(
+                                self.interner,
+                                self.query_db,
+                                instantiated,
+                                original_type_id,
+                            );
                     }
                     // Preserve discriminated object intersections after instantiation.
                     // Re-evaluating them here distributes impossible branches again,
@@ -1209,12 +1210,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         &expanded_args,
                     );
                     if crate::contains_this_type(self.interner, instantiated) {
-                        instantiated = crate::substitute_this_type_cached(
-                            self.interner,
-                            self.query_db,
-                            instantiated,
-                            original_type_id,
-                        );
+                        instantiated =
+                            crate::instantiation::instantiate::substitute_this_type_cached(
+                                self.interner,
+                                self.query_db,
+                                instantiated,
+                                original_type_id,
+                            );
                     }
                     let evaluated = if crate::type_queries::is_discriminated_object_intersection(
                         self.interner,
@@ -2708,7 +2710,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let resolved = if !self.suppress_this_binding
                 && crate::contains_this_type(self.interner, resolved)
             {
-                crate::substitute_this_type_cached(
+                crate::instantiation::instantiate::substitute_this_type_cached(
                     self.interner,
                     self.query_db,
                     resolved,

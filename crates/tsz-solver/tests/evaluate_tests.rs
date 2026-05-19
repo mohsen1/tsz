@@ -1,7 +1,8 @@
 use super::*;
+use crate::SubtypeChecker;
 use crate::TypeInterner;
 use crate::def::DefId;
-use crate::{SubtypeChecker, TypeSubstitution, instantiate_type};
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 
 #[test]
 fn evaluator_cache_statistics_report_entries_and_size() {

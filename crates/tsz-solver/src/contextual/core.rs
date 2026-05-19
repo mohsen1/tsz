@@ -847,8 +847,12 @@ impl<'a> ContextualTypeContext<'a> {
                 && let Some(body) = resolver.resolve_lazy(def_id, self.interner)
             {
                 let type_params = resolver.get_lazy_type_params(def_id).unwrap_or_default();
-                let expanded =
-                    crate::instantiate_generic(self.interner, body, &type_params, &app.args);
+                let expanded = crate::instantiation::instantiate::instantiate_generic(
+                    self.interner,
+                    body,
+                    &type_params,
+                    &app.args,
+                );
                 let expanded_ctx = ContextualTypeContext::with_expected_and_options(
                     self.interner,
                     expanded,

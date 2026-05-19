@@ -296,7 +296,12 @@ pub(crate) fn substitute_this_type(
     type_id: TypeId,
     this_type: TypeId,
 ) -> TypeId {
-    tsz_solver::substitute_this_type_cached(db.as_type_database(), Some(db), type_id, this_type)
+    tsz_solver::computation::substitute_this_type_cached(
+        db.as_type_database(),
+        Some(db),
+        type_id,
+        this_type,
+    )
 }
 
 /// Get the intersection members of a type (if it is an intersection).
