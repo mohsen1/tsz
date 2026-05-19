@@ -78,17 +78,9 @@ fn is_arbitrary_extension_declaration_file(file_name: &str) -> bool {
         .any(|tail| without_ts.ends_with(tail))
 }
 
-/// For a file with the shape `<base>.d.<ext>.ts` where `<ext>` is *not* a
-/// recognized TS/JS/JSON inner extension (e.g. `.html`, `.css`, `.svelte`,
-/// `.vue`), return the `(base, ext)` parts of the user-written import
-/// specifier `<base>.<ext>` the user is expected to type. Returns `None` for
-/// every other shape, including:
-/// - plain `.ts` / `.tsx` / `.d.ts` files,
-/// - TS/JS/JSON-wrapped declaration files (`foo.d.ts.ts`, `foo.d.json.ts`):
-///   those are intentionally dropped from the target index by
-///   `is_arbitrary_extension_declaration_file`,
-/// - files with a slash, dot, or empty segment in the inner extension
-///   (defensive — keeps the helper a pure shape check).
+/// For `<base>.d.<ext>.ts` with non-TS/JS/JSON `<ext>` (e.g. `.html`, `.vue`),
+/// return the `(base, ext)` parts of the user-written specifier `<base>.<ext>`.
+/// Returns `None` for any other shape.
 fn arbitrary_ext_decl_user_parts(file_name: &str) -> Option<(&str, &str)> {
     let stem = file_name.strip_suffix(".ts")?;
     let (base, ext) = stem.rsplit_once(".d.")?;
@@ -871,9 +863,10 @@ pub fn resolve_specifier_via_file_index(
     let stem = strip_ts_extension(&base);
     let mut buf = String::with_capacity(stem.len() + 8);
 
-    // Skip the TS fan-out when `base` has an arbitrary user-form ext, and
-    // skip the arbitrary-ext probe for the naive `.d.<arbitrary_ext>` form
-    // so the naive spelling cannot shadow the legitimate user-form.
+    // Arbitrary-extension declaration files are reachable only through the
+    // user-written `<base>.<ext>` form. Gate both probes so the naive
+    // `<base>.d.<ext>` spelling cannot claim the file via the TS `.ts`
+    // fan-out, leaving it for the dedicated arbitrary-ext probe.
     let trailing_arbitrary_ext = base
         .rsplit_once('.')
         .filter(|(_, e)| !e.is_empty() && !e.contains('/') && !is_recognized_inner_module_ext(e));
