@@ -1796,9 +1796,8 @@ def scan_project_fixture_sources(
         hits.append(f"{fixture_rel}:0 missing tsz_project_fixture_sources function")
         source_cases = []
 
-    expected_rows = sorted(
-        (set(required) | set(canary)) - GENERATED_PROJECT_ROWS_WITHOUT_PINNED_SOURCE,
-    )
+    registered_rows = set(required) | set(canary)
+    expected_rows = sorted(registered_rows - GENERATED_PROJECT_ROWS_WITHOUT_PINNED_SOURCE)
     expected_set = set(expected_rows)
     source_set = set(source_cases)
 
@@ -1810,7 +1809,7 @@ def scan_project_fixture_sources(
         if error is not None:
             hits.append(f"{fixture_rel}:0 {error}")
 
-    for name in sorted(source_set - expected_set):
+    for name in sorted(source_set - registered_rows):
         hits.append(f"{fixture_rel}:0 stale fixture source metadata for {name}")
 
     duplicates = sorted({name for name in source_cases if source_cases.count(name) > 1})
