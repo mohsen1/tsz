@@ -19,8 +19,8 @@
 //!    corresponding non-sound slot.
 //! 7. The `QueryCache` must not serve a non-sound cached result to a
 //!    sound-mode lookup for the same type pair.
-//! 8. Typed `RelationPolicy` query-cache entrypoints insert under the same
-//!    policy-derived cache keys as the legacy packed-flag entrypoints.
+//! 8. Typed `RelationPolicy` query-cache entrypoints insert under
+//!    policy-derived cache keys.
 //! 9. The typed no-flags compatibility constructor remains equivalent to the
 //!    legacy `RelationPolicy::from_flags(0)` constructor, without collapsing
 //!    into `RelationPolicy::default()`.
@@ -590,7 +590,11 @@ fn query_cache_relation_misses_insert_policy_shaped_keys() {
         RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES | RelationCacheKey::FLAG_NO_ERASE_GENERICS;
     let config = RelationPolicy::from_flags(flags).cache_config();
 
-    assert!(db.is_subtype_of_with_flags(source, TypeId::STRING, flags));
+    assert!(db.is_subtype_of_with_policy(
+        source,
+        TypeId::STRING,
+        RelationPolicy::from_flags(flags),
+    ));
     assert_eq!(
         db.lookup_subtype_cache(RelationCacheKey::for_subtype(
             source,
@@ -601,7 +605,11 @@ fn query_cache_relation_misses_insert_policy_shaped_keys() {
         "subtype miss path must insert under the policy-derived cache key",
     );
 
-    assert!(db.is_assignable_to_with_flags(source, TypeId::STRING, flags));
+    assert!(db.is_assignable_to_with_policy(
+        source,
+        TypeId::STRING,
+        RelationPolicy::from_flags(flags),
+    ));
     assert_eq!(
         db.lookup_assignability_cache(RelationCacheKey::for_assignability(
             source,

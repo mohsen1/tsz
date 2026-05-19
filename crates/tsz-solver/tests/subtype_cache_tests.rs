@@ -9,7 +9,7 @@
 //! - Preserves correctness through `SubtypeChecker` with `QueryDatabase`
 //! - Separates subtype and assignability caches (no cross-contamination)
 
-use super::*;
+use crate::caches::db::QueryDatabase;
 use crate::caches::query_cache::QueryCache;
 use crate::construction::RelationCacheProbe;
 use crate::intern::TypeInterner;
@@ -380,15 +380,19 @@ fn cache_key_includes_flags() {
 
     let hello = interner.literal_string("hello");
 
-    // Check with default flags (0) — use non-trivial pair to avoid fast-path
-    db.is_subtype_of_with_flags(hello, TypeId::STRING, 0);
+    // Check with default compatibility policy — use non-trivial pair to avoid fast-path
+    db.is_subtype_of_with_policy(
+        hello,
+        TypeId::STRING,
+        RelationPolicy::unflagged_compatibility(),
+    );
     let entries_default = db.relation_cache_stats().subtype_entries;
 
     // Check with strict null checks flag (1)
-    db.is_subtype_of_with_flags(
+    db.is_subtype_of_with_policy(
         hello,
         TypeId::STRING,
-        RelationCacheKey::FLAG_STRICT_NULL_CHECKS,
+        RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_NULL_CHECKS),
     );
     let entries_strict = db.relation_cache_stats().subtype_entries;
 
@@ -558,7 +562,7 @@ fn probe_returns_hit_after_check() {
     // Do a non-trivial check to populate cache (trivial pairs use fast-path)
     assert!(db.is_subtype_of(hello, TypeId::STRING));
 
-    // Probe with the canonical cache config for `is_subtype_of_with_flags(0)`.
+    // Probe with the canonical cache config for the unflagged compatibility policy.
     let key = RelationCacheKey::for_subtype(
         hello,
         TypeId::STRING,
