@@ -9,8 +9,8 @@ use tsz_binder::{BinderState, SymbolId};
 use tsz_checker::context::{GlobalDeclaredModules, ProgramContext};
 use tsz_checker::state::CheckerState;
 use tsz_parser::parser::node::NodeArena;
-use tsz_solver::QueryCache;
 use tsz_solver::TypeInterner;
+use tsz_solver::construction::QueryCache;
 
 /// Helper: create a minimal `ProgramContext` with all fields defaulted.
 fn empty_program_context() -> ProgramContext {
