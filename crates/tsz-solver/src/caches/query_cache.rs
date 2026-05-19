@@ -14,9 +14,9 @@ use crate::intern::TypeInterner;
 use crate::objects::element_access::ElementAccessResult;
 use crate::operations::property::PropertyAccessResult;
 use crate::relations::relation_queries::{
-    RelationContext, RelationPolicy, configured_compat_checker, configured_subtype_checker,
+    RelationContext, RelationKind, RelationPolicy, query_relation,
 };
-use crate::relations::subtype::{NoopResolver, TypeResolver};
+use crate::relations::subtype::TypeResolver;
 use crate::types::{
     CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId, FunctionShape,
     FunctionShapeId, IndexInfo, IntrinsicKind, MappedType, MappedTypeId, ObjectFlags, ObjectShape,
@@ -1537,15 +1537,15 @@ impl QueryDatabase for QueryCache<'_> {
         self.subtype_cache_misses
             .set(self.subtype_cache_misses.get() + 1);
 
-        let policy = RelationPolicy::from_flags(flags);
-        let resolver = NoopResolver;
-        let mut checker = configured_subtype_checker(
+        let result = query_relation(
             self.as_type_database(),
-            &resolver,
-            policy,
+            source,
+            target,
+            RelationKind::Subtype,
+            RelationPolicy::from_flags(flags),
             RelationContext::default(),
         );
-        let result = checker.is_subtype_of(source, target);
+        let result = result.related;
         self.subtype_cache.borrow_mut().insert(key, result);
         // Write to shared cache for cross-file benefit.
         if let Some(shared) = self.shared {
@@ -1629,15 +1629,15 @@ impl QueryDatabase for QueryCache<'_> {
         self.assignability_cache_misses
             .set(self.assignability_cache_misses.get() + 1);
 
-        let policy = RelationPolicy::from_flags(flags);
-        let resolver = NoopResolver;
-        let mut checker = configured_compat_checker(
+        let result = query_relation(
             self.as_type_database(),
-            &resolver,
-            policy,
+            source,
+            target,
+            RelationKind::Assignable,
+            RelationPolicy::from_flags(flags),
             RelationContext::default(),
         );
-        let result = checker.is_assignable(source, target);
+        let result = result.related;
 
         self.insert_cache(&self.assignability_cache, key, result);
         // Write to shared cache for cross-file benefit.

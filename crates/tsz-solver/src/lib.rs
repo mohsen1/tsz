@@ -256,8 +256,9 @@ pub use objects::{
     apparent_primitive_shape, collect_properties, element_access, index_signatures,
     literal_value_intrinsic_kind,
 };
-pub use operations::compound_assignment::{
-    fallback_compound_assignment_result, is_assignment_operator, is_compound_assignment_operator,
+#[cfg(test)]
+pub(crate) use operations::compound_assignment::{
+    fallback_compound_assignment_result, is_compound_assignment_operator,
     is_logical_compound_assignment_operator, map_compound_assignment_to_binary,
 };
 pub use operations::{

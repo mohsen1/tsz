@@ -330,7 +330,7 @@ impl<'a> DeclarationEmitter<'a> {
             || self.type_node_semantically_includes_undefined(type_idx, depth)
     }
 
-    fn strip_balanced_outer_parens(text: &str) -> Option<&str> {
+    pub(super) fn strip_balanced_outer_parens(text: &str) -> Option<&str> {
         let bytes = text.as_bytes();
         if bytes.first() != Some(&b'(') || bytes.last() != Some(&b')') {
             return None;
