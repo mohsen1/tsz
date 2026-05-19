@@ -697,6 +697,14 @@ function readJsonIfExists(p) {
   }
 }
 
+let _benchReadinessStatus;
+function loadBenchReadinessStatus() {
+  if (_benchReadinessStatus === undefined) {
+    _benchReadinessStatus = readJsonIfExists(path.join(ROOT, "artifacts", "bench-readiness-status.json")) ?? null;
+  }
+  return _benchReadinessStatus;
+}
+
 function sanitizeLegacyBenchmarkData(data) {
   if (data?.validation?.hyperfine_exit_codes_required === true) {
     return data;
@@ -2163,8 +2171,17 @@ export function getProjectCompatibilityDashboard() {
     return `<div class="compat-meta">${parts.map((part) => `<span>${escapeHtml(part)}</span>`).join("")}</div>${blockerHtml}${subsystemHtml}${queueHtml}${deltaHtml}`;
   };
 
+  const readiness = loadBenchReadinessStatus();
+  let artifactBanner = "";
+  if (readiness?.artifact_absent) {
+    artifactBanner = `<p class="bench-readiness-warning">⚠️ No recent benchmark artifact — compatibility data shown from repository snapshot and may be stale.</p>`;
+  } else if (readiness?.missing > 0) {
+    artifactBanner = `<p class="bench-readiness-warning">⚠️ Benchmark artifact is missing ${readiness.missing} required row(s); shown data may be incomplete.</p>`;
+  }
+
   return `<section class="compat-dashboard">
   <h2>Compatibility</h2>
+  ${artifactBanner}
   <div class="compat-summary">${escapeHtml(summary)}</div>
   <ul class="compat-list">
     ${rows.map((row) => `<li class="compat-item">
@@ -2178,3 +2195,4 @@ export function getProjectCompatibilityDashboard() {
   </ul>
 </section>`;
 }
+
