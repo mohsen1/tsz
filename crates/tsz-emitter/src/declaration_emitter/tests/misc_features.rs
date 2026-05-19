@@ -972,6 +972,49 @@ fn test_source_call_uses_cached_generic_return_alias_arguments() {
 }
 
 #[test]
+fn test_function_returning_generic_mapped_alias_call_preserves_alias_surface() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Box<T> = {};
+type Boxified<T> = {
+    [P in keyof T]: Box<T[P]>;
+};
+type A = { a: string };
+type B = { b: string };
+type C = { c: string };
+declare function boxify<T>(obj: T): Boxified<T>;
+function f1(x: A | B | C | undefined) {
+    return boxify(x);
+}
+
+type Wrapped<Value> = {
+    [Key in keyof Value]: { current: Value[Key] };
+};
+declare function wrap<Value>(value: Value): Wrapped<Value>;
+function f2(item: A | B | undefined) {
+    return wrap(item);
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "declare function f1(x: A | B | C | undefined): Boxified<A | B | C | undefined>;"
+        ),
+        "Expected inferred return to keep the generic mapped alias instantiation: {output}"
+    );
+    assert!(
+        output
+            .contains("declare function f2(item: A | B | undefined): Wrapped<A | B | undefined>;"),
+        "Expected renamed helper type parameters and mapped keys to preserve the alias too: {output}"
+    );
+    assert!(
+        !output.contains("declare function f1(x: A | B | C | undefined): {\n    a: Box<string>;"),
+        "Did not expect the mapped alias return to expand into object-union members: {output}"
+    );
+}
+
+#[test]
 fn test_function_return_prefers_object_literal_over_return_type_wrapper() {
     let source = r#"
     function f1(s: string) {
