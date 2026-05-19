@@ -18,7 +18,6 @@ TypeScript/tests/cases/compiler/excessPropertyCheckIntersectionWithRecursiveType
 TypeScript/tests/cases/compiler/excessivelyLargeTupleSpread.ts
 TypeScript/tests/cases/compiler/genericIndexedAccessVarianceComparisonResultCorrect.ts
 TypeScript/tests/cases/compiler/inferConditionalConstraintMappedMember.ts
-TypeScript/tests/cases/compiler/instantiationExpressionErrorNoCrash.ts
 TypeScript/tests/cases/compiler/interfaceWithMultipleDeclarations.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions2.ts

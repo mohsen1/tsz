@@ -3013,6 +3013,84 @@ fn expr_optional_call() {
     assert_eq!(node.kind, syntax_kind_ext::CALL_EXPRESSION);
 }
 
+#[test]
+fn expr_call_type_arguments_allow_trailing_comma() {
+    // `id<number,>("x")` should parse as a call expression with one type
+    // argument and a trailing comma marker, not as a relational expression.
+    let (parser, root) = parse_source("const x = id<number,>(\"x\");");
+    assert_no_errors(&parser, "call type arguments with trailing comma");
+
+    let arena = parser.get_arena();
+    let init = get_var_initializer(arena, root);
+    let node = arena.get(init).expect("init");
+    assert_eq!(node.kind, syntax_kind_ext::CALL_EXPRESSION);
+
+    let call = arena.get_call_expr(node).expect("call data");
+    let type_args = call.type_arguments.as_ref().expect("type arguments");
+    assert_eq!(type_args.nodes.len(), 1, "expected one type argument");
+    assert!(type_args.has_trailing_comma, "expected trailing comma");
+}
+
+#[test]
+fn expr_call_type_arguments_recover_missing_leading_argument() {
+    // `id<,>("x")` is malformed, but recovery should keep the call expression
+    // intact so later stages can continue from the argument list.
+    let source = "const x = id<,>(\"x\");";
+    let (parser, root) = parse_source(source);
+
+    let diagnostics = parser.get_diagnostics();
+    let comma_pos = source.find(',').expect("comma position") as u32;
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::EXPRESSION_EXPECTED
+                && diag.start == comma_pos),
+        "expected TS1109 at the missing type argument comma, got {diagnostics:?}"
+    );
+
+    let arena = parser.get_arena();
+    let init = get_var_initializer(arena, root);
+    let node = arena.get(init).expect("init");
+    assert_eq!(node.kind, syntax_kind_ext::CALL_EXPRESSION);
+}
+
+#[test]
+fn expr_new_type_arguments_allow_trailing_comma() {
+    let (parser, root) = parse_source("const x = new Box<string,>();");
+    assert_no_errors(&parser, "new expression type arguments with trailing comma");
+
+    let arena = parser.get_arena();
+    let init = get_var_initializer(arena, root);
+    let node = arena.get(init).expect("init");
+    assert_eq!(node.kind, syntax_kind_ext::NEW_EXPRESSION);
+
+    let new_expr = arena.get_call_expr(node).expect("new expression data");
+    let type_args = new_expr.type_arguments.as_ref().expect("type arguments");
+    assert_eq!(type_args.nodes.len(), 1, "expected one type argument");
+    assert!(type_args.has_trailing_comma, "expected trailing comma");
+}
+
+#[test]
+fn expr_tagged_template_type_arguments_recover_missing_leading_argument() {
+    let source = "const x = tag<,>`value`;";
+    let (parser, root) = parse_source(source);
+
+    let diagnostics = parser.get_diagnostics();
+    let comma_pos = source.find(',').expect("comma position") as u32;
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::EXPRESSION_EXPECTED
+                && diag.start == comma_pos),
+        "expected TS1109 at the missing type argument comma, got {diagnostics:?}"
+    );
+
+    let arena = parser.get_arena();
+    let init = get_var_initializer(arena, root);
+    let node = arena.get(init).expect("init");
+    assert_eq!(node.kind, syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION);
+}
+
 // =============================================================================
 // 9. Destructuring Tests
 // =============================================================================
