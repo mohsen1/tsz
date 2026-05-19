@@ -19,6 +19,7 @@ use crate::diagnostics::display_provenance::{
     FreshObjectLiteralDisplayProvenance, UnionOriginProvenance,
 };
 use crate::evaluation::request::EvaluationRequest;
+use crate::evaluation::result::EvaluationResult;
 use crate::instantiation::instantiate::instantiate_generic;
 use crate::relations::subtype::{NoopResolver, TypeResolver};
 #[cfg(test)]
@@ -392,8 +393,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Evaluate a normalized request, applying option-sensitive configuration
     /// before consulting this evaluator's local cache.
     pub fn evaluate_request(&mut self, request: EvaluationRequest) -> TypeId {
+        self.evaluate_request_result(request).into_type_id()
+    }
+
+    /// Evaluate a normalized request and return the typed result stage.
+    pub fn evaluate_request_result(&mut self, request: EvaluationRequest) -> EvaluationResult {
         self.set_no_unchecked_indexed_access(request.no_unchecked_indexed_access());
-        self.evaluate(request.type_id())
+        EvaluationResult::new(self.evaluate(request.type_id()))
     }
 
     // =========================================================================
@@ -1051,6 +1057,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         resolved
                     };
 
+                    // Homomorphic mapped-type union distribution: when the alias body is
+                    // `{ [K in keyof T]: ... }` and T's argument resolves to a union,
+                    // distribute over union members here — before calling
+                    // `instantiate_generic` — so that `try_distribute_mapped_over_union_source`
+                    // in mapped.rs can distinguish the post-instantiation constraint from the
+                    // declared constraint. After a standard instantiate_generic call with
+                    // T→(A|B), both `constraint` and `type_param.constraint` collapse to
+                    // `keyof (A|B)`, which causes that guard to treat it as a direct use and
+                    // skip distribution.
                     if let Some(TypeData::Mapped(mapped_id)) = self.interner.lookup(effective_body)
                     {
                         let mapped = self.interner.get_mapped(mapped_id);
@@ -1098,9 +1113,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                         evaluated,
                                     );
                                 }
-                                if let Some(d) = self.def_depth.get_mut(&def_id) {
-                                    *d = d.saturating_sub(1);
-                                }
+                                self.decrement_def_depth(def_id);
                                 return evaluated;
                             }
                         }
@@ -3049,7 +3062,7 @@ pub fn evaluate_type_with_request(
     request: EvaluationRequest,
 ) -> TypeId {
     let mut evaluator = TypeEvaluator::new(interner);
-    evaluator.evaluate_request(request)
+    evaluator.evaluate_request_result(request).into_type_id()
 }
 
 /// Convenience function for evaluating mapped types

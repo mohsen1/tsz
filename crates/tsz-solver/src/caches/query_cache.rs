@@ -181,7 +181,7 @@ impl QueryCacheStatistics {
         // We use 64 bytes as a conservative per-bucket overhead constant.
         const BUCKET_OVERHEAD: usize = 64;
 
-        // eval_cache: (TypeId, bool) -> TypeId  ≈ 8 + 1 + 4 = 13 bytes key+value
+        // eval_cache: EvaluationCacheKey -> TypeId  ≈ 8 + 1 + 4 = 13 bytes key+value
         let eval = self.eval_cache_entries * (BUCKET_OVERHEAD + 13);
 
         // application_eval_cache: (DefId, SmallVec<[TypeId;4]>, bool) -> TypeId
@@ -1354,7 +1354,7 @@ impl QueryDatabase for QueryCache<'_> {
         let mut evaluator =
             crate::evaluation::evaluate::TypeEvaluator::new(self.as_type_database());
         evaluator = evaluator.with_query_db(self);
-        let result = evaluator.evaluate_request(request);
+        let result = evaluator.evaluate_request_result(request).into_type_id();
 
         // PERF: Persist intermediate evaluation results from this session into
         // the long-lived eval_cache. During recursive mapped type expansion

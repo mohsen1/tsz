@@ -403,6 +403,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - uses: actions/checkout@v4
       - name: Require project corpus impact fields for semantic PRs
         env:
           GH_TOKEN: ${{ github.token }}
@@ -427,15 +428,7 @@ jobs:
             if [[ "$page" -gt 30 ]]; then break; fi
           done
 
-          title=$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '.title // ""')
-          wip_label_count=$(gh api \
-            "repos/${REPOSITORY}/pulls/${PR_NUMBER}" \
-            --jq '[.labels[]?.name | select(. == "WIP")] | length')
-          if [[ "${wip_label_count}" != "0" ]] || [[ "${title}" =~ (^|[[:space:]])\[WIP\]([[:space:]]|$) ]]; then
-            echo "Ready PRs must not carry WIP status."
-            echo "Remove the WIP label/title marker only after implementation and verification are complete."
-            exit 1
-          fi
+          node scripts/ci/check-pr-ready-state.mjs
 
           body=$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '.body // ""')
           if ! grep -Eq '^[[:space:]]*AgentName:[[:space:]]*[^[:space:]]+' <<<"$body"; then
