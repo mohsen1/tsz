@@ -81,6 +81,7 @@ function validateOutputDestinations(
   }
 
   for (const [label, root] of [
+    ["pairing report", pairingReport],
     ["official Type Challenges compile directory", typeChallengesRoot],
     ["solution compile directory", solutionsRoot],
   ]) {
