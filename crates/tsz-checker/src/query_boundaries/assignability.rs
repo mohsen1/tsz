@@ -462,6 +462,132 @@ pub(crate) fn has_recursive_type_parameter_constraint(
     })
 }
 
+/// Detect equivalent nested generic indexed-access surfaces before evaluation.
+///
+/// Contextual writes can materialize the same surface with fresh type ids on
+/// each side, for example `T[K1][K2]` assigned to `T[K1][K2]`. This helper
+/// compares the unevaluated object/key components recursively so the checker can
+/// accept the relation before type-environment evaluation collapses the two
+/// surfaces into unrelated deferred types.
+pub(crate) fn generic_index_access_components_equivalent(
+    db: &dyn TypeDatabase,
+    def_store: &tsz_solver::def::DefinitionStore,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    if tsz_solver::index_access_parts(db, source).is_none()
+        || tsz_solver::index_access_parts(db, target).is_none()
+    {
+        return false;
+    }
+    generic_index_access_components_equivalent_inner(db, def_store, source, target, 0)
+}
+
+fn generic_index_access_components_equivalent_inner(
+    db: &dyn TypeDatabase,
+    def_store: &tsz_solver::def::DefinitionStore,
+    source: TypeId,
+    target: TypeId,
+    depth: u8,
+) -> bool {
+    if same_type_id_identity(def_store, source, target) {
+        return true;
+    }
+    if depth >= 4 {
+        return false;
+    }
+
+    if let (Some(source_param), Some(target_param)) = (
+        tsz_solver::type_param_info(db, source),
+        tsz_solver::type_param_info(db, target),
+    ) {
+        return source_param.name == target_param.name
+            && source_param.is_const == target_param.is_const
+            && generic_index_optional_components_equivalent(
+                db,
+                def_store,
+                source_param.constraint,
+                target_param.constraint,
+                depth + 1,
+            )
+            && generic_index_optional_components_equivalent(
+                db,
+                def_store,
+                source_param.default,
+                target_param.default,
+                depth + 1,
+            );
+    }
+
+    if let (Some(source_inner), Some(target_inner)) = (
+        tsz_solver::keyof_inner_type(db, source),
+        tsz_solver::keyof_inner_type(db, target),
+    ) {
+        return generic_index_access_components_equivalent_inner(
+            db,
+            def_store,
+            source_inner,
+            target_inner,
+            depth + 1,
+        );
+    }
+
+    let Some((source_obj, source_idx)) = tsz_solver::index_access_parts(db, source) else {
+        return false;
+    };
+    let Some((target_obj, target_idx)) = tsz_solver::index_access_parts(db, target) else {
+        return false;
+    };
+
+    generic_index_access_components_equivalent_inner(
+        db,
+        def_store,
+        source_obj,
+        target_obj,
+        depth + 1,
+    ) && generic_index_keys_equivalent(db, def_store, source_idx, target_idx)
+}
+
+fn generic_index_keys_equivalent(
+    db: &dyn TypeDatabase,
+    def_store: &tsz_solver::def::DefinitionStore,
+    source_key: TypeId,
+    target_key: TypeId,
+) -> bool {
+    same_type_id_identity(def_store, source_key, target_key)
+        || generic_index_access_components_equivalent_inner(
+            db, def_store, source_key, target_key, 0,
+        )
+}
+
+fn generic_index_optional_components_equivalent(
+    db: &dyn TypeDatabase,
+    def_store: &tsz_solver::def::DefinitionStore,
+    source: Option<TypeId>,
+    target: Option<TypeId>,
+    depth: u8,
+) -> bool {
+    match (source, target) {
+        (Some(source), Some(target)) => {
+            generic_index_access_components_equivalent_inner(db, def_store, source, target, depth)
+        }
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+fn same_type_id_identity(
+    def_store: &tsz_solver::def::DefinitionStore,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    source == target
+        || def_store
+            .find_def_for_type(source)
+            .zip(def_store.find_def_for_type(target))
+            .is_some_and(|(source_def, target_def)| source_def == target_def)
+}
+
 /// Detect the `S[T1]` vs `S[T2]` mismatch pattern where T1/T2 are
 /// distinct type parameters and the object halves share a TypeId.
 /// Returns the failure reason that elaborates the TS2322 + TS5075

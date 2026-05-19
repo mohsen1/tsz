@@ -2236,6 +2236,20 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // Pre-evaluation IndexAccess structural identity check: contextual writes can
+        // materialize equivalent generic indexed-access surfaces with fresh TypeIds
+        // on each side (`T[K1][K2]` vs `T[K1][K2]`). Compare the object/key
+        // components recursively before evaluation turns the identical surface into
+        // unrelated deferred types.
+        if crate::query_boundaries::assignability::generic_index_access_components_equivalent(
+            self.ctx.types,
+            &self.ctx.definition_store,
+            source,
+            target,
+        ) {
+            return true;
+        }
+
         // Pre-evaluation IndexAccess covariance check: `U[J]` is assignable to
         // `T[K]` when `U extends T` and `J extends K`. Evaluation can erase the
         // source object identity before the key relationship is considered.
