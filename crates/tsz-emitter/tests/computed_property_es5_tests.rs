@@ -159,3 +159,47 @@ const obj = { [k]: 1, ...b };"#;
         "Emitted JS must have balanced parens.\nOutput:\n{output}"
     );
 }
+
+/// When the first spread in an ES5 object literal is itself an object literal,
+/// tsc uses it directly as the `__assign` target instead of allocating `{}`.
+///
+/// Rule: `{ ...{x} }` → `__assign({x})` (single arg, literal is the target)
+///       `{ ...v }` → `__assign({}, v)` (variable: fresh empty target)
+#[test]
+fn object_literal_spread_uses_literal_as_assign_target() {
+    // Single spread that is an object literal: __assign({x: 0}) not __assign({}, {x: 0})
+    let output = emit_es5("const a = { ...{ x: 0 } };");
+    assert!(
+        output.contains("__assign({ x: 0 })"),
+        "Object literal spread should be used as direct __assign target.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("__assign({}, { x: 0 })"),
+        "Should NOT create empty {{}} for object literal spread.\nOutput:\n{output}"
+    );
+
+    // Object literal spread first, then own props: __assign({x:0}, {y:1})
+    let output2 = emit_es5("const b = { ...{ x: 0 }, y: 1 };");
+    assert!(
+        output2.contains("__assign({ x: 0 }, { y: 1 })"),
+        "Object literal spread + own props: literal as target, own as source.\nOutput:\n{output2}"
+    );
+    assert!(
+        !output2.contains("__assign(__assign"),
+        "Should NOT double-wrap for object literal spread + own props.\nOutput:\n{output2}"
+    );
+
+    // Variable spread: keeps standard __assign({}, v) form
+    let output3 = emit_es5("declare const v: any; const c = { ...v };");
+    assert!(
+        output3.contains("__assign({}, v)"),
+        "Variable spread must still use fresh {{}} as target.\nOutput:\n{output3}"
+    );
+
+    // Variable spread + own props: __assign(__assign({}, v), {y:1})
+    let output4 = emit_es5("declare const v: any; const d = { ...v, y: 1 };");
+    assert!(
+        output4.contains("__assign(__assign({}, v), { y: 1 })"),
+        "Variable spread + own props must use nested __assign.\nOutput:\n{output4}"
+    );
+}
