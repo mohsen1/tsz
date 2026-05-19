@@ -45,11 +45,50 @@ impl<T: TypeDatabase + ?Sized> TypeStore for T {
     }
 }
 
+/// Cache hooks for solver type-content traversal predicates.
+///
+/// The answers are stable for a `TypeId` within one interner because interned
+/// type data is immutable. Keeping these hooks out of [`TypeDatabase`] makes
+/// traversal-cache capability visible as a narrower contract.
+pub trait TypePredicateCache {
+    /// Look up a cached `contains_this_type(type_id)` result if available.
+    ///
+    /// Default impl returns `None` (no caching). The primary implementation
+    /// on `TypeInterner` consults a project-wide `DashMap`; the `QueryCache`
+    /// delegate forwards through to the interner so all sharing callers hit
+    /// the same cache.
+    fn contains_this_type_cached(&self, _type_id: TypeId) -> Option<bool> {
+        None
+    }
+
+    /// Record the result of `contains_this_type(type_id)` in the shared
+    /// interner cache. Default impl is a no-op.
+    fn set_contains_this_type_cache(&self, _type_id: TypeId, _result: bool) {}
+
+    /// Look up a cached `contains_infer_types_db(type_id)` result if available.
+    fn contains_infer_types_cached(&self, _type_id: TypeId) -> Option<bool> {
+        None
+    }
+
+    /// Record the result of `contains_infer_types_db(type_id)` in the shared
+    /// interner cache. Default impl is a no-op.
+    fn set_contains_infer_types_cache(&self, _type_id: TypeId, _result: bool) {}
+
+    /// Look up a cached `contains_type_query_db(type_id)` result if available.
+    fn contains_type_query_cached(&self, _type_id: TypeId) -> Option<bool> {
+        None
+    }
+
+    /// Record the result of `contains_type_query_db(type_id)` in the shared
+    /// interner cache. Default impl is a no-op.
+    fn set_contains_type_query_cache(&self, _type_id: TypeId, _result: bool) {}
+}
+
 /// Query interface for the solver.
 ///
 /// This keeps solver components generic and prevents them from reaching
 /// into concrete storage structures directly.
-pub trait TypeDatabase {
+pub trait TypeDatabase: TypePredicateCache {
     fn intern(&self, key: TypeData) -> TypeId;
     fn lookup(&self, id: TypeId) -> Option<TypeData>;
     fn lookup_alloc_order(&self, _id: TypeId) -> Option<u32> {
@@ -305,41 +344,6 @@ pub trait TypeDatabase {
         false
     }
 
-    /// Look up a cached `contains_this_type(type_id)` result if available.
-    ///
-    /// Default impl returns `None` (no caching). The primary implementation
-    /// on `TypeInterner` consults a project-wide `DashMap`; the `QueryCache`
-    /// delegate forwards through to the interner so all sharing callers hit
-    /// the same cache.
-    fn contains_this_type_cached(&self, _type_id: TypeId) -> Option<bool> {
-        None
-    }
-
-    /// Record the result of `contains_this_type(type_id)` in the shared
-    /// interner cache. Default impl is a no-op.
-    fn set_contains_this_type_cache(&self, _type_id: TypeId, _result: bool) {}
-
-    /// Look up a cached `contains_infer_types_db(type_id)` result if available.
-    ///
-    /// Like `contains_this_type`, the answer is stable for a `TypeId` within one
-    /// interner because interned type data is immutable.
-    fn contains_infer_types_cached(&self, _type_id: TypeId) -> Option<bool> {
-        None
-    }
-
-    /// Record the result of `contains_infer_types_db(type_id)` in the shared
-    /// interner cache. Default impl is a no-op.
-    fn set_contains_infer_types_cache(&self, _type_id: TypeId, _result: bool) {}
-
-    /// Look up a cached `contains_type_query_db(type_id)` result if available.
-    fn contains_type_query_cached(&self, _type_id: TypeId) -> Option<bool> {
-        None
-    }
-
-    /// Record the result of `contains_type_query_db(type_id)` in the shared
-    /// interner cache. Default impl is a no-op.
-    fn set_contains_type_query_cache(&self, _type_id: TypeId, _result: bool) {}
-
     /// Whether `exactOptionalPropertyTypes` is enabled.
     ///
     /// Exposed on `TypeDatabase` (in addition to `QueryDatabase`) so that
@@ -349,6 +353,32 @@ pub trait TypeDatabase {
     /// `TypeInterner` and `QueryCache`.
     fn exact_optional_property_types(&self) -> bool {
         false
+    }
+}
+
+impl TypePredicateCache for TypeInterner {
+    fn contains_this_type_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.contains_this_cache.get(&type_id).map(|v| *v)
+    }
+
+    fn set_contains_this_type_cache(&self, type_id: TypeId, result: bool) {
+        self.contains_this_cache.insert(type_id, result);
+    }
+
+    fn contains_infer_types_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.contains_infer_cache.get(&type_id).map(|v| *v)
+    }
+
+    fn set_contains_infer_types_cache(&self, type_id: TypeId, result: bool) {
+        self.contains_infer_cache.insert(type_id, result);
+    }
+
+    fn contains_type_query_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.contains_type_query_cache.get(&type_id).map(|v| *v)
+    }
+
+    fn set_contains_type_query_cache(&self, type_id: TypeId, result: bool) {
+        self.contains_type_query_cache.insert(type_id, result);
     }
 }
 
@@ -714,30 +744,6 @@ impl TypeDatabase for TypeInterner {
 
     fn is_evaluation_fuel_exhausted(&self) -> bool {
         Self::is_evaluation_fuel_exhausted(self)
-    }
-
-    fn contains_this_type_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.contains_this_cache.get(&type_id).map(|v| *v)
-    }
-
-    fn set_contains_this_type_cache(&self, type_id: TypeId, result: bool) {
-        self.contains_this_cache.insert(type_id, result);
-    }
-
-    fn contains_infer_types_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.contains_infer_cache.get(&type_id).map(|v| *v)
-    }
-
-    fn set_contains_infer_types_cache(&self, type_id: TypeId, result: bool) {
-        self.contains_infer_cache.insert(type_id, result);
-    }
-
-    fn contains_type_query_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.contains_type_query_cache.get(&type_id).map(|v| *v)
-    }
-
-    fn set_contains_type_query_cache(&self, type_id: TypeId, result: bool) {
-        self.contains_type_query_cache.insert(type_id, result);
     }
 
     fn exact_optional_property_types(&self) -> bool {
