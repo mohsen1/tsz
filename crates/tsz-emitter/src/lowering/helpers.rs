@@ -880,7 +880,9 @@ impl<'a> LoweringPass<'a> {
                     let Some(bin) = self.arena.get_binary_expr(n) else {
                         continue;
                     };
-                    if !tsz_solver::is_assignment_operator(bin.operator_token) {
+                    if !tsz_solver::operations::compound_assignment::is_assignment_operator(
+                        bin.operator_token,
+                    ) {
                         continue;
                     }
                     let left = self.unwrap_parens_and_types(bin.left);
@@ -1004,7 +1006,9 @@ impl<'a> LoweringPass<'a> {
                 }
                 if n.kind == syntax_kind_ext::BINARY_EXPRESSION
                     && let Some(bin) = self.arena.get_binary_expr(n)
-                    && tsz_solver::is_assignment_operator(bin.operator_token)
+                    && tsz_solver::operations::compound_assignment::is_assignment_operator(
+                        bin.operator_token,
+                    )
                 {
                     let left = self.unwrap_parens(bin.left);
                     if self.is_private_field_access(left) {
@@ -1035,7 +1039,9 @@ impl<'a> LoweringPass<'a> {
                 // Check for binary expressions with private field on LHS
                 if n.kind == syntax_kind_ext::BINARY_EXPRESSION
                     && let Some(bin) = self.arena.get_binary_expr(n)
-                    && tsz_solver::is_assignment_operator(bin.operator_token)
+                    && tsz_solver::operations::compound_assignment::is_assignment_operator(
+                        bin.operator_token,
+                    )
                 {
                     let left = self.unwrap_parens(bin.left);
                     if self.is_private_field_access(left) {
@@ -1068,7 +1074,9 @@ impl<'a> LoweringPass<'a> {
                 // skip those — they're already handled.
                 if n.kind == syntax_kind_ext::BINARY_EXPRESSION
                     && let Some(bin) = self.arena.get_binary_expr(n)
-                    && !tsz_solver::is_assignment_operator(bin.operator_token)
+                    && !tsz_solver::operations::compound_assignment::is_assignment_operator(
+                        bin.operator_token,
+                    )
                 {
                     // Check if either side has a private field access
                     let left = self.unwrap_parens(bin.left);

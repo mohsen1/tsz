@@ -257,7 +257,11 @@ pub(crate) fn fallback_compound_assignment_result(
     operator_token: u16,
     rhs_literal_type: Option<TypeId>,
 ) -> Option<TypeId> {
-    tsz_solver::fallback_compound_assignment_result(db, operator_token, rhs_literal_type)
+    tsz_solver::operations::compound_assignment::fallback_compound_assignment_result(
+        db,
+        operator_token,
+        rhs_literal_type,
+    )
 }
 
 pub(crate) fn widen_literal_to_primitive(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
