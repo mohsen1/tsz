@@ -3968,7 +3968,7 @@ impl Server {
     }
 
     /// Generate code fix actions for TS9010 (variable missing type annotation)
-    /// and TS9007 (function missing return type) under `--isolatedDeclarations`.
+    /// under `--isolatedDeclarations`.
     ///
     /// Returns two actions per applicable diagnostic:
     /// 1. Direct annotation: `const x: T = expr;`

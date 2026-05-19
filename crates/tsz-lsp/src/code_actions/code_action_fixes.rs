@@ -619,9 +619,7 @@ impl CodeFixRegistry {
 
             // === fixMissingTypeAnnotationOnExports ===
             // Variable must have an explicit type annotation with --isolatedDeclarations.
-            9010 |
-            // Function must have an explicit return type annotation with --isolatedDeclarations.
-            9007 => {
+            9010 => {
                 vec![("fixMissingTypeAnnotationOnExports", "fixMissingTypeAnnotationOnExports", "Add annotation of type", "Add annotations of inferred types to all items with missing annotations")]
             }
 
@@ -714,7 +712,40 @@ impl CodeFixRegistry {
             1205, // convertToTypeOnlyExport
             2412, 2375, 2379, // addOptionalPropertyUndefined
             1259, // fixInvalidImportSyntax
-            9010, 9007, // fixMissingTypeAnnotationOnExports
+            9010, // fixMissingTypeAnnotationOnExports
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CodeFixRegistry;
+
+    #[test]
+    fn missing_type_annotation_fix_is_only_advertised_for_variable_exports() {
+        let variable_fixes = CodeFixRegistry::fixes_for_error_code(9010);
+        assert!(
+            variable_fixes
+                .iter()
+                .any(|(fix_name, _, _, _)| *fix_name == "fixMissingTypeAnnotationOnExports"),
+            "TS9010 should advertise fixMissingTypeAnnotationOnExports"
+        );
+
+        let function_fixes = CodeFixRegistry::fixes_for_error_code(9007);
+        assert!(
+            function_fixes
+                .iter()
+                .all(|(fix_name, _, _, _)| *fix_name != "fixMissingTypeAnnotationOnExports"),
+            "TS9007 must not advertise fixMissingTypeAnnotationOnExports until the server implements function return edits"
+        );
+
+        assert!(
+            CodeFixRegistry::supported_error_codes().contains(&9010),
+            "TS9010 should remain in supported_error_codes"
+        );
+        assert!(
+            !CodeFixRegistry::supported_error_codes().contains(&9007),
+            "TS9007 should not be in supported_error_codes"
+        );
     }
 }

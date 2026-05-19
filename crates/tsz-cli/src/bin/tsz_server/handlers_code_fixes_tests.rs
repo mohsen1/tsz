@@ -2660,7 +2660,7 @@ fn handle_get_code_fixes_implement_interface_function_typed_property() {
     );
 }
 
-// ── fixMissingTypeAnnotationOnExports (TS9010 / TS9007) ──────────────────────
+// ── fixMissingTypeAnnotationOnExports (TS9010) ───────────────────────────────
 //
 // These tests exercise `apply_isolated_decl_type_annotation_fix` and
 // `infer_type_for_isolated_decl_initializer` directly, using a synthetic
