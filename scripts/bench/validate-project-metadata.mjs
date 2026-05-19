@@ -46,8 +46,44 @@ const pinCouplings = [
   },
 ];
 
+const pairedMetadataFields = [
+  ["repo", "repo_env"],
+  ["ref", "ref_env"],
+  ["expected_generated", "expected_generated_env"],
+  ["expected_test_cases", "expected_test_cases_env"],
+];
+
 function isNonEmptyString(value) {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function isShellVariableName(value) {
+  return typeof value === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
+}
+
+function isProjectRowName(value) {
+  return typeof value === "string" && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value);
+}
+
+function safeRelativePathError(value, { allowDotRoot = false } = {}) {
+  if (!isNonEmptyString(value)) {
+    return "must be a non-empty relative path";
+  }
+
+  if (value.startsWith("/") || value.includes("\\")) {
+    return "must be a relative POSIX path";
+  }
+
+  if (allowDotRoot && value === ".") {
+    return null;
+  }
+
+  const segments = value.split("/");
+  if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
+    return "must not contain empty, dot, or parent segments";
+  }
+
+  return null;
 }
 
 export function validateProjectMetadata({
@@ -59,11 +95,14 @@ export function validateProjectMetadata({
 }) {
   const failures = [];
   const seen = new Set();
+  const fixtureDirs = new Map();
 
   for (const row of projectRows) {
     if (!isNonEmptyString(row.name)) {
       failures.push("project row has invalid or empty name");
       continue;
+    } else if (!isProjectRowName(row.name)) {
+      failures.push(`${row.name}: name must be a lowercase hyphenated slug`);
     }
 
     if (seen.has(row.name)) {
@@ -84,6 +123,23 @@ export function validateProjectMetadata({
       }
     }
 
+    for (const field of ["fixture_dir", "source_dir"]) {
+      if (isNonEmptyString(row[field])) {
+        const error = safeRelativePathError(row[field], { allowDotRoot: field === "source_dir" });
+        if (error) {
+          failures.push(`${row.name}: ${field} ${error}`);
+        }
+      }
+    }
+    if (isNonEmptyString(row.fixture_dir)) {
+      const previousRowName = fixtureDirs.get(row.fixture_dir);
+      if (previousRowName) {
+        failures.push(`${row.name}: fixture_dir duplicates ${previousRowName}: ${row.fixture_dir}`);
+      } else {
+        fixtureDirs.set(row.fixture_dir, row.name);
+      }
+    }
+
     if (!allowedBenchmarkSets.has(row.benchmark_set)) {
       failures.push(`${row.name}: invalid benchmark_set ${String(row.benchmark_set)}`);
     }
@@ -96,19 +152,46 @@ export function validateProjectMetadata({
       failures.push(`${row.name}: invalid category ${String(row.category)}`);
     }
 
+    const missingExternalPinFields = new Set();
+    if (row.category === "external") {
+      for (const field of ["repo", "ref", "repo_env", "ref_env"]) {
+        if (!(field in row) || row[field] === undefined) {
+          missingExternalPinFields.add(field);
+          failures.push(`${row.name}: external row is missing required pin field ${field}`);
+        }
+      }
+    }
+
     if (!Array.isArray(row.readme_candidates) || row.readme_candidates.length === 0) {
       failures.push(`${row.name}: readme_candidates must be a non-empty array`);
     } else {
       row.readme_candidates.forEach((candidate, index) => {
         if (!isNonEmptyString(candidate)) {
           failures.push(`${row.name}: readme_candidates[${index}] must be a non-empty string`);
+          return;
+        }
+        const error = safeRelativePathError(candidate);
+        if (error) {
+          failures.push(`${row.name}: readme_candidates[${index}] ${error}`);
         }
       });
     }
 
-    for (const field of ["repo_env", "ref_env"]) {
+    for (const field of ["repo_env", "ref_env", "expected_generated_env", "expected_test_cases_env"]) {
       if (field in row && !isNonEmptyString(row[field])) {
         failures.push(`${row.name}: ${field} must be a non-empty string when present`);
+      } else if (field in row && !isShellVariableName(row[field])) {
+        failures.push(`${row.name}: ${field} must be a valid shell variable name when present`);
+      }
+    }
+
+    for (const [valueField, envField] of pairedMetadataFields) {
+      if (
+        row[valueField] !== undefined
+        && row[envField] === undefined
+        && !missingExternalPinFields.has(envField)
+      ) {
+        failures.push(`${row.name}: ${valueField} is set but ${envField} is missing`);
       }
     }
 
