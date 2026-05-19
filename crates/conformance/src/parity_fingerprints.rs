@@ -35,7 +35,8 @@ pub(crate) enum ParityAction {
     ///
     /// Used only when tsz emits the wrong error code for an otherwise
     /// well-understood divergence (e.g. circular instantiation surfacing
-    /// as TS2322 instead of TS2589).
+    /// as TS2322 instead of TS2589). Reserved for future entries; the
+    /// pattern-match arms in `tsz_wrapper` are already wired up.
     #[allow(dead_code)]
     Remap(ParityRemap),
 }
@@ -102,26 +103,6 @@ impl std::fmt::Display for ParityIssue {
 /// `tsz_wrapper.rs` are rejected by the
 /// `tsz_wrapper_has_no_ad_hoc_extra_fingerprint_helpers` architecture test.
 pub(crate) const KNOWN_PARITY_FINGERPRINTS: &[ParityFingerprintRule] = &[
-    // #8422 — built-in Iterator/Iterable inheritance: extra TS2322 on
-    // destructuring a possibly-undefined yield value.
-    ParityFingerprintRule {
-        code: 2322,
-        message: "Type 'number | undefined' is not assignable to type 'number'.",
-        message_match: MessageMatch::Exact,
-        reason: "When a class/interface inherits from built-in Iterator/Iterable and overrides next() or [Symbol.iterator](), tsc collapses the inherited undefined return into the override-compatibility relation; tsz currently lets it surface as a TS2322 in destructuring.",
-        parity_issue: ParityIssue(8422),
-        action: ParityAction::Drop,
-    },
-    // #8422 — built-in Iterator/Iterable inheritance: extra TS2416 on the
-    // override site itself.
-    ParityFingerprintRule {
-        code: 2416,
-        message: "Property '[Symbol.iterator]' in type 'MyMap' is not assignable to the same property in base type 'Map<string, number>'.",
-        message_match: MessageMatch::Exact,
-        reason: "Same root cause as the iterator/iterable destructuring divergence: tsz reports the override as incompatible because the inherited [Symbol.iterator]() return type still carries undefined in the relation.",
-        parity_issue: ParityIssue(8422),
-        action: ParityAction::Drop,
-    },
     // #8423 — recursive alias display: tsz over-expands one level of the
     // recursive alias before printing the TS2322 source type.
     ParityFingerprintRule {
