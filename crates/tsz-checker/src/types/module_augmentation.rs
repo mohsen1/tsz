@@ -1151,6 +1151,12 @@ impl<'a> CheckerState<'a> {
         use crate::query_boundaries::state::type_resolution as query;
         use tsz_solver::{CallableShape, ObjectShape};
 
+        // Fast-path: avoids string allocations and hashset bookkeeping when
+        // no augmentations are registered anywhere in the program.
+        if !self.ctx.program_has_module_augmentations() {
+            return base_type;
+        }
+
         let guard_key = (
             module_spec.to_string(),
             interface_name.to_string(),

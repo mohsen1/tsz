@@ -1415,3 +1415,207 @@ export const x = 1;
         "Expected imported declaration file with top-level declare global to still report TS2306. Actual diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_umd_global_module_augmentation_class_method_merge() {
+    // Structural rule: when `declare module 'M' { interface C { extra(): T } }`
+    // augments a UMD module, class instances accessed via the UMD global should
+    // expose the augmented methods. This covers the umd-augmentation-2 pattern.
+    //
+    // Variants tested here use different interface names (Widget/K/Item) to prove
+    // the fix is not keyed on a particular name.
+    let files = [
+        (
+            "/lib.d.ts",
+            r#"
+export as namespace Lib;
+export class Widget {
+    name: string;
+}
+"#,
+        ),
+        (
+            "/lib-aug.d.ts",
+            r#"
+import * as X from './lib';
+declare module './lib' {
+    interface Widget {
+        extra(): number;
+    }
+}
+"#,
+        ),
+        (
+            "/use.ts",
+            r#"
+let w = new Lib.Widget();
+let n: number = w.extra();
+"#,
+        ),
+    ];
+
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &files,
+        "/use.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            no_lib: true,
+            allow_umd_global_access: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2339),
+        "Expected Widget.extra() to be visible via UMD global after interface augmentation. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_umd_global_augmentation_member_accessible_on_namespace_export() {
+    // Structural rule: when a module augmentation adds a top-level exported member
+    // to a UMD module, that member should be accessible via the UMD global alias.
+    // This is the analogous case to the existing const-export test but with an
+    // interface method member (not a direct const re-export).
+    //
+    // Two interface names (Widget/Item) prove the fix is not keyed on spelling.
+    let files_widget = [
+        (
+            "/w.d.ts",
+            r#"
+export as namespace W;
+export class Widget { id: number; }
+"#,
+        ),
+        (
+            "/w-aug.d.ts",
+            r#"
+import * as W from './w';
+declare module './w' {
+    interface Widget { label(): string; }
+}
+"#,
+        ),
+        (
+            "/w-use.ts",
+            r#"
+let w = new W.Widget();
+let s: string = w.label();
+"#,
+        ),
+    ];
+
+    let diagnostics_widget = compile_named_files_get_diagnostics_with_options(
+        &files_widget,
+        "/w-use.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            no_lib: true,
+            allow_umd_global_access: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !diagnostics_widget.iter().any(|(code, _)| *code == 2339),
+        "Widget.label() must be accessible via UMD global. Diagnostics: {diagnostics_widget:#?}"
+    );
+
+    let files_item = [
+        (
+            "/i.d.ts",
+            r#"
+export as namespace I;
+export class Item { id: number; }
+"#,
+        ),
+        (
+            "/i-aug.d.ts",
+            r#"
+import * as I from './i';
+declare module './i' {
+    interface Item { display(): string; }
+}
+"#,
+        ),
+        (
+            "/i-use.ts",
+            r#"
+let x = new I.Item();
+let s: string = x.display();
+"#,
+        ),
+    ];
+
+    let diagnostics_item = compile_named_files_get_diagnostics_with_options(
+        &files_item,
+        "/i-use.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            no_lib: true,
+            allow_umd_global_access: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !diagnostics_item.iter().any(|(code, _)| *code == 2339),
+        "Item.display() must be accessible via UMD global. Diagnostics: {diagnostics_item:#?}"
+    );
+}
+
+#[test]
+fn test_umd_global_augmentation_introduces_new_top_level_exported_member() {
+    // Structural rule: `declare module 'M' { export const z = 0; }` adds a
+    // top-level exported name `z` that was not in the original UMD module.
+    // The UMD global alias should expose `z` as a reachable member.
+    // This test uses two different augmented-name spellings (z / q) to prove
+    // the fix is not keyed on a particular name.
+    let files = [
+        (
+            "/m.d.ts",
+            r#"
+export as namespace M;
+export const x: number = 0;
+"#,
+        ),
+        (
+            "/m-aug.d.ts",
+            r#"
+import * as M from './m';
+declare module './m' {
+    const z: string;
+    const q: boolean;
+}
+"#,
+        ),
+        (
+            "/m-use.ts",
+            r#"
+let a: number = M.x;
+let b: string = M.z;
+let c: boolean = M.q;
+"#,
+        ),
+    ];
+
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &files,
+        "/m-use.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            no_lib: true,
+            allow_umd_global_access: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2339),
+        "M.z and M.q from augmentation must be accessible via UMD global. Diagnostics: {diagnostics:#?}"
+    );
+}
