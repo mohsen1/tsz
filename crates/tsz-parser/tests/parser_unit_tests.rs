@@ -2507,6 +2507,45 @@ fn expr_tagged_template() {
 }
 
 #[test]
+fn expr_tagged_template_with_type_arguments() {
+    for (source, context) in [
+        (
+            "const value = tag<number>`hello`;",
+            "no-substitution tagged template type arguments",
+        ),
+        (
+            "const value = tag<number>`hello ${name}`;",
+            "substituted tagged template type arguments",
+        ),
+    ] {
+        let (parser, root) = parse_source(source);
+        assert_no_errors(&parser, context);
+
+        let arena = parser.get_arena();
+        let init = get_var_initializer(arena, root);
+        let node = arena.get(init).expect("initializer");
+        assert_eq!(
+            node.kind,
+            syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION,
+            "{context}: should parse as a tagged template expression"
+        );
+
+        let tagged = arena
+            .get_tagged_template(node)
+            .expect("tagged template data");
+        let type_arguments = tagged
+            .type_arguments
+            .as_ref()
+            .expect("tagged template should retain type arguments");
+        assert_eq!(
+            type_arguments.nodes.len(),
+            1,
+            "{context}: expected exactly one type argument"
+        );
+    }
+}
+
+#[test]
 fn expr_spread_element() {
     // `[1, ...arr, 2]`
     let (parser, root) = parse_source("const x = [1, ...arr, 2];");
