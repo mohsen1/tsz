@@ -130,6 +130,11 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/types/utilities/enum_utils.rs",
         },
     ),
+    (
+        "Checker computation boundary: type-computation monoliths must stay below 3200 LOC (#8226)",
+        ROOT / "crates" / "tsz-checker" / "src" / "types" / "computation",
+        3200,
+    ),
 ]
 
 FILE_LINE_LIMIT_CHECKS = [
@@ -147,6 +152,17 @@ FILE_LINE_LIMIT_CHECKS = [
         / "query_boundaries"
         / "common.rs",
         1996,
+    ),
+    (
+        "Solver engine boundary: generic call resolver must stay under 3400 LOC (#8209)",
+        ROOT
+        / "crates"
+        / "tsz-solver"
+        / "src"
+        / "operations"
+        / "generic_call"
+        / "resolve.rs",
+        3400,
     ),
 ]
 
@@ -189,6 +205,17 @@ VALID_CHECKER_CONTEXT_LIFETIMES = {
     "SpeculationScoped",
     "DiagnosticsOnly",
     "LspPersistent",
+}
+
+VALID_CHECKER_CONTEXT_CAPABILITIES = {
+    "CheckerInputs",
+    "DiagnosticState",
+    "EmitSummaryState",
+    "FileTypeCache",
+    "FlowSessionState",
+    "ProgramLookupContext",
+    "RelationSessionState",
+    "SpeculationState",
 }
 
 CHECKER_CONTEXT_LIFETIME_MANIFEST_CHECKS = [
@@ -358,7 +385,21 @@ REGEX_LINE_COUNT_CHECKS = [
             r"\bformat_type(?:_diagnostic)?\s*\([^\n]*"
             r"(?:\.contains\s*\(|\.starts_with\s*\(|\.ends_with\s*\(|\.as_str\s*\(\))"
         ),
-        3,
+        0,
+    ),
+    (
+        "Checker diagnostic boundary: rendered message predicates (Track 10)",
+        [
+            ROOT / "crates" / "tsz-checker" / "src" / "checkers" / "jsx",
+            ROOT / "crates" / "tsz-checker" / "src" / "checkers" / "call_checker",
+            ROOT / "crates" / "tsz-checker" / "src" / "types" / "type_checking",
+        ],
+        re.compile(
+            r"\b(?:display|source_display|target_display|stripped_display|"
+            r"diagnostic\.message_text|raw|evaluated)"
+            r"\.(?:contains|starts_with|ends_with|as_str)\s*\("
+        ),
+        16,
     ),
     (
         "Emitter boundary: source_text.contains recovery decisions (Track 9/10)",
@@ -370,7 +411,7 @@ REGEX_LINE_COUNT_CHECKS = [
         "Solver API boundary: flat root wildcard compatibility re-exports (#8204)",
         [ROOT / "crates" / "tsz-solver" / "src" / "lib.rs"],
         re.compile(r"^pub use (?:[A-Za-z_][A-Za-z0-9_]*::)+\*;"),
-        12,
+        0,
     ),
     (
         "Checker relation boundary: raw diagnostic assignability predicates (#8227)",
@@ -388,7 +429,7 @@ REGEX_LINE_COUNT_CHECKS = [
             r"\b(?:self|self\.ctx\.types|self\.interner)"
             r"\.is_assignable_to(?:_[A-Za-z0-9_]+)?\s*\("
         ),
-        136,
+        135,
     ),
     (
         "Checker relation boundary: diagnostic-local RelationRequest constructors (#8227)",
@@ -1809,6 +1850,7 @@ def parse_checker_context_lifetime_manifest(
     inline_entry_pattern = re.compile(
         r'^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\{\s*'
         r'lifetime\s*=\s*"([^"]*)"\s*,\s*'
+        r'capability\s*=\s*"([^"]*)"\s*,\s*'
         r'reason\s*=\s*"([^"]*)"\s*'
         r'\}\s*(?:#.*)?$'
     )
@@ -1826,13 +1868,14 @@ def parse_checker_context_lifetime_manifest(
 
         inline_entry_match = inline_entry_pattern.match(line)
         if inline_entry_match and current is None:
-            field, lifetime, reason = inline_entry_match.groups()
+            field, lifetime, capability, reason = inline_entry_match.groups()
             if field in entries:
                 errors.append(f"{rel}:{line_no} duplicate manifest entry [{field}]")
             else:
                 entries[field] = {
                     "line": line_no,
                     "lifetime": lifetime,
+                    "capability": capability,
                     "reason": reason,
                 }
             continue
@@ -1896,6 +1939,7 @@ def scan_checker_context_lifetime_manifest(
     ):
         line = entry.get("line", 0)
         lifetime = entry.get("lifetime")
+        capability = entry.get("capability")
         reason = entry.get("reason")
         if lifetime is None:
             hits.append(f"{manifest_rel}:{line} [{field}] missing lifetime")
@@ -1904,6 +1948,14 @@ def scan_checker_context_lifetime_manifest(
         elif lifetime not in VALID_CHECKER_CONTEXT_LIFETIMES:
             hits.append(
                 f"{manifest_rel}:{line} [{field}] invalid lifetime {lifetime!r}"
+            )
+        if capability is None:
+            hits.append(f"{manifest_rel}:{line} [{field}] missing capability")
+        elif capability == "Unknown":
+            hits.append(f"{manifest_rel}:{line} [{field}] capability must not be Unknown")
+        elif capability not in VALID_CHECKER_CONTEXT_CAPABILITIES:
+            hits.append(
+                f"{manifest_rel}:{line} [{field}] invalid capability {capability!r}"
             )
         if not isinstance(reason, str) or not reason.strip():
             hits.append(f"{manifest_rel}:{line} [{field}] missing reason")
@@ -1923,14 +1975,15 @@ def checker_context_lifetime_markdown(
     fields = extract_struct_field_names(struct_path, struct_name)
     entries, _errors = parse_checker_context_lifetime_manifest(manifest_path)
     lines = [
-        "| Field | Lifetime | Reason |",
-        "| --- | --- | --- |",
+        "| Field | Lifetime | Capability | Reason |",
+        "| --- | --- | --- | --- |",
     ]
     for field in fields:
         entry = entries.get(field, {})
         lifetime = escape_markdown_cell(entry.get("lifetime", "MISSING"))
+        capability = escape_markdown_cell(entry.get("capability", "MISSING"))
         reason = escape_markdown_cell(entry.get("reason", "MISSING"))
-        lines.append(f"| `{field}` | `{lifetime}` | {reason} |")
+        lines.append(f"| `{field}` | `{lifetime}` | `{capability}` | {reason} |")
     return "\n".join(lines)
 
 

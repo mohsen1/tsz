@@ -159,8 +159,10 @@ impl<'a> CheckerState<'a> {
                     && (crate::query_boundaries::common::contains_type_parameters(
                         self.ctx.types,
                         spread_type,
-                    ) || (display_target.contains("Readonly<")
-                        && spread_type == TypeId::UNKNOWN))
+                    ) || (crate::query_boundaries::checkers::jsx::contains_mapped_type_with_readonly_modifier(
+                        self.ctx.types,
+                        props_type,
+                    ) && spread_type == TypeId::UNKNOWN))
                 {
                     generic_spreads.push(spread_type);
                 }
@@ -243,11 +245,18 @@ impl<'a> CheckerState<'a> {
         generic_spreads.push(explicit_type);
         let attrs_type = self.ctx.types.factory().intersection(generic_spreads);
         if !has_explicit_mismatch {
-            let managed_readonly_target = display_target.contains("Readonly<");
-            if !managed_readonly_target {
+            if !crate::query_boundaries::checkers::jsx::contains_mapped_type_with_readonly_modifier(
+                self.ctx.types,
+                props_type,
+            ) {
                 return;
             }
-            let source_retains_explicit_object = self.format_type(attrs_type).contains('{');
+            let source_retains_explicit_object =
+                crate::query_boundaries::checkers::jsx::contains_anonymous_object_surface(
+                    self.ctx.types,
+                    &self.ctx.definition_store,
+                    attrs_type,
+                );
             if !source_retains_explicit_object && self.is_assignable_to(attrs_type, props_type) {
                 return;
             }
@@ -273,11 +282,8 @@ impl<'a> CheckerState<'a> {
         }
         visited.push(type_id);
 
-        if let Some(app) = common::type_application(self.ctx.types, type_id)
-            && app.args.len() == 1
-            && matches!(self.format_type(app.base).as_str(), "Readonly" | "Element")
-        {
-            return self.jsx_concrete_prop_expected_type(app.args[0], attr_name, visited);
+        if let Some(inner) = self.jsx_single_arg_props_wrapper_inner(type_id) {
+            return self.jsx_concrete_prop_expected_type(inner, attr_name, visited);
         }
 
         let resolved = self.resolve_type_for_property_access(type_id);
@@ -285,11 +291,8 @@ impl<'a> CheckerState<'a> {
         if let Some(inner) = common::unwrap_readonly_or_noinfer(self.ctx.types, resolved) {
             return self.jsx_concrete_prop_expected_type(inner, attr_name, visited);
         }
-        if let Some(app) = common::type_application(self.ctx.types, resolved)
-            && app.args.len() == 1
-            && matches!(self.format_type(app.base).as_str(), "Readonly" | "Element")
-        {
-            return self.jsx_concrete_prop_expected_type(app.args[0], attr_name, visited);
+        if let Some(inner) = self.jsx_single_arg_props_wrapper_inner(resolved) {
+            return self.jsx_concrete_prop_expected_type(inner, attr_name, visited);
         }
 
         let normalized = self.normalize_jsx_required_props_target(resolved);
@@ -380,6 +383,51 @@ impl<'a> CheckerState<'a> {
                 })
             }),
         }
+    }
+
+    fn jsx_single_arg_props_wrapper_inner(&mut self, type_id: TypeId) -> Option<TypeId> {
+        let app = crate::query_boundaries::checkers::jsx::single_arg_type_application(
+            self.ctx.types,
+            type_id,
+        )?;
+        (self.jsx_type_base_is_jsx_element(app.base)
+            || self.jsx_single_arg_application_is_transparent_readonly_mapped(app.base, app.arg))
+        .then_some(app.arg)
+    }
+
+    fn jsx_single_arg_application_is_transparent_readonly_mapped(
+        &mut self,
+        base: TypeId,
+        arg: TypeId,
+    ) -> bool {
+        let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base) else {
+            return false;
+        };
+        let (base_body, base_params) = self.type_reference_symbol_type_with_params(sym_id);
+        let Some(instantiated) =
+            crate::query_boundaries::checkers::jsx::instantiate_single_arg_type_alias_body(
+                self.ctx.types,
+                base_body,
+                &base_params,
+                arg,
+            )
+        else {
+            return false;
+        };
+        let instantiated = self.evaluate_type_with_env(instantiated);
+        let instantiated = self.resolve_lazy_type(instantiated);
+        crate::query_boundaries::checkers::jsx::is_exact_readonly_mapped_type(
+            self.ctx.types,
+            instantiated,
+        )
+    }
+
+    fn jsx_type_base_is_jsx_element(&mut self, type_id: TypeId) -> bool {
+        let Some(base_symbol_id) = self.ctx.resolve_type_to_symbol_id(type_id) else {
+            return false;
+        };
+        self.get_jsx_namespace_export_symbol_id("Element")
+            .is_some_and(|element_symbol_id| base_symbol_id == element_symbol_id)
     }
 
     fn instantiate_type_alias_body_from_application(
