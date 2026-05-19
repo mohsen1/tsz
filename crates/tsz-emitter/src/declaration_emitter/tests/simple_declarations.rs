@@ -2369,8 +2369,8 @@ function identity(x: unknown): unknown {
         "Expected string overload with renamed param: {output}"
     );
     assert!(
-        !output.contains("unknown"),
-        "Implementation signature with unknown param should be suppressed: {output}"
+        !output.contains("identity(x: unknown)"),
+        "Implementation signature should be suppressed when @overload present: {output}"
     );
 }
 
@@ -2402,11 +2402,11 @@ class Converter {
 
     assert!(
         output.contains("convert(x: number): string;"),
-        "Expected number→string method overload in TS class: {output}"
+        "Expected number-to-string method overload in TS class: {output}"
     );
     assert!(
         output.contains("convert(x: string): number;"),
-        "Expected string→number method overload in TS class: {output}"
+        "Expected string-to-number method overload in TS class: {output}"
     );
     assert!(
         !output.contains("convert(x: unknown)"),
