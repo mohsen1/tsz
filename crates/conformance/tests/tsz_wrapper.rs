@@ -1441,11 +1441,11 @@ fn test_normalize_file_not_found_message_key_both_sides_converge() {
 //   - drive the documented `parse_tsz_output` behavior end-to-end.
 //
 // The tests below pin each of those properties so a careless edit to
-// `crates/conformance/src/parity_fingerprints.rs` fails CI before it can hide
+// `crates/conformance/src/parity/fingerprints.rs` fails CI before it can hide
 // new divergences.
 // ---------------------------------------------------------------------------
 
-use crate::parity_fingerprints::{
+use crate::parity::fingerprints::{
     classify_parity, MatchScope, MessageMatch, ParityAction, ParityFingerprintRule,
     KNOWN_PARITY_FINGERPRINTS,
 };
@@ -1665,7 +1665,7 @@ fn parity_fingerprint_catalog_remaps_circular_tup_end_to_end() {
 
 #[test]
 fn tsz_wrapper_has_no_ad_hoc_extra_fingerprint_helpers() {
-    // Architecture guard: the catalog in `parity_fingerprints.rs` is the only
+    // Architecture guard: the catalog in `parity/fingerprints.rs` is the only
     // sanctioned place to hardcode fingerprint shapes. New ad-hoc
     // `is_extra_*` predicates in `tsz_wrapper.rs` recreate the §25 anti-pattern.
     //
@@ -1703,7 +1703,7 @@ fn tsz_wrapper_has_no_ad_hoc_extra_fingerprint_helpers() {
     assert!(
         ad_hoc.is_empty(),
         "ad-hoc parity suppressor helpers found in crates/conformance/src/tsz_wrapper.rs: {:?}\n\
-         Add a `ParityFingerprintRule` entry to crates/conformance/src/parity_fingerprints.rs \
+         Add a `ParityFingerprintRule` entry to crates/conformance/src/parity/fingerprints.rs \
          instead and link the underlying parity issue.",
         ad_hoc,
     );
