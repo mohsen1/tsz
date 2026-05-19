@@ -433,16 +433,26 @@ impl<'a> Printer<'a> {
         let needs_tslib_dependency = self.transforms.helpers_populated()
             && self.transforms.helpers().any_needed()
             || self.import_helpers_need_tslib_binding_for_class_emit(&source.statements);
-        if self.ctx.options.import_helpers
-            && needs_tslib_dependency
-            && !system_dependencies.iter().any(|d| d == "tslib")
-        {
-            system_dependencies.insert(0, "tslib".to_string());
-            system_plan
-                .actions
-                .entry("tslib".to_string())
-                .or_default()
-                .push(SystemDependencyAction::Assign("tslib_1".to_string()));
+        if self.ctx.options.import_helpers && needs_tslib_dependency {
+            if !system_dependencies.iter().any(|d| d == "tslib") {
+                system_dependencies.insert(0, "tslib".to_string());
+            }
+            // When the source already supplies an `Assign` for "tslib" (e.g.
+            // `import * as TSLib from "tslib"` registers `Assign("TSLib")`),
+            // helper calls resolve through that binding via the later
+            // `commonjs_tslib_import_binding = dep_vars["tslib"]` update — no
+            // helper-specific setter line is needed. Only inject the helper
+            // `Assign("tslib_1")` when no user `Assign` exists (side-effect
+            // `import "tslib"` or no source import at all). Without it,
+            // `tslib_1.__decorate` references a hoisted-but-never-assigned
+            // binding when the wrapper provides tslib instead of CJS.
+            let actions = system_plan.actions.entry("tslib".to_string()).or_default();
+            let has_assign_action = actions
+                .iter()
+                .any(|action| matches!(action, SystemDependencyAction::Assign(_)));
+            if !has_assign_action {
+                actions.push(SystemDependencyAction::Assign("tslib_1".to_string()));
+            }
         }
 
         self.write("System.register(");
