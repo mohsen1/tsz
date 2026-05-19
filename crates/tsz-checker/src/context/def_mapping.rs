@@ -1697,7 +1697,7 @@ mod tests {
     use tsz_binder::BinderState;
     use tsz_parser::parser::ParserState;
     use tsz_solver::TypeEnvironment;
-    use tsz_solver::def::core::{DefinitionInfo, DefinitionStore};
+    use tsz_solver::def::DefinitionInfo;
 
     fn minimal_checker_ctx() -> (
         Arc<tsz_parser::parser::node::NodeArena>,
@@ -1722,7 +1722,7 @@ mod tests {
     /// `source_file.rs`.
     #[test]
     fn ensure_both_envs_wires_store_into_type_environment() {
-        use tsz_scanner::Atom;
+        use tsz_common::interner::Atom;
         use tsz_solver::TypeId;
         use tsz_solver::def::DefKind;
 
@@ -1737,7 +1737,7 @@ mod tests {
 
         // Register a definition only in the shared store (not in any local env map).
         let def_id = ctx.definition_store.register(DefinitionInfo::type_alias(
-            Atom::from("TestAlias"),
+            Atom::default(),
             vec![],
             TypeId::UNKNOWN,
         ));
