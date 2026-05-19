@@ -22,16 +22,23 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
-const PROVENANCE_FILENAME = ".tsz-fixture-provenance.json";
+export const PROVENANCE_FILENAME = ".tsz-fixture-provenance.json";
 
-/** Repo root relative to this file (scripts/bench/fixture-provenance.mjs). */
+/** Repo-root-relative directory prefix for all generator scripts. */
+export const GENERATOR_SCRIPTS_PREFIX = "scripts/bench/";
+
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 /**
- * Return the SHA-256 hex digest of `filePath`, or null when the file does not exist.
- * @param {string} filePath Absolute path to the file.
- * @returns {string | null}
+ * Parse the standard `[--dry-run] <output-dir>` CLI arguments used by fixture generators.
+ * @returns {{ dryRun: boolean, outputDir: string }}
  */
+export function parseGeneratorArgs() {
+  const dryRun = process.argv.includes("--dry-run");
+  const positional = process.argv.slice(2).filter((a) => a !== "--dry-run");
+  return { dryRun, outputDir: positional[0] };
+}
+
 function sha256File(filePath) {
   try {
     const bytes = fs.readFileSync(filePath);
@@ -41,10 +48,6 @@ function sha256File(filePath) {
   }
 }
 
-/**
- * Return the installed npm version, or null if the query fails.
- * @returns {string | null}
- */
 function npmVersion() {
   const result = spawnSync("npm", ["--version"], { encoding: "utf8" });
   if (result.status !== 0 || !result.stdout) {
@@ -73,8 +76,7 @@ export function writeFixtureProvenance({ outputDir, generatorScript, templateNam
 
   const fileHashes = {};
   for (const relFile of filesToHash) {
-    const absPath = path.join(outputDir, relFile);
-    fileHashes[relFile] = sha256File(absPath);
+    fileHashes[relFile] = sha256File(path.join(outputDir, relFile));
   }
 
   const provenance = {
@@ -85,12 +87,10 @@ export function writeFixtureProvenance({ outputDir, generatorScript, templateNam
     dry_run: dryRun,
     generated_at: new Date().toISOString(),
     file_hashes: fileHashes,
-    reproduce: `node scripts/bench/${path.basename(generatorScript)} <output-dir>`,
+    reproduce: `node ${GENERATOR_SCRIPTS_PREFIX}${path.basename(generatorScript)} <output-dir>`,
   };
 
   const provenancePath = path.join(outputDir, PROVENANCE_FILENAME);
   fs.writeFileSync(provenancePath, `${JSON.stringify(provenance, null, 2)}\n`, "utf8");
   return { provenancePath, provenance };
 }
-
-export { PROVENANCE_FILENAME };

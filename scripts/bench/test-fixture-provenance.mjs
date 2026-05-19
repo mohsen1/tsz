@@ -89,6 +89,7 @@ function assertProvenanceShape(provenancePath, expectedTemplateName, generatorBa
     provenance.reproduce.includes(generatorBasename),
     `reproduce should reference ${generatorBasename}`,
   );
+  return provenance;
 }
 
 let passed = 0;
@@ -111,13 +112,14 @@ const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-provenance-test-"));
 try {
   console.log("test-fixture-provenance: Vite generator");
   const viteDir = path.join(tmpBase, "vite");
+  let viteProvenance;
 
   test("Vite generator runs successfully with --dry-run", () => {
     runGenerator(VITE_GENERATOR, viteDir);
   });
 
   test("Vite provenance file is written", () => {
-    assertProvenanceShape(
+    viteProvenance = assertProvenanceShape(
       path.join(viteDir, PROVENANCE_FILENAME),
       "vite-vanilla-ts",
       "generate-vite-app-fixture.mjs",
@@ -147,13 +149,14 @@ try {
 
   console.log("\ntest-fixture-provenance: Next.js generator");
   const nextDir = path.join(tmpBase, "next");
+  let nextProvenance;
 
   test("Next.js generator runs successfully with --dry-run", () => {
     runGenerator(NEXT_GENERATOR, nextDir);
   });
 
   test("Next.js provenance file is written", () => {
-    assertProvenanceShape(
+    nextProvenance = assertProvenanceShape(
       path.join(nextDir, PROVENANCE_FILENAME),
       "next-app-router",
       "generate-next-app-fixture.mjs",
@@ -184,24 +187,12 @@ try {
   console.log("\ntest-fixture-provenance: field consistency across generators");
 
   test("Both generators produce the same provenance schema keys", () => {
-    const viteProvenance = JSON.parse(
-      fs.readFileSync(path.join(viteDir, PROVENANCE_FILENAME), "utf8"),
-    );
-    const nextProvenance = JSON.parse(
-      fs.readFileSync(path.join(nextDir, PROVENANCE_FILENAME), "utf8"),
-    );
     const viteKeys = Object.keys(viteProvenance).sort().join(",");
     const nextKeys = Object.keys(nextProvenance).sort().join(",");
     assert.equal(viteKeys, nextKeys, "Provenance schema keys should be identical across generators");
   });
 
   test("Generators produce different template_name values", () => {
-    const viteProvenance = JSON.parse(
-      fs.readFileSync(path.join(viteDir, PROVENANCE_FILENAME), "utf8"),
-    );
-    const nextProvenance = JSON.parse(
-      fs.readFileSync(path.join(nextDir, PROVENANCE_FILENAME), "utf8"),
-    );
     assert.notEqual(
       viteProvenance.template_name,
       nextProvenance.template_name,

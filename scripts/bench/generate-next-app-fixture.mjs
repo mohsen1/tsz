@@ -3,12 +3,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { writeFixtureProvenance } from "./fixture-provenance.mjs";
+import { writeFixtureProvenance, parseGeneratorArgs } from "./fixture-provenance.mjs";
 
-const args = process.argv.slice(2).filter((a) => a !== "--dry-run");
-const dryRun = process.argv.includes("--dry-run");
-
-const outputArg = args[0];
+const { dryRun, outputDir: outputArg } = parseGeneratorArgs();
 if (!outputArg) {
   console.error("Usage: generate-next-app-fixture.mjs [--dry-run] <output-dir>");
   process.exit(1);

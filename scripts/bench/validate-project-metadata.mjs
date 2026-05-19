@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { PROJECT_ROW_DEFINITIONS, REQUIRED_PROJECT_ROWS, COMPILE_GUARD_REQUIRED_ROWS, COMPILE_CANARY_PROJECT_ROWS, COMPILE_GUARD_CANARY_PROJECT_ROWS } from "./project-rows.mjs";
+import { GENERATOR_SCRIPTS_PREFIX } from "./fixture-provenance.mjs";
 
 const requiredFields = [
   "name",
@@ -81,16 +82,15 @@ for (const row of PROJECT_ROW_DEFINITIONS) {
     }
   }
 
-  if (row.generated_by !== undefined) {
-    if (
-      typeof row.generated_by !== "string" ||
-      !row.generated_by.startsWith("scripts/bench/") ||
-      !row.generated_by.endsWith(".mjs")
-    ) {
-      failures.push(
-        `${row.name}: generated_by must point to a scripts/bench/*.mjs generator script`,
-      );
-    }
+  if (row.generated_by === undefined) continue;
+  if (
+    typeof row.generated_by !== "string" ||
+    !row.generated_by.startsWith(GENERATOR_SCRIPTS_PREFIX) ||
+    !row.generated_by.endsWith(".mjs")
+  ) {
+    failures.push(
+      `${row.name}: generated_by must point to a ${GENERATOR_SCRIPTS_PREFIX}*.mjs generator script`,
+    );
   }
 }
 
