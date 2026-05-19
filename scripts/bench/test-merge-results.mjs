@@ -28,6 +28,17 @@ const REQUIRED_COMPATIBILITY_FIELDS = {
   fixture_sources: [{ name: "fixture", repository: "https://example.invalid/repo.git", ref: "abc123" }],
   emit_status: "not in scope (noEmit project check)",
   dts_status: "not in scope (noEmit project check)",
+  artifact_source: {
+    generated_at: "2026-05-19T00:00:00.000Z",
+    source_commit: "fixture-sha",
+    run_status: "completed",
+    workflow: "ci",
+    run_id: "123",
+    run_attempt: "1",
+    run_number: "77",
+    event_name: "pull_request",
+    artifact_url: "https://github.com/mohsen1/tsz/actions/runs/123",
+  },
   reduced_repro_path: null,
   repro: {
     tsconfig_path: null,
@@ -75,10 +86,11 @@ function runMerge(dir, results, extraPayload = {}) {
   return runMergeInputs(dir, [input]);
 }
 
-function runMergeInputs(dir, inputs) {
+function runMergeInputs(dir, inputs, env = {}) {
   const output = path.join(dir, "merged.json");
   const result = spawnSync(process.execPath, [MERGE_SCRIPT, output, ...inputs], {
     cwd: ROOT,
+    env: { ...process.env, ...env },
     encoding: "utf8",
   });
   return { ...result, output };
@@ -102,6 +114,36 @@ withTempDir((dir) => {
   assert.equal(result.status, 0, result.stderr);
   const merged = JSON.parse(fs.readFileSync(result.output, "utf8"));
   assert.equal(merged.validation.project_compatibility_required_fields, true);
+  assert.equal(merged.artifact_source.run_status, "manual");
+  assert.match(merged.artifact_source.source_commit, /^[0-9a-f]{40}$/);
+});
+
+withTempDir((dir) => {
+  const input = writeInput(dir, "input.json", REQUIRED_PROJECT_ROWS.map((name) => projectRow(name)));
+  const result = runMergeInputs(dir, [input], {
+    GITHUB_REPOSITORY: "mohsen1/tsz",
+    GITHUB_SERVER_URL: "https://github.com",
+    GITHUB_SHA: "abcdef0123456789abcdef0123456789abcdef01",
+    GITHUB_RUN_ID: "123456",
+    GITHUB_RUN_ATTEMPT: "2",
+    GITHUB_RUN_NUMBER: "77",
+    GITHUB_WORKFLOW: "Bench",
+    GITHUB_EVENT_NAME: "workflow_dispatch",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const merged = JSON.parse(fs.readFileSync(result.output, "utf8"));
+  assert.deepEqual(merged.artifact_source, {
+    generated_at: merged.artifact_source.generated_at,
+    source_commit: "abcdef0123456789abcdef0123456789abcdef01",
+    run_status: "completed",
+    workflow: "Bench",
+    run_id: "123456",
+    run_attempt: "2",
+    run_number: "77",
+    event_name: "workflow_dispatch",
+    artifact_url: "https://github.com/mohsen1/tsz/actions/runs/123456",
+  });
+  assert.match(merged.artifact_source.generated_at, /^\d{4}-\d{2}-\d{2}T/);
 });
 
 withTempDir((dir) => {
@@ -121,6 +163,17 @@ withTempDir((dir) => {
   const result = runMerge(dir, rows);
   assert.equal(result.status, 1);
   assert.match(result.stderr, /rxjs-project: missing compatibility\.peak_memory_bytes/);
+});
+
+withTempDir((dir) => {
+  const rows = REQUIRED_PROJECT_ROWS.map((name) => {
+    if (name !== "rxjs-project") return projectRow(name);
+    const { artifact_source: _artifactSource, ...compatibility } = REQUIRED_COMPATIBILITY_FIELDS;
+    return projectRow(name, compatibility);
+  });
+  const result = runMerge(dir, rows);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /rxjs-project: missing compatibility\.artifact_source/);
 });
 
 withTempDir((dir) => {

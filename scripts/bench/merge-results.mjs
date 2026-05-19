@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import {
   COMPILE_CANARY_PROJECT_ROWS,
   REQUIRED_COMPATIBILITY_FIELDS,
@@ -51,6 +52,31 @@ const PROJECT_COMPATIBILITY_ROW_SET = new Set([
   ...REQUIRED_PROJECT_ROWS,
   ...COMPILE_CANARY_PROJECT_ROWS,
 ]);
+
+function currentGitSha() {
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  } catch {
+    return null;
+  }
+}
+
+function artifactSource() {
+  const repository = process.env.GITHUB_REPOSITORY || null;
+  const runId = process.env.GITHUB_RUN_ID || null;
+  const serverUrl = process.env.GITHUB_SERVER_URL || "https://github.com";
+  return {
+    generated_at: new Date().toISOString(),
+    source_commit: process.env.GITHUB_SHA || process.env.TSZ_SOURCE_COMMIT || currentGitSha(),
+    run_status: process.env.TSZ_ARTIFACT_RUN_STATUS || (runId ? "completed" : "manual"),
+    workflow: process.env.GITHUB_WORKFLOW || null,
+    run_id: runId,
+    run_attempt: process.env.GITHUB_RUN_ATTEMPT || null,
+    run_number: process.env.GITHUB_RUN_NUMBER || null,
+    event_name: process.env.GITHUB_EVENT_NAME || null,
+    artifact_url: repository && runId ? `${serverUrl}/${repository}/actions/runs/${runId}` : null,
+  };
+}
 
 function hasProjectCompatibilityRows(rows) {
   return rows.some((row) => PROJECT_COMPATIBILITY_ROW_SET.has(row?.name));
@@ -145,6 +171,7 @@ const projectCompatibilityRequiredFields = hasProjectCompatibilityRows(results);
 
 const merged = {
   generated_at: new Date().toISOString(),
+  artifact_source: artifactSource(),
   benchmark_runner: "scripts/bench/bench-vs-tsgo.sh",
   merged_from: payloads.map(({ file }) => path.basename(file)).sort(),
   validation: {

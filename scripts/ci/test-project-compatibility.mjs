@@ -55,6 +55,14 @@ withTempDir((dir) => {
       "type-fest|https://github.com/sindresorhus/type-fest.git|4005f60",
       "type-fest|https://github.com/sindresorhus/type-fest.git|4005f60",
     ].join("\n"),
+    GITHUB_REPOSITORY: "mohsen1/tsz",
+    GITHUB_SERVER_URL: "https://github.com",
+    GITHUB_SHA: "abcdef0123456789abcdef0123456789abcdef01",
+    GITHUB_RUN_ID: "123456",
+    GITHUB_RUN_ATTEMPT: "2",
+    GITHUB_RUN_NUMBER: "77",
+    GITHUB_WORKFLOW: "CI",
+    GITHUB_EVENT_NAME: "pull_request",
   });
 
   assert.equal(result.status, 0, result.stderr);
@@ -83,6 +91,18 @@ withTempDir((dir) => {
       ref: "4005f60",
     },
   ]);
+  assert.deepEqual(row.artifact_source, {
+    generated_at: row.artifact_source.generated_at,
+    source_commit: "abcdef0123456789abcdef0123456789abcdef01",
+    run_status: "completed",
+    workflow: "CI",
+    run_id: "123456",
+    run_attempt: "2",
+    run_number: "77",
+    event_name: "pull_request",
+    artifact_url: "https://github.com/mohsen1/tsz/actions/runs/123456",
+  });
+  assert.match(row.artifact_source.generated_at, /^\d{4}-\d{2}-\d{2}T/);
   assert.equal(row.diagnostic_subsystems[0].subsystem, "evaluation-inference-instantiation");
   assert.equal(row.diagnostic_subsystems[1].subsystem, "uncoded diagnostic");
 });
@@ -386,6 +406,8 @@ withTempDir((dir) => {
     SUMMARY_PROJECT_FILTER: "type",
     SUMMARY_ALLOW_FAILURES: "1",
     SUMMARY_FAILURES: "1",
+    TSZ_ARTIFACT_RUN_STATUS: "manual",
+    TSZ_SOURCE_COMMIT: "0123456789abcdef0123456789abcdef01234567",
   });
 
   assert.equal(result.status, 0, result.stderr);
@@ -395,6 +417,8 @@ withTempDir((dir) => {
   assert.equal(payload.allow_failures, true);
   assert.equal(payload.failures, 1);
   assert.equal(payload.row_count, 2);
+  assert.equal(payload.artifact_source.source_commit, "0123456789abcdef0123456789abcdef01234567");
+  assert.equal(payload.artifact_source.run_status, "manual");
   assert.equal(payload.malformed_jsonl_lines, 1);
   assert.equal(payload.by_state.green, 1);
   assert.equal(payload.by_state.red, 1);

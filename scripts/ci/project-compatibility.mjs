@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import {
   normalizePath,
   semanticFamiliesForFile,
@@ -37,6 +38,31 @@ const TYPE_CHALLENGES_PROJECT_ROWS = new Set([
   "type-challenges-solutions-project",
   "type-challenges-assertions-tsc-clean",
 ]);
+
+function currentGitSha() {
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  } catch {
+    return null;
+  }
+}
+
+function artifactSource() {
+  const repository = process.env.GITHUB_REPOSITORY || null;
+  const runId = process.env.GITHUB_RUN_ID || null;
+  const serverUrl = process.env.GITHUB_SERVER_URL || "https://github.com";
+  return {
+    generated_at: new Date().toISOString(),
+    source_commit: process.env.GITHUB_SHA || process.env.TSZ_SOURCE_COMMIT || currentGitSha(),
+    run_status: process.env.TSZ_ARTIFACT_RUN_STATUS || (runId ? "completed" : "manual"),
+    workflow: process.env.GITHUB_WORKFLOW || null,
+    run_id: runId,
+    run_attempt: process.env.GITHUB_RUN_ATTEMPT || null,
+    run_number: process.env.GITHUB_RUN_NUMBER || null,
+    event_name: process.env.GITHUB_EVENT_NAME || null,
+    artifact_url: repository && runId ? `${serverUrl}/${repository}/actions/runs/${runId}` : null,
+  };
+}
 
 function ownerTrackForSubsystem(subsystem) {
   if (subsystem?.startsWith("type-challenges ")) {
@@ -530,6 +556,7 @@ function record() {
     files_reached: toNumber(process.env.COMPAT_FILES_REACHED),
     peak_memory_bytes: toNumber(process.env.COMPAT_PEAK_MEMORY_BYTES),
     fixture_sources: fixtureSources,
+    artifact_source: artifactSource(),
   };
   const assertionMetadata = typeChallengesCleanAssertionMetadata(projectName);
   if (assertionMetadata) {
@@ -564,6 +591,7 @@ function summarize() {
 
   const summary = {
     generated_at: new Date().toISOString(),
+    artifact_source: artifactSource(),
     project_set: process.env.SUMMARY_PROJECT_SET || "required",
     project_filter: process.env.SUMMARY_PROJECT_FILTER || "",
     allow_failures: process.env.SUMMARY_ALLOW_FAILURES === "1",

@@ -150,6 +150,11 @@ function firstPresent(...values) {
   return null;
 }
 
+function shortCommit(value) {
+  const text = String(value || "").trim();
+  return /^[0-9a-f]{40}$/i.test(text) ? text.slice(0, 12) : text || null;
+}
+
 const DIAGNOSTIC_SUBSYSTEM_RULES = [
   ["project-config", new Set(["TS18003", "TS5052", "TS5069", "TS5070", "TS5083", "TS5110", "TS6053", "TS2688"])],
   ["syntax-parser-jsdoc", new Set(["TS1005", "TS1109", "TS1128", "TS17004", "TS8010", "TS8023", "TS8032"])],
@@ -297,6 +302,7 @@ const COMPATIBILITY_METADATA_FIELDS = [
   ["fixture_sources", "fixture sources"],
   ["emit_status", "emit status"],
   ["dts_status", "dts status"],
+  ["artifact_source", "artifact source"],
 ];
 
 function missingCompatibilityMetadata(row) {
@@ -469,6 +475,9 @@ function compatibilityRowFor(definition, allResults) {
     peakMemoryBytes: compatibility.peak_memory_bytes ?? null,
     emitStatus: compatibility.emit_status || "not in scope (noEmit project check)",
     dtsStatus: compatibility.dts_status || "not in scope (noEmit project check)",
+    artifactSource: compatibility.artifact_source && typeof compatibility.artifact_source === "object"
+      ? compatibility.artifact_source
+      : null,
     knownBlockers: normalizedKnownBlockers(compatibility, diagnosticSubsystems, fallbackBlockers),
     exitCodes: compatibility.exit_codes && typeof compatibility.exit_codes === "object"
       ? {
@@ -2064,6 +2073,17 @@ export function getProjectCompatibilityDashboard() {
     });
   };
 
+  const artifactSourceParts = (row) => {
+    const source = row.artifactSource && typeof row.artifactSource === "object" ? row.artifactSource : null;
+    if (!source) return [];
+    const parts = [];
+    if (source.run_status) parts.push(`run: ${source.run_status}`);
+    const commit = shortCommit(source.source_commit);
+    if (commit) parts.push(`commit: ${commit}`);
+    if (source.run_id) parts.push(`run id: ${source.run_id}`);
+    return parts;
+  };
+
   const renderRowDetails = (row) => {
     const deltas = diagnosticDeltas(row);
     const diagnosticCodes = Array.isArray(row.diagnosticCodes) ? row.diagnosticCodes.filter(Boolean).slice(0, 8) : [];
@@ -2094,6 +2114,7 @@ export function getProjectCompatibilityDashboard() {
       row.primarySubsystem ? `subsystem: ${row.primarySubsystem}` : "",
       row.emitStatus ? `emit: ${row.emitStatus}` : "",
       row.dtsStatus ? `dts: ${row.dtsStatus}` : "",
+      ...artifactSourceParts(row),
       ...measurementParts(row),
       ...fixtureSourceParts(row),
       ...assertionCandidateParts(row),

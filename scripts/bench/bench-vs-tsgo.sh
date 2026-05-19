@@ -1774,6 +1774,7 @@ export_results_json() {
     PROJECT_README_CANDIDATES_JSON_VALUE="$project_readme_candidates_json" \
     node - "$out_file" <<'NODE'
 const fs = require("node:fs");
+const cp = require("node:child_process");
 const os = require("node:os");
 const path = require("node:path");
 const outFile = process.argv[2];
@@ -1846,6 +1847,31 @@ function readSourceRows() {
   } catch {
     return new Map();
   }
+}
+
+function currentGitSha() {
+  try {
+    return cp.execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  } catch {
+    return null;
+  }
+}
+
+function artifactSource() {
+  const repository = process.env.GITHUB_REPOSITORY || null;
+  const runId = process.env.GITHUB_RUN_ID || null;
+  const serverUrl = process.env.GITHUB_SERVER_URL || "https://github.com";
+  return {
+    generated_at: new Date().toISOString(),
+    source_commit: process.env.GITHUB_SHA || process.env.TSZ_SOURCE_COMMIT || currentGitSha(),
+    run_status: process.env.TSZ_ARTIFACT_RUN_STATUS || (runId ? "completed" : "manual"),
+    workflow: process.env.GITHUB_WORKFLOW || null,
+    run_id: runId,
+    run_attempt: process.env.GITHUB_RUN_ATTEMPT || null,
+    run_number: process.env.GITHUB_RUN_NUMBER || null,
+    event_name: process.env.GITHUB_EVENT_NAME || null,
+    artifact_url: repository && runId ? `${serverUrl}/${repository}/actions/runs/${runId}` : null,
+  };
 }
 
 function fallbackCompatibility(row) {
@@ -2032,6 +2058,7 @@ function compatibilityFor(row, compatibilityRows) {
       reduction_candidates: reductionCandidatesFrom(diagnosticDeltas),
       emit_status: recorded.emit_status || "not in scope (noEmit project check)",
       dts_status: recorded.dts_status || "not in scope (noEmit project check)",
+      artifact_source: recorded.artifact_source || artifactSource(),
       known_blockers: knownBlockersFrom(recorded, diagnosticSubsystems, diagnosticDeltas),
       exit_codes: recorded.exit_codes && typeof recorded.exit_codes === "object"
         ? {
@@ -2131,6 +2158,7 @@ function runnerEnvironment() {
 
 const payload = {
   generated_at: new Date().toISOString(),
+  artifact_source: artifactSource(),
   benchmark_runner: "scripts/bench/bench-vs-tsgo.sh",
   runner_environment: runnerEnvironment(),
   validation: {
