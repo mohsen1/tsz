@@ -112,6 +112,75 @@ export class Task<T> extends Promise<T> { }
     );
 }
 
+/// A same-file user declaration named `Promise` must not become the standard
+/// library Promise identity. The lib lookup used by `sym_id_is_lib_promise`
+/// must skip current-file `file_locals`, otherwise a shadowed Promise class is
+/// incorrectly treated as the lib Promise.
+#[test]
+fn same_file_user_promise_shadow_is_not_lib_promise_identity() {
+    let lib_files = load_lib_files(&["lib.es2015.promise.d.ts", "lib.es5.d.ts"]);
+    if lib_files.is_empty() {
+        return;
+    }
+
+    let (arena, binder, _) = parse_and_bind_with_libs(
+        "./shadow.ts",
+        r#"
+declare class Promise<T> { }
+export class Task<T> extends Promise<T> { }
+"#,
+        &lib_files,
+    );
+    let promise_sym = binder
+        .file_locals
+        .get("Promise")
+        .expect("same-file Promise shadow should be bound");
+    let task_sym = binder
+        .file_locals
+        .get("Task")
+        .expect("Task should be bound");
+    let types = TypeInterner::new();
+
+    let mut checker = CheckerState::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "./shadow.ts".to_string(),
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let lib_contexts: Vec<_> = lib_files
+        .iter()
+        .map(|lib| CheckerLibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    let lib_count = lib_contexts.len();
+    checker.ctx.set_lib_contexts(lib_contexts);
+    checker.ctx.set_actual_lib_file_count(lib_count);
+
+    assert!(
+        !checker.ctx.sym_id_is_lib_promise(promise_sym),
+        "same-file Promise shadow must not be treated as the standard-library Promise"
+    );
+
+    let result = checker.promise_like_type_argument_from_class(
+        task_sym,
+        &[TypeId::STRING],
+        &mut AliasCycleTracker::new(),
+    );
+    assert!(
+        result.is_none(),
+        "Task extends a same-file Promise shadow, not lib Promise; got: {result:?}"
+    );
+}
+
 /// Structural rule: when a class in a *different* file extends the lib `Promise<T>`,
 /// `promise_like_type_argument_from_class` must traverse the cross-file heritage
 /// clause and return the resolved type argument `T`.

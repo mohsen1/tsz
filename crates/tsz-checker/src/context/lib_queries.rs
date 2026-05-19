@@ -65,6 +65,20 @@ impl<'a> CheckerContext<'a> {
             })
     }
 
+    fn actual_lib_global_type_symbol_id(&self, name: &str) -> Option<SymbolId> {
+        if name.contains('.') {
+            return None;
+        }
+
+        for lib_ctx in self.lib_contexts.iter().take(self.actual_lib_file_count) {
+            if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
+                return Some(sym_id);
+            }
+        }
+
+        self.actual_lib_symbol_id_for_bare_name(name)
+    }
+
     pub fn file_local_type_shadow_for_lib_name(&self, name: &str) -> bool {
         use tsz_binder::symbol_flags;
 
@@ -334,13 +348,11 @@ impl<'a> CheckerContext<'a> {
 
     /// `SymbolId` of the standard-library `Promise` declaration, if loaded.
     ///
-    /// Uses the same lookup chain as `resolve_lib_type_by_name` but skips full
-    /// type materialisation. Compare the returned id with a `SymbolId` directly
-    /// to decide whether a symbol IS the lib `Promise` — do not re-match on the
-    /// symbol's name string.
+    /// Looks only at actual lib contexts or merged/cloned lib symbols. Compare
+    /// the returned id with a `SymbolId` directly to decide whether a symbol IS
+    /// the lib `Promise` — do not re-match on the symbol's name string.
     pub fn lib_promise_sym_id(&self) -> Option<SymbolId> {
-        self.binder
-            .get_global_type_with_libs("Promise", &self.lib_binders_cached)
+        self.actual_lib_global_type_symbol_id("Promise")
     }
 
     /// True when `sym_id` is the standard-library `Promise` symbol.
@@ -349,9 +361,7 @@ impl<'a> CheckerContext<'a> {
     }
 
     fn sym_id_is_lib_promise_like(&self, sym_id: SymbolId) -> bool {
-        self.binder
-            .get_global_type_with_libs("PromiseLike", &self.lib_binders_cached)
-            == Some(sym_id)
+        self.actual_lib_global_type_symbol_id("PromiseLike") == Some(sym_id)
     }
 
     /// True when `sym_id` is the standard-library `Promise` or `PromiseLike` symbol.
