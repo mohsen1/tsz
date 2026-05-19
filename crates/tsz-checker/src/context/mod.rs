@@ -1787,6 +1787,7 @@ impl ProgramContext {
                     Default::default(),
                 ),
                 patterns: Vec::new(),
+                suffix_patterns: Vec::new(),
                 pattern_set: None,
             })
         };
