@@ -967,6 +967,19 @@ impl TypeResolver for TypeEnvironment {
             return Some(ty);
         }
 
+        if self
+            .definition_store
+            .as_ref()
+            .is_some_and(|store| store.contains(def_id))
+        {
+            tracing::trace!(
+                target: "tsz::solver::def_id",
+                def_id = def_id.0,
+                "resolve_lazy skipped raw SymbolId fallback for existing DefId without body"
+            );
+            return None;
+        }
+
         // Fallback: `interner.reference(SymbolRef(N))` creates `Lazy(DefId(N))`
         // where N is the raw SymbolId. Look up the real DefId via symbol_to_def.
         let real_def = self.symbol_to_def.get(&def_id.0).copied().or_else(|| {
@@ -1207,6 +1220,29 @@ mod tests {
             env.resolve_lazy(DefId(raw_symbol.0), &interner),
             Some(instance_type)
         );
+    }
+
+    #[test]
+    fn resolve_lazy_does_not_redirect_existing_def_id_by_raw_symbol_collision() {
+        let mut env = TypeEnvironment::new();
+        let interner = crate::TypeInterner::new();
+        let store = Arc::new(DefinitionStore::new());
+
+        let unresolved_def = store.register(crate::def::DefinitionInfo::interface(
+            interner.intern_string("UnresolvedDef"),
+            vec![],
+            vec![],
+        ));
+        let unrelated_def = store.register(crate::def::DefinitionInfo::interface(
+            interner.intern_string("UnrelatedSymbolTarget"),
+            vec![],
+            vec![],
+        ));
+        store.set_body(unrelated_def, TypeId::NUMBER);
+        store.register_symbol_mapping(unresolved_def.0, 0, unrelated_def);
+        env.set_definition_store(Arc::clone(&store));
+
+        assert_eq!(env.resolve_lazy(unresolved_def, &interner), None);
     }
 
     #[test]
