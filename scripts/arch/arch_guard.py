@@ -134,9 +134,9 @@ LINE_LIMIT_CHECKS = [
 
 FILE_LINE_LIMIT_CHECKS = [
     (
-        "Core boundary: tsz-core lib facade must stay under 500 LOC",
+        "Core boundary: tsz-core lib facade must stay at current 365 LOC baseline",
         ROOT / "crates" / "tsz-core" / "src" / "lib.rs",
-        500,
+        365,
     ),
     (
         "Checker query boundary: common quarantine must not grow (#8225)",
