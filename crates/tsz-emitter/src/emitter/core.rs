@@ -165,11 +165,8 @@ pub struct PrinterOptions {
     pub jsx_import_source: Option<String>,
     /// Module name to use for AMD/System outFile bundles.
     pub bundled_module_name: Option<String>,
-    /// Per-base AMD factory-parameter counters accumulated from previous files
-    /// in the same outFile bundle. Each subsequent file in the bundle starts its
-    /// `module_temp_counters` from these values so parameter names are unique
-    /// across the entire bundled output (e.g. `m1_1` in the first file, `m1_2`
-    /// in the second), matching tsc behavior.
+    /// Per-base AMD factory-parameter counters from preceding files in the bundle.
+    /// Seeds `module_temp_counters` so each file's parameters are globally unique.
     pub bundle_module_counters: FxHashMap<String, u32>,
     /// When true, suppress "use strict" emission even if module kind is CJS.
     /// Set when module was overridden from ESM/preserve to CJS for .cts/.cjs files.
@@ -1504,10 +1501,8 @@ impl<'a> Printer<'a> {
         self.writer.take_output()
     }
 
-    /// Returns the AMD factory-parameter counters accumulated during emission.
-    /// The CLI driver calls this after each file in an outFile AMD bundle so
-    /// the next file's `PrinterOptions::bundle_module_counters` starts where
-    /// this file left off, making parameter names unique across the bundle.
+    /// Returns AMD factory-parameter counters accumulated during emission, for
+    /// threading into the next file's `PrinterOptions::bundle_module_counters`.
     pub const fn bundle_module_counters(&self) -> &FxHashMap<String, u32> {
         &self.ctx.module_state.module_temp_counters
     }
