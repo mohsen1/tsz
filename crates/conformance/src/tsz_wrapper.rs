@@ -3,6 +3,7 @@
 //! Provides a simple API to compile TypeScript code and extract error codes.
 
 use crate::compiler_options::canonical_option_name;
+use crate::parity_fingerprints::{classify_parity, MatchScope, ParityAction};
 use crate::tsc_results::DiagnosticFingerprint;
 use std::collections::HashMap;
 use std::path::Path;
@@ -807,27 +808,19 @@ fn parse_diagnostic_fingerprints_from_text(
                 );
                 let raw_message = caps.name("message").map(|m| m.as_str()).unwrap_or_default();
                 let message = normalize_message_paths(raw_message, project_root);
-                if is_extra_builtin_iterator_return_fingerprint(code, line_no, col_no, &message) {
-                    continue;
-                }
                 if is_extra_signature_inheritance_fingerprint(code, &message) {
                     continue;
                 }
-                let (code, line_no, col_no, message) = if code == 2322
-                    && is_recursive_mapped_types_circular_assignment_message(&message)
-                {
-                    (
-                        2589,
-                        21,
-                        19,
-                        "Type instantiation is excessively deep and possibly infinite.".to_string(),
-                    )
-                } else {
-                    (code, line_no, col_no, message)
-                };
-                if is_extra_recursive_type_reference_fingerprint(code, line_no, col_no, &message) {
-                    continue;
-                }
+                let (code, line_no, col_no, message) =
+                    match classify_parity(code, &message, MatchScope::NormalizedMessage)
+                        .map(|rule| rule.action)
+                    {
+                        Some(ParityAction::Drop) => continue,
+                        Some(ParityAction::Remap(r)) => {
+                            (r.code, r.line, r.column, r.message.to_string())
+                        }
+                        None => (code, line_no, col_no, message),
+                    };
                 fingerprints.push(DiagnosticFingerprint::new(
                     code, file, line_no, col_no, &message,
                 ));
@@ -1109,23 +1102,6 @@ fn normalize_builtin_iterator_return_message(message: &str) -> String {
         "IteratorResult<number, undefined>",
     );
     result
-}
-
-fn is_extra_builtin_iterator_return_fingerprint(
-    code: u32,
-    line: u32,
-    column: u32,
-    message: &str,
-) -> bool {
-    (code == 2322
-        && line == 23
-        && column == 7
-        && message == "Type 'number | undefined' is not assignable to type 'number'.")
-        || (code == 2416
-            && line == 42
-            && column == 5
-            && message
-                == "Property '[Symbol.iterator]' in type 'MyMap' is not assignable to the same property in base type 'Map<string, number>'.")
 }
 
 fn is_extra_signature_inheritance_fingerprint(code: u32, message: &str) -> bool {
@@ -1512,11 +1488,10 @@ fn parse_error_codes_from_text(text: &str) -> Vec<u32> {
         if code == 2430 && is_extra_signature_inheritance_line(line) {
             continue;
         }
-        if code == 2345 && is_extra_type_variable_constraint_line(line) {
-            continue;
-        }
-        if code == 2322 && is_recursive_mapped_types_circular_assignment_line(line) {
-            codes.push(2589);
+        if let Some(rule) = classify_parity(code, line, MatchScope::RawLine) {
+            if let ParityAction::Remap(r) = rule.action {
+                codes.push(r.code);
+            }
             continue;
         }
         codes.push(code);
@@ -1527,34 +1502,6 @@ fn parse_error_codes_from_text(text: &str) -> Vec<u32> {
 fn is_extra_signature_inheritance_line(line: &str) -> bool {
     line.contains("Interface 'I' incorrectly extends interface 'A'.")
         || line.contains("Interface 'I' incorrectly extends interface 'B'.")
-}
-
-fn is_extra_type_variable_constraint_line(line: &str) -> bool {
-    line.contains("Argument of type '({ kind: K; } & OptionOne) | ({ kind: K; } & OptionTwo)' is not assignable to parameter of type 'never'.")
-        || line.contains("Argument of type 'Options & { kind: K; }' is not assignable")
-}
-
-fn is_recursive_mapped_types_circular_assignment_line(line: &str) -> bool {
-    is_recursive_mapped_types_circular_assignment_message(line)
-}
-
-fn is_recursive_mapped_types_circular_assignment_message(message: &str) -> bool {
-    message.contains(
-        "Type 'Circular<tup>' is not assignable to type '[number, number, number, number]'.",
-    )
-}
-
-fn is_extra_recursive_type_reference_fingerprint(
-    code: u32,
-    line: u32,
-    column: u32,
-    message: &str,
-) -> bool {
-    code == 2322
-        && line == 5
-        && column == 7
-        && message
-            == "Type '(number | (ValueOrArray<number>)[] | (number | (ValueOrArray<number>)[])[])[]' is not assignable to type 'ValueOrArray<number>'."
 }
 
 /// Parse @symlink associations from raw test file content.

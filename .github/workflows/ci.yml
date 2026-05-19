@@ -295,6 +295,16 @@ jobs:
               fi
             fi
             if [[ -n "$pr_number" ]]; then
+              main_skip_allowed=true
+              pr_wip_status=$(gh api "repos/${{ github.repository }}/pulls/${pr_number}" \
+                --jq 'if (([.labels[]?.name | select(. == "WIP")] | length) > 0) or (.title | test("(^|[[:space:]])\\[WIP\\]([[:space:]]|$)")) then "true" else "false" end' \
+                2>/dev/null || echo "false")
+              if [[ "${pr_wip_status}" == "true" ]]; then
+                echo "Merged PR #${pr_number} still carried WIP status; running main CI instead of trusting its PR run"
+                main_skip_allowed=false
+              fi
+
+              pr_changed_paths=""
               page=1
               while :; do
                 page_paths=$(gh api \
@@ -302,6 +312,7 @@ jobs:
                   --jq '.[] | (.filename, (.previous_filename // empty))' \
                   2>/dev/null || true)
                 if [[ -z "$page_paths" ]]; then break; fi
+                pr_changed_paths+="${page_paths}"$'\n'
                 cache_paths=$(printf '%s\n' "$page_paths" \
                   | grep -E '^(Cargo\.lock|Cargo\.toml|\.cargo/config\.toml)$' \
                   || true)
@@ -318,7 +329,7 @@ jobs:
                 if [[ "$page" -gt 30 ]]; then break; fi
               done
             fi
-            if [[ -n "$pr_number" && "$cache_key_changed" != "true" ]]; then
+            if [[ -n "$pr_number" && "$cache_key_changed" != "true" && "${main_skip_allowed:-true}" == "true" ]]; then
               pr_head_sha=$(gh api "repos/${{ github.repository }}/pulls/${pr_number}" \
                 --jq '.head.sha' 2>/dev/null || true)
               if [[ -n "$pr_head_sha" ]]; then
@@ -345,8 +356,24 @@ jobs:
                     --jq '[.jobs[] | select(.name == "CI Summary" and .conclusion == "success")] | length' \
                     2>/dev/null || echo "0")
                   if [[ "${required_summary_passed}" -gt 0 ]]; then
-                    echo "Latest required PR CI summary for #${pr_number} head ${pr_head_sha} passed — skipping redundant main CI"
-                    should_run=false
+                    compiler_paths_on_pr=$(printf '%s\n' "${pr_changed_paths:-}" \
+                      | grep -E '^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|crates/clippy\.toml|crates/(conformance|tsz-(binder|checker|cli|common|core|emitter|lowering|lsp|parser|scanner|solver|wasm))(/|$)|benches/|tests/|TypeScript/|scripts/(conformance|emit|fourslash|tsc|dts|snapshot)|scripts/ci/(gcp-full-ci|github-suite|gcp-cache|suite-metadata|build-dist|dist|wasm)[^/]*\.sh)' \
+                      || true)
+                    if [[ -n "$compiler_paths_on_pr" ]]; then
+                      heavy_checks_passed=$(gh api \
+                        "repos/${{ github.repository }}/actions/runs/${latest_ci_run_id}/jobs?per_page=100" \
+                        --jq '[.jobs[] | select((.name == "conformance-snapshot-gate" or .name == "conformance-aggregate" or .name == "fourslash-aggregate" or .name == "emit") and .conclusion == "success")] | length' \
+                        2>/dev/null || echo "0")
+                      if [[ "${heavy_checks_passed}" -ge 4 ]]; then
+                        echo "Latest required PR CI summary and heavy compiler gates for #${pr_number} head ${pr_head_sha} passed — skipping redundant main CI"
+                        should_run=false
+                      else
+                        echo "Latest PR CI for #${pr_number} passed CI Summary but not all heavy compiler gates (${heavy_checks_passed}/4); running main CI"
+                      fi
+                    else
+                      echo "Latest required PR CI summary for non-compiler PR #${pr_number} head ${pr_head_sha} passed — skipping redundant main CI"
+                      should_run=false
+                    fi
                   else
                     echo "Latest PR CI for #${pr_number} head ${pr_head_sha} passed without a required CI Summary — running main CI"
                   fi
@@ -554,7 +581,23 @@ jobs:
           fi
           cargo install cargo-shear --version "${CARGO_SHEAR_VERSION}" --locked
       - name: Run cargo shear
-        run: cargo shear
+        shell: bash
+        run: |
+          set -euo pipefail
+          (
+            while true; do
+              sleep "${TSZ_CI_CARGO_SHEAR_HEARTBEAT_SECONDS:-60}"
+              echo "cargo shear still running at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            done
+          ) &
+          heartbeat_pid="$!"
+          set +e
+          cargo shear
+          cargo_shear_rc="$?"
+          set -e
+          kill "$heartbeat_pid" >/dev/null 2>&1 || true
+          wait "$heartbeat_pid" 2>/dev/null || true
+          exit "$cargo_shear_rc"
 
   cargo-deny:
     name: cargo-deny

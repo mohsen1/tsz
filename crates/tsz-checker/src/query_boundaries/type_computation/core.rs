@@ -144,10 +144,34 @@ pub(crate) fn is_fresh_literal_indexed_object(db: &dyn TypeDatabase, type_id: Ty
     db.object_shape(shape_id).is_fresh_literal()
 }
 
+pub(crate) fn union_context_prefers_tuple_array_literal(
+    db: &dyn TypeDatabase,
+    contextual: TypeId,
+) -> bool {
+    let Some(members) = crate::query_boundaries::common::union_members(db, contextual) else {
+        return false;
+    };
+
+    let mut saw_tuple = false;
+    for member in members {
+        let Some(applicable) = crate::query_boundaries::common::array_applicable_type(db, member)
+        else {
+            return false;
+        };
+
+        if !crate::query_boundaries::common::is_tuple_type(db, applicable) {
+            return false;
+        }
+        saw_tuple = true;
+    }
+
+    saw_tuple
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tsz_solver::{PropertyInfo, TypeInterner};
+    use tsz_solver::{PropertyInfo, TupleElement, TypeInterner};
 
     fn fresh_object(db: &TypeInterner, name: &str, ty: TypeId) -> TypeId {
         db.object_fresh(vec![PropertyInfo::new(db.intern_string(name), ty)])
@@ -155,6 +179,15 @@ mod tests {
 
     fn union_members(db: &TypeInterner, ty: TypeId) -> Vec<TypeId> {
         tsz_solver::type_queries::get_union_members(db, ty).unwrap_or_else(|| vec![ty])
+    }
+
+    fn tuple(db: &TypeInterner, type_id: TypeId) -> TypeId {
+        db.tuple(vec![TupleElement {
+            type_id,
+            name: None,
+            optional: false,
+            rest: false,
+        }])
     }
 
     #[test]
@@ -185,6 +218,42 @@ mod tests {
                 &db, member, "right"
             ));
         }
+    }
+
+    #[test]
+    fn union_context_prefers_tuple_when_all_array_shapes_are_tuples() {
+        let db = TypeInterner::new();
+        let first = tuple(&db, TypeId::STRING);
+        let second = tuple(&db, TypeId::NUMBER);
+        let contextual = db.union(vec![first, second]);
+
+        assert!(union_context_prefers_tuple_array_literal(&db, contextual));
+    }
+
+    #[test]
+    fn union_context_does_not_prefer_tuple_for_array_member() {
+        let db = TypeInterner::new();
+        let contextual = db.union(vec![tuple(&db, TypeId::STRING), db.array(TypeId::NUMBER)]);
+
+        assert!(!union_context_prefers_tuple_array_literal(&db, contextual));
+    }
+
+    #[test]
+    fn union_context_does_not_prefer_tuple_for_non_applicable_member() {
+        let db = TypeInterner::new();
+        let contextual = db.union(vec![tuple(&db, TypeId::STRING), TypeId::NUMBER]);
+
+        assert!(!union_context_prefers_tuple_array_literal(&db, contextual));
+    }
+
+    #[test]
+    fn non_union_context_does_not_prefer_tuple_array_literal() {
+        let db = TypeInterner::new();
+
+        assert!(!union_context_prefers_tuple_array_literal(
+            &db,
+            tuple(&db, TypeId::STRING)
+        ));
     }
 
     #[test]
