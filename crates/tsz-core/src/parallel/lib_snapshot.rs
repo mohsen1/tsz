@@ -71,8 +71,8 @@ const ENV_DIR: &str = "TSZ_LIB_CACHE_DIR";
 struct LibSnapshot {
     /// File name as stored on the original `LibFile`.
     file_name: String,
-    /// Hash of `(file_name, source_text)`. Verified on load to detect
-    /// corrupted entries; the lookup also keys on the same hash via the
+    /// Content fingerprint used by the cache key. Verified on load to detect
+    /// corrupted entries; the lookup also keys on the same fingerprint via the
     /// filename, but verifying after load catches bit-rot.
     content_hash: u64,
     /// The parsed AST.
@@ -91,6 +91,14 @@ pub(super) fn content_hash(file_name: &str, source_text: &str) -> u64 {
     hasher.finish()
 }
 
+pub(super) fn content_hash_from_source_hash(file_name: &str, source_hash: u64) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = rustc_hash::FxHasher::default();
+    file_name.hash(&mut hasher);
+    source_hash.hash(&mut hasher);
+    hasher.finish()
+}
+
 /// Persistent representation of an ordered lib-set snapshot.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct LibSnapshotSet {
@@ -98,12 +106,11 @@ struct LibSnapshotSet {
     files: Vec<LibSnapshot>,
 }
 
-fn lib_set_hash(keys: &[(String, u64)]) -> u64 {
+fn lib_set_hash(keys: &[(&str, u64)]) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = rustc_hash::FxHasher::default();
     keys.len().hash(&mut hasher);
-    for (file_name, content_hash) in keys {
-        file_name.hash(&mut hasher);
+    for (_, content_hash) in keys {
         content_hash.hash(&mut hasher);
     }
     hasher.finish()
@@ -194,7 +201,7 @@ pub(super) fn try_load(file_name: &str, source_text: &str) -> Option<Arc<LibFile
 ///
 /// The key contains each lib file's name and content hash in final load order,
 /// so a hit is valid only for the exact same lib graph and physical contents.
-pub(super) fn try_load_many(keys: &[(String, u64)]) -> Option<Vec<Arc<LibFile>>> {
+pub(super) fn try_load_many(keys: &[(&str, u64)]) -> Option<Vec<Arc<LibFile>>> {
     if keys.is_empty() || !is_enabled() {
         return None;
     }
@@ -264,7 +271,7 @@ pub(super) fn try_store(file_name: &str, source_text: &str, lib: &Arc<LibFile>) 
 
 /// Persist an ordered lib-set snapshot. Errors are propagated to the caller so
 /// it can log and continue, matching `try_store`.
-pub(super) fn try_store_many(keys: &[(String, u64)], libs: &[Arc<LibFile>]) -> Result<()> {
+pub(super) fn try_store_many(keys: &[(&str, u64)], libs: &[Arc<LibFile>]) -> Result<()> {
     if keys.is_empty() || libs.len() != keys.len() || !is_enabled() {
         return Ok(());
     }
@@ -277,7 +284,7 @@ pub(super) fn try_store_many(keys: &[(String, u64)], libs: &[Arc<LibFile>]) -> R
     let mut files = Vec::with_capacity(libs.len());
     for ((file_name, content_hash), lib) in keys.iter().zip(libs) {
         files.push(LibSnapshot {
-            file_name: file_name.clone(),
+            file_name: (*file_name).to_string(),
             content_hash: *content_hash,
             arena: (*lib.arena).clone(),
             binder: (*lib.binder).clone(),
@@ -394,14 +401,8 @@ mod tests {
         let first = parse_and_bind(first_name, first_source);
         let second = parse_and_bind(second_name, second_source);
         let keys = vec![
-            (
-                first_name.to_string(),
-                content_hash(first_name, first_source),
-            ),
-            (
-                second_name.to_string(),
-                content_hash(second_name, second_source),
-            ),
+            (first_name, content_hash(first_name, first_source)),
+            (second_name, content_hash(second_name, second_source)),
         ];
 
         try_store_many(&keys, &[Arc::clone(&first), Arc::clone(&second)])

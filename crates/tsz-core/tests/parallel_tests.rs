@@ -177,6 +177,17 @@ fn test_resolve_lib_reference_path_uses_embedded_virtual_root_without_disk_probe
 }
 
 #[test]
+fn test_resolve_generated_embedded_lib_reference_path_uses_normalized_refs() {
+    let dom = resolve_generated_embedded_lib_reference_path("dom").expect("resolve dom");
+    assert_eq!(dom, Path::new("/embedded-lib/dom.d.ts"));
+
+    let es5 = resolve_generated_embedded_lib_reference_path("lib.d.ts").expect("resolve es5");
+    assert_eq!(es5, Path::new("/embedded-lib/es5.d.ts"));
+
+    assert!(resolve_generated_embedded_lib_reference_path("definitely-not-a-lib").is_none());
+}
+
+#[test]
 fn test_collect_lib_files_recursive_cached_reads_embedded_virtual_root_as_static() {
     let mut loaded = FxHashSet::default();
     let mut file_contents = Vec::new();
@@ -194,8 +205,53 @@ fn test_collect_lib_files_recursive_cached_reads_embedded_virtual_root_as_static
         .iter()
         .find(|(name, _)| name == "/embedded-lib/es2020.d.ts")
         .expect("es2020 entry");
-    assert!(matches!(source_text, LibSourceText::Static(_)));
+    assert!(matches!(
+        source_text,
+        LibSourceText::Static {
+            text: _,
+            content_hash: _
+        }
+    ));
     assert!(loaded.iter().all(|path| path.starts_with("/embedded-lib")));
+}
+
+#[test]
+fn test_collect_lib_files_recursive_cached_uses_owned_references_for_physical_libs() {
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let es2020_path = temp_dir.path().join("lib.es2020.d.ts");
+    let custom_path = temp_dir.path().join("lib.custom.d.ts");
+    fs::write(&es2020_path, "").expect("write es2020 lib");
+    fs::write(&custom_path, "").expect("write custom lib");
+
+    let es2020_path = es2020_path.canonicalize().expect("canonical es2020");
+    let custom_path = custom_path.canonicalize().expect("canonical custom");
+    let mut file_cache = FxHashMap::default();
+    file_cache.insert(
+        es2020_path.clone(),
+        "/// <reference lib=\"custom\" />\ninterface PhysicalEs2020 {}\n".to_string(),
+    );
+    file_cache.insert(
+        custom_path.clone(),
+        "interface PhysicalCustom {}\n".to_string(),
+    );
+
+    let mut loaded = FxHashSet::default();
+    let mut file_contents = Vec::new();
+    collect_lib_files_recursive_cached(&es2020_path, &mut loaded, &mut file_contents, &file_cache)
+        .expect("collect physical lib files");
+
+    assert!(
+        file_contents
+            .iter()
+            .any(|(name, _)| name == custom_path.to_string_lossy().as_ref()),
+        "physical lib references should be parsed from owned source text"
+    );
+    assert!(
+        file_contents
+            .iter()
+            .all(|(name, _)| !name.starts_with("/embedded-lib")),
+        "physical libs must not use embedded reference metadata"
+    );
 }
 
 #[test]

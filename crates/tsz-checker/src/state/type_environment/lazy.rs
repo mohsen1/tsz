@@ -1335,6 +1335,15 @@ impl<'a> CheckerState<'a> {
         &mut self,
         def_id: tsz_solver::DefId,
     ) -> Option<TypeId> {
+        if let Ok(env) = self.ctx.type_env.try_borrow()
+            && let Some(body) = env.get_def(def_id)
+            && body != TypeId::ERROR
+            && body != TypeId::ANY
+            && lazy_def_id(self.ctx.types, body) != Some(def_id)
+        {
+            return Some(body);
+        }
+
         let def_kind = self.ctx.definition_store.get(def_id).map(|info| info.kind);
         let is_class_def = matches!(def_kind, Some(tsz_solver::def::DefKind::Class));
         let def_identity = self.ctx.def_symbol_identity(def_id);

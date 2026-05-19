@@ -62,14 +62,17 @@ type Reexports = FxHashMap<String, ModuleExportEntry>;
 
 enum LibSourceText {
     Owned(String),
-    Static(&'static str),
+    Static {
+        text: &'static str,
+        content_hash: u64,
+    },
 }
 
 impl LibSourceText {
     fn as_str(&self) -> &str {
         match self {
             Self::Owned(text) => text,
-            Self::Static(text) => text,
+            Self::Static { text, .. } => text,
         }
     }
 
@@ -1155,24 +1158,28 @@ pub fn load_lib_files_for_binding_strict(
     // file #81 of 87 and becomes the critical-path bottleneck.
     file_contents.sort_by_key(|b| std::cmp::Reverse(b.1.len()));
 
-    let snapshot_keys: Vec<(String, u64)> = file_contents
+    let snapshot_keys: Vec<(&str, u64)> = file_contents
         .iter()
-        .map(|(file_name, source_text)| {
-            (
-                file_name.clone(),
-                super::lib_snapshot::content_hash(file_name, source_text.as_str()),
-            )
-        })
+        .map(snapshot_key_for_lib_source)
         .collect();
     if let Some(cached) = super::lib_snapshot::try_load_many(&snapshot_keys) {
         return Ok(cached);
     }
+    let snapshot_keys_for_store: Vec<(String, u64)> = snapshot_keys
+        .iter()
+        .map(|(file_name, content_hash)| ((*file_name).to_string(), *content_hash))
+        .collect();
+    drop(snapshot_keys);
 
     // Collect results, propagating any parse errors
     let results: Vec<Arc<lib_loader::LibFile>> = parse_and_bind_lib_files(file_contents)
         .into_iter()
         .collect::<Result<Vec<_>>>()?;
-    if let Err(err) = super::lib_snapshot::try_store_many(&snapshot_keys, &results) {
+    let snapshot_keys_for_store: Vec<(&str, u64)> = snapshot_keys_for_store
+        .iter()
+        .map(|(file_name, content_hash)| (file_name.as_str(), *content_hash))
+        .collect();
+    if let Err(err) = super::lib_snapshot::try_store_many(&snapshot_keys_for_store, &results) {
         tracing::debug!(
             target: "wasm::lib_snapshot",
             error = %err,
@@ -1294,10 +1301,22 @@ fn parse_and_bind_lib_source(
 ) -> Result<Arc<lib_loader::LibFile>> {
     match source_text {
         LibSourceText::Owned(source_text) => parse_and_bind_lib_file(file_name, source_text),
-        LibSourceText::Static(source_text) => {
-            parse_and_bind_lib_file_with_source(file_name, Cow::Borrowed(source_text))
-        }
+        LibSourceText::Static {
+            text: source_text, ..
+        } => parse_and_bind_lib_file_with_source(file_name, Cow::Borrowed(source_text)),
     }
+}
+
+fn snapshot_key_for_lib_source((file_name, source_text): &(String, LibSourceText)) -> (&str, u64) {
+    let content_hash = match source_text {
+        LibSourceText::Owned(source_text) => {
+            super::lib_snapshot::content_hash(file_name, source_text.as_str())
+        }
+        LibSourceText::Static { content_hash, .. } => {
+            super::lib_snapshot::content_hash_from_source_hash(file_name, *content_hash)
+        }
+    };
+    (file_name.as_str(), content_hash)
 }
 
 fn parse_and_bind_lib_file_with_source(
@@ -1383,7 +1402,11 @@ fn collect_lib_files_recursive_cached(
     {
         // Embedded virtual-root paths are never real files; avoid a failed stat
         // before reading the built-in content.
-        LibSourceText::Static(embedded)
+        LibSourceText::Static {
+            text: embedded,
+            content_hash: crate::embedded_libs::get_lib_content_hash(embedded_key)
+                .expect("embedded lib content hash missing"),
+        }
     } else if lib_path.exists() {
         LibSourceText::Owned(
             std::fs::read_to_string(&lib_path)
@@ -1391,7 +1414,11 @@ fn collect_lib_files_recursive_cached(
         )
     } else if let Some(embedded) = crate::embedded_libs::get_lib_content(embedded_key) {
         // Built-in embedded content — zero I/O, comment-stripped for faster parsing
-        LibSourceText::Static(embedded)
+        LibSourceText::Static {
+            text: embedded,
+            content_hash: crate::embedded_libs::get_lib_content_hash(embedded_key)
+                .expect("embedded lib content hash missing"),
+        }
     } else {
         // Fallback to disk read
         LibSourceText::Owned(
@@ -1400,16 +1427,54 @@ fn collect_lib_files_recursive_cached(
         )
     };
 
-    // Resolve references before adding this file (dependencies come first)
-    for ref_lib in parse_lib_references(source_text.as_str()) {
-        if let Some(ref_path) = resolve_lib_reference_path(&lib_path, &ref_lib) {
-            collect_lib_files_recursive_cached(&ref_path, loaded, file_contents, file_cache)?;
+    // Resolve references before adding this file (dependencies come first).
+    // Embedded libs have a generated reference table, so cache-hit startup
+    // does not need to rescan source text just to rediscover lib headers.
+    match &source_text {
+        LibSourceText::Static { .. } => {
+            for ref_lib in crate::embedded_libs::get_embedded_lib_references(embedded_key) {
+                if let Some(ref_path) = resolve_generated_embedded_lib_reference_path(ref_lib)
+                    .or_else(|| resolve_lib_reference_path(&lib_path, ref_lib))
+                {
+                    collect_lib_files_recursive_cached(
+                        &ref_path,
+                        loaded,
+                        file_contents,
+                        file_cache,
+                    )?;
+                }
+            }
+        }
+        LibSourceText::Owned(_) => {
+            for ref_lib in parse_lib_references(source_text.as_str()) {
+                if let Some(ref_path) = resolve_lib_reference_path(&lib_path, &ref_lib) {
+                    collect_lib_files_recursive_cached(
+                        &ref_path,
+                        loaded,
+                        file_contents,
+                        file_cache,
+                    )?;
+                }
+            }
         }
     }
 
     let file_name = lib_path.to_string_lossy().to_string();
     file_contents.push((file_name, source_text));
     Ok(())
+}
+
+fn resolve_generated_embedded_lib_reference_path(lib_name: &str) -> Option<PathBuf> {
+    let embedded_name = match lib_name {
+        "lib" | "lib.d.ts" => "es5.d.ts".to_string(),
+        name if name.starts_with("lib.") && name.ends_with(".d.ts") => {
+            format!("{}.d.ts", &name[4..name.len() - 5])
+        }
+        name if name.ends_with(".d.ts") => name.to_string(),
+        name => format!("{name}.d.ts"),
+    };
+    crate::embedded_libs::is_embedded_lib(&embedded_name)
+        .then(|| Path::new("/embedded-lib").join(embedded_name))
 }
 
 fn parse_lib_references(content: &str) -> Vec<String> {

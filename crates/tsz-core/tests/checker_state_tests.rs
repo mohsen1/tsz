@@ -1166,10 +1166,16 @@ fn test_checker_assignability_bivariant_cache_key_is_distinct() {
 
     let regular_flags = checker.ctx.pack_relation_flags();
     let bivariant_flags = regular_flags & !RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES;
-    let regular_key =
-        RelationCacheKey::assignability(TypeId::STRING, TypeId::NUMBER, regular_flags, 0);
-    let bivariant_key =
-        RelationCacheKey::assignability(TypeId::STRING, TypeId::NUMBER, bivariant_flags, 0);
+    let regular_key = RelationCacheKey::for_assignability(
+        TypeId::STRING,
+        TypeId::NUMBER,
+        tsz_solver::RelationPolicy::from_flags(regular_flags).cache_config(),
+    );
+    let bivariant_key = RelationCacheKey::for_assignability(
+        TypeId::STRING,
+        TypeId::NUMBER,
+        tsz_solver::RelationPolicy::from_flags(bivariant_flags).cache_config(),
+    );
     assert_ne!(
         regular_key, bivariant_key,
         "regular and bivariant assignability must use distinct relation cache keys"
@@ -1273,10 +1279,16 @@ fn test_checker_assignability_direct_union_member_fast_path() {
 
     let regular_flags = checker.ctx.pack_relation_flags();
     let bivariant_flags = regular_flags & !RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES;
-    let regular_key =
-        RelationCacheKey::assignability(TypeId::STRING, string_or_number, regular_flags, 0);
-    let bivariant_key =
-        RelationCacheKey::assignability(TypeId::STRING, string_or_number, bivariant_flags, 0);
+    let regular_key = RelationCacheKey::for_assignability(
+        TypeId::STRING,
+        string_or_number,
+        tsz_solver::RelationPolicy::from_flags(regular_flags).cache_config(),
+    );
+    let bivariant_key = RelationCacheKey::for_assignability(
+        TypeId::STRING,
+        string_or_number,
+        tsz_solver::RelationPolicy::from_flags(bivariant_flags).cache_config(),
+    );
     assert_ne!(
         regular_key, bivariant_key,
         "regular and bivariant union-member assignability must use distinct relation cache keys"

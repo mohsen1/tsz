@@ -905,7 +905,7 @@ impl<'a> CheckerState<'a> {
                                     })
                                     .map(|symbol| symbol.escaped_name.clone());
                                 if let Some(ref_name) = ref_name {
-                                    let _ = self.resolve_lib_type_by_name(&ref_name);
+                                    self.prime_lib_type_params(&ref_name);
                                 }
                             }
                             if !has_type_args
