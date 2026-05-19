@@ -2,6 +2,7 @@
 //! type syntax, declarations, class syntax, statements, and error recovery.
 
 use crate::parser::node::NodeArena;
+use crate::parser::node_flags;
 use crate::parser::node_view::NodeAccess;
 use crate::parser::syntax_kind_ext;
 use crate::parser::test_fixture::{parse_source, parse_source_named};
@@ -3487,6 +3488,49 @@ fn decl_await_using() {
     // `await using x = getResource();`
     let (parser, _root) = parse_source("async function f() { await using x = getResource(); }");
     assert_no_errors(&parser, "await using declaration");
+}
+
+#[test]
+fn decl_using_and_await_using_in_blocks_are_variable_statements() {
+    for (source, expected_flags, context) in [
+        (
+            "function f() { using x = getResource(); }",
+            node_flags::USING,
+            "using declaration in function block",
+        ),
+        (
+            "async function f() { await using x = getResource(); }",
+            node_flags::AWAIT_USING,
+            "await using declaration in async function block",
+        ),
+    ] {
+        let (parser, root) = parse_source(source);
+        assert_no_errors(&parser, context);
+
+        let arena = parser.get_arena();
+        let function_node = arena
+            .get(get_first_statement(arena, root))
+            .expect("function declaration");
+        let function = arena.get_function(function_node).expect("function data");
+        let body_node = arena.get(function.body).expect("function body");
+        let body = arena.get_block(body_node).expect("block data");
+        let stmt = arena.get(body.statements.nodes[0]).expect("body statement");
+
+        assert_eq!(
+            stmt.kind,
+            syntax_kind_ext::VARIABLE_STATEMENT,
+            "{context} should parse as a variable statement"
+        );
+        let variable = arena.get_variable(stmt).expect("variable statement data");
+        let declaration_list = arena
+            .get(variable.declarations.nodes[0])
+            .expect("declaration list");
+        assert_eq!(
+            declaration_list.flags as u32 & node_flags::AWAIT_USING,
+            expected_flags,
+            "{context} should preserve declaration flags"
+        );
+    }
 }
 
 // =============================================================================
