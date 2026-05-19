@@ -2612,6 +2612,24 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertIn("rendered.rs:1", hits[0])
         self.assertIn("rendered.rs:2", hits[1])
 
+    def test_flags_rendered_message_predicates(self):
+        pattern, _max_lines = self._check_by_name("rendered message predicates")
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/checkers/jsx/rendered.rs": (
+                    'if display.starts_with("IntrinsicAttributes") {}\n'
+                    'if target_display.ends_with(", Element>") {}\n'
+                    'if diagnostic.message_text.contains("Type") {}\n'
+                    'if source_text.contains("fixture shape") {}\n'
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 4, f"unexpected hits: {hits!r}")
+        self.assertIn("rendered.rs:1", hits[0])
+        self.assertIn("rendered.rs:2", hits[1])
+        self.assertIn("rendered.rs:3", hits[2])
+
     def test_flags_raw_diagnostic_assignability_predicates(self):
         pattern, _max_lines = self._check_by_name(
             "raw diagnostic assignability predicates"
@@ -2757,6 +2775,7 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertTrue(any("Emitter boundary" in name for name in names))
         self.assertTrue(any("file-name/path" in name for name in names))
         self.assertTrue(any("rendered type strings" in name for name in names))
+        self.assertTrue(any("rendered message predicates" in name for name in names))
         self.assertTrue(any("#8227" in name for name in names))
         self.assertTrue(any("diagnostic-local RelationRequest" in name for name in names))
         self.assertTrue(any("#8207" in name for name in names))

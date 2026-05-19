@@ -388,6 +388,20 @@ REGEX_LINE_COUNT_CHECKS = [
         3,
     ),
     (
+        "Checker diagnostic boundary: rendered message predicates (Track 10)",
+        [
+            ROOT / "crates" / "tsz-checker" / "src" / "checkers" / "jsx",
+            ROOT / "crates" / "tsz-checker" / "src" / "checkers" / "call_checker",
+            ROOT / "crates" / "tsz-checker" / "src" / "types" / "type_checking",
+        ],
+        re.compile(
+            r"\b(?:display|source_display|target_display|stripped_display|"
+            r"diagnostic\.message_text|raw|evaluated)"
+            r"\.(?:contains|starts_with|ends_with|as_str)\s*\("
+        ),
+        16,
+    ),
+    (
         "Emitter boundary: source_text.contains recovery decisions (Track 9/10)",
         [ROOT / "crates" / "tsz-emitter" / "src"],
         re.compile(r"\bsource_text\.contains\s*\("),
