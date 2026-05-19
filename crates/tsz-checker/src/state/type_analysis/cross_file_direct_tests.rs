@@ -615,11 +615,14 @@ fn delegate_source_file_type_alias_caches_generic_params() {
         "Leaf<T> should preserve one type parameter"
     );
     assert_eq!(
-        state
-            .ctx
-            .cached_stable_source_file_symbol_arena_type(leaf_sym, target_file_idx, scope),
+        state.ctx.cached_source_file_symbol_arena_type(
+            leaf_sym,
+            target_file_idx,
+            scope,
+            state.ctx.current_file_idx as u32,
+        ),
         Some((ty, params)),
-        "stable source-file symbol-arena cache hits must preserve generic params",
+        "requester-scoped source-file symbol-arena cache hits must preserve generic params",
     );
 }
 

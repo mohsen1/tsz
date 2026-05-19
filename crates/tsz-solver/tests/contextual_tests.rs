@@ -1947,3 +1947,141 @@ fn get_parameter_type_constructor_only_union_returns_none() {
     let ctx = ContextualTypeContext::with_expected(&interner, union_ty);
     assert_eq!(ctx.get_parameter_type(0), None);
 }
+
+// `ThisType<T>` marker extraction across union members (#8537).
+
+/// Build a `ThisType<inner>` application via the type-parameter-named form so
+/// the tests do not depend on `register_this_type_def_id` lib.d.ts setup.
+fn make_this_type_marker(interner: &TypeInterner, inner: TypeId) -> TypeId {
+    let marker_param = TypeParamInfo::simple(interner.intern_string("ThisType"));
+    let marker_base = interner.intern(TypeData::TypeParameter(marker_param));
+    interner.application(marker_base, vec![inner])
+}
+
+fn make_named_object(interner: &TypeInterner, name: &str, value: TypeId) -> TypeId {
+    interner.object(vec![PropertyInfo::new(interner.intern_string(name), value)])
+}
+
+#[test]
+fn this_type_marker_union_is_order_independent() {
+    let interner = TypeInterner::new();
+    let a = make_named_object(&interner, "a", TypeId::STRING);
+    let b = make_named_object(&interner, "b", TypeId::NUMBER);
+    let x = TypeId::STRING;
+    let y = TypeId::NUMBER;
+    let marker_x = make_this_type_marker(&interner, x);
+    let marker_y = make_this_type_marker(&interner, y);
+    let a_with_marker = interner.intersection(vec![a, marker_x]);
+    let b_with_marker = interner.intersection(vec![b, marker_y]);
+
+    let union_forward = interner.union(vec![a_with_marker, b_with_marker]);
+    let union_reversed = interner.union(vec![b_with_marker, a_with_marker]);
+    let expected = interner.union(vec![x, y]);
+
+    let ctx_forward = ContextualTypeContext::with_expected(&interner, union_forward);
+    let ctx_reversed = ContextualTypeContext::with_expected(&interner, union_reversed);
+
+    assert_eq!(ctx_forward.get_this_type_from_marker(), Some(expected));
+    assert_eq!(ctx_reversed.get_this_type_from_marker(), Some(expected));
+}
+
+#[test]
+fn this_type_marker_union_renamed_targets_still_order_independent() {
+    // Same structural rule with different `ThisType<T>` arguments — the targets
+    // here are boolean and bigint instead of string/number — to prove the fix
+    // is not keyed on a particular spelling or pair of payload types.
+    let interner = TypeInterner::new();
+    let a = make_named_object(&interner, "first", TypeId::NUMBER);
+    let b = make_named_object(&interner, "second", TypeId::STRING);
+    let x = TypeId::BOOLEAN;
+    let y = TypeId::BIGINT;
+    let marker_x = make_this_type_marker(&interner, x);
+    let marker_y = make_this_type_marker(&interner, y);
+    let union_forward = interner.union(vec![
+        interner.intersection(vec![a, marker_x]),
+        interner.intersection(vec![b, marker_y]),
+    ]);
+    let union_reversed = interner.union(vec![
+        interner.intersection(vec![b, marker_y]),
+        interner.intersection(vec![a, marker_x]),
+    ]);
+    let expected = interner.union(vec![x, y]);
+
+    let ctx_forward = ContextualTypeContext::with_expected(&interner, union_forward);
+    let ctx_reversed = ContextualTypeContext::with_expected(&interner, union_reversed);
+
+    assert_eq!(ctx_forward.get_this_type_from_marker(), Some(expected));
+    assert_eq!(ctx_reversed.get_this_type_from_marker(), Some(expected));
+}
+
+#[test]
+fn this_type_marker_union_skips_members_without_marker() {
+    // `(A & ThisType<X>) | B` should yield `X` — members without a marker
+    // contribute nothing to the result, matching tsc's `mapType` behavior of
+    // dropping undefined-mapped members.
+    let interner = TypeInterner::new();
+    let a = make_named_object(&interner, "a", TypeId::STRING);
+    let b = make_named_object(&interner, "b", TypeId::NUMBER);
+    let x = TypeId::STRING;
+    let marker_x = make_this_type_marker(&interner, x);
+    let union_ty = interner.union(vec![interner.intersection(vec![a, marker_x]), b]);
+
+    let ctx = ContextualTypeContext::with_expected(&interner, union_ty);
+    assert_eq!(ctx.get_this_type_from_marker(), Some(x));
+}
+
+#[test]
+fn this_type_marker_union_no_markers_returns_none() {
+    // A union of objects with no `ThisType<T>` member must produce no marker —
+    // this is the negative case proving the fix does not synthesize one.
+    let interner = TypeInterner::new();
+    let a = make_named_object(&interner, "a", TypeId::STRING);
+    let b = make_named_object(&interner, "b", TypeId::NUMBER);
+    let union_ty = interner.union(vec![a, b]);
+
+    let ctx = ContextualTypeContext::with_expected(&interner, union_ty);
+    assert_eq!(ctx.get_this_type_from_marker(), None);
+}
+
+#[test]
+fn this_type_marker_union_collapses_duplicate_targets() {
+    // Two union members carrying `ThisType<X>` with the same `X` must produce a
+    // single target — `db.union` deduplicates members so the result is `X`,
+    // not `X | X`.
+    let interner = TypeInterner::new();
+    let a = make_named_object(&interner, "a", TypeId::STRING);
+    let b = make_named_object(&interner, "b", TypeId::NUMBER);
+    let x = TypeId::STRING;
+    let marker_x = make_this_type_marker(&interner, x);
+    let union_ty = interner.union(vec![
+        interner.intersection(vec![a, marker_x]),
+        interner.intersection(vec![b, marker_x]),
+    ]);
+
+    let ctx = ContextualTypeContext::with_expected(&interner, union_ty);
+    assert_eq!(ctx.get_this_type_from_marker(), Some(x));
+}
+
+#[test]
+fn this_type_marker_intersection_is_unchanged_and_order_independent() {
+    // Intersection extraction collects all `ThisType<T>` markers and intersects
+    // their targets — this has always been deterministic (the result `TypeId`
+    // is independent of source order because `db.intersection` canonicalizes
+    // member order). Pin the behavior so the union fix doesn't regress it.
+    let interner = TypeInterner::new();
+    let methods = make_named_object(&interner, "greet", TypeId::VOID);
+    let x = TypeId::STRING;
+    let y = TypeId::NUMBER;
+    let marker_x = make_this_type_marker(&interner, x);
+    let marker_y = make_this_type_marker(&interner, y);
+
+    let forward = interner.intersection(vec![methods, marker_x, marker_y]);
+    let reversed = interner.intersection(vec![marker_y, marker_x, methods]);
+    let expected = interner.intersection(vec![x, y]);
+
+    let ctx_forward = ContextualTypeContext::with_expected(&interner, forward);
+    let ctx_reversed = ContextualTypeContext::with_expected(&interner, reversed);
+
+    assert_eq!(ctx_forward.get_this_type_from_marker(), Some(expected));
+    assert_eq!(ctx_reversed.get_this_type_from_marker(), Some(expected));
+}

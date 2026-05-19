@@ -1,7 +1,7 @@
 use super::Printer;
 use tsz_common::ScriptTarget;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::Node;
+use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::syntax::transform_utils::{
     contains_arguments_reference, contains_this_reference, is_private_identifier,
@@ -18,6 +18,15 @@ enum NativeArrowParamPrologueEntry {
         temp_name: String,
         initializer: NodeIndex,
     },
+}
+
+#[derive(Clone, Copy)]
+struct AsyncArrowGeneratorHoistStart {
+    byte_offset: usize,
+    line_no: u32,
+    assignment_start: usize,
+    for_of_start: usize,
+    value_start: usize,
 }
 
 impl<'a> Printer<'a> {
@@ -1162,6 +1171,7 @@ impl<'a> Printer<'a> {
                 .get(func.body)
                 .map(|n| self.is_single_line(n))
                 .unwrap_or(false);
+        let body_has_for_await = is_block && self.body_contains_for_await(func.body);
 
         if body_is_empty_single_line
             && !has_object_rest_param_prologue
@@ -1204,7 +1214,10 @@ impl<'a> Printer<'a> {
                 self.ctx.arguments_capture_name = Some(capture_name);
             }
             if is_block {
-                if body_is_single_line && !has_forwarded_object_rest_param_prologue {
+                if body_is_single_line
+                    && !has_forwarded_object_rest_param_prologue
+                    && !body_has_for_await
+                {
                     if let Some(body_node) = self.arena.get(func.body)
                         && let Some(block) = self.arena.get_block(body_node)
                     {
@@ -1216,6 +1229,8 @@ impl<'a> Printer<'a> {
                 } else {
                     self.write_line();
                     self.increase_indent();
+                    let hoist_start =
+                        body_has_for_await.then(|| self.begin_async_arrow_generator_hoists());
                     self.emit_object_rest_param_prologue_entries(
                         &forwarded_object_rest_param_prologue,
                     );
@@ -1226,6 +1241,9 @@ impl<'a> Printer<'a> {
                             self.emit(stmt);
                             self.write_line();
                         }
+                    }
+                    if let Some(hoist_start) = hoist_start {
+                        self.insert_async_arrow_generator_hoists(hoist_start);
                     }
                     self.decrease_indent();
                 }
@@ -1272,7 +1290,7 @@ impl<'a> Printer<'a> {
             self.ctx.arguments_capture_name = Some(arguments_capture_name);
 
             if is_block {
-                if body_is_single_line && !has_object_rest_param_prologue {
+                if body_is_single_line && !has_object_rest_param_prologue && !body_has_for_await {
                     if let Some(body_node) = self.arena.get(func.body)
                         && let Some(block) = self.arena.get_block(body_node)
                     {
@@ -1285,6 +1303,8 @@ impl<'a> Printer<'a> {
                 } else {
                     self.write_line();
                     self.increase_indent();
+                    let hoist_start =
+                        body_has_for_await.then(|| self.begin_async_arrow_generator_hoists());
                     self.emit_object_rest_param_prologue_entries(&object_rest_param_prologue);
                     if let Some(body_node) = self.arena.get(func.body)
                         && let Some(block) = self.arena.get_block(body_node)
@@ -1293,6 +1313,9 @@ impl<'a> Printer<'a> {
                             self.emit(stmt);
                             self.write_line();
                         }
+                    }
+                    if let Some(hoist_start) = hoist_start {
+                        self.insert_async_arrow_generator_hoists(hoist_start);
                     }
                     self.decrease_indent();
                     self.write("})");
@@ -1324,7 +1347,7 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        if body_is_single_line && !has_object_rest_param_prologue {
+        if body_is_single_line && !has_object_rest_param_prologue && !body_has_for_await {
             // Single-line body: emit inline like TSC
             // e.g., () => __awaiter(this, void 0, void 0, function* () { return yield this; })
             self.write(" => ");
@@ -1400,6 +1423,7 @@ impl<'a> Printer<'a> {
         self.write(", void 0, void 0, function* () {");
         self.write_line();
         self.increase_indent();
+        let hoist_start = body_has_for_await.then(|| self.begin_async_arrow_generator_hoists());
 
         // Emit body with await→yield substitution
         let saved_yield = self.ctx.emit_await_as_yield;
@@ -1424,6 +1448,9 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+        if let Some(hoist_start) = hoist_start {
+            self.insert_async_arrow_generator_hoists(hoist_start);
+        }
 
         self.ctx.emit_await_as_yield = saved_yield;
         self.ctx.rewrite_arguments_to_arguments_1 = saved_args;
@@ -1431,6 +1458,80 @@ impl<'a> Printer<'a> {
 
         self.decrease_indent();
         self.write("})");
+    }
+
+    const fn begin_async_arrow_generator_hoists(&self) -> AsyncArrowGeneratorHoistStart {
+        AsyncArrowGeneratorHoistStart {
+            byte_offset: self.writer.len(),
+            line_no: self.writer.current_line(),
+            assignment_start: self.hoisted_assignment_temps.len(),
+            for_of_start: self.hoisted_for_of_temps.len(),
+            value_start: self.hoisted_assignment_value_temps.len(),
+        }
+    }
+
+    fn insert_async_arrow_generator_hoists(&mut self, start: AsyncArrowGeneratorHoistStart) {
+        let mut ref_vars = Vec::new();
+        ref_vars.extend(
+            self.hoisted_assignment_temps
+                .drain(start.assignment_start..),
+        );
+        ref_vars.extend(self.hoisted_for_of_temps.drain(start.for_of_start..));
+        if !ref_vars.is_empty() {
+            let indent = " ".repeat(self.writer.indent_width() as usize);
+            let var_decl = format!("{}var {};", indent, ref_vars.join(", "));
+            self.writer
+                .insert_line_at(start.byte_offset, start.line_no, &var_decl);
+        }
+
+        if !self.hoisted_assignment_value_temps[start.value_start..].is_empty() {
+            let value_vars = self
+                .hoisted_assignment_value_temps
+                .drain(start.value_start..)
+                .collect::<Vec<_>>();
+            let indent = " ".repeat(self.writer.indent_width() as usize);
+            let var_decl = format!("{}var {};", indent, value_vars.join(", "));
+            self.writer
+                .insert_line_at(start.byte_offset, start.line_no, &var_decl);
+        }
+    }
+
+    fn body_contains_for_await(&self, body_idx: NodeIndex) -> bool {
+        let mut stack = vec![body_idx];
+        while let Some(idx) = stack.pop() {
+            if idx.is_none() {
+                continue;
+            }
+            let Some(node) = self.arena.get(idx) else {
+                continue;
+            };
+
+            if node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+                && self
+                    .arena
+                    .get_for_in_of(node)
+                    .is_some_and(|for_in_of| for_in_of.await_modifier)
+            {
+                return true;
+            }
+
+            if idx != body_idx && self.is_function_like_hoist_boundary(node.kind) {
+                continue;
+            }
+
+            stack.extend(self.arena.get_children(idx));
+        }
+        false
+    }
+
+    const fn is_function_like_hoist_boundary(&self, kind: u16) -> bool {
+        kind == syntax_kind_ext::FUNCTION_DECLARATION
+            || kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            || kind == syntax_kind_ext::ARROW_FUNCTION
+            || kind == syntax_kind_ext::METHOD_DECLARATION
+            || kind == syntax_kind_ext::CONSTRUCTOR
+            || kind == syntax_kind_ext::GET_ACCESSOR
+            || kind == syntax_kind_ext::SET_ACCESSOR
     }
 
     fn emit_object_rest_param_prologue_entries(&mut self, entries: &[(String, NodeIndex)]) {
@@ -1552,6 +1653,7 @@ impl<'a> Printer<'a> {
                 .get(func.body)
                 .map(|n| self.is_single_line(n))
                 .unwrap_or(false);
+        let body_has_for_await = is_block && self.body_contains_for_await(func.body);
 
         let saved_yield = self.ctx.emit_await_as_yield;
         let saved_args = self.ctx.rewrite_arguments_to_arguments_1;
@@ -1562,7 +1664,7 @@ impl<'a> Printer<'a> {
             self.ctx.arguments_capture_name = Some(capture_name);
         }
         if is_block {
-            if body_is_single_line {
+            if body_is_single_line && !body_has_for_await {
                 if let Some(body_node) = self.arena.get(func.body)
                     && let Some(block) = self.arena.get_block(body_node)
                 {
@@ -1574,6 +1676,8 @@ impl<'a> Printer<'a> {
             } else {
                 self.write_line();
                 self.increase_indent();
+                let hoist_start =
+                    body_has_for_await.then(|| self.begin_async_arrow_generator_hoists());
                 if let Some(body_node) = self.arena.get(func.body)
                     && let Some(block) = self.arena.get_block(body_node)
                 {
@@ -1581,6 +1685,9 @@ impl<'a> Printer<'a> {
                         self.emit(stmt);
                         self.write_line();
                     }
+                }
+                if let Some(hoist_start) = hoist_start {
+                    self.insert_async_arrow_generator_hoists(hoist_start);
                 }
                 self.decrease_indent();
             }

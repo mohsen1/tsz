@@ -200,6 +200,16 @@ pub(crate) fn widen_mutable_object_literal_property_types(
     }
 }
 
+/// Whether a contextual type is literal-permissive for object-literal property
+/// widening.
+///
+/// `unknown`, `any`, and `never` do not constrain literal property types in
+/// tsc's contextual literal check, so they should not suppress the normal
+/// widening of property literals in non-fresh object contexts.
+pub(crate) fn is_literal_permissive_object_context(type_id: TypeId) -> bool {
+    matches!(type_id, TypeId::UNKNOWN | TypeId::ANY | TypeId::NEVER)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -286,6 +296,20 @@ mod tests {
             &db,
             tuple(&db, TypeId::STRING)
         ));
+    }
+
+    #[test]
+    fn literal_permissive_object_context_accepts_top_like_contexts() {
+        assert!(is_literal_permissive_object_context(TypeId::UNKNOWN));
+        assert!(is_literal_permissive_object_context(TypeId::ANY));
+        assert!(is_literal_permissive_object_context(TypeId::NEVER));
+    }
+
+    #[test]
+    fn literal_permissive_object_context_rejects_constraining_contexts() {
+        assert!(!is_literal_permissive_object_context(TypeId::STRING));
+        assert!(!is_literal_permissive_object_context(TypeId::NUMBER));
+        assert!(!is_literal_permissive_object_context(TypeId::BOOLEAN));
     }
 
     #[test]
