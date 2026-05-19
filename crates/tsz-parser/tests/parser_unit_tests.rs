@@ -446,6 +446,58 @@ fn precedence_satisfies_expression() {
 }
 
 #[test]
+fn precedence_as_const_after_satisfies_wraps_satisfies_expression() {
+    for source in [
+        "const x = { a: 1 } satisfies Record<string, number> as const;",
+        "const x = value satisfies Foo | Bar as const;",
+        "const x = ((value) satisfies Alias) as const;",
+    ] {
+        let (parser, root) = parse_source(source);
+        assert_no_errors(&parser, source);
+
+        let arena = parser.get_arena();
+        let init = get_var_initializer(arena, root);
+        let outer = arena.get(init).expect("initializer");
+        assert_eq!(
+            outer.kind,
+            syntax_kind_ext::AS_EXPRESSION,
+            "`as const` should wrap the satisfies expression for {source}"
+        );
+
+        let outer_assertion = arena
+            .get_type_assertion(outer)
+            .expect("outer as expression data");
+        let outer_type = arena
+            .get(outer_assertion.type_node)
+            .expect("outer as expression type");
+        assert_eq!(
+            outer_type.kind,
+            SyntaxKind::ConstKeyword as u16,
+            "`as const` should keep `const` as the outer assertion type for {source}"
+        );
+
+        let mut inner_idx = outer_assertion.expression;
+        loop {
+            let inner = arena.get(inner_idx).expect("inner expression");
+            if inner.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                break;
+            }
+            inner_idx = arena
+                .get_parenthesized(inner)
+                .expect("parenthesized expression data")
+                .expression;
+        }
+
+        let inner = arena.get(inner_idx).expect("unwrapped inner expression");
+        assert_eq!(
+            inner.kind,
+            syntax_kind_ext::SATISFIES_EXPRESSION,
+            "outer `as const` should contain a satisfies expression for {source}"
+        );
+    }
+}
+
+#[test]
 fn precedence_non_null_assertion() {
     // `a!` produces a NonNullExpression
     let (parser, root) = parse_source("const x = a!;");
