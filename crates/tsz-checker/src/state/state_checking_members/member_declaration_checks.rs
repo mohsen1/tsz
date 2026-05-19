@@ -698,11 +698,15 @@ impl<'a> CheckerState<'a> {
             };
             let name = ident.escaped_text.clone();
             let atom = self.ctx.types.intern_string(&name);
+            let is_const = self
+                .ctx
+                .arena
+                .has_modifier(&param.modifiers, SyntaxKind::ConstKeyword);
             let type_id = factory.type_param(TypeParamInfo {
                 name: atom,
                 constraint: None,
                 default: None,
-                is_const: false,
+                is_const,
             });
             let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
             updates.push((name, previous, false));
