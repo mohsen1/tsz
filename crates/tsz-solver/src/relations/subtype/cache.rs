@@ -555,16 +555,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     self.resolver.is_boxed_def_id(def_id, IntrinsicKind::Object)
                 });
             if is_object_interface_target {
-                let is_nullable = source.is_nullable();
-                if !is_nullable {
-                    let result = self.check_object_contract(source, target);
+                // is_nullable() short-circuits before the interner lookup for common null/undefined/void cases.
+                if source.is_nullable() || !self.is_global_object_interface_type(source) {
                     if let Some(dp) = def_entered {
                         self.def_guard.leave(dp);
                     }
                     self.guard.leave(pair);
                     leave_global!();
-                    return result;
+                    return SubtypeResult::False;
                 }
+                let result = self.check_object_contract(source, target);
+                if let Some(dp) = def_entered {
+                    self.def_guard.leave(dp);
+                }
+                self.guard.leave(pair);
+                leave_global!();
+                return result;
             }
         }
 
