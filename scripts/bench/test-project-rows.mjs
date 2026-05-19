@@ -9,17 +9,16 @@ import {
   PROJECT_ROW_DEFINITIONS,
   REQUIRED_PROJECT_ROWS,
 } from "./project-rows.mjs";
+import {
+  BENCH_RUNNER_EXCLUDED_ROWS,
+  COMPILE_GUARD_EXCLUDED_ROWS as PROJECT_COMPILE_GUARD_EXCLUDED_ROWS,
+  extractBenchRunnerRows,
+  extractCompileGuardRows,
+  extractFixtureSourceRows,
+} from "./project-row-summary.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
-
-const BENCH_RUNNER_EXCLUDED_ROWS = new Set([
-  "type-challenges-solutions-project",
-]);
-const PROJECT_COMPILE_GUARD_EXCLUDED_ROWS = new Set([
-  "large-ts-repo",
-  "nextjs",
-]);
 const GENERATED_ROWS_WITH_FIXTURE_SOURCES = new Set();
 const ROADMAP_REQUIRED_PROJECT_ROW_BY_LABEL = new Map([
   ["utility-types", "utility-types-project"],
@@ -120,14 +119,10 @@ assert.deepEqual(
   "COMPATIBILITY_CORPUS_ROWS must describe every required and compile-canary project row",
 );
 
-const benchRows = sortedUnique(
-  extractAll(
-    readRepoFile("scripts/bench/bench-vs-tsgo.sh"),
-    /run_project_benchmark\s+"([^"]+)"/g,
-  ),
-);
+const benchRunnerScript = readRepoFile("scripts/bench/bench-vs-tsgo.sh");
+const benchRows = extractBenchRunnerRows(benchRunnerScript);
 const compileCanaryGatedBenchmarkRows = sortedUnique(
-  [...readRepoFile("scripts/bench/bench-vs-tsgo.sh").matchAll(
+  [...benchRunnerScript.matchAll(
     /run_[a-z0-9_]+_project_benchmarks\(\)\s*\{([\s\S]*?)\n\}/g,
   )]
     .filter((match) => match[1].includes("should_run_compile_canary_project"))
@@ -144,17 +139,8 @@ assert.deepEqual(
   "bench-vs-tsgo required project rows must not be hidden behind compile-canary gating",
 );
 
-const projectCompileGuardRows = sortedUnique(
-  (() => {
-    const guard = readRepoFile("scripts/ci/project-compile-guard.sh");
-    const literalRows = extractAll(guard, /check_project\s+"([^"]+)"/g)
-      .filter((row) => row !== "$name");
-    const caseRows = extractAll(
-      guard,
-      /^\s{4}([a-z0-9-]+(?:\|[a-z0-9-]+)*)\)\s*$/gm,
-    ).flatMap((row) => row.split("|"));
-    return [...literalRows, ...caseRows];
-  })(),
+const projectCompileGuardRows = extractCompileGuardRows(
+  readRepoFile("scripts/ci/project-compile-guard.sh"),
 );
 assert.deepEqual(
   projectCompileGuardRows,
@@ -162,11 +148,8 @@ assert.deepEqual(
   "project-compile-guard rows drifted from scripts/bench/project-rows.mjs",
 );
 
-const fixtureSourceRows = sortedUnique(
-  extractAll(
-    readRepoFile("scripts/bench/project-fixtures.sh"),
-    /^\s{4}([a-z0-9-]+(?:\|[a-z0-9-]+)*)\)\s*$/gm,
-  ).flatMap((row) => row.split("|")),
+const fixtureSourceRows = extractFixtureSourceRows(
+  readRepoFile("scripts/bench/project-fixtures.sh"),
 );
 assert.deepEqual(
   fixtureSourceRows,

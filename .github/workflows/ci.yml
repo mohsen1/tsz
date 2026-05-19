@@ -468,6 +468,19 @@ jobs:
 
           echo "Agent and project corpus impact metadata are present."
 
+  project-row-drift:
+    name: project-row-drift
+    needs: gate
+    if: needs.gate.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Validate project row coverage across surfaces
+        run: node scripts/bench/project-row-summary.mjs
+
   bench-script-smoke:
     name: bench-script-smoke
     needs: gate
@@ -1144,6 +1157,7 @@ jobs:
       - bench-script-smoke
       - perf-tool-smoke
       - arch-tool-smoke
+      - project-row-drift
       - lint
       - cargo-shear
       - cargo-deny
@@ -1230,7 +1244,7 @@ jobs:
               print("CI gated off; summary passes because jobs were intentionally skipped.")
               sys.exit(0)
 
-          required = {"lint", "cargo-shear", "cargo-deny"}
+          required = {"lint", "cargo-shear", "cargo-deny", "project-row-drift"}
           if compiler_checks_required:
               required.update({"dist-binaries", "unit"})
           else:

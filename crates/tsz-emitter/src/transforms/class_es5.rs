@@ -367,6 +367,107 @@ impl<'a> ClassES5Emitter<'a> {
         self.emit_class_ir(class_idx, override_name, ir)
     }
 
+    /// Build a configured `IRPrinter` ready to emit IR nodes for this class.
+    fn make_ir_printer(&self) -> IRPrinter<'a> {
+        let mut printer = IRPrinter::with_arena(self.arena);
+        printer.set_indent_level(self.indent_level);
+        printer.set_remove_comments(self.remove_comments);
+        printer.set_tslib_prefix(self.tslib_prefix);
+        printer.set_tslib_import_binding(self.tslib_import_binding.clone());
+        printer.set_target_es5(true);
+        if let Some(source_text) = self.source_text {
+            printer.set_source_text(source_text);
+        }
+        if let Some(ref transforms) = self.transforms {
+            printer.set_transforms(transforms.clone());
+        }
+        if !self.commonjs_import_substitutions.is_empty() {
+            printer.set_commonjs_import_substitutions(self.commonjs_import_substitutions.clone());
+        }
+        if let Some(ref opts) = self.printer_options {
+            printer.set_base_printer_options(opts.clone());
+        }
+        printer
+    }
+
+    /// Like `emit_class_assignment_with_name` but returns the class assignment
+    /// string and each deferred static block as separate strings so callers can
+    /// interleave `exports_1(...)` calls between the class body and static
+    /// initialisation.
+    pub fn emit_class_assignment_split_statics(
+        &mut self,
+        class_idx: NodeIndex,
+        assignment_name: &str,
+    ) -> (String, Vec<String>) {
+        let ir = match self
+            .transformer
+            .transform_class_to_ir_with_name(class_idx, Some(assignment_name))
+        {
+            Some(ir) => ir,
+            None => return (String::new(), Vec::new()),
+        };
+        let IRNode::ES5ClassIIFE {
+            name,
+            binding_name: _,
+            base_class,
+            super_param,
+            body,
+            weakmap_decls,
+            computed_prop_temp_decls,
+            computed_prop_temp_inits,
+            weakmap_inits,
+            leading_comment,
+            deferred_static_blocks,
+            deferred_block_class_alias,
+        } = ir
+        else {
+            return (
+                self.emit_class_ir(class_idx, Some(assignment_name), ir),
+                Vec::new(),
+            );
+        };
+
+        let mut output = String::new();
+        for decl_name in weakmap_decls
+            .into_iter()
+            .chain(computed_prop_temp_decls)
+            .chain(deferred_block_class_alias.iter().cloned())
+        {
+            if !output.is_empty() {
+                output.push('\n');
+            }
+            output.push_str("var ");
+            output.push_str(&decl_name);
+            output.push(';');
+        }
+
+        // Build class assignment IR with no deferred blocks — we emit them separately.
+        let assignment_ir = IRNode::ES5ClassAssignment {
+            name,
+            base_class,
+            super_param,
+            body,
+            computed_prop_temp_inits,
+            weakmap_inits,
+            leading_comment,
+            deferred_static_blocks: Vec::new(),
+            deferred_block_class_alias,
+        };
+        let assignment = self.emit_class_ir(class_idx, Some(assignment_name), assignment_ir);
+        if !output.is_empty() && !assignment.is_empty() {
+            output.push('\n');
+        }
+        output.push_str(&assignment);
+
+        // Render each deferred static block as a separate string.
+        let static_strings: Vec<String> = deferred_static_blocks
+            .into_iter()
+            .map(|block| self.make_ir_printer().emit(&block).to_string())
+            .collect();
+
+        (output, static_strings)
+    }
+
     fn emit_class_ir(
         &mut self,
         class_idx: NodeIndex,
@@ -392,24 +493,7 @@ impl<'a> ClassES5Emitter<'a> {
             *leading_comment = Some(comment);
         }
 
-        let mut printer = IRPrinter::with_arena(self.arena);
-        printer.set_indent_level(self.indent_level);
-        printer.set_remove_comments(self.remove_comments);
-        printer.set_tslib_prefix(self.tslib_prefix);
-        printer.set_tslib_import_binding(self.tslib_import_binding.clone());
-        printer.set_target_es5(true);
-        if let Some(source_text) = self.source_text {
-            printer.set_source_text(source_text);
-        }
-        if let Some(ref transforms) = self.transforms {
-            printer.set_transforms(transforms.clone());
-        }
-        if !self.commonjs_import_substitutions.is_empty() {
-            printer.set_commonjs_import_substitutions(self.commonjs_import_substitutions.clone());
-        }
-        if let Some(ref opts) = self.printer_options {
-            printer.set_base_printer_options(opts.clone());
-        }
+        let mut printer = self.make_ir_printer();
         let mut output = printer.emit(&ir).to_string();
         if self.tc39_decorators
             && let Some(wrapped) =

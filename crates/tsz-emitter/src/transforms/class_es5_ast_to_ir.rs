@@ -257,11 +257,13 @@ impl<'a> AstToIr<'a> {
                 IRNode::TrailingComment(comment_text.into()),
             ]);
         }
-        for comment in crate::emitter::get_trailing_comment_ranges(source_text, node.end as usize) {
+        let scan_start =
+            Self::find_actual_statement_end(source_text, node.pos as usize, node.end as usize);
+        for comment in crate::emitter::get_trailing_comment_ranges(source_text, scan_start) {
             if !self.comment_starts_before_limit(comment.pos) {
                 continue;
             }
-            let gap_start = (node.end as usize).min(source_text.len());
+            let gap_start = scan_start.min(source_text.len());
             let gap_end = (comment.pos as usize).min(source_text.len());
             if gap_start > gap_end
                 || !Self::can_attach_trailing_comment_gap(&source_text[gap_start..gap_end])
@@ -280,7 +282,7 @@ impl<'a> AstToIr<'a> {
         if node.kind == syntax_kind_ext::RETURN_STATEMENT {
             return statement;
         }
-        let line_start = (node.end as usize).min(source_text.len());
+        let line_start = scan_start.min(source_text.len());
         let line_end = source_text[line_start..]
             .find(['\n', '\r'])
             .map_or(source_text.len(), |offset| line_start + offset);
@@ -297,6 +299,77 @@ impl<'a> AstToIr<'a> {
             ]);
         }
         statement
+    }
+
+    /// Scan `[node_start, node_end)` and return the position after the last depth-0
+    /// statement terminator (`;` or closing bracket). The parser sets `node.end` to
+    /// the NEXT token's end, so we need to scan back to the actual statement boundary
+    /// before searching for trailing comments.
+    fn find_actual_statement_end(source_text: &str, node_start: usize, node_end: usize) -> usize {
+        let bytes = source_text.as_bytes();
+        let end = node_end.min(bytes.len());
+        let start = node_start.min(end);
+
+        let mut depth: i32 = 0;
+        let mut last_stmt_end = end;
+        let mut i = start;
+        let mut in_string: Option<u8> = None;
+
+        while i < end {
+            let ch = bytes[i];
+            if let Some(quote) = in_string {
+                if ch == b'\\' {
+                    i = (i + 2).min(end);
+                    continue;
+                }
+                if ch == quote {
+                    in_string = None;
+                }
+                i += 1;
+                continue;
+            }
+            match ch {
+                b'\'' | b'"' | b'`' => {
+                    in_string = Some(ch);
+                    i += 1;
+                }
+                b'/' if i + 1 < end && bytes[i + 1] == b'/' => {
+                    i += 2;
+                    while i < end && bytes[i] != b'\n' && bytes[i] != b'\r' {
+                        i += 1;
+                    }
+                }
+                b'/' if i + 1 < end && bytes[i + 1] == b'*' => {
+                    i += 2;
+                    while i + 1 < end && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                        i += 1;
+                    }
+                    if i + 1 < end {
+                        i += 2;
+                    }
+                }
+                b'{' | b'(' | b'[' => {
+                    depth += 1;
+                    i += 1;
+                }
+                b'}' | b')' | b']' => {
+                    depth = (depth - 1).max(0);
+                    if depth == 0 {
+                        last_stmt_end = i + 1;
+                    }
+                    i += 1;
+                }
+                b';' if depth == 0 => {
+                    last_stmt_end = i + 1;
+                    i += 1;
+                }
+                _ => {
+                    i += 1;
+                }
+            }
+        }
+
+        last_stmt_end
     }
 
     fn included_trailing_line_comment(
