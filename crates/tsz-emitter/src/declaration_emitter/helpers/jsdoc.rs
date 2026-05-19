@@ -589,7 +589,7 @@ impl<'a> DeclarationEmitter<'a> {
         let root_name = self.jsdoc_commonjs_source_export_equals_name(source_arena, source_file)?;
         let root_call = self.jsdoc_source_callable_symbol_surface(source_arena, &root_name)?;
         let mut members =
-            self.jsdoc_commonjs_source_static_members(source_arena, source_file, &root_name);
+            self.jsdoc_commonjs_source_static_members(source_arena, source_file, &root_name)?;
         members.sort_by(|(left, _), (right, _)| left.cmp(right));
 
         let mut surface = String::from("{\n");
@@ -643,39 +643,42 @@ impl<'a> DeclarationEmitter<'a> {
         source_arena: &NodeArena,
         source_file: &tsz_parser::parser::node::SourceFileData,
         root_name: &str,
-    ) -> Vec<(String, String)> {
-        source_file
-            .statements
-            .nodes
-            .iter()
-            .filter_map(|&stmt_idx| {
-                let stmt_node = source_arena.get(stmt_idx)?;
-                if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
-                    return None;
-                }
-                let expr_stmt = source_arena.get_expression_statement(stmt_node)?;
-                let expr_idx =
-                    source_arena.skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
-                let expr_node = source_arena.get(expr_idx)?;
-                if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
-                    return None;
-                }
-                let binary = source_arena.get_binary_expr(expr_node)?;
-                if binary.operator_token != SyntaxKind::EqualsToken as u16 {
-                    return None;
-                }
-                let (receiver_name, member_name) =
-                    self.jsdoc_source_property_assignment_name(source_arena, binary.left)?;
-                if receiver_name != root_name || !Self::is_unquoted_property_name(&member_name) {
-                    return None;
-                }
-                let rhs = source_arena.skip_parenthesized_and_assertions_and_comma(binary.right);
-                let rhs_name = self.identifier_text_from_arena(source_arena, rhs)?;
-                let type_text = self
-                    .jsdoc_construct_signature_surface_for_source_name(source_arena, &rhs_name)?;
-                Some((member_name, type_text))
-            })
-            .collect()
+    ) -> Option<Vec<(String, String)>> {
+        let mut members = Vec::new();
+        for &stmt_idx in &source_file.statements.nodes {
+            let stmt_node = source_arena.get(stmt_idx)?;
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let expr_stmt = source_arena.get_expression_statement(stmt_node)?;
+            let expr_idx =
+                source_arena.skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+            let expr_node = source_arena.get(expr_idx)?;
+            if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                continue;
+            }
+            let binary = source_arena.get_binary_expr(expr_node)?;
+            if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+                continue;
+            }
+            let Some((receiver_name, member_name)) =
+                self.jsdoc_source_property_assignment_name(source_arena, binary.left)
+            else {
+                continue;
+            };
+            if receiver_name != root_name {
+                continue;
+            }
+            if !Self::is_unquoted_property_name(&member_name) {
+                return None;
+            }
+            let rhs = source_arena.skip_parenthesized_and_assertions_and_comma(binary.right);
+            let rhs_name = self.identifier_text_from_arena(source_arena, rhs)?;
+            let type_text =
+                self.jsdoc_construct_signature_surface_for_source_name(source_arena, &rhs_name)?;
+            members.push((member_name, type_text));
+        }
+        Some(members)
     }
 
     fn jsdoc_source_property_assignment_name(
@@ -726,17 +729,17 @@ impl<'a> DeclarationEmitter<'a> {
         exports: &tsz_binder::SymbolTable,
     ) -> Option<String> {
         let root_call = self.jsdoc_export_equals_call_signature_text(root_sym_id)?;
-        let mut members = exports
-            .iter()
-            .filter_map(|(name, &sym_id)| {
-                if name == "export=" || name == "default" || !Self::is_unquoted_property_name(name)
-                {
-                    return None;
-                }
-                let type_text = self.jsdoc_exported_static_member_type_text(sym_id)?;
-                Some((name.clone(), type_text))
-            })
-            .collect::<Vec<_>>();
+        let mut members = Vec::new();
+        for (name, &sym_id) in exports.iter() {
+            if name == "export=" || name == "default" {
+                continue;
+            }
+            if !Self::is_unquoted_property_name(name) {
+                return None;
+            }
+            let type_text = self.jsdoc_exported_static_member_type_text(sym_id)?;
+            members.push((name.clone(), type_text));
+        }
         members.sort_by(|(left, _), (right, _)| left.cmp(right));
 
         let mut surface = String::from("{\n");
