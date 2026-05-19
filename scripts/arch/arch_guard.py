@@ -151,10 +151,10 @@ FILE_LINE_LIMIT_CHECKS = [
         / "src"
         / "query_boundaries"
         / "common.rs",
-        1996,
+        1926,
     ),
     (
-        "Solver engine boundary: generic call resolver must stay under 3400 LOC (#8209)",
+        "Solver engine boundary: generic call resolver must stay at current 3381 LOC baseline (#8209)",
         ROOT
         / "crates"
         / "tsz-solver"
@@ -162,7 +162,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "operations"
         / "generic_call"
         / "resolve.rs",
-        3400,
+        3381,
     ),
 ]
 
@@ -574,10 +574,7 @@ GENERATED_PROJECT_ROWS_WITHOUT_PINNED_SOURCE = {
 }
 
 COMPILE_GUARD_ONLY_PROJECT_ROWS = {
-    "type-challenges-project",
     "type-challenges-solutions-project",
-    "type-challenges-assertion-candidates",
-    "type-challenges-assertions-tsc-clean",
 }
 
 BENCHMARK_ONLY_PROJECT_ROWS = {

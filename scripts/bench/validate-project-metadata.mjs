@@ -63,8 +63,8 @@ for (const row of PROJECT_ROW_DEFINITIONS) {
     }
   }
 
-  if (typeof row.benchmark_set !== "string" || row.benchmark_set.length === 0) {
-    failures.push(`${row.name}: invalid benchmark_set`);
+  if (typeof row.benchmark_set !== "string" || !row.benchmark_set) {
+    failures.push(`${row.name}: invalid benchmark_set ${String(row.benchmark_set)}`);
   }
 
   if (!allowedGuardSets.has(row.guard_set)) {

@@ -32,9 +32,9 @@ External rows (cloned from GitHub) also include pin fields:
 Some generated rows include expected-count fields:
 
 - `expected_generated`: expected number of generated source files
-- `expected_generated_env`: shell variable name for this count (e.g. `TYPE_CHALLENGES_EXPECTED_GENERATED`)
-- `expected_test_cases`: expected number of test-case files
-- `expected_test_cases_env`: shell variable name for this count (e.g. `TYPE_CHALLENGES_EXPECTED_TEST_CASES`)
+- `expected_generated_env`: shell variable name for this count (e.g. `TYPE_CHALLENGES_SOLUTIONS_EXPECTED_GENERATED`)
+- `expected_test_cases`: expected number of generated test-case files, if a future generated row needs that pin
+- `expected_test_cases_env`: shell variable name for this count
 
 Derived arrays are exported for runners:
 

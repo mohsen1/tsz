@@ -112,26 +112,6 @@ export const PROJECT_ROW_DEFINITIONS = [
     category: "external",
   },
   {
-    name: "type-challenges-project",
-    label: "type-challenges",
-    readme_candidates: ["README.md"],
-    owner: "Tracks 2, 3, 5",
-    family: "advanced type-level challenge templates",
-    fixture_dir: "type-challenges",
-    source_dir: "questions",
-    repo_env: "TYPE_CHALLENGES_REPO",
-    ref_env: "TYPE_CHALLENGES_REF",
-    repo: "https://github.com/type-challenges/type-challenges.git",
-    ref: "0b0b0b18bcb7ac42dc22ce26ffb438231d4754b1",
-    expected_generated: 190,
-    expected_generated_env: "TYPE_CHALLENGES_EXPECTED_GENERATED",
-    expected_test_cases: 190,
-    expected_test_cases_env: "TYPE_CHALLENGES_EXPECTED_TEST_CASES",
-    guard_set: "canary",
-    benchmark_set: "canary",
-    category: "generated",
-  },
-  {
     name: "type-challenges-solutions-project",
     label: "type-challenges solutions",
     readme_candidates: ["README.md"],
@@ -145,30 +125,6 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "91a6d2986650475f29eeb3bd18ebd025128aa07e",
     expected_generated: 78,
     expected_generated_env: "TYPE_CHALLENGES_SOLUTIONS_EXPECTED_GENERATED",
-    guard_set: "canary",
-    benchmark_set: "canary",
-    category: "generated",
-  },
-  {
-    name: "type-challenges-assertion-candidates",
-    label: "type-challenges assertions",
-    readme_candidates: ["README.md"],
-    owner: "Tracks 2, 3, 5",
-    family: "assertion-level Type Challenges readiness comparison",
-    fixture_dir: "type-challenges-assertions",
-    source_dir: ".",
-    guard_set: "canary",
-    benchmark_set: "canary",
-    category: "generated",
-  },
-  {
-    name: "type-challenges-assertions-tsc-clean",
-    label: "type-challenges tsc-clean assertions",
-    readme_candidates: ["README.md"],
-    owner: "Tracks 2, 3, 5",
-    family: "tsz check over Type Challenges assertion candidates accepted by tsc",
-    fixture_dir: "type-challenges-assertions-tsc-clean",
-    source_dir: ".",
     guard_set: "canary",
     benchmark_set: "canary",
     category: "generated",
@@ -277,10 +233,12 @@ export const REQUIRED_COMPATIBILITY_FIELDS = [
   "dts_status",
 ];
 
-export const COMPATIBILITY_CORPUS_ROWS = PROJECT_ROW_DEFINITIONS.map((row) => ({
-  name: row.name,
-  label: row.label,
-  owner: row.owner,
-  family: row.family,
-  readme_candidates: row.readme_candidates,
-}));
+export const COMPATIBILITY_CORPUS_ROWS = PROJECT_ROW_DEFINITIONS
+  .filter((row) => row.guard_set || row.benchmark_set)
+  .map((row) => ({
+    name: row.name,
+    label: row.label,
+    owner: row.owner,
+    family: row.family,
+    readme_candidates: row.readme_candidates,
+  }));
