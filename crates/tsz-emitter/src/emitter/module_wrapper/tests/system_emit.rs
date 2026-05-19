@@ -462,9 +462,9 @@ export class Cls {
 }
 
 #[test]
-fn system_es5_default_exported_class_static_block_runs_after_export() {
-    // Default `export default class A` follows the same ordering rule: static
-    // block must execute after the class binding is exported.
+fn system_es5_default_exported_class_static_block_runs_before_export() {
+    // For `export default class`, tsc emits the static block IIFE before
+    // exports_1("default", ...) — opposite of named exports.
     let source = r#"declare function side(x: any): void;
 export default class MyClass {
     static {
@@ -486,16 +486,54 @@ export default class MyClass {
     printer.emit(root);
     let output = printer.get_output().to_string();
 
-    let export_pos = output
-        .find("exports_1(\"default\",")
-        .expect("System default export should publish the class binding");
     let static_block_pos = output
         .find("side(MyClass);")
         .expect("System ES5 static block should lower to an IIFE");
+    let export_pos = output
+        .find("exports_1(\"default\",")
+        .expect("System default export should publish the class binding");
 
     assert!(
-        export_pos < static_block_pos,
-        "System ES5 default class static block should run after the export call.\nOutput:\n{output}"
+        static_block_pos < export_pos,
+        "System ES5 default class static block should run before the export call.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_es5_anonymous_default_exported_class_static_block_runs_before_export() {
+    // Anonymous `export default class` (no identifier): same rule as named default —
+    // static block IIFE runs before exports_1("default", ...).
+    let source = r#"declare function side(x: any): void;
+export default class {
+    static {
+        side(42);
+    }
+}
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    let static_block_pos = output
+        .find("side(42);")
+        .expect("System ES5 static block should lower to an IIFE");
+    let export_pos = output
+        .find("exports_1(\"default\",")
+        .expect("System default export should publish the class binding");
+
+    assert!(
+        static_block_pos < export_pos,
+        "System ES5 anonymous default class static block should run before the export call.\nOutput:\n{output}"
     );
 }
 

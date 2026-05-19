@@ -1354,12 +1354,13 @@ impl<'a> Printer<'a> {
                 self.write(";");
             }
             self.write_line();
-            self.write("exports_1(\"default\", ");
-            self.write(&gen_name);
-            self.write(");");
+            // tsc emits static block IIFEs before the default export registration.
             if !deferred.is_empty() {
                 self.emit_static_block_iifes(deferred);
             }
+            self.write("exports_1(\"default\", ");
+            self.write(&gen_name);
+            self.write(");");
             return true;
         }
 
