@@ -464,3 +464,74 @@ fn test_async_tagged_template_no_substitutions_unchanged() {
         "No-substitution tagged template should still lower to __makeTemplateObject.\nOutput:\n{output}"
     );
 }
+
+/// Drive the full async-ES5 emit pipeline for the first top-level function
+/// in `source`. The surrounding indent is set to 3 levels so embedded `ASTRef`
+/// statements appear inside a typical `__awaiter`/`__generator` wrapper depth,
+/// mirroring the indent at which the original regression surfaced.
+fn emit_async_function_from_source(source: &str) -> String {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let Some(root_node) = parser.arena.get(root) else {
+        return String::new();
+    };
+    let Some(source_file) = parser.arena.get_source_file(root_node) else {
+        return String::new();
+    };
+    let Some(&func_idx) = source_file.statements.nodes.first() else {
+        return String::new();
+    };
+    let mut emitter = crate::transforms::async_es5::AsyncES5Emitter::new(&parser.arena);
+    emitter.set_source_map_context(source, 0);
+    emitter.set_indent_level(3);
+    emitter.emit_async_function(func_idx)
+}
+
+// Regression: ASTRef inside async-ES5 IR must go through AstPrinter (not the
+// raw source-text fallback) so a `do { ... } while (...);` body is re-formatted
+// to the canonical tsc shape at the surrounding indent. Pre-fix, the AstPrinter
+// path was gated on `transforms non-empty || base_printer_options`, and async
+// function bodies (which attach neither) fell through to a `text[pos..end]`
+// slice. That slice inherits any imprecision in `node.end` — notably for
+// statements whose terminating `;` is consumed via `parse_optional`, leaving
+// the captured `token_end()` at the *next* token — and spills source from the
+// enclosing block's closing `}` into the emitted output.
+#[test]
+fn test_async_do_while_no_await_uses_formatted_emission() {
+    let output = emit_async_function_from_source("async function f() { do { x; } while (y); }");
+    assert!(
+        output.contains("do {\n                        x;\n                    } while (y);"),
+        "Do-while inside async-ES5 body should be re-formatted to tsc's multi-line shape at the surrounding indent.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("do { x; } while (y);"),
+        "Do-while must not be emitted as a single-line raw source slice.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("} while (y);\n}"),
+        "ASTRef fallback must not spill an extra `}}` from the enclosing block.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_labeled_do_while_no_await_uses_formatted_emission() {
+    let output =
+        emit_async_function_from_source("async function f() { L: do { break L; } while (y); }");
+    assert!(
+        output.contains(
+            "L: do {\n                        break L;\n                    } while (y);"
+        ),
+        "Labeled do-while inside async-ES5 body should re-format at the surrounding indent.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_inline_if_no_await_uses_formatted_emission() {
+    let output =
+        emit_async_function_from_source("async function f() { if (x) { y; } else { z; } }");
+    // Branch bodies should sit at the surrounding indent.
+    assert!(
+        output.contains("if (x) {\n                        y;\n                    }\n                    else {\n                        z;\n                    }"),
+        "Inline if/else inside async-ES5 body should re-format at the surrounding indent.\nOutput:\n{output}"
+    );
+}
