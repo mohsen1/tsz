@@ -139,6 +139,7 @@ pub mod computation {
     pub use crate::evaluation::evaluate::evaluate_type;
 
     // Instantiation
+    pub use crate::instantiation::application::ApplicationEvaluator;
     pub use crate::instantiation::instantiate::{
         MAX_INSTANTIATION_DEPTH, TypeInstantiator, TypeSubstitution, fill_application_defaults,
         instantiate_function_with_type_args, instantiate_generic, instantiate_type,
@@ -230,7 +231,6 @@ pub use evaluation::evaluate::{
     TypeEvaluator, evaluate_conditional, evaluate_index_access, evaluate_index_access_with_options,
     evaluate_keyof, evaluate_mapped, evaluate_type, evaluate_type_with_request,
 };
-pub use instantiation::application::{ApplicationEvaluator, ApplicationResult};
 pub use instantiation::instantiate::{
     MAX_INSTANTIATION_DEPTH, TypeInstantiator, TypeSubstitution, fill_application_defaults,
     instantiate_function_with_type_args, instantiate_generic, instantiate_type,
