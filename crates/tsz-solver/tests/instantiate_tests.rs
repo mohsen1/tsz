@@ -420,6 +420,102 @@ fn instantiate_shadowed_function_preserves_fresh_type_param_identity() {
 }
 
 #[test]
+fn instantiate_shadowed_function_ignores_nested_shadowed_binding() {
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let outer_param = TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let inner_param = TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let outer_t = interner.fresh_type_param(outer_param);
+    let inner_t = interner.fresh_type_param(inner_param);
+    let nested = interner.function(FunctionShape {
+        type_params: vec![inner_param],
+        params: vec![ParamInfo::unnamed(inner_t)],
+        this_type: None,
+        return_type: inner_t,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let func = interner.function(FunctionShape {
+        type_params: vec![outer_param],
+        params: vec![ParamInfo::unnamed(nested)],
+        this_type: None,
+        return_type: outer_t,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    assert_ne!(
+        outer_t, inner_t,
+        "test setup requires distinct fresh parameters with the same name"
+    );
+
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, TypeId::STRING);
+    let result = instantiate_type(&interner, func, &subst);
+
+    let Some(TypeData::Function(shape_id)) = interner.lookup(result) else {
+        panic!(
+            "expected function result, got {:?}",
+            interner.lookup(result)
+        );
+    };
+    let shape = interner.function_shape(shape_id);
+    assert_eq!(shape.return_type, outer_t);
+    assert_eq!(shape.params[0].type_id, nested);
+}
+
+#[test]
+fn instantiate_shadowed_function_preserves_fresh_binding_inside_object_param() {
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let t_param = TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let fresh_t = interner.fresh_type_param(t_param);
+    let object = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        fresh_t,
+    )]);
+    let func = interner.function(FunctionShape {
+        type_params: vec![t_param],
+        params: vec![ParamInfo::unnamed(object)],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, TypeId::STRING);
+    let result = instantiate_type(&interner, func, &subst);
+
+    let Some(TypeData::Function(shape_id)) = interner.lookup(result) else {
+        panic!(
+            "expected function result, got {:?}",
+            interner.lookup(result)
+        );
+    };
+    let shape = interner.function_shape(shape_id);
+    assert_eq!(shape.params[0].type_id, object);
+}
+
+#[test]
 fn test_instantiate_tuple() {
     let interner = TypeInterner::new();
     let t_name = interner.intern_string("T");

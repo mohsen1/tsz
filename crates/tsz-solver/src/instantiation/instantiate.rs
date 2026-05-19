@@ -541,6 +541,248 @@ impl<'a> TypeInstantiator<'a> {
         instantiated
     }
 
+    fn bind_local_signature_type_params(
+        &mut self,
+        original_type_params: &[TypeParamInfo],
+        instantiated_type_params: Option<&[TypeParamInfo]>,
+        params: &[ParamInfo],
+        this_type: Option<TypeId>,
+        return_type: TypeId,
+        type_predicate: Option<&TypePredicate>,
+    ) -> usize {
+        let local_start = self.local_type_params.len();
+        if let Some(type_params) = instantiated_type_params {
+            for type_param in type_params {
+                self.local_type_params
+                    .push((type_param.name, self.interner.type_param(*type_param)));
+            }
+            return local_start;
+        }
+
+        for type_param in original_type_params {
+            let binding = self
+                .find_signature_type_param_binding(
+                    type_param.name,
+                    params,
+                    this_type,
+                    return_type,
+                    type_predicate,
+                )
+                .unwrap_or_else(|| self.interner.type_param(*type_param));
+            self.local_type_params.push((type_param.name, binding));
+        }
+        local_start
+    }
+
+    fn find_signature_type_param_binding(
+        &self,
+        name: Atom,
+        params: &[ParamInfo],
+        this_type: Option<TypeId>,
+        return_type: TypeId,
+        type_predicate: Option<&TypePredicate>,
+    ) -> Option<TypeId> {
+        params
+            .iter()
+            .find_map(|param| self.find_type_param_binding(param.type_id, name))
+            .or_else(|| this_type.and_then(|type_id| self.find_type_param_binding(type_id, name)))
+            .or_else(|| self.find_type_param_binding(return_type, name))
+            .or_else(|| {
+                type_predicate
+                    .and_then(|predicate| predicate.type_id)
+                    .and_then(|type_id| self.find_type_param_binding(type_id, name))
+            })
+    }
+
+    fn find_type_param_binding(&self, root: TypeId, name: Atom) -> Option<TypeId> {
+        if root.is_intrinsic() {
+            return None;
+        }
+
+        match self.interner.lookup(root) {
+            Some(TypeData::TypeParameter(info)) if info.name == name => Some(root),
+            Some(TypeData::Array(element))
+            | Some(TypeData::ReadonlyType(element))
+            | Some(TypeData::KeyOf(element))
+            | Some(TypeData::NoInfer(element))
+            | Some(TypeData::StringIntrinsic {
+                type_arg: element, ..
+            }) => self.find_type_param_binding(element, name),
+            Some(TypeData::Union(list_id)) | Some(TypeData::Intersection(list_id)) => self
+                .interner
+                .type_list(list_id)
+                .iter()
+                .find_map(|&member| self.find_type_param_binding(member, name)),
+            Some(TypeData::Tuple(tuple_id)) => self
+                .interner
+                .tuple_list(tuple_id)
+                .iter()
+                .find_map(|element| self.find_type_param_binding(element.type_id, name)),
+            Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner.object_shape(shape_id);
+                shape
+                    .properties
+                    .iter()
+                    .find_map(|property| {
+                        self.find_type_param_binding(property.type_id, name)
+                            .or_else(|| self.find_type_param_binding(property.write_type, name))
+                    })
+                    .or_else(|| {
+                        shape.string_index.as_ref().and_then(|signature| {
+                            self.find_type_param_binding(signature.key_type, name)
+                                .or_else(|| {
+                                    self.find_type_param_binding(signature.value_type, name)
+                                })
+                        })
+                    })
+                    .or_else(|| {
+                        shape.number_index.as_ref().and_then(|signature| {
+                            self.find_type_param_binding(signature.key_type, name)
+                                .or_else(|| {
+                                    self.find_type_param_binding(signature.value_type, name)
+                                })
+                        })
+                    })
+            }
+            Some(TypeData::Function(shape_id)) => {
+                let shape = self.interner.function_shape(shape_id);
+                if shape
+                    .type_params
+                    .iter()
+                    .any(|type_param| type_param.name == name)
+                {
+                    None
+                } else {
+                    shape
+                        .params
+                        .iter()
+                        .find_map(|param| self.find_type_param_binding(param.type_id, name))
+                        .or_else(|| {
+                            shape
+                                .this_type
+                                .and_then(|type_id| self.find_type_param_binding(type_id, name))
+                        })
+                        .or_else(|| self.find_type_param_binding(shape.return_type, name))
+                        .or_else(|| {
+                            shape
+                                .type_predicate
+                                .as_ref()
+                                .and_then(|predicate| predicate.type_id)
+                                .and_then(|type_id| self.find_type_param_binding(type_id, name))
+                        })
+                }
+            }
+            Some(TypeData::Callable(shape_id)) => {
+                let shape = self.interner.callable_shape(shape_id);
+                shape
+                    .call_signatures
+                    .iter()
+                    .chain(shape.construct_signatures.iter())
+                    .filter(|signature| {
+                        !signature
+                            .type_params
+                            .iter()
+                            .any(|type_param| type_param.name == name)
+                    })
+                    .find_map(|signature| {
+                        signature
+                            .params
+                            .iter()
+                            .find_map(|param| self.find_type_param_binding(param.type_id, name))
+                            .or_else(|| {
+                                signature
+                                    .this_type
+                                    .and_then(|type_id| self.find_type_param_binding(type_id, name))
+                            })
+                            .or_else(|| self.find_type_param_binding(signature.return_type, name))
+                            .or_else(|| {
+                                signature
+                                    .type_predicate
+                                    .as_ref()
+                                    .and_then(|predicate| predicate.type_id)
+                                    .and_then(|type_id| self.find_type_param_binding(type_id, name))
+                            })
+                    })
+                    .or_else(|| {
+                        shape.properties.iter().find_map(|property| {
+                            self.find_type_param_binding(property.type_id, name)
+                                .or_else(|| self.find_type_param_binding(property.write_type, name))
+                        })
+                    })
+                    .or_else(|| {
+                        shape.string_index.as_ref().and_then(|signature| {
+                            self.find_type_param_binding(signature.key_type, name)
+                                .or_else(|| {
+                                    self.find_type_param_binding(signature.value_type, name)
+                                })
+                        })
+                    })
+                    .or_else(|| {
+                        shape.number_index.as_ref().and_then(|signature| {
+                            self.find_type_param_binding(signature.key_type, name)
+                                .or_else(|| {
+                                    self.find_type_param_binding(signature.value_type, name)
+                                })
+                        })
+                    })
+            }
+            Some(TypeData::Application(app_id)) => {
+                let application = self.interner.type_application(app_id);
+                self.find_type_param_binding(application.base, name)
+                    .or_else(|| {
+                        application
+                            .args
+                            .iter()
+                            .find_map(|&arg| self.find_type_param_binding(arg, name))
+                    })
+            }
+            Some(TypeData::Conditional(cond_id)) => {
+                let conditional = self.interner.get_conditional(cond_id);
+                self.find_type_param_binding(conditional.check_type, name)
+                    .or_else(|| self.find_type_param_binding(conditional.extends_type, name))
+                    .or_else(|| self.find_type_param_binding(conditional.true_type, name))
+                    .or_else(|| self.find_type_param_binding(conditional.false_type, name))
+            }
+            Some(TypeData::Mapped(mapped_id)) => {
+                let mapped = self.interner.get_mapped(mapped_id);
+                mapped
+                    .type_param
+                    .constraint
+                    .and_then(|constraint| self.find_type_param_binding(constraint, name))
+                    .or_else(|| self.find_type_param_binding(mapped.constraint, name))
+                    .or_else(|| {
+                        (mapped.type_param.name != name)
+                            .then(|| self.find_type_param_binding(mapped.template, name))
+                            .flatten()
+                    })
+                    .or_else(|| {
+                        (mapped.type_param.name != name)
+                            .then(|| {
+                                mapped
+                                    .name_type
+                                    .and_then(|type_id| self.find_type_param_binding(type_id, name))
+                            })
+                            .flatten()
+                    })
+            }
+            Some(TypeData::IndexAccess(object_type, key_type)) => self
+                .find_type_param_binding(object_type, name)
+                .or_else(|| self.find_type_param_binding(key_type, name)),
+            Some(TypeData::TemplateLiteral(template_id)) => self
+                .interner
+                .template_list(template_id)
+                .iter()
+                .find_map(|span| match span {
+                    crate::types::TemplateSpan::Text(_) => None,
+                    crate::types::TemplateSpan::Type(type_id) => {
+                        self.find_type_param_binding(*type_id, name)
+                    }
+                }),
+            Some(TypeData::Enum(_, member_type)) => self.find_type_param_binding(member_type, name),
+            _ => None,
+        }
+    }
+
     /// Enter a shadowing scope for type parameters.
     ///
     /// Returns `(saved_shadowed_len, saved_visiting)` for restoring via
@@ -695,13 +937,14 @@ impl<'a> TypeInstantiator<'a> {
         let (shadowed_len, saved_visiting) = self.enter_shadowing_scope(&sig.type_params);
 
         let type_params = self.instantiate_type_params_if_changed(&sig.type_params);
-        let local_start = self.local_type_params.len();
-        if let Some(type_params) = &type_params {
-            for type_param in type_params {
-                self.local_type_params
-                    .push((type_param.name, self.interner.type_param(*type_param)));
-            }
-        }
+        let local_start = self.bind_local_signature_type_params(
+            &sig.type_params,
+            type_params.as_deref(),
+            &sig.params,
+            sig.this_type,
+            sig.return_type,
+            sig.type_predicate.as_ref(),
+        );
         let type_predicate = sig
             .type_predicate
             .as_ref()
@@ -1061,13 +1304,14 @@ impl<'a> TypeInstantiator<'a> {
 
                 let instantiated_type_params =
                     self.instantiate_type_params_if_changed(&shape.type_params);
-                let local_start = self.local_type_params.len();
-                if let Some(type_params) = &instantiated_type_params {
-                    for type_param in type_params {
-                        self.local_type_params
-                            .push((type_param.name, self.interner.type_param(*type_param)));
-                    }
-                }
+                let local_start = self.bind_local_signature_type_params(
+                    &shape.type_params,
+                    instantiated_type_params.as_deref(),
+                    &shape.params,
+                    shape.this_type,
+                    shape.return_type,
+                    shape.type_predicate.as_ref(),
+                );
                 let type_predicate = shape
                     .type_predicate
                     .as_ref()
