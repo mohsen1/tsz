@@ -42,14 +42,23 @@ impl<'a> Printer<'a> {
                 let Some(module_name) = Self::extract_declare_module_name(line) else {
                     return false;
                 };
-                module_name.contains('!')
-                    && self.arena.import_decls.iter().any(|d| {
-                        self.arena
-                            .get_literal_text(d.module_specifier)
-                            .is_some_and(|s| s == module_name)
-                    })
+                module_name.contains('!') && self.source_references_module_specifier(module_name)
             })
         })
+    }
+
+    fn source_references_module_specifier(&self, module_name: &str) -> bool {
+        let specifier_matches = |idx| {
+            self.arena
+                .get_literal_text(idx)
+                .is_some_and(|s| s == module_name)
+        };
+        self.arena
+            .import_decls
+            .iter()
+            .map(|d| d.module_specifier)
+            .chain(self.arena.export_decls.iter().map(|d| d.module_specifier))
+            .any(specifier_matches)
     }
 
     fn source_imports_bang_module_specifier(&self) -> bool {

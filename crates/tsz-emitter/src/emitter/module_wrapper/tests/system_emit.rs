@@ -589,6 +589,39 @@ import * as http from 'intern/dojo/node!http';
 }
 
 #[test]
+fn amd_reference_directive_for_exported_bang_module_preserved() {
+    let declarations = r#"declare module 'intern/dojo/node!http' {
+export const value: string;
+}
+"#;
+    let source = r#"/// <reference path="a.d.ts"/>
+
+export { value } from 'intern/dojo/node!http';
+"#;
+    let mut parser = ParserState::new("a.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut declaration_file = parser.arena.source_files[0].clone();
+    declaration_file.file_name = "a.d.ts".to_string();
+    declaration_file.text = std::sync::Arc::from(declarations);
+    declaration_file.is_declaration_file = true;
+    parser.arena.source_files.push(declaration_file);
+
+    let options = PrinterOptions {
+        module: ModuleKind::AMD,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.starts_with("/// <reference path=\"a.d.ts\"/>"),
+        "Bang module declaration reference should be preserved when re-exported from source.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn amd_reference_directive_stripped_when_bang_module_not_imported() {
     let declarations = r#"declare module 'intern/dojo/node!http' {
 export = {};
