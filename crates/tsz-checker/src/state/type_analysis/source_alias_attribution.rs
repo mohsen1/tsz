@@ -1,9 +1,10 @@
 //! Structural attribution helpers for source-file alias direct-lowering misses.
 
+use std::collections::HashSet;
 use tsz_binder::{BinderState, symbol_flags};
 use tsz_common::perf_counters::{
     DirectSourceFileTypeAliasBodyRejectionKind,
-    DirectSourceFileTypeAliasTypeReferenceRejectionKind,
+    DirectSourceFileTypeAliasTypeReferenceRejectionKind, enabled_fast,
     record_direct_source_file_type_alias_body_rejection_kind,
     record_direct_source_file_type_alias_type_reference_rejection_kind,
 };
@@ -20,7 +21,7 @@ pub(crate) fn record_source_alias_rejection_kinds(
     let node_idx = type_alias.type_node;
     let body_kind = body_rejection_kind(arena, node_idx);
     record_direct_source_file_type_alias_body_rejection_kind(body_kind);
-    if body_kind == DirectSourceFileTypeAliasBodyRejectionKind::TypeReference {
+    if body_kind == DirectSourceFileTypeAliasBodyRejectionKind::TypeReference && enabled_fast() {
         record_direct_source_file_type_alias_type_reference_rejection_kind(
             type_reference_rejection_kind(arena, delegate_binder, node_idx, type_param_names),
         );
@@ -105,7 +106,8 @@ fn type_reference_rejection_kind(
             return Kind::UnresolvedIdentifier;
         };
         if symbol.flags & symbol_flags::ALIAS != 0 {
-            if let Some(resolved_sym_id) = delegate_binder.resolve_import_symbol(sym_id)
+            if let Some(resolved_sym_id) =
+                resolve_import_symbol_for_attribution_no_cache(delegate_binder, sym_id)
                 && resolved_sym_id != sym_id
                 && let Some(resolved_symbol) = delegate_binder.get_symbol(resolved_sym_id)
             {
@@ -132,6 +134,72 @@ fn type_reference_rejection_kind(
     }
 
     Kind::UnresolvedIdentifier
+}
+
+fn resolve_import_symbol_for_attribution_no_cache(
+    binder: &BinderState,
+    sym_id: tsz_binder::SymbolId,
+) -> Option<tsz_binder::SymbolId> {
+    let symbol = binder.get_symbol(sym_id)?;
+    let module_specifier = symbol.import_module.as_ref()?;
+    let export_name = symbol.import_name.as_deref().unwrap_or("export=");
+    let mut visited = HashSet::new();
+    resolve_import_with_reexports_for_attribution_no_cache(
+        binder,
+        module_specifier,
+        export_name,
+        &mut visited,
+    )
+}
+
+fn resolve_import_with_reexports_for_attribution_no_cache(
+    binder: &BinderState,
+    module_specifier: &str,
+    export_name: &str,
+    visited: &mut HashSet<(String, String)>,
+) -> Option<tsz_binder::SymbolId> {
+    let key = (module_specifier.to_string(), export_name.to_string());
+    if !visited.insert(key) {
+        return None;
+    }
+
+    if let Some(module_table) = binder.module_exports.get(module_specifier) {
+        if let Some(sym_id) = module_table.get(export_name) {
+            return Some(sym_id);
+        }
+        if export_name == "default"
+            && let Some(sym_id) = module_table.get("export=")
+        {
+            return Some(sym_id);
+        }
+    }
+
+    if let Some(file_reexports) = binder.reexports.get(module_specifier)
+        && let Some((source_module, original_name)) = file_reexports.get(export_name)
+    {
+        let name_to_lookup = original_name.as_deref().unwrap_or(export_name);
+        return resolve_import_with_reexports_for_attribution_no_cache(
+            binder,
+            source_module,
+            name_to_lookup,
+            visited,
+        );
+    }
+
+    if let Some(source_modules) = binder.wildcard_reexports.get(module_specifier) {
+        for source_module in source_modules {
+            if let Some(sym_id) = resolve_import_with_reexports_for_attribution_no_cache(
+                binder,
+                source_module,
+                export_name,
+                visited,
+            ) {
+                return Some(sym_id);
+            }
+        }
+    }
+
+    None
 }
 
 const fn classify_type_reference_rejection_symbol(
@@ -226,6 +294,11 @@ mod tests {
             DirectSourceFileTypeAliasTypeReferenceRejectionKind::LocalTypeAliasNoArguments,
             "import aliases should be bucketed by resolved type target shape",
         );
+        assert_eq!(
+            binder.resolution_cache_statistics().export_cache_entries,
+            0,
+            "attribution must not populate semantic import-resolution caches",
+        );
     }
 
     #[test]
@@ -312,6 +385,11 @@ mod tests {
             kind,
             DirectSourceFileTypeAliasTypeReferenceRejectionKind::LocalInterfaceWithArguments,
             "an imported Array symbol should resolve before builtin name buckets",
+        );
+        assert_eq!(
+            binder.resolution_cache_statistics().export_cache_entries,
+            0,
+            "attribution must not populate semantic import-resolution caches",
         );
     }
 }
