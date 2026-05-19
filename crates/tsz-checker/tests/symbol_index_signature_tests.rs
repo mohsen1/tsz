@@ -1,7 +1,9 @@
 use tsz_checker::diagnostics::diagnostic_codes;
 use tsz_checker::test_utils::{
-    check_js_source_diagnostics, check_source_code_messages, check_source_diagnostics,
+    check_js_source_diagnostics, check_multi_file, check_source_code_messages,
+    check_source_diagnostics,
 };
+use tsz_common::common::ModuleKind;
 
 fn diagnostic_codes_for_ts(source: &str) -> Vec<u32> {
     check_source_diagnostics(source)
@@ -15,6 +17,22 @@ fn diagnostic_codes_for_js(source: &str) -> Vec<u32> {
         .into_iter()
         .map(|diagnostic| diagnostic.code)
         .collect()
+}
+
+fn diagnostic_codes_for_project(files: &[(&str, &str)], entry_file: &str) -> Vec<u32> {
+    check_multi_file(
+        files,
+        entry_file,
+        tsz_checker::context::CheckerOptions {
+            module: ModuleKind::ESNext,
+            strict: true,
+            ..tsz_checker::context::CheckerOptions::default()
+        },
+    )
+    .into_iter()
+    .filter(|diagnostic| diagnostic.code != 2318)
+    .map(|diagnostic| diagnostic.code)
+    .collect()
 }
 
 #[test]
@@ -121,6 +139,103 @@ const _symi: boolean = symi[sym];
     assert!(
         !codes.contains(&diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN),
         "symbol key reads should not report TS7053 when a symbol index signature is present, got {codes:?}",
+    );
+}
+
+#[test]
+fn symbol_typed_computed_interface_member_access_uses_declared_type() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const Symbol: { (description?: string): symbol };
+const sym: symbol = Symbol("test");
+
+interface WithSymbol {
+    [sym]: number;
+}
+
+declare const ws: WithSymbol;
+const value: number = ws[sym];
+"#,
+    );
+
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "symbol-valued computed key access should not resolve to undefined, got {codes:?}",
+    );
+}
+
+#[test]
+fn symbol_typed_computed_members_match_same_const_binding_across_shapes() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const Symbol: { (description?: string): symbol };
+const fieldKey: symbol = Symbol("field");
+const aliasKey: symbol = Symbol("alias");
+const methodKey: symbol = Symbol("method");
+
+interface InterfaceShape {
+    [fieldKey]: number;
+}
+
+type LiteralShape = {
+    [aliasKey]: string;
+};
+
+interface MethodShape {
+    [methodKey](): boolean;
+}
+
+declare const interfaceValue: InterfaceShape;
+declare const literalValue: LiteralShape;
+declare const methodValue: MethodShape;
+
+const field: number = interfaceValue[fieldKey];
+const literal: string = literalValue[aliasKey];
+const method: () => boolean = methodValue[methodKey];
+const called: boolean = methodValue[methodKey]();
+"#,
+    );
+
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "same const symbol binding should preserve declared member types, got {codes:?}",
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::CANNOT_INVOKE_AN_OBJECT_WHICH_IS_POSSIBLY_UNDEFINED),
+        "symbol method access should not resolve to possibly undefined, got {codes:?}",
+    );
+}
+
+#[test]
+fn imported_symbol_typed_computed_member_access_uses_export_binding() {
+    let codes = diagnostic_codes_for_project(
+        &[
+            (
+                "./a.ts",
+                r#"
+export declare const sym: symbol;
+
+export interface WithSymbol {
+    [sym]: number;
+}
+"#,
+            ),
+            (
+                "./b.ts",
+                r#"
+import { sym as importedSym, type WithSymbol } from "./a";
+
+declare const ws: WithSymbol;
+const value: number = ws[importedSym];
+"#,
+            ),
+        ],
+        "./b.ts",
+    );
+
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "imported same-binding symbol access should preserve declared member type, got {codes:?}",
     );
 }
 
