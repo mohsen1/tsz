@@ -683,6 +683,7 @@ jobs:
         run: scripts/ci/project-compile-guard.sh
       - name: Upload project compile compatibility
         if: always()
+        id: project_compile_compatibility_artifact
         uses: actions/upload-artifact@v4
         with:
           name: project-compile-compatibility
@@ -699,6 +700,15 @@ jobs:
             .target/project-compile-guard/type-challenges-solutions/.tsz-compile/type-challenges-solutions-manifest.json
           retention-days: 7
           if-no-files-found: warn
+      - name: Summarize project compatibility artifact
+        if: always()
+        run: |
+          {
+            echo "### Project compatibility artifact"
+            echo "- Artifact: [project-compile-compatibility](${{ steps.project_compile_compatibility_artifact.outputs.artifact-url }})"
+            echo "- JSONL: \`.target/project-compile-guard/project-compatibility.jsonl\`"
+            echo "- Summary: \`.target/project-compile-guard/project-compatibility-summary.json\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
 
   project-compile-canary:
     name: project-compile-canary
@@ -728,6 +738,7 @@ jobs:
         run: scripts/ci/project-compile-guard.sh
       - name: Upload compile canary logs
         if: always()
+        id: project_compile_canary_artifact
         uses: actions/upload-artifact@v4
         with:
           name: project-compile-canary-logs
@@ -745,6 +756,15 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
           compression-level: 1
+      - name: Summarize compile canary compatibility artifact
+        if: always()
+        run: |
+          {
+            echo "### Compile canary compatibility artifact"
+            echo "- Artifact: [project-compile-canary-logs](${{ steps.project_compile_canary_artifact.outputs.artifact-url }})"
+            echo "- JSONL: \`.target/project-compile-guard/project-compatibility.jsonl\`"
+            echo "- Summary: \`.target/project-compile-guard/project-compatibility-summary.json\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
 
   wasm:
     name: wasm

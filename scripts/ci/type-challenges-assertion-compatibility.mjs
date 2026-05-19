@@ -115,6 +115,38 @@ function fixtureSourcesFromCandidateManifest(manifest) {
   return sources;
 }
 
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    const normalized = String(value ?? "").trim();
+    if (normalized) return normalized;
+  }
+  return null;
+}
+
+function githubRunUrl(runId) {
+  if (!runId || runId === "local") return null;
+  const serverUrl = firstNonEmpty(process.env.GITHUB_SERVER_URL, "https://github.com");
+  const repository = firstNonEmpty(process.env.GITHUB_REPOSITORY);
+  if (!repository) return null;
+  return `${serverUrl}/${repository}/actions/runs/${runId}`;
+}
+
+function artifactMetadata(generatedAt = new Date().toISOString()) {
+  const runId = firstNonEmpty(process.env.COMPAT_WORKFLOW_RUN_ID, process.env.GITHUB_RUN_ID, "local");
+  return {
+    generated_at: firstNonEmpty(process.env.COMPAT_GENERATED_AT, generatedAt),
+    source_commit: firstNonEmpty(process.env.COMPAT_SOURCE_COMMIT, process.env.BENCH_TARGET_SHA, process.env.GITHUB_SHA, "local"),
+    workflow_name: firstNonEmpty(process.env.COMPAT_WORKFLOW_NAME, process.env.GITHUB_WORKFLOW, "local"),
+    workflow_run_id: runId,
+    workflow_run_url: firstNonEmpty(process.env.COMPAT_WORKFLOW_RUN_URL, githubRunUrl(runId)),
+    workflow_run_attempt: firstNonEmpty(process.env.COMPAT_WORKFLOW_RUN_ATTEMPT, process.env.GITHUB_RUN_ATTEMPT),
+    run_status: firstNonEmpty(
+      process.env.COMPAT_RUN_STATUS,
+      process.env.GITHUB_ACTIONS === "true" ? "completed" : "local",
+    ),
+  };
+}
+
 function validateCleanManifestSources(manifest) {
   if (!manifest?.sources || typeof manifest.sources !== "object") {
     fail("tsc-clean assertion manifest is missing sources");
@@ -1283,6 +1315,7 @@ const firstDiagnosticFile =
 const tsconfigPath = rel(path.join(candidateDir, "tsconfig.tsz-guard.json"));
 const sourceRoot = rel(path.join(candidateDir, "assertions"));
 const row = {
+  ...artifactMetadata(),
   name: "type-challenges-assertion-candidates",
   state,
   exit_class: exitClass,

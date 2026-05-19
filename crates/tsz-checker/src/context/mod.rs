@@ -3,14 +3,6 @@
 //! Holds the shared state used throughout the type checking process.
 //! This separates state from logic, allowing specialized checkers (expressions, statements)
 //! to borrow the context mutably.
-//!
-//! Sub-modules:
-//! - `constructors` - `CheckerContext` constructor methods
-//! - `resolver` - `TypeResolver` trait implementation
-//! - `def_mapping` - DefId migration helpers
-//! - `compiler_options` - Compiler option accessors and solver config derivation
-//! - `lib_queries` - Library/global type availability queries
-//! - `module_entity` - Module entity resolution (`module_resolves_to_non_module_entity`)
 mod aliases;
 mod caches;
 mod compiler_options;
@@ -355,6 +347,9 @@ pub struct CheckerContext<'a> {
     /// Used to suppress false TS2559 (weak type) violations for these types,
     /// since they inherit non-optional members from Array.prototype.
     pub types_extending_array: FxHashSet<TypeId>,
+
+    /// Recovery sites; see `crate::recovery`.
+    pub(crate) recovery_sites: RefCell<crate::recovery::RecoverySites>,
 
     // --- Caches ---
     /// Cached types for symbols (dense flat-vec, O(1) lookup by symbol index).

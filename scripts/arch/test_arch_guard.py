@@ -359,13 +359,16 @@ class ArchGuardCoreLibFacadeSizeBoundaryTests(unittest.TestCase):
     def _core_lib_size_check(self):
         for entry in self.arch_guard.FILE_LINE_LIMIT_CHECKS:
             name, path, limit = entry
-            if name == "Core boundary: tsz-core lib facade must stay under 500 LOC":
+            if (
+                name
+                == "Core boundary: tsz-core lib facade must stay at current 365 LOC baseline"
+            ):
                 return path, limit
         self.fail("core lib facade size boundary check is missing from FILE_LINE_LIMIT_CHECKS")
 
     def test_rule_exists_with_expected_limit(self):
         path, limit = self._core_lib_size_check()
-        self.assertEqual(limit, 500)
+        self.assertEqual(limit, 365)
         self.assertTrue(str(path).endswith("crates/tsz-core/src/lib.rs"))
 
     def test_scan_file_line_limit_flags_file_above_limit(self):
@@ -2924,7 +2927,7 @@ class ArchGuardPolicyTomlTests(unittest.TestCase):
 
     def test_live_checks_matches_expected_count(self):
         """CHECKS must be loaded from TOML and have the expected entry count."""
-        self.assertEqual(len(self.arch_guard.CHECKS), 31)
+        self.assertEqual(len(self.arch_guard.CHECKS), 33)
 
     def test_live_manifest_checks_matches_expected_count(self):
         """MANIFEST_CHECKS must be loaded from TOML and have the expected entry count."""
