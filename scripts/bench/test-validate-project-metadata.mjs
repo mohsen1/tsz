@@ -41,9 +41,21 @@ assert.deepEqual(validate([validRow({ name: " " })]), [
   "project row has invalid or empty name",
 ]);
 
+assert.deepEqual(validate([validRow({ name: "Example_Project" })]), [
+  "Example_Project: name must be a lowercase hyphenated slug",
+]);
+
 assert.deepEqual(validate([validRow(), validRow()]), [
   "duplicate project row name: example-project",
 ]);
+
+assert.deepEqual(
+  validate([
+    validRow({ name: "first-project", fixture_dir: "shared-fixture" }),
+    validRow({ name: "second-project", fixture_dir: "shared-fixture" }),
+  ]),
+  ["second-project: fixture_dir duplicates first-project: shared-fixture"],
+);
 
 assert.deepEqual(
   validate([
@@ -55,6 +67,8 @@ assert.deepEqual(
       source_dir: " ",
       repo_env: "",
       ref_env: " ",
+      expected_generated_env: "bad-env-name",
+      expected_test_cases_env: "1BAD_ENV",
       guard_set: "nightly",
       benchmark_set: "manual",
       category: "fixture",
@@ -73,6 +87,10 @@ assert.deepEqual(
     "example-project: readme_candidates[1] must be a non-empty string",
     "example-project: repo_env must be a non-empty string when present",
     "example-project: ref_env must be a non-empty string when present",
+    "example-project: expected_generated_env must be a valid shell variable name when present",
+    "example-project: expected_test_cases_env must be a valid shell variable name when present",
+    "example-project: expected_generated_env is set but expected_generated is missing or not a positive number",
+    "example-project: expected_test_cases_env is set but expected_test_cases is missing or not a positive number",
   ],
 );
 
@@ -96,8 +114,50 @@ assert.deepEqual(
 );
 
 assert.deepEqual(
+  validate([
+    (() => {
+      const row = validRow({
+        expected_generated: 10,
+        expected_test_cases: 20,
+      });
+      delete row.repo_env;
+      delete row.ref_env;
+      return row;
+    })(),
+  ]),
+  [
+    "example-project: repo is set but repo_env is missing",
+    "example-project: ref is set but ref_env is missing",
+    "example-project: expected_generated is set but expected_generated_env is missing",
+    "example-project: expected_test_cases is set but expected_test_cases_env is missing",
+  ],
+);
+
+assert.deepEqual(
   validate([validRow({ readme_candidates: [] })]),
   ["example-project: readme_candidates must be a non-empty array"],
+);
+
+assert.deepEqual(
+  validate([
+    validRow({
+      fixture_dir: "/tmp/example",
+      source_dir: "../src",
+      readme_candidates: ["README.md", "docs//README.md", "docs\\README.md", "../README.md"],
+    }),
+  ]),
+  [
+    "example-project: fixture_dir must be a relative POSIX path",
+    "example-project: source_dir must not contain empty, dot, or parent segments",
+    "example-project: readme_candidates[1] must not contain empty, dot, or parent segments",
+    "example-project: readme_candidates[2] must be a relative POSIX path",
+    "example-project: readme_candidates[3] must not contain empty, dot, or parent segments",
+  ],
+);
+
+assert.deepEqual(
+  validate([validRow({ source_dir: "." })]),
+  [],
 );
 
 assert.deepEqual(
