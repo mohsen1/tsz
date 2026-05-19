@@ -52,6 +52,36 @@ class Renamed<U> {
 }
 
 #[test]
+fn nested_generic_indexed_access_write_accepts_same_surface() {
+    let diagnostics = check_source_strict(
+        r#"
+function assignTo<T, K1 extends keyof T, K2 extends keyof T[K1]>(
+    object: T,
+    key1: K1,
+    key2: K2,
+) {
+    return (value: T[K1][K2]) => object[key1][key2] = value;
+}
+
+function renamed<U, A extends keyof U, B extends keyof U[A]>(
+    item: U,
+    first: A,
+    second: B,
+) {
+    return (next: U[A][B]) => item[first][second] = next;
+}
+"#,
+    );
+
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|diag| diag.code == 2322 || diag.code == 2719),
+        "equivalent nested indexed-access write surfaces should not report self-mismatches, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn distinct_generic_indexed_access_surfaces_still_report_mismatch() {
     let diagnostics = check_source_strict(
         r#"
