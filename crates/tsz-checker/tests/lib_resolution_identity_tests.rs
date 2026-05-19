@@ -22,8 +22,9 @@ use tsz_checker::state::CheckerState;
 use tsz_checker::test_utils::{
     diagnostic_count, diagnostics_with_any_code, diagnostics_with_code,
     diagnostics_with_code_any_message, diagnostics_with_code_message, diagnostics_without_codes,
-    has_any_diagnostic_code, has_diagnostic_code, has_diagnostic_code_message,
+    has_any_diagnostic_code, has_diagnostic_code, has_diagnostic_code_message, load_lib_files,
 };
+use tsz_common::common::ModuleKind;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
@@ -4237,6 +4238,70 @@ fn compile_with_es2015_sublibs(source: &str) -> Vec<(u32, String)> {
         .collect()
 }
 
+fn compile_with_esnext_iterator_libs(source: &str) -> Vec<(u32, String)> {
+    let lib_files = load_lib_files(&[
+        "es5.d.ts",
+        "es2015.core.d.ts",
+        "es2015.collection.d.ts",
+        "es2015.iterable.d.ts",
+        "es2015.generator.d.ts",
+        "es2015.symbol.d.ts",
+        "es2015.symbol.wellknown.d.ts",
+        "esnext.iterator.d.ts",
+    ]);
+    if lib_files.is_empty() {
+        return Vec::new();
+    }
+    tsz_checker::test_utils::check_source_with_libs(
+        source,
+        "test.ts",
+        CheckerOptions {
+            target: ScriptTarget::ESNext,
+            strict: true,
+            strict_null_checks: true,
+            ..Default::default()
+        },
+        &lib_files,
+    )
+    .into_iter()
+    .map(|d| (d.code, d.message_text))
+    .collect()
+}
+
+fn compile_multi_file_with_esnext_iterator_libs(
+    files: &[(&str, &str)],
+    entry_file: &str,
+) -> Vec<(u32, String)> {
+    let lib_files = load_lib_files(&[
+        "es5.d.ts",
+        "es2015.core.d.ts",
+        "es2015.collection.d.ts",
+        "es2015.iterable.d.ts",
+        "es2015.generator.d.ts",
+        "es2015.symbol.d.ts",
+        "es2015.symbol.wellknown.d.ts",
+        "esnext.iterator.d.ts",
+    ]);
+    if lib_files.is_empty() {
+        return Vec::new();
+    }
+    tsz_checker::test_utils::check_multi_file_with_libs(
+        files,
+        entry_file,
+        CheckerOptions {
+            module: ModuleKind::ESNext,
+            target: ScriptTarget::ESNext,
+            strict: true,
+            strict_null_checks: true,
+            ..Default::default()
+        },
+        &lib_files,
+    )
+    .into_iter()
+    .map(|d| (d.code, d.message_text))
+    .collect()
+}
+
 #[test]
 fn test_new_proxy_no_false_ts2351() {
     // `new Proxy(target, handler)` should resolve via ProxyConstructor's construct
@@ -4408,6 +4473,65 @@ const iter3 = iter2.flatMap(() => g1);
         has_diagnostic_code_message(&diagnostics, 2416, "Iterator<string, undefined, unknown>"),
         "Expected Iterator<string> heritage diagnostics to show scoped abstract defaults. Got: {diagnostics:#?}"
     );
+    let bare_iterator_base_messages: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, message)| {
+            *code == 2416
+                && message.contains("base type 'Iterator<")
+                && !message.contains("undefined, unknown")
+        })
+        .collect();
+    assert!(
+        bare_iterator_base_messages.is_empty(),
+        "Expected every builtin Iterator TS2416 base type display to include scoped defaults. Got: {bare_iterator_base_messages:#?}"
+    );
+}
+
+#[test]
+fn test_esnext_builtin_iterator_protocol_uses_scoped_defaults_in_all_errors() {
+    let diagnostics = compile_with_esnext_iterator_libs(
+        r#"
+class BadIterator1 extends Iterator<number> {
+  next() {
+    if (Math.random() < .5) {
+      return { done: false, value: 0 } as const;
+    } else {
+      return { done: true, value: "a string" } as const;
+    }
+  }
+}
+class BadIterator2 extends Iterator<number> {
+  next() {
+    return { done: false, value: 0 };
+  }
+}
+class BadIterator3 extends Iterator<number> {
+  next() {
+    if (Math.random() < .5) {
+      return { done: false, value: 0 };
+    } else {
+      return { done: true, value: "a string" };
+    }
+  }
+}
+"#,
+    );
+
+    let ts2416: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2416)
+        .collect();
+    assert_eq!(
+        ts2416.len(),
+        3,
+        "Expected three Iterator.next override diagnostics. Got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2416
+            .iter()
+            .all(|(_, message)| message.contains("Iterator<number, undefined, unknown>")),
+        "Expected every ESNext Iterator TS2416 base type display to include scoped defaults. Got: {ts2416:#?}"
+    );
 }
 
 #[test]
@@ -4440,6 +4564,73 @@ class Bad extends N.Iterator<number> {
     assert!(
         !has_diagnostic_code_message(&diagnostics, 2416, "Iterator<number, undefined, unknown>"),
         "Expected user-defined namespace Iterator not to receive builtin Iterator defaults. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_module_local_iterator_class_does_not_use_builtin_defaults_in_errors() {
+    let diagnostics = compile_with_esnext_iterator_libs(
+        r#"
+export {};
+class Iterator<T> {
+  next(): T {
+    throw new Error();
+  }
+}
+class Bad extends Iterator<number> {
+  override next(): string {
+    return "";
+  }
+}
+"#,
+    );
+
+    assert!(
+        has_diagnostic_code_message(&diagnostics, 2416, "Iterator<number>"),
+        "Expected module-local Iterator diagnostic to keep its written arity. Got: {diagnostics:#?}"
+    );
+    assert!(
+        !has_diagnostic_code_message(&diagnostics, 2416, "Iterator<number, undefined, unknown>"),
+        "Expected module-local Iterator not to receive builtin Iterator defaults. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_imported_iterator_class_does_not_use_builtin_defaults_in_errors() {
+    let diagnostics = compile_multi_file_with_esnext_iterator_libs(
+        &[
+            (
+                "./consumer.ts",
+                r#"
+import { Iterator } from "./user";
+class Bad extends Iterator<number> {
+  override next(): string {
+    return "";
+  }
+}
+"#,
+            ),
+            (
+                "./user.ts",
+                r#"
+export class Iterator<T> {
+  next(): T {
+    throw new Error();
+  }
+}
+"#,
+            ),
+        ],
+        "./consumer.ts",
+    );
+
+    assert!(
+        has_diagnostic_code_message(&diagnostics, 2416, "Iterator<number>"),
+        "Expected imported user Iterator diagnostic to keep its written arity. Got: {diagnostics:#?}"
+    );
+    assert!(
+        !has_diagnostic_code_message(&diagnostics, 2416, "Iterator<number, undefined, unknown>"),
+        "Expected imported user Iterator not to receive builtin Iterator defaults. Got: {diagnostics:#?}"
     );
 }
 

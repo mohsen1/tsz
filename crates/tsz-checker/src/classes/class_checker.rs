@@ -11,6 +11,7 @@ use crate::query_boundaries::class::{
 use crate::query_boundaries::common::TypeSubstitution;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -1340,19 +1341,20 @@ impl<'a> CheckerState<'a> {
                 // Handle both cases:
                 // 1. ExpressionWithTypeArguments (e.g., Base<T>)
                 // 2. Simple Identifier (e.g., Base)
-                let (expr_idx, type_arguments) =
+                let (expr_idx, type_arguments, heritage_expr_for_type_idx) =
                     if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node) {
                         (
                             expr_type_args.expression,
                             expr_type_args.type_arguments.as_ref(),
+                            expr_type_args.expression,
                         )
                     } else if let Some(call_expr) = self.ctx.arena.get_call_expr(type_node) {
-                        (call_expr.expression, None)
+                        (call_expr.expression, None, type_idx)
                     } else {
                         // For simple identifiers without type arguments, the type_node itself is the identifier
-                        (type_idx, None)
+                        (type_idx, None, type_idx)
                     };
-                heritage_expr_idx = Some(type_idx);
+                heritage_expr_idx = Some(heritage_expr_for_type_idx);
                 heritage_type_idx = Some(type_idx);
                 if let Some(args) = type_arguments {
                     base_type_argument_nodes = Some(args.nodes.clone());
@@ -1470,20 +1472,34 @@ impl<'a> CheckerState<'a> {
                     self.base_instance_type_from_expression(h_expr_idx, type_arguments)
                 {
                     let heritage_sym_id = self.resolve_heritage_symbol(h_expr_idx);
+                    let is_actual_lib_iterator =
+                        self.heritage_reference_is_actual_lib_iterator(h_expr_idx);
+                    let heritage_sym_id_for_display = self
+                        .heritage_symbol_id_for_expression_display(
+                            heritage_sym_id,
+                            is_actual_lib_iterator,
+                        );
                     // Use intersection display name if available (preserves "I1 & I2"
                     // instead of showing merged "{ m1: ...; m2: ... }")
-                    let type_base_name = self
-                        .format_heritage_class_symbol_reference(heritage_sym_id, type_arguments)
-                        .or_else(|| {
-                            self.intersection_instance_display_name(h_expr_idx, type_arguments)
-                        })
-                        .unwrap_or_else(|| {
-                            self.format_heritage_instance_display(
-                                instance_type,
-                                h_expr_idx,
-                                type_arguments,
-                            )
-                        });
+                    let type_base_name = if is_actual_lib_iterator {
+                        self.format_builtin_iterator_reference_with_type_arguments(type_arguments)
+                    } else {
+                        None
+                    }
+                    .or_else(|| {
+                        self.format_heritage_class_symbol_reference(
+                            heritage_sym_id_for_display,
+                            type_arguments,
+                        )
+                    })
+                    .or_else(|| self.intersection_instance_display_name(h_expr_idx, type_arguments))
+                    .unwrap_or_else(|| {
+                        self.format_heritage_instance_display(
+                            instance_type,
+                            h_expr_idx,
+                            type_arguments,
+                        )
+                    });
                     let base_instance_member_names =
                         self.collect_property_names_from_type(instance_type);
                     let base_static_type =
@@ -1539,18 +1555,32 @@ impl<'a> CheckerState<'a> {
                     self.base_instance_type_from_expression(h_expr_idx, type_arguments)
                 {
                     let heritage_sym_id = self.resolve_heritage_symbol(h_expr_idx);
-                    let type_base_name = self
-                        .format_heritage_class_symbol_reference(heritage_sym_id, type_arguments)
-                        .or_else(|| {
-                            self.intersection_instance_display_name(h_expr_idx, type_arguments)
-                        })
-                        .unwrap_or_else(|| {
-                            self.format_heritage_instance_display(
-                                instance_type,
-                                h_expr_idx,
-                                type_arguments,
-                            )
-                        });
+                    let is_actual_lib_iterator =
+                        self.heritage_reference_is_actual_lib_iterator(h_expr_idx);
+                    let heritage_sym_id_for_display = self
+                        .heritage_symbol_id_for_expression_display(
+                            heritage_sym_id,
+                            is_actual_lib_iterator,
+                        );
+                    let type_base_name = if is_actual_lib_iterator {
+                        self.format_builtin_iterator_reference_with_type_arguments(type_arguments)
+                    } else {
+                        None
+                    }
+                    .or_else(|| {
+                        self.format_heritage_class_symbol_reference(
+                            heritage_sym_id_for_display,
+                            type_arguments,
+                        )
+                    })
+                    .or_else(|| self.intersection_instance_display_name(h_expr_idx, type_arguments))
+                    .unwrap_or_else(|| {
+                        self.format_heritage_instance_display(
+                            instance_type,
+                            h_expr_idx,
+                            type_arguments,
+                        )
+                    });
                     let base_instance_member_names =
                         self.collect_property_names_from_type(instance_type);
                     let base_static_type =
@@ -1592,8 +1622,7 @@ impl<'a> CheckerState<'a> {
         let (base_type_params, base_type_param_updates) =
             self.push_type_parameters(&base_class.type_parameters);
         let base_is_actual_lib_iterator = heritage_expr_idx
-            .and_then(|expr_idx| self.resolve_heritage_symbol(expr_idx))
-            .is_some_and(|sym_id| self.class_symbol_is_actual_lib_iterator(sym_id));
+            .is_some_and(|expr_idx| self.heritage_reference_is_actual_lib_iterator(expr_idx));
         if type_args.len() < base_type_params.len() {
             for (param_index, param) in base_type_params.iter().enumerate().skip(type_args.len()) {
                 let fallback = if base_is_actual_lib_iterator && param_index == 1 {
@@ -2585,6 +2614,133 @@ impl<'a> CheckerState<'a> {
         self.get_symbol_globally(sym_id).is_some_and(|symbol| {
             symbol.escaped_name == "Iterator"
                 && self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+        })
+    }
+
+    pub(crate) fn heritage_reference_is_actual_lib_iterator(&self, expr_idx: NodeIndex) -> bool {
+        let resolved_sym = self.resolve_heritage_symbol(expr_idx);
+        let Some(name) = self.ctx.arena.get_identifier_text(expr_idx) else {
+            return false;
+        };
+        if name != "Iterator" {
+            return false;
+        }
+        if self.current_file_import_binds_name(name) {
+            return false;
+        }
+        if resolved_sym.is_some_and(|sym_id| self.class_symbol_is_actual_lib_iterator(sym_id)) {
+            return true;
+        }
+        if let Some(sym_id) = self.resolve_identifier_symbol(expr_idx) {
+            return self.class_symbol_is_actual_lib_iterator(sym_id);
+        }
+        if resolved_sym.is_some() {
+            return false;
+        }
+        if self
+            .ctx
+            .binder
+            .file_locals
+            .get(name)
+            .is_some_and(|sym_id| !self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id))
+        {
+            return false;
+        }
+
+        self.ctx.actual_lib_context_has_bare_name(name)
+            && !self.ctx.file_local_type_shadow_for_lib_name(name)
+            && !self.file_local_import_alias_shadows_lib_name(name)
+    }
+
+    pub(crate) fn heritage_symbol_id_for_expression_display(
+        &self,
+        sym_id: Option<tsz_binder::SymbolId>,
+        is_actual_lib_iterator: bool,
+    ) -> Option<tsz_binder::SymbolId> {
+        let sym_id = sym_id?;
+        if self.class_symbol_is_actual_lib_iterator(sym_id) && !is_actual_lib_iterator {
+            return None;
+        }
+        Some(sym_id)
+    }
+
+    fn file_local_import_alias_shadows_lib_name(&self, name: &str) -> bool {
+        use tsz_binder::symbol_flags;
+
+        if !self.ctx.binder.is_external_module() {
+            return false;
+        }
+
+        self.ctx.binder.file_locals.get(name).is_some_and(|sym_id| {
+            if self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id) {
+                return self.current_file_import_binds_name(name);
+            }
+
+            self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                symbol.import_module.is_some() && symbol.has_any_flags(symbol_flags::ALIAS)
+            })
+        }) || self.current_file_import_binds_name(name)
+    }
+
+    fn current_file_import_binds_name(&self, name: &str) -> bool {
+        let Some(source_file) = self.ctx.arena.source_files.first() else {
+            return false;
+        };
+
+        source_file.statements.nodes.iter().any(|&stmt_idx| {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                return false;
+            };
+            if stmt_node.kind != syntax_kind_ext::IMPORT_DECLARATION {
+                return false;
+            }
+            let Some(import_decl) = self.ctx.arena.get_import_decl(stmt_node) else {
+                return false;
+            };
+            let Some(clause_node) = self.ctx.arena.get(import_decl.import_clause) else {
+                return false;
+            };
+            let Some(clause) = self.ctx.arena.get_import_clause(clause_node) else {
+                return false;
+            };
+
+            if self.ctx.arena.get_identifier_text(clause.name) == Some(name) {
+                return true;
+            }
+
+            let Some(bindings_node) = self.ctx.arena.get(clause.named_bindings) else {
+                return false;
+            };
+            if bindings_node.kind == syntax_kind_ext::NAMESPACE_IMPORT {
+                return self
+                    .ctx
+                    .arena
+                    .get_named_imports(bindings_node)
+                    .is_some_and(|ns| self.ctx.arena.get_identifier_text(ns.name) == Some(name));
+            }
+            if bindings_node.kind != syntax_kind_ext::NAMED_IMPORTS {
+                return false;
+            }
+
+            self.ctx
+                .arena
+                .get_named_imports(bindings_node)
+                .is_some_and(|named| {
+                    named.elements.nodes.iter().any(|&spec_idx| {
+                        let Some(spec_node) = self.ctx.arena.get(spec_idx) else {
+                            return false;
+                        };
+                        let Some(spec) = self.ctx.arena.get_specifier(spec_node) else {
+                            return false;
+                        };
+                        let local_name_idx = if spec.name.is_some() {
+                            spec.name
+                        } else {
+                            spec.property_name
+                        };
+                        self.ctx.arena.get_identifier_text(local_name_idx) == Some(name)
+                    })
+                })
         })
     }
 
