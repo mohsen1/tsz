@@ -2829,7 +2829,7 @@ export const publicProcedure = trpc.procedure;
     ])
     .expect("batch-style args");
 
-    tsz_solver::clear_thread_local_cache();
+    tsz_solver::construction::clear_thread_local_cache();
     tsz_solver::reset_subtype_thread_local_state();
     tsz::checker::clear_all_thread_local_state();
 
@@ -3773,8 +3773,13 @@ fn compile_module_none_outfile_keeps_cached_reference_dependencies() {
 
     write_file(&referenced_path, "const referencedValue = 4;\n");
     let result = with_types_versions_env(None, || {
-        compile_with_cache_and_changes(&args, base, &mut cache, &[referenced_path.clone()])
-            .expect("compile should succeed")
+        compile_with_cache_and_changes(
+            &args,
+            base,
+            &mut cache,
+            std::slice::from_ref(&referenced_path),
+        )
+        .expect("compile should succeed")
     });
     assert!(
         result.diagnostics.iter().all(|diag| diag.code == 1323),

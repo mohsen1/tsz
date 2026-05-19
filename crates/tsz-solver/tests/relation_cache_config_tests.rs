@@ -19,6 +19,11 @@
 //!    corresponding non-sound slot.
 //! 7. The `QueryCache` must not serve a non-sound cached result to a
 //!    sound-mode lookup for the same type pair.
+//! 8. Typed `RelationPolicy` query-cache entrypoints insert under the same
+//!    policy-derived cache keys as the legacy packed-flag entrypoints.
+//! 9. The typed no-flags compatibility constructor remains equivalent to the
+//!    legacy `RelationPolicy::from_flags(0)` constructor, without collapsing
+//!    into `RelationPolicy::default()`.
 
 use super::*;
 use crate::caches::db::QueryDatabase;
@@ -56,6 +61,27 @@ fn assert_packed_flag_partitions(name: &str, flag_bits: u16) {
         name,
         RelationPolicy::from_flags(flag_bits),
         RelationPolicy::from_flags(0),
+    );
+}
+
+#[test]
+fn unflagged_compatibility_policy_matches_empty_legacy_flags() {
+    let typed = RelationPolicy::unflagged_compatibility();
+    let legacy = RelationPolicy::from_flags(0);
+
+    assert_eq!(
+        typed, legacy,
+        "typed no-flags compatibility policy must preserve the legacy packed no-flags behavior",
+    );
+    assert_eq!(
+        typed.cache_config(),
+        legacy.cache_config(),
+        "typed no-flags compatibility policy must use the legacy no-flags cache slot",
+    );
+    assert_ne!(
+        typed.cache_config(),
+        RelationPolicy::default().cache_config(),
+        "historical no-flags compatibility remains distinct from the strict-null default policy",
     );
 }
 
@@ -584,5 +610,39 @@ fn query_cache_relation_misses_insert_policy_shaped_keys() {
         )),
         Some(true),
         "assignability miss path must insert under the policy-derived cache key",
+    );
+}
+
+#[test]
+fn query_cache_typed_policy_entrypoints_insert_policy_shaped_keys() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let source = interner.literal_string("typed-policy-key-source");
+    let policy = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES)
+        .with_strict_any_propagation(true)
+        .with_skip_weak_type_checks(true)
+        .with_erase_generics(false);
+    let config = policy.cache_config();
+
+    assert!(db.is_subtype_of_with_policy(source, TypeId::STRING, policy));
+    assert_eq!(
+        db.lookup_subtype_cache(RelationCacheKey::for_subtype(
+            source,
+            TypeId::STRING,
+            config,
+        )),
+        Some(true),
+        "typed subtype policy path must insert under the policy-derived cache key",
+    );
+
+    assert!(db.is_assignable_to_with_policy(source, TypeId::STRING, policy));
+    assert_eq!(
+        db.lookup_assignability_cache(RelationCacheKey::for_assignability(
+            source,
+            TypeId::STRING,
+            config,
+        )),
+        Some(true),
+        "typed assignability policy path must insert under the policy-derived cache key",
     );
 }

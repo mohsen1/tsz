@@ -177,20 +177,20 @@ impl<'a> WorkspaceSymbolsProvider<'a> {
             return SymbolKind::Variable;
         }
 
-        let chars: Vec<char> = name.chars().collect();
+        let bytes = name.as_bytes();
 
         // SCREAMING_SNAKE_CASE -> Constant.
-        if chars.len() > 1
-            && chars
+        if bytes.len() > 1
+            && bytes
                 .iter()
-                .all(|c| c.is_ascii_uppercase() || *c == '_' || c.is_ascii_digit())
+                .all(|b| b.is_ascii_uppercase() || *b == b'_' || b.is_ascii_digit())
         {
             return SymbolKind::Constant;
         }
 
         // PascalCase -> Class, with `I`-prefix carved out for Interface.
-        if chars[0].is_ascii_uppercase() {
-            if chars.len() > 1 && chars[0] == 'I' && chars[1].is_ascii_uppercase() {
+        if bytes[0].is_ascii_uppercase() {
+            if bytes.len() > 1 && bytes[0] == b'I' && bytes[1].is_ascii_uppercase() {
                 return SymbolKind::Interface;
             }
             return SymbolKind::Class;

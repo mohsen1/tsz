@@ -22,7 +22,7 @@ use tsz_cli::config::{
     resolve_lib_files_from_dir,
 };
 use tsz_solver::QueryCache;
-use tsz_solver::RelationCacheStats;
+use tsz_solver::construction::RelationCacheStats;
 
 pub(crate) struct RunCheckResult {
     pub(crate) codes: Vec<i32>,

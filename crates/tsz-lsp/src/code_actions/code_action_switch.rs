@@ -5,7 +5,7 @@
 
 use crate::rename::{TextEdit, WorkspaceEdit};
 use crate::utils::find_node_at_offset;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::syntax_kind_ext;
@@ -52,7 +52,7 @@ impl<'a> CodeActionProvider<'a> {
         let missing: Vec<&str> = enum_members
             .iter()
             .map(|s| s.as_str())
-            .filter(|member| !existing_cases.contains(&member.to_string()))
+            .filter(|member| !existing_cases.contains(*member))
             .collect();
 
         if missing.is_empty() {
@@ -117,8 +117,8 @@ impl<'a> CodeActionProvider<'a> {
     }
 
     /// Collect the string values of existing case clauses in a switch statement.
-    fn collect_existing_case_values(&self, switch_idx: NodeIndex) -> Vec<String> {
-        let mut values = Vec::new();
+    fn collect_existing_case_values(&self, switch_idx: NodeIndex) -> FxHashSet<String> {
+        let mut values = FxHashSet::default();
         let switch_node = match self.arena.get(switch_idx) {
             Some(n) => n,
             None => return values,
@@ -154,7 +154,7 @@ impl<'a> CodeActionProvider<'a> {
                         ..self.arena.get(case.expression).map_or(0, |n| n.end) as usize,
                 )
             {
-                values.push(text.trim().to_string());
+                values.insert(text.trim().to_string());
             }
         }
 

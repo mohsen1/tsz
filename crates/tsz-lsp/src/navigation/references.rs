@@ -202,10 +202,12 @@ impl<'a> FindReferences<'a> {
         let ref_nodes = walker.find_references(root, symbol_id);
 
         // Convert to Locations
-        let locations: Vec<Location> = ref_nodes
-            .iter()
-            .filter_map(|&idx| self.location_for_node(idx))
-            .collect();
+        let mut locations = Vec::with_capacity(ref_nodes.len());
+        locations.extend(
+            ref_nodes
+                .iter()
+                .filter_map(|&idx| self.location_for_node(idx)),
+        );
 
         if locations.is_empty() {
             None

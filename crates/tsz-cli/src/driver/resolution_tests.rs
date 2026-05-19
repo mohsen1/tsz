@@ -4,6 +4,29 @@ use tsz::config::{CompilerOptions, resolve_compiler_options};
 use tsz::emitter::ModuleKind;
 
 #[test]
+fn test_module_resolution_file_exists_cache_is_per_cache() {
+    use std::fs;
+
+    let dir = tempfile::TempDir::new().expect("temp dir creation should succeed in test");
+    let candidate = dir.path().join("late.ts");
+
+    let mut cache = ModuleResolutionCache::default();
+    assert!(!cache.file_exists(&candidate));
+
+    fs::write(&candidate, "export {};").unwrap();
+    assert!(
+        !cache.file_exists(&candidate),
+        "file-existence misses are a per-resolution-run snapshot"
+    );
+
+    let mut fresh_cache = ModuleResolutionCache::default();
+    assert!(
+        fresh_cache.file_exists(&candidate),
+        "file-existence misses must not leak across resolution caches"
+    );
+}
+
+#[test]
 fn test_preserve_symlinks_keeps_symlink_path_identity() {
     use std::fs;
     use std::os::unix::fs::symlink;

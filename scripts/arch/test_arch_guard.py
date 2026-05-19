@@ -2779,6 +2779,40 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertIn("query_cache.rs:2", hits[1])
         self.assertIn("total matching lines: 2", hits[2])
 
+    def test_flags_checker_migration_with_parent_cache_callsite(self):
+        pattern, _max_lines = self._check_by_name("with_parent_cache_attributed")
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/migration.rs": (
+                    "let checker = CheckerState::with_parent_cache_attributed(parent, reason);\n"
+                    "pub fn with_parent_cache_attributed(parent: Parent) -> Self { todo!() }\n"
+                    "// CheckerState::with_parent_cache_attributed(parent, reason);\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 2, f"unexpected hits: {hits!r}")
+        self.assertIn("migration.rs:1", hits[0])
+        self.assertIn("total matching lines: 1", hits[1])
+
+    def test_flags_checker_migration_overlay_copy_callsite(self):
+        pattern, _max_lines = self._check_by_name(
+            "copy_symbol_file_targets_to_attributed"
+        )
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/migration.rs": (
+                    "self.ctx.copy_symbol_file_targets_to_attributed(&mut child, reason);\n"
+                    "pub fn copy_symbol_file_targets_to_attributed(&self) {}\n"
+                    "// self.ctx.copy_symbol_file_targets_to_attributed(&mut child, reason);\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 2, f"unexpected hits: {hits!r}")
+        self.assertIn("migration.rs:1", hits[0])
+        self.assertIn("total matching lines: 1", hits[1])
+
     def test_flags_root_solver_wildcard_compat_reexports(self):
         pattern, _max_lines = self._check_by_name("#8204")
         root = self._make_tree(
@@ -2860,6 +2894,10 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertTrue(any("diagnostic-local RelationRequest" in name for name in names))
         self.assertTrue(any("#8207" in name for name in names))
         self.assertTrue(any("#8204" in name for name in names))
+        self.assertTrue(any("with_parent_cache_attributed" in name for name in names))
+        self.assertTrue(
+            any("copy_symbol_file_targets_to_attributed" in name for name in names)
+        )
 
     def test_real_counts_pass_at_pinned_caps(self):
         """The pinned caps must match the live count (no off-by-one)."""
@@ -2873,6 +2911,57 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
                 [],
                 f"{name}: cap is too tight — guard fires at the live count.",
             )
+
+
+class ArchGuardDebugPrintMacroTests(unittest.TestCase):
+    """Cover Track 10's hard debug-print macro guard."""
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def test_scans_compiler_internal_debug_print_macros(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            source = root / "crates" / "tsz-checker" / "src" / "lib.rs"
+            source.parent.mkdir(parents=True)
+            source.write_text(
+                "\n".join(
+                    [
+                        "pub fn probe() {",
+                        "    let literal = \"println!(not code)\";",
+                        "    println!(\"debug\");",
+                        "    // eprintln!(\"comment\");",
+                        "    dbg!(literal);",
+                        "}",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            hits = self.arch_guard.scan_debug_print_macros(
+                root,
+                ("crates/tsz-checker/src",),
+            )
+
+        self.assertEqual(
+            hits,
+            [
+                "crates/tsz-checker/src/lib.rs:3 println!: println!(\"debug\");",
+                "crates/tsz-checker/src/lib.rs:5 dbg!: dbg!(literal);",
+            ],
+        )
+
+    def test_real_compiler_internals_have_no_debug_print_macros(self):
+        for name, root, scan_dirs in self.arch_guard.DEBUG_PRINT_MACRO_CHECKS:
+            hits = self.arch_guard.scan_debug_print_macros(root, scan_dirs)
+            self.assertEqual(hits, [], f"{name}: {hits[:5]}")
+
+    def test_debug_print_check_is_registered(self):
+        names = [entry[0] for entry in self.arch_guard.DEBUG_PRINT_MACRO_CHECKS]
+        self.assertTrue(
+            any("debug print macros" in name for name in names),
+            "debug print macro guard missing from DEBUG_PRINT_MACRO_CHECKS",
+        )
 
 
 class ArchGuardVisitedCloneTests(unittest.TestCase):
@@ -2976,6 +3065,26 @@ class ArchGuardVisitedCloneTests(unittest.TestCase):
             search_roots, allowlist
         )
         self.assertEqual(hits, [], f"live visited.clone() allowlist is stale: {hits!r}")
+
+    def test_registered_check_covers_solver_sources(self):
+        _name, search_roots, allowlist = self._registered_check()
+        root_strings = {str(root) for root in search_roots}
+
+        self.assertIn(str(self.arch_guard.ROOT / "crates" / "tsz-solver" / "src"), root_strings)
+        self.assertIn(
+            (
+                "crates/tsz-solver/src/evaluation/evaluate_rules/infer_pattern.rs",
+                "let mut alias_visited = visited.clone();",
+            ),
+            allowlist,
+        )
+        self.assertIn(
+            (
+                "crates/tsz-solver/src/evaluation/evaluate_rules/infer_pattern_helpers.rs",
+                "let mut alias_visited = visited.clone();",
+            ),
+            allowlist,
+        )
 
 
 class ArchGuardPolicyTomlTests(unittest.TestCase):

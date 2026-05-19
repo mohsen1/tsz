@@ -753,9 +753,7 @@ pub(super) fn read_source_files(
                 (Some(text), is_binary, suppress_parser_diagnostics),
             );
             let entry = dependencies.entry(path.clone()).or_default();
-            let bundle_entry = outfile_bundle_dependencies
-                .entry(path.clone())
-                .or_insert_with(FxHashSet::default);
+            let bundle_entry = outfile_bundle_dependencies.entry(path.clone()).or_default();
 
             if !options.no_resolve {
                 for (

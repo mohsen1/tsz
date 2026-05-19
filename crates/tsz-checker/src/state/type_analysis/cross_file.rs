@@ -611,14 +611,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Check cross-file symbol target mapping as fallback.
-        // When resolve_cross_file_export returns a SymbolId from another file's binder,
-        // it records the target file index. Use that to find the correct arena AND binder.
-        //
-        // IMPORTANT: Skip this fallback for INTERFACE symbols that have local interface
-        // declarations. These need local handling so that compute_type_of_symbol can
-        // merge members from both the local and cross-file declarations. Delegating
-        // to the other file would lose the local declaration's members and heritage.
+        // Use recorded cross-file targets only when local merge handling is not required.
         let mut cross_file_idx: Option<usize> = None;
         let needs_cross_file_delegation = !interface_has_local_decl
             && !function_has_local_decl
@@ -638,11 +631,8 @@ impl<'a> CheckerState<'a> {
             cross_file_idx = Some(file_idx);
         }
 
-        let should_delegate = if needs_cross_file_delegation {
-            true
-        } else {
-            delegate_arena.is_some_and(|arena| !std::ptr::eq(arena, self.ctx.arena))
-        };
+        let should_delegate = needs_cross_file_delegation
+            || delegate_arena.is_some_and(|arena| !std::ptr::eq(arena, self.ctx.arena));
 
         if should_delegate {
             let symbol_type_cache_file_idx = self.symbol_arena_symbol_type_cache_file_idx(
@@ -749,7 +739,6 @@ impl<'a> CheckerState<'a> {
             ) {
                 return Some(result);
             }
-
             let direct_target = if let Some(file_idx) = cross_file_idx {
                 let arena = self.ctx.get_arena_for_file(file_idx as u32);
                 let binder = self
@@ -836,6 +825,16 @@ impl<'a> CheckerState<'a> {
                     );
                 }
                 return Some((direct_type, Vec::new()));
+            }
+
+            if let Some(result) = self.direct_declaration_file_type_alias_delegation_result(
+                sym_id,
+                cross_file_idx,
+                symbol_type_cache_file_idx,
+                source_cache_scope,
+                symbol_type_cache_from_symbol_arena,
+            ) {
+                return Some(result);
             }
 
             let direct_target_file_idx =

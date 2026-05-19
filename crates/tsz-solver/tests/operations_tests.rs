@@ -605,6 +605,76 @@ fn test_generic_call_widens_fresh_object_union_inferred_type() {
     );
 }
 
+fn type_union_members(interner: &TypeInterner, type_id: TypeId) -> Vec<TypeId> {
+    match interner.lookup(type_id) {
+        Some(TypeData::Union(list_id)) => interner.type_list(list_id).to_vec(),
+        _ => vec![type_id],
+    }
+}
+
+#[test]
+fn object_spread_property_merge_later_required_overrides() {
+    let interner = TypeInterner::new();
+    let prop_name = interner.intern_string("value");
+    let earlier = PropertyInfo::readonly(prop_name, TypeId::STRING);
+    let mut spread = PropertyInfo::new(prop_name, TypeId::NUMBER);
+    spread.declaration_order = 42;
+
+    let merged = merge_object_spread_property(&interner, false, Some(&earlier), &spread);
+
+    assert_eq!(merged.type_id, TypeId::NUMBER);
+    assert_eq!(merged.write_type, TypeId::NUMBER);
+    assert!(!merged.optional);
+    assert!(!merged.readonly);
+    assert_eq!(merged.declaration_order, 42);
+}
+
+#[test]
+fn object_spread_property_merge_optional_later_unions_without_undefined_when_inexact() {
+    let interner = TypeInterner::new();
+    let prop_name = interner.intern_string("value");
+    let earlier = PropertyInfo::new(prop_name, TypeId::STRING);
+    let optional_number = interner.union2(TypeId::NUMBER, TypeId::UNDEFINED);
+    let spread = PropertyInfo::opt(prop_name, optional_number);
+
+    let merged = merge_object_spread_property(&interner, false, Some(&earlier), &spread);
+    let members = type_union_members(&interner, merged.type_id);
+
+    assert!(
+        !merged.optional,
+        "earlier required property keeps merge required"
+    );
+    assert!(members.contains(&TypeId::STRING));
+    assert!(members.contains(&TypeId::NUMBER));
+    assert!(
+        !members.contains(&TypeId::UNDEFINED),
+        "inexact optional spread merge should remove undefined from the later optional contribution"
+    );
+}
+
+#[test]
+fn object_spread_property_merge_optional_later_preserves_undefined_when_exact() {
+    let interner = TypeInterner::new();
+    let prop_name = interner.intern_string("value");
+    let earlier = PropertyInfo::new(prop_name, TypeId::STRING);
+    let optional_number = interner.union2(TypeId::NUMBER, TypeId::UNDEFINED);
+    let spread = PropertyInfo::opt(prop_name, optional_number);
+
+    let merged = merge_object_spread_property(&interner, true, Some(&earlier), &spread);
+    let members = type_union_members(&interner, merged.type_id);
+
+    assert!(
+        !merged.optional,
+        "earlier required property keeps merge required"
+    );
+    assert!(members.contains(&TypeId::STRING));
+    assert!(members.contains(&TypeId::NUMBER));
+    assert!(
+        members.contains(&TypeId::UNDEFINED),
+        "exact optional spread merge should preserve undefined in the later optional contribution"
+    );
+}
+
 #[test]
 fn test_generic_call_uninferred_callback_param_mismatch_uses_unknown() {
     let interner = TypeInterner::new();

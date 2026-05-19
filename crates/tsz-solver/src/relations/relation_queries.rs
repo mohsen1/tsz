@@ -87,6 +87,23 @@ impl Default for RelationPolicy {
 }
 
 impl RelationPolicy {
+    /// Construct the historical no-flags compatibility policy.
+    ///
+    /// This is equivalent to `RelationPolicy::from_flags(0)`, but keeps
+    /// default relation wrappers on a typed policy constructor instead of
+    /// spelling the legacy packed flag protocol at every no-flags call site.
+    pub const fn unflagged_compatibility() -> Self {
+        Self {
+            flags: 0,
+            strict_subtype_checking: false,
+            strict_any_propagation: false,
+            any_propagation_mode: AnyPropagationMode::All,
+            assume_related_on_cycle: true,
+            skip_weak_type_checks: false,
+            erase_generics: true,
+        }
+    }
+
     /// Construct a policy from the legacy packed `u16` bitmask.
     ///
     /// Only explicit bits in `flags` are applied. In particular,
