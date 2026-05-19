@@ -199,6 +199,55 @@ fn apply_to_uses_global_index_skips_local_copy() {
 }
 
 #[test]
+fn register_symbol_file_target_skips_global_index_duplicates() {
+    let interner = TypeInterner::new();
+    let query_cache = QueryCache::new(&interner);
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
+    let mut checker = make_checker(&arena, &binder, &query_cache);
+
+    let mut env = empty_program_context();
+    env.symbol_file_targets = Arc::new(vec![(SymbolId(1), 0)]);
+    env.build_global_symbol_file_index();
+    env.apply_to(&mut checker.ctx);
+
+    checker.ctx.register_symbol_file_target(SymbolId(1), 0);
+
+    assert!(
+        checker.ctx.cross_file_symbol_targets.borrow().is_empty(),
+        "dynamic overlay should not duplicate an identical global symbol-file mapping"
+    );
+    assert_eq!(checker.ctx.resolve_symbol_file_index(SymbolId(1)), Some(0));
+    assert_eq!(
+        checker.ctx.resolve_dynamic_symbol_file_index(SymbolId(1)),
+        None
+    );
+}
+
+#[test]
+fn register_symbol_file_target_keeps_dynamic_override() {
+    let interner = TypeInterner::new();
+    let query_cache = QueryCache::new(&interner);
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
+    let mut checker = make_checker(&arena, &binder, &query_cache);
+
+    let mut env = empty_program_context();
+    env.symbol_file_targets = Arc::new(vec![(SymbolId(1), 0)]);
+    env.build_global_symbol_file_index();
+    env.apply_to(&mut checker.ctx);
+
+    checker.ctx.register_symbol_file_target(SymbolId(1), 2);
+
+    assert_eq!(
+        checker.ctx.resolve_dynamic_symbol_file_index(SymbolId(1)),
+        Some(2),
+        "a dynamic mapping that differs from the global index must remain visible"
+    );
+    assert_eq!(checker.ctx.resolve_symbol_file_index(SymbolId(1)), Some(2));
+}
+
+#[test]
 fn copy_and_merge_symbol_file_targets() {
     // Test the copy_symbol_file_targets_to / merge_symbol_file_targets_from helpers.
     let interner = TypeInterner::new();

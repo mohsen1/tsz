@@ -129,12 +129,13 @@ impl<'a> CheckerContext<'a> {
             || self.cross_file_symbol_targets.borrow().contains_key(sym_id)
     }
 
-    /// Register a dynamically-discovered `SymbolId` → file index mapping
-    /// in the local overlay.
+    /// Register a dynamically-discovered `SymbolId` → file index mapping in the local overlay.
     pub fn register_symbol_file_target(&self, sym_id: SymbolId, file_idx: usize) {
-        self.cross_file_symbol_targets
-            .borrow_mut()
-            .insert(sym_id, file_idx);
+        if self.resolve_symbol_file_index(sym_id) != Some(file_idx) {
+            self.cross_file_symbol_targets
+                .borrow_mut()
+                .insert(sym_id, file_idx);
+        }
     }
 
     pub fn register_symbol_file_index(&self, sym_id: SymbolId, file_idx: usize) {
