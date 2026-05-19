@@ -1,13 +1,19 @@
 use std::sync::Arc;
 
-use crate::symbols_domain::alias_cycle::AliasCycleTracker;
-use tsz_binder::BinderState;
-use tsz_checker::context::CheckerOptions;
-use tsz_checker::state::CheckerState;
+use tsz_binder::state::LibContext as BinderLibContext;
+use tsz_binder::{BinderState, lib_loader::LibFile};
 use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_parser::parser::{NodeIndex, ParserState};
 use tsz_solver::TypeId;
 use tsz_solver::construction::TypeInterner;
+
+use crate::context::{CheckerOptions, LibContext as CheckerLibContext};
+use crate::state::CheckerState;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
+
+fn load_lib_files(names: &[&str]) -> Vec<Arc<LibFile>> {
+    crate::test_utils::load_compiled_lib_files(names)
+}
 
 fn parse_and_bind(
     name: &str,
@@ -24,8 +30,41 @@ fn parse_and_bind(
     (Arc::new(parser.get_arena().clone()), Arc::new(binder), root)
 }
 
+fn parse_and_bind_with_libs(
+    name: &str,
+    source: &str,
+    lib_files: &[Arc<LibFile>],
+) -> (
+    Arc<tsz_parser::parser::node::NodeArena>,
+    Arc<BinderState>,
+    NodeIndex,
+) {
+    let mut parser = ParserState::new(name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    if !lib_files.is_empty() {
+        let lib_contexts: Vec<_> = lib_files
+            .iter()
+            .map(|lib| BinderLibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        binder.merge_lib_contexts_into_binder(&lib_contexts);
+    }
+    binder.bind_source_file(parser.get_arena(), root);
+    (Arc::new(parser.get_arena().clone()), Arc::new(binder), root)
+}
+
+/// A user-declared `Promise` class in another file is NOT the lib Promise.
+/// `promise_like_type_argument_from_class` must not unwrap through it even when
+/// the name matches "Promise" — the identity check rejects non-lib symbols.
+///
+/// This test also verifies that the cross-file arena lookup path (accessing the
+/// declaring file's binder and arena from the current-file checker) is reachable
+/// without panicking.
 #[test]
-fn promise_subclass_heritage_unwrap_uses_declaring_file_arena() {
+fn user_declared_promise_shadow_cross_file_returns_none() {
     let (task_arena, task_binder, _) = parse_and_bind(
         "./task.ts",
         r#"
@@ -60,13 +99,157 @@ export class Task<T> extends Promise<T> { }
     checker.ctx.set_current_file_idx(1);
     checker.ctx.register_symbol_file_target(task_sym, 0);
 
+    // Without lib loaded, the user-declared `Promise` in task.ts is not the lib
+    // Promise. The identity check must reject it → None.
+    let result = checker.promise_like_type_argument_from_class(
+        task_sym,
+        &[TypeId::STRING],
+        &mut AliasCycleTracker::new(),
+    );
+    assert!(
+        result.is_none(),
+        "User-declared Promise shadow should not be unwrapped; got: {result:?}"
+    );
+}
+
+/// Structural rule: when a class in a *different* file extends the lib `Promise<T>`,
+/// `promise_like_type_argument_from_class` must traverse the cross-file heritage
+/// clause and return the resolved type argument `T`.
+///
+/// This covers the case where the string name "Promise" in the declaring file's
+/// file_locals is absent (no local shadow) so we fall back to `has_name_in_lib`.
+#[test]
+fn lib_promise_subclass_cross_file_unwraps_type_arg() {
+    let lib_files = load_lib_files(&["lib.es2015.promise.d.ts", "lib.es5.d.ts"]);
+    if lib_files.is_empty() {
+        // Lib files not available in this environment; skip.
+        return;
+    }
+
+    // Deferred<T> extends Promise<T> — uses the global (lib) Promise.
+    let (task_arena, task_binder, _) = parse_and_bind_with_libs(
+        "./deferred.ts",
+        r#"
+export class Deferred<T> extends Promise<T> {
+    constructor() { super(() => {}); }
+}
+"#,
+        &lib_files,
+    );
+    let deferred_sym = task_binder
+        .file_locals
+        .get("Deferred")
+        .expect("Deferred should be bound");
+
+    let (test_arena, test_binder, _) =
+        parse_and_bind_with_libs("./test.ts", "export {};", &lib_files);
+    let all_arenas = Arc::new(vec![task_arena, test_arena]);
+    let all_binders = Arc::new(vec![task_binder, test_binder]);
+    let types = TypeInterner::new();
+
+    let mut checker = CheckerState::new(
+        all_arenas[1].as_ref(),
+        all_binders[1].as_ref(),
+        &types,
+        "./test.ts".to_string(),
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+    checker.ctx.set_all_binders(Arc::clone(&all_binders));
+    checker.ctx.set_current_file_idx(1);
+    checker.ctx.register_symbol_file_target(deferred_sym, 0);
+
+    let lib_contexts: Vec<_> = lib_files
+        .iter()
+        .map(|lib| CheckerLibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    let lib_count = lib_contexts.len();
+    checker.ctx.set_lib_contexts(lib_contexts);
+    checker.ctx.set_actual_lib_file_count(lib_count);
+
     let inner = checker
         .promise_like_type_argument_from_class(
-            task_sym,
+            deferred_sym,
             &[TypeId::STRING],
             &mut AliasCycleTracker::new(),
         )
-        .expect("Task<string> should unwrap through extends Promise<T>");
+        .expect("Deferred<string> should unwrap through extends Promise<T>");
 
     assert_eq!(inner, TypeId::STRING);
+}
+
+/// Renamed type parameter: `class Future<U> extends Promise<U>` must work
+/// identically to `class Deferred<T> extends Promise<T>` — the fix is keyed
+/// on symbol identity, not on the type-parameter spelling.
+#[test]
+fn lib_promise_subclass_renamed_type_param_unwraps_correctly() {
+    let lib_files = load_lib_files(&["lib.es2015.promise.d.ts", "lib.es5.d.ts"]);
+    if lib_files.is_empty() {
+        return;
+    }
+
+    let (task_arena, task_binder, _) = parse_and_bind_with_libs(
+        "./future.ts",
+        r#"
+export class Future<U> extends Promise<U> {
+    constructor() { super(() => {}); }
+}
+"#,
+        &lib_files,
+    );
+    let future_sym = task_binder
+        .file_locals
+        .get("Future")
+        .expect("Future should be bound");
+
+    let (test_arena, test_binder, _) =
+        parse_and_bind_with_libs("./test.ts", "export {};", &lib_files);
+    let all_arenas = Arc::new(vec![task_arena, test_arena]);
+    let all_binders = Arc::new(vec![task_binder, test_binder]);
+    let types = TypeInterner::new();
+
+    let mut checker = CheckerState::new(
+        all_arenas[1].as_ref(),
+        all_binders[1].as_ref(),
+        &types,
+        "./test.ts".to_string(),
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+    checker.ctx.set_all_binders(Arc::clone(&all_binders));
+    checker.ctx.set_current_file_idx(1);
+    checker.ctx.register_symbol_file_target(future_sym, 0);
+
+    let lib_contexts: Vec<_> = lib_files
+        .iter()
+        .map(|lib| CheckerLibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    let lib_count = lib_contexts.len();
+    checker.ctx.set_lib_contexts(lib_contexts);
+    checker.ctx.set_actual_lib_file_count(lib_count);
+
+    let inner = checker
+        .promise_like_type_argument_from_class(
+            future_sym,
+            &[TypeId::NUMBER],
+            &mut AliasCycleTracker::new(),
+        )
+        .expect("Future<number> should unwrap through extends Promise<U>");
+
+    assert_eq!(inner, TypeId::NUMBER);
 }
