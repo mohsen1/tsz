@@ -7658,6 +7658,43 @@ export class Aleph {
 }
 
 #[test]
+fn test_js_constructor_assignment_single_line_type_comment_stays_compact() {
+    let source = r#"
+/**
+ * @typedef {string | number} Whatever
+ */
+class Conn {
+    constructor() {}
+    item = 3;
+    method() {}
+}
+
+class Wrap {
+    /**
+     * @param {Conn} c
+     */
+    constructor(c) {
+        this.connItem = c.item;
+        /** @type {Whatever} */
+        this.another = "";
+    }
+}
+
+export { Wrap };
+"#;
+    let output = emit_js_dts(source);
+
+    assert!(
+        output.contains("    /** @type {Whatever} */\n    another: Whatever;"),
+        "Expected single-line constructor assignment @type JSDoc to stay compact: {output}"
+    );
+    assert!(
+        output.contains("export type Whatever = string | number;"),
+        "Expected exported typedef alias used by compact @type comment to be emitted: {output}"
+    );
+}
+
+#[test]
 fn test_js_local_bare_require_alias_without_exports_is_elided() {
     let source = r#"
 const u = require("untyped");
