@@ -9,8 +9,27 @@ on:
 permissions:
   contents: read
   actions: read
+  issues: read
+  pull-requests: read
 
 jobs:
+  wip-state-comments:
+    name: wip-state-comments
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Report WIP-state comment gaps
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          node scripts/ci/check-wip-state-comments.mjs --advisory --window-hours 24 --max-prs 60 \
+            | tee -a "${GITHUB_STEP_SUMMARY}"
+
   health:
     name: runner-health
     runs-on: ubuntu-latest
