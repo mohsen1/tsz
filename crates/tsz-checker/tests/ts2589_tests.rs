@@ -650,14 +650,20 @@ function foo(arg: Circular<tup>): tup {
     return arg;
 }
 "#;
-    let diags = get_diagnostics(source);
+    let diags = check_source_diagnostics(source);
+    let ts2589 = diags
+        .iter()
+        .find(|d| d.code == 2589)
+        .expect("Should emit TS2589 for Circular<tup> vs tup");
     assert!(
-        diags.iter().any(|d| d.0 == 2589),
-        "Should emit TS2589 for Circular<tup> vs tup; got: {diags:?}"
-    );
-    assert!(
-        !diags.iter().any(|d| d.0 == 2322),
+        !diags.iter().any(|d| d.code == 2322),
         "Should NOT emit TS2322 when TS2589 fires; got: {diags:?}"
+    );
+    let start = ts2589.start as usize;
+    assert_eq!(
+        &source[start..start + "Circular<tup>".len()],
+        "Circular<tup>",
+        "Should emit TS2589 for Circular<tup> vs tup; got: {diags:?}"
     );
 }
 
@@ -672,14 +678,20 @@ function bar(arg: Loop<Pair>): Pair {
     return arg;
 }
 "#;
-    let diags = get_diagnostics(source);
+    let diags = check_source_diagnostics(source);
+    let ts2589 = diags
+        .iter()
+        .find(|d| d.code == 2589)
+        .expect("Should emit TS2589 for Loop<Pair> vs Pair regardless of alias name");
     assert!(
-        diags.iter().any(|d| d.0 == 2589),
-        "Should emit TS2589 for Loop<Pair> vs Pair regardless of alias name; got: {diags:?}"
-    );
-    assert!(
-        !diags.iter().any(|d| d.0 == 2322),
+        !diags.iter().any(|d| d.code == 2322),
         "Should NOT emit TS2322 when TS2589 fires; got: {diags:?}"
+    );
+    let start = ts2589.start as usize;
+    assert_eq!(
+        &source[start..start + "Loop<Pair>".len()],
+        "Loop<Pair>",
+        "TS2589 should anchor at the explicit source type annotation; got: {ts2589:?}"
     );
 }
 
