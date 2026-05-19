@@ -172,7 +172,7 @@ pub mod computation {
 /// `query_boundaries` in the checker crate.
 pub mod construction {
     pub use crate::caches::db::{QueryDatabase, TypeDatabase};
-    pub use crate::caches::query_cache::QueryCache;
+    pub use crate::caches::query_cache::{QueryCache, RelationCacheStats};
     pub use crate::intern::type_factory::*;
     pub use crate::intern::{TypeInterner, clear_thread_local_cache};
 }
@@ -207,7 +207,7 @@ pub use visitors::visitor::{
 
 pub use caches::db::{QueryDatabase, TypeDatabase};
 pub use caches::query_cache::{
-    QueryCache, QueryCacheStatistics, RelationCacheProbe, RelationCacheStats, SharedQueryCache,
+    QueryCache, QueryCacheStatistics, RelationCacheProbe, SharedQueryCache,
 };
 pub use canonicalize::Canonicalizer;
 pub use classes::inheritance::InheritanceGraph;
