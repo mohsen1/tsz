@@ -1433,16 +1433,8 @@ fn collect_lib_files_recursive_cached(
     match &source_text {
         LibSourceText::Static { .. } => {
             for ref_lib in crate::embedded_libs::get_embedded_lib_references(embedded_key) {
-                if let Some(ref_path) = resolve_generated_embedded_lib_reference_path(ref_lib)
-                    .or_else(|| resolve_lib_reference_path(&lib_path, ref_lib))
-                {
-                    collect_lib_files_recursive_cached(
-                        &ref_path,
-                        loaded,
-                        file_contents,
-                        file_cache,
-                    )?;
-                }
+                let ref_path = resolve_generated_embedded_lib_reference_path(ref_lib);
+                collect_lib_files_recursive_cached(&ref_path, loaded, file_contents, file_cache)?;
             }
         }
         LibSourceText::Owned(_) => {
@@ -1464,17 +1456,9 @@ fn collect_lib_files_recursive_cached(
     Ok(())
 }
 
-fn resolve_generated_embedded_lib_reference_path(lib_name: &str) -> Option<PathBuf> {
-    let embedded_name = match lib_name {
-        "lib" | "lib.d.ts" => "es5.d.ts".to_string(),
-        name if name.starts_with("lib.") && name.ends_with(".d.ts") => {
-            format!("{}.d.ts", &name[4..name.len() - 5])
-        }
-        name if name.ends_with(".d.ts") => name.to_string(),
-        name => format!("{name}.d.ts"),
-    };
-    crate::embedded_libs::is_embedded_lib(&embedded_name)
-        .then(|| Path::new("/embedded-lib").join(embedded_name))
+fn resolve_generated_embedded_lib_reference_path(lib_name: &str) -> PathBuf {
+    let embedded_name = crate::embedded_libs::embedded_reference_filename(lib_name);
+    PathBuf::from(format!("/embedded-lib/{embedded_name}"))
 }
 
 fn parse_lib_references(content: &str) -> Vec<String> {

@@ -178,13 +178,11 @@ fn test_resolve_lib_reference_path_uses_embedded_virtual_root_without_disk_probe
 
 #[test]
 fn test_resolve_generated_embedded_lib_reference_path_uses_normalized_refs() {
-    let dom = resolve_generated_embedded_lib_reference_path("dom").expect("resolve dom");
+    let dom = resolve_generated_embedded_lib_reference_path("dom");
     assert_eq!(dom, Path::new("/embedded-lib/dom.d.ts"));
 
-    let es5 = resolve_generated_embedded_lib_reference_path("lib.d.ts").expect("resolve es5");
+    let es5 = resolve_generated_embedded_lib_reference_path("lib.d.ts");
     assert_eq!(es5, Path::new("/embedded-lib/es5.d.ts"));
-
-    assert!(resolve_generated_embedded_lib_reference_path("definitely-not-a-lib").is_none());
 }
 
 #[test]

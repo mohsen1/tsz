@@ -540,6 +540,18 @@ pub fn get_embedded_lib_references(filename: &str) -> &'static [&'static str] {
     }
 }
 
+/// Convert a `/// <reference lib=...>` value to its embedded lib filename.
+pub(crate) fn embedded_reference_filename(lib_name: &str) -> String {
+    match lib_name {
+        "lib" | "lib.d.ts" => "es5.d.ts".to_string(),
+        name if name.starts_with("lib.") && name.ends_with(".d.ts") => {
+            format!("{}.d.ts", &name[4..name.len() - 5])
+        }
+        name if name.ends_with(".d.ts") => name.to_string(),
+        name => format!("{name}.d.ts"),
+    }
+}
+
 /// Check if a filename corresponds to an embedded lib file.
 #[inline]
 pub fn is_embedded_lib(filename: &str) -> bool {
@@ -711,6 +723,19 @@ mod tests {
         }
 
         assert_eq!(seen, LIB_FILE_COUNT);
+    }
+
+    #[test]
+    fn test_embedded_lib_references_resolve_to_embedded_assets() {
+        for filename in all_lib_filenames() {
+            for ref_lib in get_embedded_lib_references(filename) {
+                let embedded_name = embedded_reference_filename(ref_lib);
+                assert!(
+                    is_embedded_lib(&embedded_name),
+                    "{filename} reference {ref_lib} should resolve to embedded {embedded_name}"
+                );
+            }
+        }
     }
 
     #[test]
