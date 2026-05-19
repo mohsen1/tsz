@@ -538,9 +538,17 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         printed: &str,
     ) -> Option<SymbolId> {
+        let current_path = self.current_file_path.as_deref()?;
+        self.find_symbol_for_import_type_text_from_path(printed, current_path)
+    }
+
+    pub(in crate::declaration_emitter) fn find_symbol_for_import_type_text_from_path(
+        &self,
+        printed: &str,
+        current_path: &str,
+    ) -> Option<SymbolId> {
         let (module_specifier, first_name) = self.parse_import_type_text(printed)?;
         let binder = self.binder?;
-        let current_path = self.current_file_path.as_deref()?;
 
         for module_path in
             self.matching_module_export_paths(binder, current_path, &module_specifier)
@@ -588,8 +596,17 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         printed: &str,
     ) -> Option<(String, String)> {
+        let (module_specifier, first_name) = self.parse_import_type_text_at(printed, 0)?;
+        Some((module_specifier, first_name))
+    }
+
+    pub(in crate::declaration_emitter) fn parse_import_type_text_at(
+        &self,
+        printed: &str,
+        expected_start: usize,
+    ) -> Option<(String, String)> {
         let (start, module_specifier, tail) = Self::next_import_type_text(printed)?;
-        if start != 0 {
+        if start != expected_start {
             return None;
         }
         let tail = tail.strip_prefix('.')?;
@@ -1745,6 +1762,9 @@ impl<'a> DeclarationEmitter<'a> {
         // package subpath such as `@types/node/fs.d.ts` or `ext/ts3.1/index.d.ts`.
         // TS2883 should only fire when the symbol truly lacks a public module path.
         if self.check_ambient_module(sym_id, binder).is_some() {
+            return None;
+        }
+        if self.source_path_is_root_file(&source_path) {
             return None;
         }
 
