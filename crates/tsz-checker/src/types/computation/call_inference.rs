@@ -115,6 +115,50 @@ fn instantiate_contextual_target_shape_for_return_context(
 }
 
 impl<'a> CheckerState<'a> {
+    fn type_has_dependent_template_or_index_surface(&mut self, type_id: TypeId) -> bool {
+        if self.raw_type_has_dependent_template_or_index_surface(type_id) {
+            return true;
+        }
+
+        let resolved = self.resolve_lazy_type(type_id);
+        if resolved != type_id && self.raw_type_has_dependent_template_or_index_surface(resolved) {
+            return true;
+        }
+
+        let evaluated = self.evaluate_type_with_env(type_id);
+        evaluated != type_id && self.raw_type_has_dependent_template_or_index_surface(evaluated)
+    }
+
+    fn raw_type_has_dependent_template_or_index_surface(&self, type_id: TypeId) -> bool {
+        common::collect_all_types(self.ctx.types, type_id)
+            .into_iter()
+            .any(|ty| {
+                common::contains_generic_indexed_access_surface(self.ctx.types, ty)
+                    || (common::is_template_literal_type(self.ctx.types, ty)
+                        && common::contains_type_parameters(self.ctx.types, ty))
+            })
+    }
+
+    pub(crate) fn should_trust_solver_for_dependent_never_generic_arg(
+        &mut self,
+        actual: TypeId,
+        expected: TypeId,
+        source_expected: Option<TypeId>,
+    ) -> bool {
+        // Dependent generic parameters such as `${S}:${E}` and `T[K]` can
+        // collapse to `never` when this checker-only recheck evaluates them
+        // without the solver's correlated inference context.
+        if expected != TypeId::NEVER || !self.type_has_dependent_template_or_index_surface(actual) {
+            return false;
+        }
+
+        source_expected.is_none_or(|source_expected| {
+            source_expected != TypeId::NEVER
+                && (common::contains_type_parameters(self.ctx.types, source_expected)
+                    || self.type_has_dependent_template_or_index_surface(source_expected))
+        })
+    }
+
     fn substitution_with_source_constraint_fallbacks(
         &mut self,
         source_fn: &tsz_solver::FunctionShape,
@@ -2037,6 +2081,20 @@ impl<'a> CheckerState<'a> {
             let Some(mut expected) = expected else {
                 break;
             };
+            let source_expected = instantiated_params
+                .get(index)
+                .or_else(|| {
+                    let last = instantiated_params.last()?;
+                    last.rest.then_some(last)
+                })
+                .map(|param| param.type_id);
+            if self.should_trust_solver_for_dependent_never_generic_arg(
+                cached_actual,
+                expected,
+                source_expected,
+            ) {
+                continue;
+            }
 
             // When the expected type has readonly members (from const type parameter
             // inference), skip the recheck for this argument. The argument was already

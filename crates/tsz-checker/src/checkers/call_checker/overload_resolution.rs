@@ -3,15 +3,19 @@
 //! Split from the parent `call_checker` module — pure code motion.
 
 mod contextual_retry;
+mod diagnostic_helpers;
+mod literal_fast_path;
+mod property_like;
 mod return_context;
 
 use crate::context::TypingRequest;
 use crate::context::speculation::FullSnapshot;
 use crate::query_boundaries::checkers::call::lazy_def_id_for_type;
 use crate::query_boundaries::common::{
-    CallResult, ContextualTypeContext, PendingDiagnosticBuilder,
+    CallResult, ContextualTypeContext, FunctionShape, PendingDiagnosticBuilder,
 };
 use crate::state::CheckerState;
+use rustc_hash::FxHashSet;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
@@ -47,14 +51,13 @@ impl<'a> CheckerState<'a> {
     /// - `None` if there were no overload signatures to resolve
     pub(crate) fn resolve_overloaded_call_with_signatures(
         &mut self,
+        call_idx: NodeIndex,
         args: &[NodeIndex],
         signatures: &[tsz_solver::CallSignature],
         force_bivariant_callbacks: bool,
         contextual_type: Option<TypeId>,
         actual_this_type: Option<TypeId>,
     ) -> Option<OverloadResolution> {
-        use crate::query_boundaries::common::FunctionShape;
-
         tracing::debug!(
             "resolve_overloaded_call_with_signatures: signatures = {:?}, args = {:?}",
             signatures,
@@ -62,6 +65,32 @@ impl<'a> CheckerState<'a> {
         );
         if signatures.is_empty() {
             return None;
+        }
+        let preserve_property_like_overload_duplicates =
+            self.call_is_property_like_with_multiple_args(call_idx);
+        let mut deduped_signatures = Vec::new();
+        if signatures.len() > 1 && !preserve_property_like_overload_duplicates {
+            let mut seen = FxHashSet::default();
+            for signature in signatures {
+                if seen.insert(signature.clone()) {
+                    deduped_signatures.push(signature.clone());
+                }
+            }
+        }
+        let signatures =
+            if !deduped_signatures.is_empty() && deduped_signatures.len() != signatures.len() {
+                deduped_signatures.as_slice()
+            } else {
+                signatures
+            };
+        if contextual_type.is_none()
+            && let Some(resolution) = self.try_resolve_literal_overloaded_call_fast_path(
+                args,
+                signatures,
+                force_bivariant_callbacks,
+            )
+        {
+            return Some(resolution);
         }
 
         let arity_compatible_signature_count = signatures
@@ -1479,8 +1508,8 @@ impl<'a> CheckerState<'a> {
                                 Vec::new(),
                             ));
                         }
-                        failures.push(PendingDiagnosticBuilder::argument_not_assignable(
-                            actual, expected,
+                        failures.push(self.argument_not_assignable_for_overload_arg(
+                            args, index, actual, expected,
                         ));
                         self.ctx
                             .rollback_diagnostics_filtered(&candidate_snap, |diag| {
@@ -1707,8 +1736,8 @@ impl<'a> CheckerState<'a> {
                                 ),
                             ));
                         }
-                        failures.push(PendingDiagnosticBuilder::argument_not_assignable(
-                            actual, expected,
+                        failures.push(self.argument_not_assignable_for_overload_arg(
+                            args, index, actual, expected,
                         ));
                     }
                 }
@@ -1960,41 +1989,5 @@ impl<'a> CheckerState<'a> {
             self.invalidate_expression_for_contextual_retry(arg_idx);
             let _ = self.get_type_of_node_with_request(arg_idx, &TypingRequest::NONE);
         }
-    }
-
-    fn overload_string_argument_array_parameter_mismatch(
-        &mut self,
-        sig: &tsz_solver::CallSignature,
-        arg_types: &[TypeId],
-    ) -> Option<CallResult> {
-        arg_types
-            .iter()
-            .copied()
-            .enumerate()
-            .find_map(|(index, actual)| {
-                if actual != TypeId::STRING
-                    && !crate::query_boundaries::common::is_string_type(self.ctx.types, actual)
-                    && crate::query_boundaries::common::string_literal_value(self.ctx.types, actual)
-                        .is_none()
-                {
-                    return None;
-                }
-                let expected = sig
-                    .params
-                    .get(index)
-                    .map(|param| param.type_id)
-                    .or_else(|| {
-                        sig.params
-                            .last()
-                            .and_then(|param| param.rest.then_some(param.type_id))
-                    })?;
-                self.is_array_like_type(expected)
-                    .then_some(CallResult::ArgumentTypeMismatch {
-                        index,
-                        expected,
-                        actual,
-                        fallback_return: sig.return_type,
-                    })
-            })
     }
 }
