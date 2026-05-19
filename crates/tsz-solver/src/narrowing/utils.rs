@@ -502,7 +502,12 @@ fn remove_nullish_inner(
             && let Some(type_params) = db.get_lazy_type_params(def_id)
             && let Some(resolved) = db.resolve_lazy(def_id, types)
         {
-            let instantiated = crate::instantiate_generic(types, resolved, &type_params, &app.args);
+            let instantiated = crate::instantiation::instantiate::instantiate_generic(
+                types,
+                resolved,
+                &type_params,
+                &app.args,
+            );
             if instantiated != type_id {
                 return remove_nullish_inner(types, query_db, instantiated);
             }

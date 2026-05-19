@@ -2,14 +2,14 @@
 
 use crate::query_boundaries::common::QueryDatabase;
 use tsz_common::interner::Atom;
-use tsz_solver::{TypeId, TypeSubstitution};
+use tsz_solver::{TypeId, computation::TypeSubstitution};
 
 pub(crate) fn instantiate_type_with_infer(
     db: &dyn QueryDatabase,
     type_id: TypeId,
     substitution: &TypeSubstitution,
 ) -> TypeId {
-    tsz_solver::instantiate_type_with_infer_cached(
+    tsz_solver::computation::instantiate_type_with_infer_cached(
         db.as_type_database(),
         Some(db),
         type_id,
