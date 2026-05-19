@@ -95,8 +95,15 @@ pub struct EnumES5Transformer<'a> {
 
 #[derive(Clone, Debug)]
 enum EnumExportFold {
-    CommonJs { export_name: String },
-    System { export_names: Vec<String> },
+    /// Source-ordered list of CJS export aliases for the enum's local name.
+    /// The emitter chains them so the local-name assignment is right-most:
+    /// `["E", "EE"]` produces `(E || (exports.EE = exports.E = E = {}))`.
+    CommonJs {
+        export_names: Vec<String>,
+    },
+    System {
+        export_names: Vec<String>,
+    },
 }
 
 fn commonjs_export_access(export_name: &str) -> IRNode {
@@ -148,9 +155,37 @@ impl<'a> EnumES5Transformer<'a> {
     }
 
     pub fn set_commonjs_export_fold(&mut self, export_name: &str) {
-        self.export_fold = Some(EnumExportFold::CommonJs {
-            export_name: export_name.to_string(),
-        });
+        self.set_commonjs_export_folds([export_name]);
+    }
+
+    /// Fold one or more CommonJS export bindings into the enum IIFE tail.
+    ///
+    /// `export_names` must be in **source order**: the directly-exported name
+    /// first, followed by any later `export { local as alias }` re-exports.
+    /// The emitter inverts this list when building the chain so the local
+    /// assignment is the right-most node (e.g. `["E", "EE"]` →
+    /// `exports.EE = exports.E = E = {}`).
+    pub fn set_commonjs_export_folds<'b>(
+        &mut self,
+        export_names: impl IntoIterator<Item = &'b str>,
+    ) {
+        let mut collected: Vec<String> = Vec::new();
+        for name in export_names {
+            if name.is_empty() {
+                continue;
+            }
+            if collected.iter().any(|existing| existing == name) {
+                continue;
+            }
+            collected.push(name.to_string());
+        }
+        if collected.is_empty() {
+            self.export_fold = None;
+        } else {
+            self.export_fold = Some(EnumExportFold::CommonJs {
+                export_names: collected,
+            });
+        }
     }
 
     pub fn set_system_export_fold(&mut self, export_name: &str) {
@@ -270,11 +305,9 @@ impl<'a> EnumES5Transformer<'a> {
             });
         }
 
-        // Build IIFE body (enum member assignments)
-        let body = self.transform_members(&enum_data.members, &name);
+        let body_open_pos = self.find_enum_body_open_pos(enum_node);
+        let body = self.transform_members(&enum_data.members, &name, body_open_pos);
 
-        // Build IIFE argument: E || (E = {}), optionally folding the module
-        // export into the same structured assignment/call.
         let iife_arg = self.enum_iife_argument(&name);
 
         // (function (E) { body })(arg)
@@ -303,11 +336,19 @@ impl<'a> EnumES5Transformer<'a> {
 
         let right = match &self.export_fold {
             None => plain_assignment(),
-            Some(EnumExportFold::CommonJs { export_name }) => IRNode::BinaryExpr {
-                left: Box::new(commonjs_export_access(export_name)),
-                operator: "=".into(),
-                right: Box::new(plain_assignment()),
-            },
+            Some(EnumExportFold::CommonJs { export_names }) => {
+                // Inside-out: forward iteration places the source-latest alias
+                // outermost so the chain reads `exports.LastAlias = ... = E = {}`.
+                let mut folded = plain_assignment();
+                for export_name in export_names {
+                    folded = IRNode::BinaryExpr {
+                        left: Box::new(commonjs_export_access(export_name)),
+                        operator: "=".into(),
+                        right: Box::new(folded),
+                    };
+                }
+                folded
+            }
             Some(EnumExportFold::System { export_names }) => {
                 let mut folded = plain_assignment();
                 for export_name in export_names {
@@ -349,45 +390,67 @@ impl<'a> EnumES5Transformer<'a> {
             .has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword)
     }
 
-    /// Extract a leading block/JSDoc comment that appears immediately before `pos`.
-    ///
-    /// Scans backward from `pos` skipping whitespace/newlines.  If we land on `*/`
-    /// we scan further back for the matching `/*` and return the comment text.
-    fn extract_leading_comment_at(&self, pos: u32) -> Option<String> {
+    /// Find the source-text position immediately after the enum body's
+    /// opening `{`. Returns `None` when the source is unavailable or the
+    /// brace cannot be located.
+    fn find_enum_body_open_pos(&self, enum_node: &tsz_parser::parser::node::Node) -> Option<u32> {
         let source_text = self.source_text?;
         let bytes = source_text.as_bytes();
-        let pos = pos as usize;
-        if pos == 0 {
-            return None;
-        }
-        let mut i = pos;
-        // Skip trailing whitespace/newlines before the token
-        while i > 0 && matches!(bytes[i - 1], b' ' | b'\t' | b'\r' | b'\n') {
-            i -= 1;
-        }
-        // Check if we landed on `*/` (end of a block comment)
-        if i >= 2 && bytes[i - 1] == b'/' && bytes[i - 2] == b'*' {
-            let comment_end = i;
-            let mut j = i - 2;
-            loop {
-                if j < 2 {
-                    break;
-                }
-                if bytes[j - 1] == b'/' && bytes[j] == b'*' {
-                    let comment_start = j - 1;
-                    let comment_text = &source_text[comment_start..comment_end];
-                    if comment_text.starts_with("/**") && !comment_text.starts_with("/***") {
-                        return Some(comment_text.to_string());
-                    }
-                    if comment_text.starts_with("/*") {
-                        return Some(comment_text.to_string());
-                    }
-                    break;
-                }
-                j -= 1;
+        let start = enum_node.pos as usize;
+        let end = (enum_node.end as usize).min(bytes.len());
+        let mut i = start;
+        while i < end {
+            if bytes[i] == b'{' {
+                return Some((i + 1) as u32);
             }
+            i += 1;
         }
         None
+    }
+
+    /// Collect every leading comment (line or block) that appears between
+    /// `scan_start` and `member_pos`.
+    ///
+    /// Mirrors tsc's `getLeadingCommentRanges`: any `// line` or `/* block */`
+    /// comment that begins after `scan_start` and ends at or before
+    /// `member_pos` is preserved before the member's emitted assignment.
+    fn extract_leading_comments_between(&self, scan_start: u32, member_pos: u32) -> Vec<String> {
+        let Some(source_text) = self.source_text else {
+            return Vec::new();
+        };
+        if scan_start >= member_pos {
+            return Vec::new();
+        }
+        let mut comments = Vec::new();
+        for range in crate::emitter::get_leading_comment_ranges(source_text, scan_start as usize) {
+            if range.end > member_pos {
+                break;
+            }
+            let text = &source_text[range.pos as usize..range.end as usize];
+            comments.push(text.to_string());
+        }
+        comments
+    }
+
+    /// Scan past the comma (and any trailing same-line whitespace) following an
+    /// enum member, so subsequent leading-comment scans don't see the comma as
+    /// a boundary. Returns the position to start scanning from for the next
+    /// member's leading comments.
+    fn scan_past_member_terminator(&self, after_member: u32) -> u32 {
+        let Some(source_text) = self.source_text else {
+            return after_member;
+        };
+        let bytes = source_text.as_bytes();
+        let len = bytes.len();
+        let mut i = after_member as usize;
+        // Skip same-line whitespace, then take an optional comma.
+        while i < len && matches!(bytes[i], b' ' | b'\t') {
+            i += 1;
+        }
+        if i < len && bytes[i] == b',' {
+            i += 1;
+        }
+        i as u32
     }
 
     /// Extract trailing inline comment from right after the member name end.
@@ -405,7 +468,12 @@ impl<'a> EnumES5Transformer<'a> {
     }
 
     /// Transform enum members to IR statements
-    fn transform_members(&mut self, members: &NodeList, enum_name: &str) -> Vec<IRNode> {
+    fn transform_members(
+        &mut self,
+        members: &NodeList,
+        enum_name: &str,
+        body_open_pos: Option<u32>,
+    ) -> Vec<IRNode> {
         let mut statements = Vec::new();
         // Reset per-enum tracking state
         self.member_names.clear();
@@ -428,6 +496,12 @@ impl<'a> EnumES5Transformer<'a> {
                 self.member_names.insert(name);
             }
         }
+
+        // Position where we should start scanning for the *next* member's
+        // leading comments. Initially set just past the enum body's opening
+        // brace; after each member it advances past that member's trailing
+        // comma so comments between members are seen exactly once.
+        let mut comment_scan_pos = body_open_pos;
 
         for &member_idx in &members.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
@@ -631,8 +705,14 @@ impl<'a> EnumES5Transformer<'a> {
                 IRNode::ExpressionStatement(Box::new(outer_assign))
             };
 
-            // Extract leading comment (JSDoc/block comment before the member name)
-            let leading_comment = self.extract_leading_comment_at(member_node.pos);
+            // Extract every leading comment (line or block) that sits between
+            // the previous member terminator (or `{`) and this member's start.
+            // tsc preserves both kinds of comments in the lowered IIFE body, so
+            // a single trailing-`*/` lookup is not enough.
+            let leading_comments = match comment_scan_pos {
+                Some(start) => self.extract_leading_comments_between(start, member_node.pos),
+                None => Vec::new(),
+            };
             // Extract trailing inline comment after the enum member (e.g., `/* blue */`)
             // Search from the name end or initializer end, then also from the comma position.
             // We check multiple positions because the comment can appear at different spots:
@@ -668,14 +748,14 @@ impl<'a> EnumES5Transformer<'a> {
                         None
                     });
 
-            // Insert leading comment before the member statement
-            if let Some(text) = leading_comment {
+            for text in &leading_comments {
                 let is_block = text.starts_with("/*");
-                // Strip the `/*` / `/**` prefix and `*/` suffix for the Comment node text
                 let inner = if is_block {
                     text[2..text.len().saturating_sub(2)].to_string()
+                } else if let Some(rest) = text.strip_prefix("//") {
+                    rest.trim_start_matches(' ').to_string()
                 } else {
-                    text
+                    text.clone()
                 };
                 statements.push(IRNode::Comment {
                     text: inner.into(),
@@ -699,6 +779,8 @@ impl<'a> EnumES5Transformer<'a> {
             {
                 statements.push(IRNode::TrailingComment(text.into()));
             }
+
+            comment_scan_pos = Some(self.scan_past_member_terminator(member_node.end));
         }
 
         statements
@@ -1807,6 +1889,13 @@ impl<'a> EnumES5Emitter<'a> {
     /// Fold a CommonJS export binding into the enum IIFE tail.
     pub fn set_commonjs_export_fold(&mut self, export_name: &str) {
         self.transformer.set_commonjs_export_fold(export_name);
+    }
+
+    pub fn set_commonjs_export_folds<'b>(
+        &mut self,
+        export_names: impl IntoIterator<Item = &'b str>,
+    ) {
+        self.transformer.set_commonjs_export_folds(export_names);
     }
 
     /// Fold a System export call into the enum IIFE tail.
