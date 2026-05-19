@@ -505,8 +505,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 let members = self.interner().type_list(members);
                 let prop_atom =
                     prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
-                let mut results = Vec::new();
-                let mut write_results = Vec::new();
+                let mut results = Vec::with_capacity(members.len());
+                let mut write_results = Vec::with_capacity(members.len());
                 let mut any_from_index = false;
                 let mut saw_deferred_any_fallback = false;
                 let mut nullable_causes = Vec::new();
