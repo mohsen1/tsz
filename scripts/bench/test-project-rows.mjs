@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   COMPILE_CANARY_PROJECT_ROWS,
   COMPATIBILITY_CORPUS_ROWS,
+  PROJECT_ROW_DEFINITIONS,
   REQUIRED_PROJECT_ROWS,
 } from "./project-rows.mjs";
 
@@ -18,6 +19,10 @@ const BENCH_RUNNER_EXCLUDED_ROWS = new Set([
 const PROJECT_COMPILE_GUARD_EXCLUDED_ROWS = new Set([
   "large-ts-repo",
   "nextjs",
+]);
+const GENERATED_ROWS_WITH_FIXTURE_SOURCES = new Set([
+  "type-challenges-assertion-candidates",
+  "type-challenges-assertions-tsc-clean",
 ]);
 const ROADMAP_REQUIRED_PROJECT_ROW_BY_LABEL = new Map([
   ["utility-types", "utility-types-project"],
@@ -88,6 +93,10 @@ function roadmapRequiredProjectRows() {
 const requiredRows = sortedUnique(REQUIRED_PROJECT_ROWS);
 const compileCanaryRows = sortedUnique(COMPILE_CANARY_PROJECT_ROWS);
 const allTrackedRows = sortedUnique([...requiredRows, ...compileCanaryRows]);
+const projectRowsByName = new Map(PROJECT_ROW_DEFINITIONS.map((row) => [row.name, row]));
+const pinnedSourceRows = PROJECT_ROW_DEFINITIONS
+  .filter((row) => row.repo !== undefined || row.ref !== undefined)
+  .map((row) => row.name);
 const compatibilityRows = COMPATIBILITY_CORPUS_ROWS.map((row) => row.name);
 const roadmapRequiredRows = roadmapRequiredProjectRows();
 const mappedRoadmapRequiredRows = roadmapRequiredRows.map((label) => (
@@ -142,4 +151,21 @@ assert.deepEqual(
   projectCompileGuardRows,
   sortedUnique(without(allTrackedRows, PROJECT_COMPILE_GUARD_EXCLUDED_ROWS)),
   "project-compile-guard rows drifted from scripts/bench/project-rows.mjs",
+);
+
+const fixtureSourceRows = sortedUnique(
+  extractAll(
+    readRepoFile("scripts/bench/project-fixtures.sh"),
+    /^\s{4}([a-z0-9-]+(?:\|[a-z0-9-]+)*)\)\s*$/gm,
+  ).flatMap((row) => row.split("|")),
+);
+assert.deepEqual(
+  fixtureSourceRows,
+  sortedUnique([...pinnedSourceRows, ...GENERATED_ROWS_WITH_FIXTURE_SOURCES]),
+  "project-fixtures.sh fixture source rows drifted from scripts/bench/project-rows.mjs",
+);
+assert.deepEqual(
+  sortedUnique([...fixtureSourceRows].filter((row) => !projectRowsByName.has(row))),
+  [],
+  "project-fixtures.sh fixture source rows must be defined in scripts/bench/project-rows.mjs",
 );
