@@ -197,6 +197,7 @@ impl<'a> DeclarationEmitter<'a> {
         type_text = Self::replace_whole_words_in_text(&type_text, &substitutions);
         type_text = Self::simplify_string_literal_template_type_text(&type_text);
         type_text = Self::expand_literal_key_mapped_type_text(&type_text).unwrap_or(type_text);
+        type_text = Self::expand_inline_object_literals_for_dts(&type_text);
         if type_param_names
             .iter()
             .any(|name| Self::contains_whole_word_in_text(&type_text, name))
@@ -207,6 +208,69 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
         Some(type_text)
+    }
+
+    /// Reformat top-level single-line object literal type fragments
+    /// (`{ a: T; b: U }`) into the multi-line form tsc uses in declaration
+    /// emission (`{\n    a: T;\n    b: U;\n}`). Object literals nested
+    /// inside generic type arguments, parentheses, brackets, or other
+    /// object literals are kept inline — they're emitted by their own
+    /// paths (printer or recursive source-text fragment).
+    ///
+    /// Applied to `substitute_source_call_type_parameters` output: that
+    /// path preserves the original single-line spelling of the substituted
+    /// return annotation, but tsc declaration emit puts each object-literal
+    /// member on its own line.
+    pub(in crate::declaration_emitter) fn expand_inline_object_literals_for_dts(
+        type_text: &str,
+    ) -> String {
+        if !type_text.contains('{') {
+            return type_text.to_string();
+        }
+        let bytes = type_text.as_bytes();
+        let mut result = String::with_capacity(type_text.len() + 16);
+        let mut depths = TypeTextDepths::default();
+        let mut run_start = 0usize;
+        let mut i = 0usize;
+        while i < bytes.len() {
+            let b = bytes[i];
+            // UTF-8 continuation bytes and non-ASCII payload are kept verbatim
+            // in the current run; only the ASCII structural bytes drive layout.
+            if b >= 128 {
+                i += 1;
+                continue;
+            }
+            if let Some(end) = skip_quoted_run(bytes, i) {
+                i = end;
+                continue;
+            }
+            if is_arrow_token(bytes, i) {
+                i += 2;
+                continue;
+            }
+            if b == b'{'
+                && depths.at_top_level()
+                && let Some(end) = find_matching_brace(bytes, i)
+                && let Some(inner) = type_text.get(i + 1..end)
+                && let Some(members) = split_inline_object_literal_members(inner)
+            {
+                result.push_str(&type_text[run_start..i]);
+                result.push_str("{\n");
+                for member in &members {
+                    result.push_str("    ");
+                    result.push_str(member);
+                    result.push_str(";\n");
+                }
+                result.push('}');
+                i = end + 1;
+                run_start = i;
+                continue;
+            }
+            depths.update(b);
+            i += 1;
+        }
+        result.push_str(&type_text[run_start..]);
+        result
     }
 
     fn expand_literal_key_mapped_type_text(type_text: &str) -> Option<String> {
@@ -550,5 +614,257 @@ impl<'a> DeclarationEmitter<'a> {
                 || (bytes[0] == b'\'' && bytes[trimmed.len() - 1] == b'\'');
         }
         false
+    }
+}
+
+#[derive(Default)]
+struct TypeTextDepths {
+    paren: u32,
+    angle: u32,
+    bracket: u32,
+    brace: u32,
+}
+
+impl TypeTextDepths {
+    const fn at_top_level(&self) -> bool {
+        self.paren == 0 && self.angle == 0 && self.bracket == 0 && self.brace == 0
+    }
+
+    const fn update(&mut self, byte: u8) {
+        match byte {
+            b'(' => self.paren += 1,
+            b')' => self.paren = self.paren.saturating_sub(1),
+            b'<' => self.angle += 1,
+            b'>' => self.angle = self.angle.saturating_sub(1),
+            b'[' => self.bracket += 1,
+            b']' => self.bracket = self.bracket.saturating_sub(1),
+            b'{' => self.brace += 1,
+            b'}' => self.brace = self.brace.saturating_sub(1),
+            _ => {}
+        }
+    }
+}
+
+const fn is_quote_byte(b: u8) -> bool {
+    b == b'"' || b == b'\'' || b == b'`'
+}
+
+const fn is_arrow_token(bytes: &[u8], i: usize) -> bool {
+    bytes[i] == b'=' && i + 1 < bytes.len() && bytes[i + 1] == b'>'
+}
+
+/// If `bytes[i]` opens a string or template literal, return the index just
+/// past the closing quote. Returns `None` when `bytes[i]` is not a quote.
+fn skip_quoted_run(bytes: &[u8], i: usize) -> Option<usize> {
+    if !is_quote_byte(bytes[i]) {
+        return None;
+    }
+    let close = bytes[i];
+    let mut j = i + 1;
+    while j < bytes.len() {
+        let b = bytes[j];
+        if b == b'\\' && j + 1 < bytes.len() {
+            j += 2;
+            continue;
+        }
+        j += 1;
+        if b == close {
+            break;
+        }
+    }
+    Some(j)
+}
+
+/// Find the index of the `}` that closes the `{` at `bytes[start]`. Skips
+/// over nested braces and string literals.
+fn find_matching_brace(bytes: &[u8], start: usize) -> Option<usize> {
+    debug_assert!(bytes[start] == b'{');
+    let mut depth = 0u32;
+    let mut i = start;
+    while i < bytes.len() {
+        if let Some(end) = skip_quoted_run(bytes, i) {
+            i = end;
+            continue;
+        }
+        match bytes[i] {
+            b'{' => depth += 1,
+            b'}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Split the body of an inline object literal `{ a: T; b: U }` into its
+/// top-level members. Returns `None` when the body is empty, contains
+/// newlines (already multi-line), or matches mapped-type syntax that the
+/// printer formats differently.
+fn split_inline_object_literal_members(body: &str) -> Option<Vec<&str>> {
+    if body.contains('\n') {
+        return None;
+    }
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.starts_with('[') && trimmed.contains(" in ") {
+        return None;
+    }
+    let bytes = trimmed.as_bytes();
+    let mut members = Vec::new();
+    let mut depths = TypeTextDepths::default();
+    let mut start = 0usize;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if let Some(end) = skip_quoted_run(bytes, i) {
+            i = end;
+            continue;
+        }
+        if is_arrow_token(bytes, i) {
+            i += 2;
+            continue;
+        }
+        let b = bytes[i];
+        depths.update(b);
+        if matches!(b, b';' | b',') && depths.at_top_level() {
+            let piece = trimmed.get(start..i)?.trim();
+            if !piece.is_empty() {
+                members.push(piece);
+            }
+            start = i + 1;
+        }
+        i += 1;
+    }
+    let tail = trimmed
+        .get(start..)?
+        .trim()
+        .trim_end_matches([';', ','])
+        .trim();
+    if !tail.is_empty() {
+        members.push(tail);
+    }
+    if members.is_empty() {
+        None
+    } else {
+        Some(members)
+    }
+}
+
+#[cfg(test)]
+mod expand_inline_object_literals_tests {
+    use crate::declaration_emitter::DeclarationEmitter;
+
+    fn expand(input: &str) -> String {
+        DeclarationEmitter::expand_inline_object_literals_for_dts(input)
+    }
+
+    #[test]
+    fn top_level_object_literal_is_split_across_lines() {
+        let input = "{ message: string }";
+        let expected = "{\n    message: string;\n}";
+        assert_eq!(expand(input), expected);
+    }
+
+    #[test]
+    fn intersection_with_inline_object_literal_expands_only_object_member() {
+        let input =
+            "Constructor<Tagged> & Constructor<Printable> & { message: string } & typeof Derived";
+        let expected = "Constructor<Tagged> & Constructor<Printable> & {\n    message: string;\n} & typeof Derived";
+        assert_eq!(expand(input), expected);
+    }
+
+    #[test]
+    fn multiple_top_level_object_literals_in_intersection_are_each_expanded() {
+        let input = "{ a: number } & { b: string }";
+        let expected = "{\n    a: number;\n} & {\n    b: string;\n}";
+        assert_eq!(expand(input), expected);
+    }
+
+    #[test]
+    fn object_literal_with_multiple_members_uses_semicolon_separators() {
+        let input = "{ a: number; b: string }";
+        let expected = "{\n    a: number;\n    b: string;\n}";
+        assert_eq!(expand(input), expected);
+    }
+
+    #[test]
+    fn already_multiline_object_literal_is_not_touched() {
+        let input = "X & {\n    a: number;\n}";
+        assert_eq!(expand(input), input);
+    }
+
+    #[test]
+    fn empty_object_literal_is_not_touched() {
+        let input = "X & {} & Y";
+        assert_eq!(expand(input), input);
+    }
+
+    #[test]
+    fn object_literal_inside_generic_type_arguments_is_not_expanded() {
+        let input = "Map<{ a: number }, string>";
+        assert_eq!(expand(input), input);
+    }
+
+    #[test]
+    fn object_literal_inside_function_parameters_is_not_expanded() {
+        let input = "(arg: { a: number }) => void";
+        assert_eq!(expand(input), input);
+    }
+
+    #[test]
+    fn nested_object_literal_inside_a_top_level_one_stays_inline() {
+        let input = "{ a: { b: number } }";
+        let expected = "{\n    a: { b: number };\n}";
+        assert_eq!(expand(input), expected);
+    }
+
+    #[test]
+    fn arrow_return_with_object_literal_keeps_arrow_intact() {
+        let input = "() => { a: number }";
+        let expected = "() => {\n    a: number;\n}";
+        assert_eq!(expand(input), expected);
+    }
+
+    #[test]
+    fn semicolons_inside_inner_braces_do_not_split_outer_members() {
+        let input = "{ a: { b: number; c: string }; d: boolean }";
+        let expected = "{\n    a: { b: number; c: string };\n    d: boolean;\n}";
+        assert_eq!(expand(input), expected);
+    }
+
+    #[test]
+    fn empty_text_is_returned_unchanged() {
+        assert_eq!(expand(""), "");
+    }
+
+    #[test]
+    fn type_text_without_braces_is_returned_unchanged() {
+        let input = "A & B | C";
+        assert_eq!(expand(input), input);
+    }
+
+    #[test]
+    fn mapped_type_syntax_is_left_compact() {
+        let input = "{ [K in keyof T]: T[K] }";
+        assert_eq!(expand(input), input);
+    }
+
+    #[test]
+    fn non_ascii_identifiers_in_object_literal_pass_through_intact() {
+        let input = "{ café: string; π: number }";
+        let expected = "{\n    café: string;\n    π: number;\n}";
+        assert_eq!(expand(input), expected);
+    }
+
+    #[test]
+    fn non_ascii_outside_object_literal_passes_through_intact() {
+        let input = "Map<\"café\", \"π\">";
+        assert_eq!(expand(input), input);
     }
 }
