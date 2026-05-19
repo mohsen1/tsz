@@ -428,7 +428,7 @@ fn run_batch_mode() -> Result<()> {
         // same TypeId values would get stale TypeData from the old interner.
         // The checker thread-locals hold NodeIndex-keyed caches that similarly get
         // stale when a new AST arena reuses the same indices.
-        tsz_solver::clear_thread_local_cache();
+        tsz_solver::construction::clear_thread_local_cache();
         tsz_solver::reset_subtype_thread_local_state();
         tsz::checker::clear_all_thread_local_state();
 

@@ -173,12 +173,12 @@ pub mod computation {
 pub mod construction {
     pub use crate::caches::db::{QueryDatabase, TypeDatabase};
     pub use crate::caches::query_cache::QueryCache;
-    pub use crate::intern::TypeInterner;
     pub use crate::intern::type_factory::*;
+    pub use crate::intern::{TypeInterner, clear_thread_local_cache};
 }
 pub use intern::TypeInterner;
-pub use intern::clear_thread_local_cache;
-pub use operations::infer_generic_function;
+#[cfg(test)]
+pub(crate) use operations::infer_generic_function;
 pub use visitors::visitor::{
     apparent_intrinsic_kind, application_id, array_element_type, bound_parameter_index,
     callable_shape_id, collect_enum_def_ids, collect_infer_bindings, collect_lazy_def_ids,

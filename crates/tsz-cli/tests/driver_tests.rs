@@ -2829,7 +2829,7 @@ export const publicProcedure = trpc.procedure;
     ])
     .expect("batch-style args");
 
-    tsz_solver::clear_thread_local_cache();
+    tsz_solver::construction::clear_thread_local_cache();
     tsz_solver::reset_subtype_thread_local_state();
     tsz::checker::clear_all_thread_local_state();
 
