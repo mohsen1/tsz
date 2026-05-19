@@ -17,6 +17,7 @@ mod interface_checks;
 mod mapped_type_param_provisional;
 mod member_access;
 mod member_declaration_checks;
+mod member_modifier_checks;
 mod member_type_constraint_checks;
 mod mixin_member_access;
 mod overload_compatibility;
