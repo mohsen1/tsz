@@ -430,9 +430,11 @@ impl<'a> Printer<'a> {
             self.collect_active_system_dependencies(dependencies, source, &system_plan);
         // Must run after collect_active_system_dependencies so collect_system_dependency_vars
         // sees the injected "tslib" entry.
-        if self.ctx.options.import_helpers
-            && self.transforms.helpers_populated()
+        let needs_tslib_dependency = self.transforms.helpers_populated()
             && self.transforms.helpers().any_needed()
+            || self.import_helpers_need_tslib_binding_for_class_emit(&source.statements);
+        if self.ctx.options.import_helpers
+            && needs_tslib_dependency
             && !system_dependencies.iter().any(|d| d == "tslib")
         {
             system_dependencies.insert(0, "tslib".to_string());
@@ -1367,10 +1369,12 @@ impl<'a> Printer<'a> {
 
         // Must run after the main loops so the seen_value guard prevents double-insertion
         // when "tslib" was already present as a source import.
+        let needs_tslib_dependency = self.transforms.helpers_populated()
+            && self.transforms.helpers().any_needed()
+            || self.import_helpers_need_tslib_binding_for_class_emit(&source.statements);
         if (collect_for_amd || collect_for_umd)
             && self.ctx.options.import_helpers
-            && self.transforms.helpers_populated()
-            && self.transforms.helpers().any_needed()
+            && needs_tslib_dependency
             && !seen_value.contains("tslib")
         {
             let tslib_var = if collect_for_amd {
