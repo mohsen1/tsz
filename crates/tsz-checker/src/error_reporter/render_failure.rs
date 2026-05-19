@@ -1486,14 +1486,9 @@ impl<'a> CheckerState<'a> {
                         alias,
                     )
                 });
-            let target_preserves_literal_intersection_display = self
-                .is_literal_sensitive_assignment_target(target)
-                || self.is_literal_sensitive_assignment_target(target_type);
             let src_str = if depth == 0 {
                 if case_a || case_b {
                     self.format_type_for_assignability_message(source)
-                } else if target_preserves_literal_intersection_display {
-                    self.format_type_diagnostic(source)
                 } else {
                     self.format_type_for_diagnostic_role(
                         source,
@@ -1507,11 +1502,7 @@ impl<'a> CheckerState<'a> {
                 self.format_type_diagnostic(source_type)
             };
             let tgt_str = if depth == 0 {
-                if target_preserves_literal_intersection_display {
-                    self.format_type_diagnostic(target)
-                } else {
-                    self.format_assignability_type_for_message(target, source)
-                }
+                self.format_assignability_type_for_message(target, source)
             } else if crate::query_boundaries::common::is_intersection_type(
                 self.ctx.types,
                 target_evaluated_for_intersection,

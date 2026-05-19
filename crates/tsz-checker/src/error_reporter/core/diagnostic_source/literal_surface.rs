@@ -4,20 +4,6 @@ use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    pub(in crate::error_reporter) fn object_shape_has_literal_sensitive_property_target(
-        &self,
-        target: TypeId,
-    ) -> bool {
-        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, target).is_some_and(
-            |shape| {
-                shape
-                    .properties
-                    .iter()
-                    .any(|prop| self.is_literal_sensitive_assignment_target_inner(prop.type_id))
-            },
-        )
-    }
-
     pub(crate) fn target_preserves_literal_surface(&mut self, target: TypeId) -> bool {
         let target = self.evaluate_type_for_assignability(target);
 
