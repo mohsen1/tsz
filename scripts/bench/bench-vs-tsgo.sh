@@ -328,7 +328,9 @@ process_tree_rss_kb() {
 run_with_timeout() {
     local timeout_secs="$1"
     shift
-    LAST_PEAK_RSS_BYTES=0
+    # Empty (not "0") is the "no positive sample yet" sentinel so the
+    # record-time reason logic can distinguish it from a deliberate zero.
+    LAST_PEAK_RSS_BYTES=""
 
     # Run the command in a background subshell
     "$@" &
@@ -341,7 +343,7 @@ run_with_timeout() {
     local watchdog_pid=$!
     if measure_peak_rss_enabled; then
         rss_file=$(mktemp)
-        printf '0\n' > "$rss_file"
+        : > "$rss_file"
         (
             local peak_kb=0
             local rss_kb
@@ -369,7 +371,7 @@ run_with_timeout() {
         wait "$rss_monitor_pid" 2>/dev/null || true
     fi
     if [ -n "$rss_file" ]; then
-        LAST_PEAK_RSS_BYTES="$(cat "$rss_file" 2>/dev/null || echo 0)"
+        LAST_PEAK_RSS_BYTES="$(cat "$rss_file" 2>/dev/null || true)"
         rm -f "$rss_file"
     fi
 
