@@ -16,6 +16,25 @@ const path = require("path");
 const fs = require("fs");
 const { TszServerBridge, createTszAdapterFactory } = require("./tsz-adapter.cjs");
 
+// Module-level cache for TypeScript lib .d.ts files.
+// Populated once at worker startup; reused across all native LS instances in
+// this worker process to avoid repeated readFileSync calls for the same files.
+const libFileContentCache = new Map(); // absolute path -> string content
+
+// Pre-load lib.*.d.ts files from builtLocal into memory. Best-effort: the
+// per-call fallback in createNativeHost still reads from disk on any miss.
+function preloadLibFiles(builtLocal) {
+    try {
+        for (const name of fs.readdirSync(builtLocal)) {
+            if (name.startsWith("lib.") && name.endsWith(".d.ts")) {
+                const fullPath = path.join(builtLocal, name);
+                try { libFileContentCache.set(fullPath, fs.readFileSync(fullPath, "utf-8")); }
+                catch { /* skip unreadable files; per-call fallback handles them */ }
+            }
+        }
+    } catch { /* best-effort */ }
+}
+
 // Per-test timeout (ms) - tests taking longer are killed
 const TEST_TIMEOUT_MS = 15000;
 // Memory threshold per worker (bytes) - restart bridge if exceeded
@@ -752,7 +771,13 @@ function patchSessionClient(SessionClient, ts) {
             const baseName = path.basename(fileName);
             if (baseName.startsWith("lib.") && baseName.endsWith(".d.ts")) {
                 const libPath = path.join(builtLocal, baseName);
-                try { return fs.readFileSync(libPath, "utf-8"); } catch { return undefined; }
+                const cached = libFileContentCache.get(libPath);
+                if (cached !== undefined) return cached;
+                try {
+                    const content = fs.readFileSync(libPath, "utf-8");
+                    libFileContentCache.set(libPath, content);
+                    return content;
+                } catch { return undefined; }
             }
             return undefined;
         };
@@ -761,6 +786,7 @@ function patchSessionClient(SessionClient, ts) {
             const baseName = path.basename(fileName);
             if (baseName.startsWith("lib.") && baseName.endsWith(".d.ts")) {
                 const libPath = path.join(builtLocal, baseName);
+                if (libFileContentCache.has(libPath)) return true;
                 return fs.existsSync(libPath);
             }
             return false;
@@ -4420,6 +4446,8 @@ async function main() {
     // Set up globals and load harness
     setupGlobals(tsDir);
     const { ts, Harness, FourSlash, HarnessLS, SessionClient } = loadHarnessModules(tsDir);
+
+    preloadLibFiles(path.join(tsDir, "built/local"));
 
     const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
     const startBridgeWithRetries = async (candidateBridge, attempts = 4) => {
