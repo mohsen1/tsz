@@ -151,15 +151,19 @@ impl<'a> Printer<'a> {
                 loop_stmt.statement,
             );
             if !body_info.block_scoped_vars.is_empty()
-                && let Some(capture_info) =
-                    super::super::es5::loop_capture::check_loop_needs_capture(
-                        self.arena,
-                        loop_stmt.statement,
-                        &[],
-                        &body_info.block_scoped_vars,
-                    )
+                && super::super::es5::loop_capture::check_loop_needs_capture(
+                    self.arena,
+                    loop_stmt.statement,
+                    &[],
+                    &body_info.block_scoped_vars,
+                )
+                .is_some()
             {
-                self.emit_while_statement_with_capture(node, loop_stmt, &capture_info, &body_info);
+                self.emit_condition_loop_with_capture(
+                    loop_stmt,
+                    &body_info,
+                    super::super::es5::loop_capture::ConditionLoopKind::While,
+                );
                 return;
             }
         }
@@ -1444,15 +1448,19 @@ impl<'a> Printer<'a> {
                 loop_stmt.statement,
             );
             if !body_info.block_scoped_vars.is_empty()
-                && let Some(capture_info) =
-                    super::super::es5::loop_capture::check_loop_needs_capture(
-                        self.arena,
-                        loop_stmt.statement,
-                        &[],
-                        &body_info.block_scoped_vars,
-                    )
+                && super::super::es5::loop_capture::check_loop_needs_capture(
+                    self.arena,
+                    loop_stmt.statement,
+                    &[],
+                    &body_info.block_scoped_vars,
+                )
+                .is_some()
             {
-                self.emit_do_statement_with_capture(node, loop_stmt, &capture_info, &body_info);
+                self.emit_condition_loop_with_capture(
+                    loop_stmt,
+                    &body_info,
+                    super::super::es5::loop_capture::ConditionLoopKind::DoWhile,
+                );
                 return;
             }
         }
