@@ -1262,18 +1262,15 @@ test.ts(2,1): error TS2430: Interface 'Kept' incorrectly extends interface 'Base
 }
 
 #[test]
-fn test_retained_diagnostic_fingerprints_keeps_raw_parser_visible() {
+fn test_parse_diagnostic_fingerprints_filters_nonretained_codes() {
     let output = "test.ts(1,1): error TS2430: Interface 'I' incorrectly extends interface 'A'.";
     let root = std::path::Path::new("/tmp/tsz-test");
 
-    let raw = parse_diagnostic_fingerprints_from_text(output, root);
-    let retained = retained_diagnostic_fingerprints(output, root);
+    let fingerprints = parse_diagnostic_fingerprints_from_text(output, root);
 
-    assert_eq!(raw.len(), 1);
-    assert_eq!(raw[0].code, 2430);
     assert!(
-        retained.is_empty(),
-        "final tsz output fingerprints should mirror retained diagnostic codes",
+        fingerprints.is_empty(),
+        "fingerprints should mirror retained diagnostic codes",
     );
 }
 
@@ -1334,6 +1331,23 @@ fn test_parse_diagnostic_fingerprints_from_text_handles_colon_prefixed_no_pos() 
         fp.display_key(),
         "TS5057 <unknown>:0:0 Cannot find a tsconfig.json file at the specified directory: ''."
     );
+}
+
+#[test]
+fn test_parse_batch_output_retains_bare_no_pos_diagnostics() {
+    let root = std::path::Path::new("/tmp/tsz-test");
+    let output = "error TS2468: Cannot find global value 'Promise'.";
+
+    let result = parse_batch_output(output, root, HashMap::new());
+
+    assert_eq!(result.error_codes, vec![2468]);
+    assert_eq!(result.diagnostic_fingerprints.len(), 1);
+    let fp = &result.diagnostic_fingerprints[0];
+    assert_eq!(fp.code, 2468);
+    assert_eq!(fp.file, "");
+    assert_eq!(fp.line, 0);
+    assert_eq!(fp.column, 0);
+    assert_eq!(fp.message_key, "Cannot find global value 'Promise'.");
 }
 
 #[test]
