@@ -49,6 +49,7 @@ use rayon::prelude::{
     IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
@@ -58,6 +59,27 @@ use tsz_scanner::SyntaxKind;
 
 type ModuleExportEntry = FxHashMap<String, (String, Option<String>)>;
 type Reexports = FxHashMap<String, ModuleExportEntry>;
+
+enum LibSourceText {
+    Owned(String),
+    Static {
+        text: &'static str,
+        content_hash: u64,
+    },
+}
+
+impl LibSourceText {
+    fn as_str(&self) -> &str {
+        match self {
+            Self::Owned(text) => text,
+            Self::Static { text, .. } => text,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.as_str().len()
+    }
+}
 
 fn build_sym_to_decl_indices(declaration_arenas: &DeclarationArenaMap) -> SymToDeclIndicesMap {
     let mut sym_to_decl_indices: SymToDeclIndicesMap = FxHashMap::default();
@@ -341,6 +363,11 @@ fn resolve_default_lib_files(_target: ScriptTarget) -> anyhow::Result<Vec<PathBu
 #[cfg(not(target_arch = "wasm32"))]
 static RAYON_POOL_INIT: Once = Once::new();
 
+#[cfg(not(target_arch = "wasm32"))]
+const SMALL_WORKLOAD_RAYON_MAX_ITEMS: usize = 32;
+#[cfg(not(target_arch = "wasm32"))]
+const SMALL_WORKLOAD_RAYON_THREADS: usize = 4;
+
 /// Ensure Rayon global pool is configured once with stack size suitable for checker recursion.
 ///
 /// We initialize lazily to avoid paying global pool startup cost for single-file sequential paths.
@@ -352,16 +379,59 @@ static RAYON_POOL_INIT: Once = Once::new();
 /// instantiate -> evaluate` cycle still consumes real stack frames.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn ensure_rayon_global_pool() {
+    ensure_rayon_global_pool_with_threads(None);
+}
+
+/// Ensure the Rayon global pool is initialized for a known source workload.
+///
+/// Tiny generated app projects have enough independent parse/bind work to benefit from
+/// Rayon, but on high-core machines a full-width pool spends disproportionate time in
+/// worker startup and scheduler/system overhead. Cap only this small-workload regime;
+/// larger projects keep Rayon's default width.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn ensure_rayon_global_pool_for_work_items(work_item_count: usize) {
+    let worker_count = rayon_worker_count_for_work_items(
+        work_item_count,
+        std::thread::available_parallelism()
+            .map(std::num::NonZeroUsize::get)
+            .unwrap_or(1),
+        std::env::var_os("RAYON_NUM_THREADS").is_some(),
+    );
+    ensure_rayon_global_pool_with_threads(worker_count);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn ensure_rayon_global_pool_with_threads(worker_count: Option<usize>) {
     RAYON_POOL_INIT.call_once(|| {
         // If the pool was already initialized through another rayon call, keep going.
-        let _ = rayon::ThreadPoolBuilder::new()
-            .stack_size(tsz_common::limits::THREAD_STACK_SIZE_BYTES)
-            .build_global();
+        let mut builder =
+            rayon::ThreadPoolBuilder::new().stack_size(tsz_common::limits::THREAD_STACK_SIZE_BYTES);
+        if let Some(worker_count) = worker_count {
+            builder = builder.num_threads(worker_count);
+        }
+        let _ = builder.build_global();
     });
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn rayon_worker_count_for_work_items(
+    work_item_count: usize,
+    available_parallelism: usize,
+    env_override_set: bool,
+) -> Option<usize> {
+    if env_override_set || work_item_count == 0 || work_item_count > SMALL_WORKLOAD_RAYON_MAX_ITEMS
+    {
+        return None;
+    }
+
+    Some(available_parallelism.clamp(1, SMALL_WORKLOAD_RAYON_THREADS))
 }
 
 #[cfg(target_arch = "wasm32")]
 pub fn ensure_rayon_global_pool() {}
+
+#[cfg(target_arch = "wasm32")]
+pub fn ensure_rayon_global_pool_for_work_items(_work_item_count: usize) {}
 
 /// Conditionally use parallel or sequential iteration based on target.
 /// For WASM, Rayon parallelism creates oversubscription when combined with
@@ -1073,7 +1143,7 @@ pub fn load_lib_files_for_binding_strict(
     }
 
     let mut loaded = FxHashSet::default();
-    let mut file_contents: Vec<(String, String)> = Vec::new();
+    let mut file_contents: Vec<(String, LibSourceText)> = Vec::new();
     for path in lib_files {
         collect_lib_files_recursive_cached(path, &mut loaded, &mut file_contents, &file_cache)?;
     }
@@ -1088,43 +1158,108 @@ pub fn load_lib_files_for_binding_strict(
     // file #81 of 87 and becomes the critical-path bottleneck.
     file_contents.sort_by_key(|b| std::cmp::Reverse(b.1.len()));
 
-    // Parse and bind all lib files in parallel using the global rayon pool.
-    // The global pool threads are already warm (no thread creation overhead).
-    #[cfg(not(target_arch = "wasm32"))]
-    ensure_rayon_global_pool();
-
-    let results: Vec<Result<Arc<lib_loader::LibFile>>> = maybe_parallel_into!(file_contents)
-        .map(|(file_name, source_text)| parse_and_bind_lib_file(file_name, source_text))
+    let snapshot_keys: Vec<(&str, u64)> = file_contents
+        .iter()
+        .map(snapshot_key_for_lib_source)
         .collect();
+    if let Some(cached) = super::lib_snapshot::try_load_many(&snapshot_keys) {
+        return Ok(cached);
+    }
+    let snapshot_keys_for_store: Vec<(String, u64)> = snapshot_keys
+        .iter()
+        .map(|(file_name, content_hash)| ((*file_name).to_string(), *content_hash))
+        .collect();
+    drop(snapshot_keys);
 
     // Collect results, propagating any parse errors
-    results.into_iter().collect()
+    let results: Vec<Arc<lib_loader::LibFile>> = parse_and_bind_lib_files(file_contents)
+        .into_iter()
+        .collect::<Result<Vec<_>>>()?;
+    let snapshot_keys_for_store: Vec<(&str, u64)> = snapshot_keys_for_store
+        .iter()
+        .map(|(file_name, content_hash)| (file_name.as_str(), *content_hash))
+        .collect();
+    if let Err(err) = super::lib_snapshot::try_store_many(&snapshot_keys_for_store, &results) {
+        tracing::debug!(
+            target: "wasm::lib_snapshot",
+            error = %err,
+            "lib snapshot set write failed (compilation continues normally)",
+        );
+    }
+    Ok(results)
 }
 
-/// Clone lib files into fresh checker-only binders using the already-loaded source text.
+fn parse_and_bind_lib_files(
+    file_contents: Vec<(String, LibSourceText)>,
+) -> Vec<Result<Arc<lib_loader::LibFile>>> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        return file_contents
+            .into_iter()
+            .map(|(file_name, source_text)| parse_and_bind_lib_source(file_name, source_text))
+            .collect();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let worker_count = std::thread::available_parallelism()
+            .map(std::num::NonZeroUsize::get)
+            .unwrap_or(1)
+            .min(8)
+            .min(file_contents.len().max(1));
+        if worker_count <= 1 {
+            return file_contents
+                .into_iter()
+                .map(|(file_name, source_text)| parse_and_bind_lib_source(file_name, source_text))
+                .collect();
+        }
+
+        match rayon::ThreadPoolBuilder::new()
+            .num_threads(worker_count)
+            .stack_size(tsz_common::limits::THREAD_STACK_SIZE_BYTES)
+            .build()
+        {
+            Ok(pool) => pool.install(|| {
+                file_contents
+                    .into_par_iter()
+                    .map(|(file_name, source_text)| {
+                        parse_and_bind_lib_source(file_name, source_text)
+                    })
+                    .collect()
+            }),
+            Err(_) => file_contents
+                .into_par_iter()
+                .map(|(file_name, source_text)| parse_and_bind_lib_source(file_name, source_text))
+                .collect(),
+        }
+    }
+}
+
+/// Clone lib files into fresh checker-only binders.
 ///
 /// The binders used during program construction are mutated while merging lib symbols into
 /// user-file binders. Checker-facing lib contexts and lib-file checks need fresh binder state
 /// so declaration merging and semantic lookups run against clean lib binders.
 ///
-/// The clone re-parses and re-binds every lib file (parse+bind is the heavy step in
-/// `LibFile::from_source`). With ~40 lib files in the full ES2020+DOM lib set, doing
-/// this sequentially leaves all but one core idle. Run the parse+bind across rayon's
-/// global pool, mirroring `load_lib_files_for_binding_strict`. Output order matches
-/// input order via rayon's order-preserving `collect`.
+/// The clone needs an independent parsed + bound copy of every lib file, but
+/// the source lib files have already been loaded into clean parsed/bound state.
+/// Deep-cloning that state in memory preserves distinct arena/binder identity
+/// for checker resolution while avoiding a second pass through the disk-backed
+/// lib snapshot cache. Output order matches input order via rayon's
+/// order-preserving `collect`.
 #[must_use]
 pub fn clone_lib_files_for_checker(
     lib_files: &[Arc<lib_loader::LibFile>],
     should_clone_libs_in_parallel: bool,
 ) -> Vec<Arc<lib_loader::LibFile>> {
     let clone_lib_file = |lib: &Arc<lib_loader::LibFile>| {
-        let source = lib
-            .arena
-            .get_source_file_at(lib.root_index)
-            .unwrap_or_else(|| panic!("missing source text for lib file {}", lib.file_name));
-        Arc::new(lib_loader::LibFile::from_source(
+        let mut binder = (*lib.binder).clone();
+        binder.clear_resolution_caches();
+        Arc::new(lib_loader::LibFile::new(
             lib.file_name.clone(),
-            source.text.to_string(),
+            Arc::new((*lib.arena).clone()),
+            Arc::new(binder),
+            lib.root_index,
         ))
     };
 
@@ -1147,20 +1282,52 @@ pub fn clone_lib_files_for_checker(
 
 /// Parse and bind a single lib file, returning a `LibFile` or error.
 ///
-/// When `TSZ_LIB_CACHE=1` is set, this consults the disk-backed snapshot
-/// cache before parsing. On a hit the parsed arena and bound state are
-/// loaded from disk (skipping both parse and bind). On a miss the
-/// parse + bind result is written back. See
+/// This consults the disk-backed snapshot cache before parsing unless
+/// `TSZ_LIB_CACHE` explicitly disables it. On a hit the parsed arena and
+/// bound state are loaded from disk, skipping both parse and bind. On a
+/// miss the parse + bind result is written back. See
 /// `crates/tsz-core/src/parallel/lib_snapshot.rs` and
 /// `docs/plan/PERFORMANCE_PLAN.md`.
 fn parse_and_bind_lib_file(
     file_name: String,
     source_text: String,
 ) -> Result<Arc<lib_loader::LibFile>> {
-    if let Some(cached) = super::lib_snapshot::try_load(&file_name, &source_text) {
+    parse_and_bind_lib_file_with_source(file_name, Cow::Owned(source_text))
+}
+
+fn parse_and_bind_lib_source(
+    file_name: String,
+    source_text: LibSourceText,
+) -> Result<Arc<lib_loader::LibFile>> {
+    match source_text {
+        LibSourceText::Owned(source_text) => parse_and_bind_lib_file(file_name, source_text),
+        LibSourceText::Static {
+            text: source_text, ..
+        } => parse_and_bind_lib_file_with_source(file_name, Cow::Borrowed(source_text)),
+    }
+}
+
+fn snapshot_key_for_lib_source((file_name, source_text): &(String, LibSourceText)) -> (&str, u64) {
+    let content_hash = match source_text {
+        LibSourceText::Owned(source_text) => {
+            super::lib_snapshot::content_hash(file_name, source_text.as_str())
+        }
+        LibSourceText::Static { content_hash, .. } => {
+            super::lib_snapshot::content_hash_from_source_hash(file_name, *content_hash)
+        }
+    };
+    (file_name.as_str(), content_hash)
+}
+
+fn parse_and_bind_lib_file_with_source(
+    file_name: String,
+    source_text: Cow<'_, str>,
+) -> Result<Arc<lib_loader::LibFile>> {
+    if let Some(cached) = super::lib_snapshot::try_load(&file_name, source_text.as_ref()) {
         return Ok(cached);
     }
 
+    let source_text = source_text.into_owned();
     let mut lib_parser = ParserState::new(file_name.clone(), source_text.clone());
     let source_file_idx = lib_parser.parse_source_file();
     let diagnostics = lib_parser.get_diagnostics();
@@ -1204,7 +1371,7 @@ fn parse_and_bind_lib_file(
 fn collect_lib_files_recursive_cached(
     path: &Path,
     loaded: &mut FxHashSet<PathBuf>,
-    file_contents: &mut Vec<(String, String)>,
+    file_contents: &mut Vec<(String, LibSourceText)>,
     file_cache: &FxHashMap<PathBuf, String>,
 ) -> Result<()> {
     // Skip canonicalize (stat syscall) when using embedded content.
@@ -1229,29 +1396,69 @@ fn collect_lib_files_recursive_cached(
     let embedded_key = basename.strip_prefix("lib.").unwrap_or(basename);
     let source_text = if let Some(cached) = file_cache.get(&lib_path) {
         // File was read from disk (custom lib dir with non-standard files) — use it
-        cached.clone()
+        LibSourceText::Owned(cached.clone())
+    } else if lib_path.starts_with(Path::new("/embedded-lib"))
+        && let Some(embedded) = crate::embedded_libs::get_lib_content(embedded_key)
+    {
+        // Embedded virtual-root paths are never real files; avoid a failed stat
+        // before reading the built-in content.
+        LibSourceText::Static {
+            text: embedded,
+            content_hash: crate::embedded_libs::get_lib_content_hash(embedded_key)
+                .expect("embedded lib content hash missing"),
+        }
     } else if lib_path.exists() {
-        std::fs::read_to_string(&lib_path)
-            .with_context(|| format!("failed to read lib file {}", lib_path.display()))?
+        LibSourceText::Owned(
+            std::fs::read_to_string(&lib_path)
+                .with_context(|| format!("failed to read lib file {}", lib_path.display()))?,
+        )
     } else if let Some(embedded) = crate::embedded_libs::get_lib_content(embedded_key) {
         // Built-in embedded content — zero I/O, comment-stripped for faster parsing
-        embedded.to_string()
+        LibSourceText::Static {
+            text: embedded,
+            content_hash: crate::embedded_libs::get_lib_content_hash(embedded_key)
+                .expect("embedded lib content hash missing"),
+        }
     } else {
         // Fallback to disk read
-        std::fs::read_to_string(&lib_path)
-            .with_context(|| format!("failed to read lib file {}", lib_path.display()))?
+        LibSourceText::Owned(
+            std::fs::read_to_string(&lib_path)
+                .with_context(|| format!("failed to read lib file {}", lib_path.display()))?,
+        )
     };
 
-    // Resolve references before adding this file (dependencies come first)
-    for ref_lib in parse_lib_references(&source_text) {
-        if let Some(ref_path) = resolve_lib_reference_path(&lib_path, &ref_lib) {
-            collect_lib_files_recursive_cached(&ref_path, loaded, file_contents, file_cache)?;
+    // Resolve references before adding this file (dependencies come first).
+    // Embedded libs have a generated reference table, so cache-hit startup
+    // does not need to rescan source text just to rediscover lib headers.
+    match &source_text {
+        LibSourceText::Static { .. } => {
+            for ref_lib in crate::embedded_libs::get_embedded_lib_references(embedded_key) {
+                let ref_path = resolve_generated_embedded_lib_reference_path(ref_lib);
+                collect_lib_files_recursive_cached(&ref_path, loaded, file_contents, file_cache)?;
+            }
+        }
+        LibSourceText::Owned(_) => {
+            for ref_lib in parse_lib_references(source_text.as_str()) {
+                if let Some(ref_path) = resolve_lib_reference_path(&lib_path, &ref_lib) {
+                    collect_lib_files_recursive_cached(
+                        &ref_path,
+                        loaded,
+                        file_contents,
+                        file_cache,
+                    )?;
+                }
+            }
         }
     }
 
     let file_name = lib_path.to_string_lossy().to_string();
     file_contents.push((file_name, source_text));
     Ok(())
+}
+
+fn resolve_generated_embedded_lib_reference_path(lib_name: &str) -> PathBuf {
+    let embedded_name = crate::embedded_libs::embedded_reference_filename(lib_name);
+    PathBuf::from(format!("/embedded-lib/{embedded_name}"))
 }
 
 fn parse_lib_references(content: &str) -> Vec<String> {
@@ -1308,6 +1515,13 @@ fn resolve_lib_reference_path(base_path: &Path, lib_name: &str) -> Option<PathBu
         "dom.iterable.generated" => candidate_names.push("dom.iterable".to_string()),
         "dom.asynciterable.generated" => candidate_names.push("dom.asynciterable".to_string()),
         _ => {}
+    }
+    if base_path.starts_with(Path::new("/embedded-lib")) {
+        return candidate_names.into_iter().find_map(|name| {
+            let embedded_name = format!("{name}.d.ts");
+            crate::embedded_libs::is_embedded_lib(&embedded_name)
+                .then(|| lib_dir.join(embedded_name))
+        });
     }
     let candidates: Vec<PathBuf> = candidate_names
         .into_iter()
@@ -1393,6 +1607,14 @@ pub fn parse_and_bind_parallel_with_libs_and_target(
     lib_files: &[Arc<lib_loader::LibFile>],
     language_version: ScriptTarget,
 ) -> Vec<BindResult> {
+    let premerged_lib_binder = if files.len() > 1 && !lib_files.is_empty() {
+        let mut binder = BinderState::new();
+        binder.merge_lib_symbols(lib_files);
+        Some(Arc::new(binder))
+    } else {
+        None
+    };
+
     if files.len() <= 1 {
         return files
             .into_iter()
@@ -1402,6 +1624,7 @@ pub fn parse_and_bind_parallel_with_libs_and_target(
                     source_text,
                     lib_files,
                     language_version,
+                    premerged_lib_binder.as_deref(),
                 )
             })
             .collect();
@@ -1417,6 +1640,7 @@ pub fn parse_and_bind_parallel_with_libs_and_target(
                 source_text,
                 lib_files,
                 language_version,
+                premerged_lib_binder.as_deref(),
             )
         })
         .collect()
@@ -1427,6 +1651,7 @@ fn bind_file_with_libs_with_language_version(
     source_text: String,
     lib_files: &[Arc<lib_loader::LibFile>],
     language_version: ScriptTarget,
+    premerged_lib_binder: Option<&BinderState>,
 ) -> BindResult {
     // Skip parsing .json files - they should not be parsed as TypeScript.
     // JSON module imports should be resolved during module resolution and
@@ -1443,12 +1668,14 @@ fn bind_file_with_libs_with_language_version(
     let (arena, parse_diagnostics) = parser.into_parts();
 
     // Bind with lib symbols
-    let mut binder = BinderState::new();
+    let mut binder = premerged_lib_binder
+        .cloned()
+        .unwrap_or_else(BinderState::new);
     binder.set_debug_file(&file_name);
 
     // IMPORTANT: Merge lib symbols BEFORE binding source file
     // so that symbols like console, Array, Promise are available during binding
-    if !lib_files.is_empty() {
+    if premerged_lib_binder.is_none() && !lib_files.is_empty() {
         binder.merge_lib_symbols(lib_files);
     }
 
@@ -5312,6 +5539,10 @@ fn affected_lib_interface_names(
     checker_lib_files: &[Arc<LibFile>],
 ) -> FxHashSet<String> {
     let seed_interfaces = collect_user_global_interface_seeds(program);
+    if seed_interfaces.is_empty() {
+        return FxHashSet::default();
+    }
+
     let mut affected = seed_interfaces.clone();
     let user_member_names = collect_user_global_interface_member_names(program);
     let mut inheritance_graph: FxHashMap<String, FxHashSet<String>> = FxHashMap::default();
