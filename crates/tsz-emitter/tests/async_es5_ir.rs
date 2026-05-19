@@ -155,6 +155,96 @@ fn test_async_while_with_await_lowers_to_generator_cases() {
 }
 
 #[test]
+fn test_async_while_body_await_parenthesizes_binary_condition() {
+    let output = transform_and_print(
+        "async function f(i, limit) { while (i < limit) { await tick(i++); } }",
+    );
+
+    assert!(
+        output.contains("if (!(i < limit)) return [3 /*break*/, 2];"),
+        "Binary while condition should be negated with parentheses.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, tick(i++)];"),
+        "Await in the while body should still lower to a generator yield.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_do_while_body_await_lowers_to_generator_cases() {
+    let output = transform_and_print(
+        "async function f(xs) { do { await g(xs.pop()); } while (xs.length); }",
+    );
+
+    assert!(
+        !output.contains("do "),
+        "Raw do-while statement must not remain around suspended body.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("await "),
+        "Raw await syntax must not remain in ES5 generator output.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, g(xs.pop())];"),
+        "Await in the do-while body should become the first generator yield.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (!xs.length) return [3 /*break*/, 2];"),
+        "Do-while condition should be checked after the body resumes.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [3 /*break*/, 0];"),
+        "Truthy do-while condition should jump back to the body case.\nOutput:\n{output}"
+    );
+    let yield_pos = output.find("return [4 /*yield*/, g(xs.pop())];");
+    let condition_pos = output.find("if (!xs.length) return [3 /*break*/, 2];");
+    assert!(
+        yield_pos.is_some()
+            && condition_pos.is_some()
+            && yield_pos.expect("yield_pos is Some, checked above")
+                < condition_pos.expect("condition_pos is Some, checked above"),
+        "Do-while lowering must preserve body-first semantics.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 2: return [2 /*return*/];"),
+        "Do-while exit should have a final generator return case.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_do_while_single_statement_await_uses_post_body_binary_condition() {
+    let output = transform_and_print(
+        "async function f(i, limit) { do await tick(i++); while (i < limit); }",
+    );
+
+    assert!(
+        !output.contains("do "),
+        "Raw do-while statement must not remain around suspended single-statement body.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("await "),
+        "Raw await syntax must not remain in ES5 generator output.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, tick(i++)];"),
+        "Single-statement do-while body await should become a generator yield.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (!(i < limit)) return [3 /*break*/, 2];"),
+        "Binary do-while condition should be negated with parentheses after the body resumes.\nOutput:\n{output}"
+    );
+    let yield_pos = output.find("return [4 /*yield*/, tick(i++)];");
+    let condition_pos = output.find("if (!(i < limit)) return [3 /*break*/, 2];");
+    assert!(
+        yield_pos.is_some()
+            && condition_pos.is_some()
+            && yield_pos.expect("yield_pos is Some, checked above")
+                < condition_pos.expect("condition_pos is Some, checked above"),
+        "Do-while single-statement lowering must preserve body-first semantics.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_return_await() {
     let output = transform_and_print("async function foo() { return await bar(); }");
     assert!(output.contains("[4 /*yield*/"), "Should have yield");

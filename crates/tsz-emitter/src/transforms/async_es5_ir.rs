@@ -2675,6 +2675,15 @@ impl<'a> AsyncES5Transformer<'a> {
                 );
             }
 
+            k if k == syntax_kind_ext::DO_STATEMENT => {
+                self.process_do_while_statement_in_async(
+                    idx,
+                    cases,
+                    current_statements,
+                    current_label,
+                );
+            }
+
             k if k == syntax_kind_ext::FOR_STATEMENT => {
                 if !self.process_for_initializer_using_statement_in_async(
                     idx,
@@ -3842,10 +3851,7 @@ impl<'a> AsyncES5Transformer<'a> {
         let condition = self.expression_to_ir(loop_data.condition);
 
         current_statements.push(IRNode::IfBreak {
-            condition: Box::new(IRNode::PrefixUnaryExpr {
-                operator: "!".to_string().into(),
-                operand: Box::new(condition),
-            }),
+            condition: Box::new(Self::negated_condition(condition)),
             target_label: exit_placeholder,
         });
 
@@ -3865,6 +3871,60 @@ impl<'a> AsyncES5Transformer<'a> {
                 comment: Some("break".to_string().into()),
             },
         ))));
+
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+
+        let exit_label = self.state.next_label();
+        Self::patch_if_break_target(cases, exit_placeholder, exit_label);
+        *current_label = exit_label;
+    }
+
+    /// Process a do-while statement inside an async function body.
+    ///
+    /// When the body suspends and the condition does not, the state machine must
+    /// enter through the body case first. Emitting a raw `do` statement would
+    /// leave `await` syntax inside the ES5 generator callback.
+    fn process_do_while_statement_in_async(
+        &mut self,
+        idx: NodeIndex,
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+    ) {
+        let Some(node) = self.arena.get(idx) else {
+            return;
+        };
+        let Some(loop_data) = self.arena.get_loop(node) else {
+            return;
+        };
+
+        let condition_has_await = self.contains_await_recursive(loop_data.condition);
+        let body_has_await = self.contains_await_recursive(loop_data.statement);
+
+        if !body_has_await || condition_has_await {
+            current_statements.push(self.statement_to_ir(idx));
+            return;
+        }
+
+        let loop_label = *current_label;
+        let exit_placeholder = self.next_loop_exit_placeholder();
+
+        self.process_block_or_statement_in_async(
+            loop_data.statement,
+            cases,
+            current_statements,
+            current_label,
+        );
+
+        let condition = self.expression_to_ir(loop_data.condition);
+        current_statements.push(IRNode::IfBreak {
+            condition: Box::new(Self::negated_condition(condition)),
+            target_label: exit_placeholder,
+        });
+        current_statements.push(Self::generator_break_statement(loop_label));
 
         cases.push(IRGeneratorCase {
             label: *current_label,
@@ -4435,6 +4495,22 @@ impl<'a> AsyncES5Transformer<'a> {
 
     fn expression_statement(expression: IRNode) -> IRNode {
         IRNode::ExpressionStatement(Box::new(expression))
+    }
+
+    fn negated_condition(condition: IRNode) -> IRNode {
+        let operand = match condition {
+            IRNode::BinaryExpr { .. }
+            | IRNode::LogicalOr { .. }
+            | IRNode::LogicalAnd { .. }
+            | IRNode::ConditionalExpr { .. }
+            | IRNode::CommaExpr(_)
+            | IRNode::CommaExprMultiline(_) => IRNode::Parenthesized(Box::new(condition)),
+            _ => condition,
+        };
+        IRNode::PrefixUnaryExpr {
+            operator: "!".into(),
+            operand: Box::new(operand),
+        }
     }
 
     fn generator_label_assignment(label: u32) -> IRNode {
