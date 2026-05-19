@@ -1570,12 +1570,12 @@ run_project_benchmark() {
         tsz_prefix+=(env "RUST_MIN_STACK=$TSZ_RUST_MIN_STACK")
     fi
 
-    # For project fixtures (except nextjs and large-ts-repo), require
-    # a clean tsc pass before benchmarking. large-ts-repo is too expensive
-    # to validate twice, so its hyperfine result is validated via exit_codes
-    # before any timing is recorded as a valid compiler pass.
+    # For project fixtures (except large-ts-repo), require a clean tsc pass
+    # before benchmarking so green rows have oracle evidence. large-ts-repo is
+    # too expensive to validate twice, so its hyperfine result is validated via
+    # exit_codes before any timing is recorded as a valid compiler pass.
     local tsc_exit_codes=""
-    if [ "$name" != "nextjs" ] && [ "$name" != "large-ts-repo" ]; then
+    if [ "$name" != "large-ts-repo" ]; then
         local project_tsc_timeout
         project_tsc_timeout=$((BENCH_TIMEOUT * 2))
         local tsc_check=0
@@ -1676,7 +1676,7 @@ run_project_benchmark() {
             echo -e "  ${CYAN}tsgo error:${NC} $(printf '%s' "$tsgo_error" | head -1)" >&2
         fi
 
-        if [ "$name" != "nextjs" ]; then
+        if [ "$name" != "large-ts-repo" ]; then
             status="${status:+${status}; }tsc ok"
         fi
 

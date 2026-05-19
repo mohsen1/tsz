@@ -109,6 +109,14 @@ impl ParserState {
                 if ch == '\\' {
                     let next_start = start + ch.len_utf8();
                     let next = raw_text.get(next_start..class_end)?.chars().next()?;
+                    if next == 'x' {
+                        let hex_start = next_start + next.len_utf8();
+                        let next_index = hex_start.saturating_add(2).min(class_end);
+                        if let Some(value) = parse_hex_u32(raw_text, hex_start, 2) {
+                            return Some((vec![(value, u32::try_from(start).ok()?)], next_index));
+                        }
+                        return Some((Vec::new(), next_index));
+                    }
                     if next == 'u' {
                         let brace_start = next_start + next.len_utf8();
                         if raw_text.as_bytes().get(brace_start).copied() == Some(b'{') {
@@ -275,7 +283,7 @@ impl ParserState {
 
             #[derive(Clone, Copy)]
             enum ClassAtomKind {
-                Character { value: u32, utf16_len: usize },
+                Character,
                 Class,
                 Unknown,
             }
@@ -305,6 +313,15 @@ impl ParserState {
                 *pos - start
             }
 
+            const fn hex_byte_value(byte: u8) -> Option<u32> {
+                match byte {
+                    b'0'..=b'9' => Some((byte - b'0') as u32),
+                    b'a'..=b'f' => Some((byte - b'a' + 10) as u32),
+                    b'A'..=b'F' => Some((byte - b'A' + 10) as u32),
+                    _ => None,
+                }
+            }
+
             fn next_utf8_char(bytes: &[u8], end: usize, pos: usize) -> Option<(char, usize)> {
                 std::str::from_utf8(&bytes[pos..end])
                     .ok()
@@ -320,6 +337,24 @@ impl ParserState {
                 while *pos < end && is_word_char(body[*pos]) {
                     *pos += 1;
                 }
+            }
+
+            fn read_fixed_hex(body: &[u8], pos: usize, len: usize) -> Option<u32> {
+                if pos + len > body.len() {
+                    return None;
+                }
+                let mut value = 0u32;
+                for offset in 0..len {
+                    value = (value << 4) | hex_byte_value(body[pos + offset])?;
+                }
+                Some(value)
+            }
+
+            const fn decode_surrogate_pair(high: u32, low: u32) -> Option<u32> {
+                if high < 0xD800 || high > 0xDBFF || low < 0xDC00 || low > 0xDFFF {
+                    return None;
+                }
+                Some(0x10000 + ((high - 0xD800) << 10) + (low - 0xDC00))
             }
 
             fn scan_braced_unicode_escape_value(
@@ -552,6 +587,69 @@ impl ParserState {
                         *pos += 1;
                         Some(ClassAtomKind::Class)
                     }
+                    b'x' => {
+                        *pos += 1;
+                        if *pos + 1 < body.len() && read_fixed_hex(body, *pos, 2).is_some() {
+                            *pos += 2;
+                            Some(ClassAtomKind::Character)
+                        } else {
+                            while *pos < body.len()
+                                && *pos < start + 3
+                                && body[*pos].is_ascii_hexdigit()
+                            {
+                                *pos += 1;
+                            }
+                            Some(ClassAtomKind::Unknown)
+                        }
+                    }
+                    b'u' => {
+                        *pos += 1;
+                        if *pos < body.len() && body[*pos] == b'{' {
+                            *pos += 1;
+                            let mut value = 0u32;
+                            let mut valid = false;
+                            while *pos < body.len() && body[*pos] != b'}' {
+                                if let Some(digit) = hex_byte_value(body[*pos]) {
+                                    valid = true;
+                                    value = (value << 4) | digit;
+                                } else {
+                                    valid = false;
+                                }
+                                *pos += 1;
+                            }
+                            if *pos < body.len() {
+                                *pos += 1;
+                            }
+                            if valid && char::from_u32(value).is_some() {
+                                Some(ClassAtomKind::Character)
+                            } else {
+                                Some(ClassAtomKind::Unknown)
+                            }
+                        } else if let Some(value) = read_fixed_hex(body, *pos, 4) {
+                            *pos += 4;
+                            if strict_mode
+                                && let Some(low) = body
+                                    .get(*pos..)
+                                    .filter(|rest| {
+                                        rest.len() >= 6 && rest[0] == b'\\' && rest[1] == b'u'
+                                    })
+                                    .and_then(|rest| read_fixed_hex(rest, 2, 4))
+                                && decode_surrogate_pair(value, low).is_some()
+                            {
+                                *pos += 6;
+                                return Some(ClassAtomKind::Character);
+                            }
+                            Some(ClassAtomKind::Character)
+                        } else {
+                            while *pos < body.len()
+                                && *pos < start + 5
+                                && body[*pos].is_ascii_hexdigit()
+                            {
+                                *pos += 1;
+                            }
+                            Some(ClassAtomKind::Unknown)
+                        }
+                    }
                     b'q' if unicode_sets_mode => {
                         *pos += 1;
                         if *pos < body.len() && body[*pos] == b'{' {
@@ -593,10 +691,7 @@ impl ParserState {
                             // `P`, so emit a Character atom directly rather
                             // than returning None and letting the caller
                             // re-scan (which would consume the next escape).
-                            Some(ClassAtomKind::Character {
-                                value: u32::from(b'P'),
-                                utf16_len: 1,
-                            })
+                            Some(ClassAtomKind::Character)
                         }
                     }
                     b'p' => {
@@ -622,10 +717,7 @@ impl ParserState {
                         } else {
                             // Annex B: `\p` without braces is treated as the
                             // literal character `p`. See `\P` above.
-                            Some(ClassAtomKind::Character {
-                                value: u32::from(b'p'),
-                                utf16_len: 1,
-                            })
+                            Some(ClassAtomKind::Character)
                         }
                     }
                     _ => None,
@@ -650,7 +742,6 @@ impl ParserState {
                         return;
                     }
 
-                    let class_escape_start = *pos;
                     match scan_character_class_escape(
                         parser,
                         ctx.emit,
@@ -676,21 +767,15 @@ impl ParserState {
                                 ctx.start_pos,
                             );
                             if *pos > current_pos {
-                                range.push(ClassAtomKind::Character {
-                                    value: u32::from(ctx.body[class_escape_start]),
-                                    utf16_len: 1,
-                                });
+                                range.push(ClassAtomKind::Character);
                             }
                         }
                     }
                     return;
                 }
 
-                if let Some((ch, char_len)) = next_utf8_char(ctx.body, ctx.body_end, *pos) {
-                    range.push(ClassAtomKind::Character {
-                        value: ch as u32,
-                        utf16_len: ch.len_utf16(),
-                    });
+                if let Some((_ch, char_len)) = next_utf8_char(ctx.body, ctx.body_end, *pos) {
+                    range.push(ClassAtomKind::Character);
                     *pos += char_len;
                 }
 
@@ -805,26 +890,10 @@ impl ParserState {
                         }
                     }
 
-                    if let (
-                        Some(ClassAtomKind::Character {
-                            value: left,
-                            utf16_len: 1,
-                        }),
-                        Some(ClassAtomKind::Character {
-                            value: right,
-                            utf16_len: 1,
-                        }),
-                    ) = (min_atom, max_atom)
-                        && left > right
-                    {
-                        (ctx.emit)(
-                            parser,
-                            min_start,
-                            (max_start as u32).saturating_sub(min_start as u32),
-                            "Range out of order in character class.",
-                            diagnostic_codes::RANGE_OUT_OF_ORDER_IN_CHARACTER_CLASS,
-                        );
-                    }
+                    // TS1517 range-order diagnostics are emitted by
+                    // `regex_range_order_errors`, which handles escaped atoms
+                    // and surrogate pairs consistently. This scanner still
+                    // validates class-boundary rules above.
                 }
             }
 

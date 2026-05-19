@@ -759,6 +759,20 @@ fn test_regex_hyphen_after_range_is_literal() {
 }
 
 #[test]
+fn test_regex_hex_escape_range_start_does_not_report_ts1517() {
+    let source = r"const pattern = /[\x2D-9A-Z\\_a-z\xF8-\u02C1]/u;";
+    let (parser, _root) = parse_source(source);
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::RANGE_OUT_OF_ORDER_IN_CHARACTER_CLASS),
+        "Hex escapes should be decoded as one range atom before range-order checks: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_unicode_regex_trailing_hyphen_class_does_not_report_ts1508() {
     let source = r#"
 const unicode = /[a-]/u;
@@ -3876,6 +3890,27 @@ interface Foo {
     assert_eq!(
         ts1131_count, 0,
         "Expected no TS1131 for valid interface, got {ts1131_count}. Diagnostics: {diagnostics:?}",
+    );
+}
+
+#[test]
+fn test_computed_property_signature_after_array_type_line_break_does_not_emit_ts1131() {
+    let source = r"
+const IGNORE_LIST = 'ignoreList';
+
+interface SourceMap {
+  sources: string[]
+  [IGNORE_LIST]: number[]
+}
+";
+    let (parser, _root) = parse_source(source);
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED),
+        "A line-broken computed property signature should not be parsed as indexed access: {diagnostics:?}"
     );
 }
 

@@ -655,7 +655,11 @@ impl ParserState {
         in_interface_declaration: bool,
     ) -> NodeIndex {
         let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
-            self.parse_type()
+            let saved_flags = self.context_flags;
+            self.context_flags |= crate::parser::state::CONTEXT_FLAG_TYPE_MEMBER_TYPE_ANNOTATION;
+            let type_annotation = self.parse_type();
+            self.context_flags = saved_flags;
+            type_annotation
         } else {
             NodeIndex::NONE
         };
