@@ -473,12 +473,6 @@ run independently of the semantic checker. tsserver does this as a
 separate process; TSZ can do it as a separate task pool first and a
 separate process later if needed.
 
-Document-symbol responses must stay bounded even before the syntactic split
-lands: cap returned nav trees at `3000` entries and depth `64`, and include a
-single `more...` sentinel when the cap truncates output. This keeps
-namespace-heavy declaration files from producing multi-megabyte editor
-responses while preserving a visible cue that the outline was abbreviated.
-
 Justification: keeps the editor responsive during heavy checker work. The
 existing single-threaded model means a 2-second `check_source_file` blocks
 formatting requests on a different file.
