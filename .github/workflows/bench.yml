@@ -106,16 +106,10 @@ jobs:
             active_runs=""
             while IFS=$'\t' read -r run_id run_sha run_url; do
               [[ -n "${run_id:-}" ]] || continue
-              if [[ "${run_sha}" != "${target_sha}" ]]; then
-                echo "Cancelling stale Bench run ${run_id} for ${run_sha}; target is ${target_sha}."
-                gh run cancel --repo "${{ github.repository }}" "${run_id}" || true
-                gh api -X POST "repos/${{ github.repository }}/actions/runs/${run_id}/force-cancel" --silent || true
-                continue
-              fi
               active_runs+="${run_id}"$'\t'"${run_sha}"$'\t'"${run_url}"$'\n'
             done <<< "$active_runs_raw"
             if [[ -n "$active_runs" ]]; then
-              echo "Another Bench run for ${target_sha} is already active; skipping this benchmark instead of queuing."
+              echo "Another Bench run is already active; skipping ${target_sha} instead of cancelling or queuing."
               printf '%s\n' "$active_runs"
               should_run=false
             fi
