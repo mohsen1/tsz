@@ -55,7 +55,7 @@ use tsz::parser::ParseDiagnostic;
 use tsz::parser::node::NodeArena;
 use tsz::parser::syntax_kind_ext;
 use tsz::scanner::SyntaxKind;
-use tsz_solver::QueryCache;
+use tsz_solver::construction::QueryCache;
 
 fn diagnostic_source_line<'a>(
     program: &'a MergedProgram,

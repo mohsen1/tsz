@@ -5450,7 +5450,7 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
         program
             .type_interner
             .set_exact_optional_property_types(resolved.checker.exact_optional_property_types);
-        let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+        let query_cache = tsz_solver::construction::QueryCache::new(&program.type_interner);
         let mut checker = CheckerState::with_options(
             &program.files[0].arena,
             &rebuilt_binder,

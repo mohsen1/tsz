@@ -21,7 +21,7 @@ use tsz_cli::config::{
     checker_target_from_emitter, default_lib_name_for_target, resolve_default_lib_files_from_dir,
     resolve_lib_files_from_dir,
 };
-use tsz_solver::QueryCache;
+use tsz_solver::construction::QueryCache;
 use tsz_solver::construction::RelationCacheStats;
 
 pub(crate) struct RunCheckResult {
