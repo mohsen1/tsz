@@ -97,6 +97,29 @@ function makeArtifact(rows, extraMeta = {}) {
   };
 }
 
+const SAMPLE_MEASUREMENT_PROFILE = {
+  mode: "release-pgo",
+  tsz_binary_source: "bench-dist",
+  profile_guided_optimization: {
+    requested: true,
+    required: true,
+    optimized: true,
+    marker_path: "/tmp/tsz/.target-bench/dist/.bench-pgo-optimized",
+    marker_found: true,
+    profile_use: "/tmp/tsz/.target-bench/pgo-data/merged.profdata",
+    profile_fingerprint: "abcdef1234567890",
+    training_fingerprint: "123456abcdef7890",
+    profile_data_source: "fresh",
+    built_at: "2026-05-20T01:02:03Z",
+    llvm_profdata: "/toolchain/bin/llvm-profdata",
+    training_metadata_available: true,
+    training_input_count: 17,
+    training_failure_count: 0,
+    training_inputs: ["stdin:scalar", "synthetic:mapped_type.ts"],
+    training_failed_inputs: [],
+  },
+};
+
 function run(artifactFile, extraArgs = []) {
   return spawnSync(process.execPath, [CHECK_SCRIPT, ...(artifactFile ? [artifactFile] : []), ...extraArgs], {
     cwd: ROOT,
@@ -133,12 +156,29 @@ console.log("✅ malformed artifact exits 2");
 withTempDir((dir) => {
   const file = path.join(dir, "bench.json");
   const rows = REQUIRED_PROJECT_ROWS.map((name) => makeRow(name, "green"));
-  writeJson(file, makeArtifact(rows));
+  writeJson(file, makeArtifact(rows, { measurement_profile: SAMPLE_MEASUREMENT_PROFILE }));
   const result = run(file);
   assert.equal(result.status, 0, `all-green artifact should exit 0, got:\n${result.stderr}`);
   assert.match(result.stdout, new RegExp(`green.*\\| ${REQUIRED_PROJECT_ROWS.length}`), "should show all green count");
+  assert.match(result.stdout, /Measurement profile.*release-pgo/, "should show measurement profile mode");
+  assert.match(result.stdout, /PGO profile.*abcdef123456/, "should show PGO profile fingerprint");
+  assert.match(result.stdout, /PGO training.*123456abcdef/, "should show PGO training fingerprint");
 });
 console.log("✅ complete all-green artifact exits 0");
+
+// ---------------------------------------------------------------------------
+// Test: modern artifact without measurement_profile still exits 0 but reports
+// the missing profile so dashboards can surface the metadata gap.
+// ---------------------------------------------------------------------------
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const rows = REQUIRED_PROJECT_ROWS.map((name) => makeRow(name, "green"));
+  writeJson(file, makeArtifact(rows));
+  const result = run(file);
+  assert.equal(result.status, 0, `missing measurement profile should warn, not fail:\n${result.stderr}`);
+  assert.match(result.stdout, /Measurement profile.*measurement_profile missing/);
+});
+console.log("✅ missing measurement profile is reported without failing readiness");
 
 // ---------------------------------------------------------------------------
 // Test: artifact missing one required row → exit 1
@@ -194,7 +234,7 @@ console.log("✅ yellow row present exits 0");
 withTempDir((dir) => {
   const file = path.join(dir, "bench.json");
   const rows = REQUIRED_PROJECT_ROWS.map((name) => makeRow(name, "green"));
-  writeJson(file, makeArtifact(rows));
+  writeJson(file, makeArtifact(rows, { measurement_profile: SAMPLE_MEASUREMENT_PROFILE }));
   const result = run(file, ["--json"]);
   assert.equal(result.status, 0, `--json flag with full artifact should exit 0`);
   // stdout must be exactly one line of valid JSON
@@ -207,6 +247,13 @@ withTempDir((dir) => {
   }
   assert.equal(parsed.missing, 0, "JSON output should show 0 missing");
   assert.equal(parsed.artifact_absent, false, "JSON should have artifact_absent: false");
+  assert.equal(parsed.measurement_profile.present, true, "JSON should report measurement profile presence");
+  assert.equal(parsed.measurement_profile.mode, "release-pgo", "JSON should report measurement profile mode");
+  assert.equal(
+    parsed.measurement_profile.training_fingerprint,
+    SAMPLE_MEASUREMENT_PROFILE.profile_guided_optimization.training_fingerprint,
+    "JSON should report training fingerprint",
+  );
   assert.equal(parsed.green, REQUIRED_PROJECT_ROWS.length, "JSON output should show all green");
   assert.ok(Array.isArray(parsed.rows), "JSON output should have rows array");
   assert.equal(parsed.rows.length, REQUIRED_PROJECT_ROWS.length, "rows array should have all required rows");
