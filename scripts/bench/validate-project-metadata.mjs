@@ -96,6 +96,7 @@ export function validateProjectMetadata({
 }) {
   const failures = [];
   const seen = new Set();
+  const labels = new Map();
   const fixtureDirs = new Map();
   const envNames = new Map();
 
@@ -122,6 +123,14 @@ export function validateProjectMetadata({
     for (const field of ["label", "owner", "family", "fixture_dir", "source_dir"]) {
       if (!isNonEmptyString(row[field])) {
         failures.push(`${row.name}: ${field} must be a non-empty string`);
+      }
+    }
+    if (isNonEmptyString(row.label)) {
+      const previousRowName = labels.get(row.label);
+      if (previousRowName) {
+        failures.push(`${row.name}: label duplicates ${previousRowName}: ${row.label}`);
+      } else {
+        labels.set(row.label, row.name);
       }
     }
 

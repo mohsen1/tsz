@@ -51,9 +51,24 @@ assert.deepEqual(validate([validRow(), validRow()]), [
 
 assert.deepEqual(
   validate([
-    validRow({ name: "first-project", fixture_dir: "shared-fixture" }),
+    validRow({ name: "first-project", label: "Shared Label" }),
     validRow({
       name: "second-project",
+      label: "Shared Label",
+      fixture_dir: "second-project",
+      repo_env: "SECOND_REPO",
+      ref_env: "SECOND_REF",
+    }),
+  ]),
+  ["second-project: label duplicates first-project: Shared Label"],
+);
+
+assert.deepEqual(
+  validate([
+    validRow({ name: "first-project", label: "First", fixture_dir: "shared-fixture" }),
+    validRow({
+      name: "second-project",
+      label: "Second",
       fixture_dir: "shared-fixture",
       repo_env: "SECOND_REPO",
       ref_env: "SECOND_REF",
@@ -101,15 +116,17 @@ assert.deepEqual(
 
 assert.deepEqual(
   validate([
-    validRow({ name: "first-project", repo_env: "SHARED_REPO" }),
+    validRow({ name: "first-project", label: "First", repo_env: "SHARED_REPO" }),
     validRow({
       name: "second-project",
+      label: "Second",
       repo_env: "SHARED_REPO",
       ref_env: "SECOND_REF",
       fixture_dir: "second-project",
     }),
     validRow({
       name: "third-project",
+      label: "Third",
       ref_env: "SHARED_REPO",
       fixture_dir: "third-project",
     }),

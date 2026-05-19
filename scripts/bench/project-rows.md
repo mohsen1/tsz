@@ -26,7 +26,9 @@ Path-like fields must be relative POSIX paths. They may not be absolute, use
 backslashes, contain empty segments, or contain `.` / `..` segments. `source_dir`
 alone may be `"."` for generated fixtures whose source root is the fixture root.
 Row names must use lowercase hyphenated slugs because runners use them as stable
-identifiers and artifact/log path components.
+identifiers and artifact/log path components. Labels must be unique because
+dashboard and compatibility reports use them as the human-facing project
+identity.
 
 External rows (cloned from GitHub) also include pin fields:
 
@@ -93,7 +95,8 @@ Validation:
 - `node scripts/bench/validate-project-metadata.mjs`
 
 This command fails when any required metadata field is missing or malformed,
-when a `repo_env` row lacks a `repo` URL, or when a `ref_env` row lacks a `ref` hash.
+when a row name, label, fixture directory, or shell env name is duplicated, when
+a `repo_env` row lacks a `repo` URL, or when a `ref_env` row lacks a `ref` hash.
 It also validates fixture/source/README paths before benchmark or compile-guard
 runners consume them, and validates shell variable field names before runtime
 pin loading exports them.
