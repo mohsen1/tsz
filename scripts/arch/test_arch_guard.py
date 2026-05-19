@@ -2779,6 +2779,23 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertIn("query_cache.rs:2", hits[1])
         self.assertIn("total matching lines: 2", hits[2])
 
+    def test_query_cache_trace_labels_use_typed_policy_names(self):
+        pattern, _max_lines = self._check_by_name("typed policy names")
+        root = self._make_tree(
+            {
+                "crates/tsz-solver/src/caches/query_cache.rs": (
+                    'query_trace::relation_start(id, "is_subtype_of_with_flags", a, b, flags);\n'
+                    'query_trace::relation_end(id, "is_assignable_to_with_flags", true, false);\n'
+                    'const OP: &str = "is_subtype_of_with_policy";\n'
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 3, f"unexpected hits: {hits!r}")
+        self.assertIn("query_cache.rs:1", hits[0])
+        self.assertIn("query_cache.rs:2", hits[1])
+        self.assertIn("total matching lines: 2", hits[2])
+
     def test_flags_checker_migration_with_parent_cache_callsite(self):
         pattern, _max_lines = self._check_by_name("with_parent_cache_attributed")
         root = self._make_tree(

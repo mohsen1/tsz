@@ -695,6 +695,12 @@ REGEX_LINE_COUNT_CHECKS = [
         re.compile(r"\b(?:configured_compat_checker|configured_subtype_checker)\s*\("),
         0,
     ),
+    (
+        "Solver relation boundary: query cache trace labels use typed policy names (#8207)",
+        [ROOT / "crates" / "tsz-solver" / "src" / "caches" / "query_cache.rs"],
+        re.compile(r'"is_(?:subtype_of|assignable_to)_with_flags"'),
+        0,
+    ),
 ]
 
 # Track 10 performance guardrail: branch-local `visited.clone()` traversal
