@@ -60,7 +60,7 @@ enum CjsLiveExportKind {
 }
 
 impl<'a> Printer<'a> {
-    fn is_commonjs_live_export_context(&self) -> bool {
+    const fn is_commonjs_live_export_context(&self) -> bool {
         self.ctx.is_commonjs()
             || matches!(self.ctx.original_module_kind, Some(ModuleKind::CommonJS))
     }
