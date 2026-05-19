@@ -6811,6 +6811,27 @@ function g<T>(x: T) {
 }
 
 #[test]
+fn test_generic_class_unrelated_methods_preserve_literal_return_unions() {
+    let output = emit_dts_with_binding(
+        r#"
+export class C<T> {
+    m(x: boolean) { return x ? 1 : 2; }
+    s(x: boolean) { return x ? "a" : "b"; }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("m(x: boolean): 1 | 2;"),
+        "Expected generic class method numeric literal union to use source-backed return text: {output}"
+    );
+    assert!(
+        output.contains(r#"s(x: boolean): "a" | "b";"#),
+        "Expected generic class method string literal union to use source-backed return text: {output}"
+    );
+}
+
+#[test]
 fn test_const_enum_member_access_const_variable_preserves_initializer() {
     let output = emit_dts_with_binding(
         r#"
