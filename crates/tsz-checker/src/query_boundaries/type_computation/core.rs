@@ -172,6 +172,34 @@ pub(crate) fn union_context_prefers_tuple_array_literal(
     saw_tuple
 }
 
+pub(crate) fn widen_mutable_object_literal_property_types(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
+    let Some(shape) = crate::query_boundaries::common::object_shape_for_type(db, type_id) else {
+        return type_id;
+    };
+
+    let mut widened_shape = shape.as_ref().clone();
+    let mut changed = false;
+    for prop in &mut widened_shape.properties {
+        let widened_read = crate::query_boundaries::common::widen_literal_type(db, prop.type_id);
+        let widened_write =
+            crate::query_boundaries::common::widen_literal_type(db, prop.write_type);
+        if widened_read != prop.type_id || widened_write != prop.write_type {
+            changed = true;
+        }
+        prop.type_id = widened_read;
+        prop.write_type = widened_write;
+    }
+
+    if changed {
+        db.object_with_index(widened_shape)
+    } else {
+        type_id
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
