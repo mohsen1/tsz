@@ -706,6 +706,33 @@ export { ns, AnEnum, ns as FooBar, AnEnum as BarEnum };
     );
 }
 
+#[test]
+fn system_wrapper_folds_direct_exported_dotted_namespace() {
+    let source = r#"
+export namespace A.B.C {
+    export function foo() {}
+}
+
+export function bar() {
+    return A.B.C.foo();
+}
+"#;
+    let output = emit_system_es2015(source);
+
+    assert!(
+        output.contains(r#"})(A || (exports_1("A", A = {})));"#),
+        "Direct exported dotted namespaces in System modules should register the root binding through exports_1.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return A.B.C.foo();"),
+        "Namespace value references should keep using the local root binding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.A = A = {}"),
+        "System namespace export folding must not use CommonJS exports assignment.\nOutput:\n{output}"
+    );
+}
+
 /// `/// <reference .../>` directives should be stripped from JS output.
 /// tsc never emits these in JS — they are only preserved in .d.ts files.
 #[test]
