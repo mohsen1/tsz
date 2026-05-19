@@ -1602,8 +1602,8 @@ impl<'a> CheckerState<'a> {
             // narrower than `A | B` and the broad declared display would leak
             // into the diagnostic.
             let expr_is_assignability_narrower = expr_display_type != declared_type
-                && self.is_assignable_to(expr_display_type, declared_type)
-                && !self.is_assignable_to(declared_type, expr_display_type);
+                && self.diagnostic_relation_boolean_guard(expr_display_type, declared_type)
+                && !self.diagnostic_relation_boolean_guard(declared_type, expr_display_type);
             let expr_is_union_subset_narrower = expr_display_type != declared_type
                 && self.is_strict_union_member_subset(expr_display_type, declared_type);
             !(expr_is_assignability_narrower || expr_is_union_subset_narrower)
