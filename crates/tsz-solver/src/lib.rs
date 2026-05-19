@@ -153,9 +153,11 @@ pub mod computation {
         instantiate_type_preserving, instantiate_type_preserving_cached,
         instantiate_type_preserving_meta, instantiate_type_preserving_meta_cached,
         instantiate_type_with_depth_status, instantiate_type_with_infer,
-        instantiate_type_with_infer_cached, substitute_this_type,
+        instantiate_type_with_infer_cached, instantiate_type_with_request, substitute_this_type,
         substitute_this_type_at_return_position, substitute_this_type_cached,
     };
+    pub use crate::instantiation::request::{InstantiationOptions, InstantiationRequest};
+    pub use crate::instantiation::result::InstantiationResult;
 
     // Contextual typing
     pub use crate::contextual::{
