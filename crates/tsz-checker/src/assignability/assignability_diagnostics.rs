@@ -12,13 +12,12 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    /// Legacy boolean-only relation guard for diagnostic code paths.
+    /// Boolean relation guard for diagnostic code paths.
     ///
-    /// Keep these calls grep-distinct from diagnostic decisions that need
-    /// `RelationOutcome` failure classification, weak-union handling, or depth
-    /// reporting.
+    /// Keep these checks on the canonical `RelationRequest` / `RelationOutcome`
+    /// path even when the caller only needs the boolean relation result.
     fn diagnostic_relation_boolean_guard(&mut self, source: TypeId, target: TypeId) -> bool {
-        self.is_assignable_to(source, target)
+        self.assign_relation_outcome(source, target).related
     }
 
     fn has_explicit_any_generic_variable_annotation(&self, diag_idx: NodeIndex) -> bool {
@@ -324,7 +323,8 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if self.diagnostic_relation_boolean_guard(source, target) {
+        let outcome = self.assign_relation_outcome(source, target);
+        if outcome.related {
             return true;
         }
         if self.is_nested_same_wrapper_application_assignment(source, target) {
@@ -334,20 +334,17 @@ impl<'a> CheckerState<'a> {
         // Use the canonical assign relation outcome so the weak-union hint is collected alongside
         // the failure reason, avoiding a redundant solver round-trip in
         // should_skip_weak_union_error's fallback path.
-        {
-            let outcome = self.assign_relation_outcome(source, target);
-            if self.should_skip_weak_union_error_with_outcome(
-                source,
-                target,
-                source_idx,
-                Some(&outcome),
-            ) {
-                return true;
-            }
-            if outcome.weak_union_violation {
-                self.error_no_common_properties(source, target, diag_idx);
-                return false;
-            }
+        if self.should_skip_weak_union_error_with_outcome(
+            source,
+            target,
+            source_idx,
+            Some(&outcome),
+        ) {
+            return true;
+        }
+        if outcome.weak_union_violation {
+            self.error_no_common_properties(source, target, diag_idx);
+            return false;
         }
 
         // tsc 6.0: `satisfies` ignores readonly-to-mutable mismatches.
@@ -780,13 +777,14 @@ impl<'a> CheckerState<'a> {
         // Reset the relation depth flag before the assignability check so we
         // can detect fresh depth exceedance from this particular relation.
         self.ctx.relation_depth_exceeded.set(false);
-        let assignable = self.diagnostic_relation_boolean_guard(source, target);
+        let outcome = self.assign_relation_outcome(source, target);
+        let assignable = outcome.related;
         // TS2859: if the solver hit its recursion/complexity limit and could
         // not establish assignability, emit "Excessive complexity comparing
         // types". A successful relation may still set the sticky depth flag
         // while exploring expansive recursive siblings; tsc does not report
         // TS2859 when an assignable path was found.
-        if !assignable && self.ctx.relation_depth_exceeded.get() {
+        if !assignable && outcome.depth_exceeded {
             let source_name = self.format_type_diagnostic(source);
             let target_name = self.format_type_diagnostic(target);
             self.error_at_node(
@@ -1044,7 +1042,8 @@ impl<'a> CheckerState<'a> {
             self.error_type_not_assignable_with_reason_at_anchor(source, target, diag_idx);
             return false;
         }
-        if self.diagnostic_relation_boolean_guard(source, target) {
+        let outcome = self.assign_relation_outcome(source, target);
+        if outcome.related {
             return true;
         }
         if self.is_nested_same_wrapper_application_assignment(source, target) {
@@ -1071,7 +1070,6 @@ impl<'a> CheckerState<'a> {
         // Use the canonical assign relation outcome so the weak-union hint is collected alongside
         // the failure reason, avoiding a redundant solver round-trip in
         // should_skip_weak_union_error's fallback path.
-        let outcome = self.assign_relation_outcome(source, target);
         if self.should_skip_weak_union_error_with_outcome(
             source,
             target,
@@ -1109,14 +1107,14 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
             return true;
         }
-        if self.diagnostic_relation_boolean_guard(source, target) {
+        let outcome = self.assign_relation_outcome(source, target);
+        if outcome.related {
             return true;
         }
 
         // Use the canonical assign relation outcome so the weak-union hint is collected alongside
         // the failure reason, avoiding a redundant solver round-trip in
         // should_skip_weak_union_error's fallback path.
-        let outcome = self.assign_relation_outcome(source, target);
         if self.should_skip_weak_union_error_with_outcome(
             source,
             target,
@@ -1152,14 +1150,14 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
             return true;
         }
-        if self.diagnostic_relation_boolean_guard(source, target) {
+        let outcome = self.assign_relation_outcome(source, target);
+        if outcome.related {
             return true;
         }
 
         // Use the canonical assign relation outcome so the weak-union hint is collected alongside
         // the failure reason, avoiding a redundant solver round-trip in
         // should_skip_weak_union_error's fallback path.
-        let outcome = self.assign_relation_outcome(source, target);
         if self.should_skip_weak_union_error_with_outcome(
             source,
             target,
