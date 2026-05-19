@@ -121,6 +121,52 @@ withTempDir((dir) => {
 });
 
 withTempDir((dir) => {
+  const outside = path.join(path.dirname(dir), `${path.basename(dir)}-outside.jsonl`);
+  const result = runProjectCompatibility(["record"], {
+    COMPAT_JSONL_FILE: outside,
+    COMPAT_OUTPUT_ROOT: dir,
+    COMPAT_NAME: "sample-project",
+    COMPAT_EXIT_CLASS: "exit success",
+    COMPAT_PHASE: "check",
+    COMPAT_DIAGNOSTIC_STATUS: "none",
+  });
+
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /project compatibility JSONL must stay inside output root/);
+  assert.equal(fs.existsSync(outside), false);
+});
+
+withTempDir((dir) => {
+  const directoryOutput = path.join(dir, "compat.jsonl");
+  fs.mkdirSync(directoryOutput);
+  const result = runProjectCompatibility(["record"], {
+    COMPAT_JSONL_FILE: directoryOutput,
+    COMPAT_OUTPUT_ROOT: dir,
+    COMPAT_NAME: "sample-project",
+    COMPAT_EXIT_CLASS: "exit success",
+    COMPAT_PHASE: "check",
+    COMPAT_DIAGNOSTIC_STATUS: "none",
+  });
+
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /project compatibility JSONL path is not a file/);
+});
+
+withTempDir((dir) => {
+  const result = runProjectCompatibility(["record"], {
+    COMPAT_JSONL_FILE: path.join(dir, "missing", "compat.jsonl"),
+    COMPAT_OUTPUT_ROOT: dir,
+    COMPAT_NAME: "sample-project",
+    COMPAT_EXIT_CLASS: "exit success",
+    COMPAT_PHASE: "check",
+    COMPAT_DIAGNOSTIC_STATUS: "none",
+  });
+
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /project compatibility JSONL parent directory does not exist/);
+});
+
+withTempDir((dir) => {
   const jsonl = path.join(dir, "compat.jsonl");
   const result = runProjectCompatibility(["record"], {
     COMPAT_JSONL_FILE: jsonl,
@@ -352,4 +398,40 @@ withTempDir((dir) => {
   assert.equal(payload.malformed_jsonl_lines, 1);
   assert.equal(payload.by_state.green, 1);
   assert.equal(payload.by_state.red, 1);
+});
+
+withTempDir((dir) => {
+  const jsonl = path.join(dir, "compat.jsonl");
+  fs.writeFileSync(jsonl, `${JSON.stringify({ name: "a", state: "green" })}\n`, "utf8");
+
+  const clobberResult = runProjectCompatibility(["summary"], {
+    SUMMARY_JSONL_FILE: jsonl,
+    SUMMARY_OUTPUT_FILE: jsonl,
+    SUMMARY_OUTPUT_ROOT: dir,
+  });
+  assert.equal(clobberResult.status, 1, clobberResult.stderr);
+  assert.match(
+    clobberResult.stderr,
+    /project compatibility summary must not overwrite an input artifact/,
+  );
+
+  const outside = path.join(path.dirname(dir), `${path.basename(dir)}-summary.json`);
+  const outsideResult = runProjectCompatibility(["summary"], {
+    SUMMARY_JSONL_FILE: jsonl,
+    SUMMARY_OUTPUT_FILE: outside,
+    SUMMARY_OUTPUT_ROOT: dir,
+  });
+  assert.equal(outsideResult.status, 1, outsideResult.stderr);
+  assert.match(outsideResult.stderr, /project compatibility summary must stay inside output root/);
+  assert.equal(fs.existsSync(outside), false);
+
+  const directoryOutput = path.join(dir, "summary.json");
+  fs.mkdirSync(directoryOutput);
+  const directoryResult = runProjectCompatibility(["summary"], {
+    SUMMARY_JSONL_FILE: jsonl,
+    SUMMARY_OUTPUT_FILE: directoryOutput,
+    SUMMARY_OUTPUT_ROOT: dir,
+  });
+  assert.equal(directoryResult.status, 1, directoryResult.stderr);
+  assert.match(directoryResult.stderr, /project compatibility summary path is not a file/);
 });

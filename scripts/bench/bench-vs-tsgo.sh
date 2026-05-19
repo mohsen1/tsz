@@ -1116,6 +1116,7 @@ record_project_compatibility() {
     fixture_sources="$(tsz_project_fixture_sources "$name")"
 
     COMPAT_JSONL_FILE="$PROJECT_COMPATIBILITY_JSONL" \
+    COMPAT_OUTPUT_ROOT="$TEMP_DIR" \
     COMPAT_FIXTURE_ROOT="$EXTERNAL_BENCH_DIR" \
     COMPAT_NAME="$name" \
     COMPAT_EXIT_CLASS="$exit_class" \
