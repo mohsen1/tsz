@@ -2913,6 +2913,57 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
             )
 
 
+class ArchGuardDebugPrintMacroTests(unittest.TestCase):
+    """Cover Track 10's hard debug-print macro guard."""
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def test_scans_compiler_internal_debug_print_macros(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            source = root / "crates" / "tsz-checker" / "src" / "lib.rs"
+            source.parent.mkdir(parents=True)
+            source.write_text(
+                "\n".join(
+                    [
+                        "pub fn probe() {",
+                        "    let literal = \"println!(not code)\";",
+                        "    println!(\"debug\");",
+                        "    // eprintln!(\"comment\");",
+                        "    dbg!(literal);",
+                        "}",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            hits = self.arch_guard.scan_debug_print_macros(
+                root,
+                ("crates/tsz-checker/src",),
+            )
+
+        self.assertEqual(
+            hits,
+            [
+                "crates/tsz-checker/src/lib.rs:3 println!: println!(\"debug\");",
+                "crates/tsz-checker/src/lib.rs:5 dbg!: dbg!(literal);",
+            ],
+        )
+
+    def test_real_compiler_internals_have_no_debug_print_macros(self):
+        for name, root, scan_dirs in self.arch_guard.DEBUG_PRINT_MACRO_CHECKS:
+            hits = self.arch_guard.scan_debug_print_macros(root, scan_dirs)
+            self.assertEqual(hits, [], f"{name}: {hits[:5]}")
+
+    def test_debug_print_check_is_registered(self):
+        names = [entry[0] for entry in self.arch_guard.DEBUG_PRINT_MACRO_CHECKS]
+        self.assertTrue(
+            any("debug print macros" in name for name in names),
+            "debug print macro guard missing from DEBUG_PRINT_MACRO_CHECKS",
+        )
+
+
 class ArchGuardVisitedCloneTests(unittest.TestCase):
     """Cover Track 10 branch-local `visited.clone()` traversal guardrails."""
 
