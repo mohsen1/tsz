@@ -83,25 +83,37 @@ fn direct_declaration_file_type_alias_lowers_builtin_dom_alias_body() {
         );
     }
 
-    let literal_union_alias = "XMLHttpRequestResponseType";
-    let sym_id = state
-        .ctx
-        .binder
-        .file_locals
-        .get(literal_union_alias)
-        .unwrap_or_else(|| panic!("{literal_union_alias} should resolve to a DOM lib symbol"));
-    let delegate_arena = state
-        .ctx
-        .binder
-        .symbol_arenas
-        .get(&sym_id)
-        .map(std::convert::AsRef::as_ref)
-        .unwrap_or_else(|| panic!("{literal_union_alias} should have a delegate arena"));
+    for literal_union_alias in ["DocumentReadyState", "XMLHttpRequestResponseType"] {
+        let sym_id = state
+            .ctx
+            .binder
+            .file_locals
+            .get(literal_union_alias)
+            .unwrap_or_else(|| panic!("{literal_union_alias} should resolve to a DOM lib symbol"));
+        let delegate_arena = state
+            .ctx
+            .binder
+            .symbol_arenas
+            .get(&sym_id)
+            .map(std::convert::AsRef::as_ref)
+            .unwrap_or_else(|| panic!("{literal_union_alias} should have a delegate arena"));
 
-    assert!(
-        state
+        let (ty, params) = state
             .direct_declaration_file_type_alias_result(sym_id, delegate_arena)
-            .is_none(),
-        "{literal_union_alias} should stay on the normal cross-file path so recursive mapped inference preserves its string-like apparent shape",
-    );
+            .unwrap_or_else(|| {
+                panic!("{literal_union_alias} should resolve through canonical lazy alias identity")
+            });
+        assert!(
+            params.is_empty(),
+            "{literal_union_alias} should not synthesize type parameters",
+        );
+        assert!(
+            crate::query_boundaries::common::lazy_def_id(state.ctx.types, ty).is_some(),
+            "{literal_union_alias} should preserve alias identity instead of returning the literal-union body",
+        );
+        assert!(
+            state.ctx.lib_delegation_cache.symbol_type(sym_id).is_some(),
+            "{literal_union_alias} should populate the built-in lib delegation cache",
+        );
+    }
 }

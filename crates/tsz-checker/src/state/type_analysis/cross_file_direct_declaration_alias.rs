@@ -126,12 +126,26 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|params| !params.nodes.is_empty());
 
         if builtin_lib_alias {
-            if Self::source_file_type_node_contains_kind(
+            let alias_contains_literal = Self::source_file_type_node_contains_kind(
                 symbol_arena,
                 type_alias.type_node,
                 syntax_kind_ext::LITERAL_TYPE,
-            ) {
-                return None;
+            );
+            if alias_contains_literal {
+                if alias_has_type_params {
+                    return None;
+                }
+                let alias_type = self.resolve_lib_type_by_name(&name)?;
+                if matches!(alias_type, TypeId::UNKNOWN | TypeId::ERROR)
+                    || crate::query_boundaries::common::lazy_def_id(self.ctx.types, alias_type)
+                        .is_none()
+                {
+                    return None;
+                }
+                self.ctx
+                    .lib_delegation_cache
+                    .insert_symbol_type(sym_id, (alias_type, Vec::new()));
+                return Some((alias_type, Vec::new()));
             }
 
             let (alias_type, mut params) = self.resolve_lib_type_with_params(&name);
