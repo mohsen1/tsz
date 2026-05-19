@@ -165,9 +165,10 @@ function baseSurfaces() {
 {
   const coverage = computeCoverage(baseSurfaces());
   const md = formatMarkdown(coverage);
+  const cleanSummary = `All ${PROJECT_ROW_DEFINITIONS.length} rows consistent`;
   assert.ok(md.includes("## Project Row Coverage"), "markdown missing heading");
   assert.ok(md.includes("| Row |"), "markdown missing table header");
-  assert.ok(md.includes("All 12 rows consistent"), "markdown missing clean summary");
+  assert.ok(md.includes(cleanSummary), "markdown missing clean summary");
   assert.ok(md.includes("✅"), "markdown missing green check");
 }
 
@@ -186,8 +187,9 @@ function baseSurfaces() {
 {
   const coverage = computeCoverage(baseSurfaces());
   const text = formatPlainText(coverage);
+  const cleanSummary = `All ${PROJECT_ROW_DEFINITIONS.length} rows consistent`;
   assert.ok(text.includes("Project Row Coverage"), "plain text missing heading");
-  assert.ok(text.includes("All 12 rows consistent"), "plain text missing clean summary");
+  assert.ok(text.includes(cleanSummary), "plain text missing clean summary");
 }
 
 // Extractor: bench runner rows from shell snippet.
