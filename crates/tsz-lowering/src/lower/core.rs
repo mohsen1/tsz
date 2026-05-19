@@ -26,8 +26,9 @@ use tsz_solver::{QueryDatabase, TypeDatabase};
 pub const MAX_LOWERING_OPERATIONS: u32 = 100_000;
 
 pub(super) type NodeIndexResolver<'a, T> = dyn Fn(NodeIndex) -> Option<T> + 'a;
-pub(super) type ArenaNodeIndexResolver<'a, T> = dyn Fn(&NodeArena, NodeIndex) -> Option<T> + 'a;
-pub(super) type ArenaNodeIndexPredicate<'a> = dyn Fn(&NodeArena, NodeIndex) -> bool + 'a;
+pub(super) type ArenaNodeIndexResolver<'a, T> =
+    dyn for<'b> Fn(&'b NodeArena, NodeIndex) -> Option<T> + 'a;
+pub(super) type ArenaNodeIndexPredicate<'a> = dyn for<'b> Fn(&'b NodeArena, NodeIndex) -> bool + 'a;
 pub(super) type TypeIdResolver<'a> = dyn Fn(&str) -> Option<DefId> + 'a;
 pub(super) type LazyTypeParamsResolver<'a> = dyn Fn(DefId) -> Option<Vec<TypeParamInfo>> + 'a;
 pub(super) type TypeParamScopeStack = RefCell<Vec<Vec<(Atom, TypeId)>>>;
@@ -764,7 +765,7 @@ impl<'a> TypeLowering<'a> {
     /// `NodeIndex` values are only unique inside their originating `NodeArena`.
     pub fn with_arena_computed_name_resolver(
         mut self,
-        resolver: &'a dyn Fn(&NodeArena, NodeIndex) -> Option<Atom>,
+        resolver: &'a ArenaNodeIndexResolver<'a, Atom>,
     ) -> Self {
         self.arena_computed_name_resolver = Some(resolver);
         self
@@ -782,7 +783,7 @@ impl<'a> TypeLowering<'a> {
     /// Set arena-aware metadata for symbol-valued computed property names.
     pub fn with_arena_computed_symbol_name_resolver(
         mut self,
-        resolver: &'a dyn Fn(&NodeArena, NodeIndex) -> bool,
+        resolver: &'a ArenaNodeIndexPredicate<'a>,
     ) -> Self {
         self.arena_computed_symbol_name_resolver = Some(resolver);
         self
