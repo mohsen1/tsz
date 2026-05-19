@@ -1305,7 +1305,66 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         let evaluated_left = self.evaluate(left);
         let evaluated_right = self.evaluate(right);
-        left == evaluated_right || evaluated_left == right || evaluated_left == evaluated_right
+        left == evaluated_right
+            || evaluated_left == right
+            || evaluated_left == evaluated_right
+            || self.keyof_constraints_are_mutually_assignable(
+                left,
+                right,
+                evaluated_left,
+                evaluated_right,
+            )
+    }
+
+    fn keyof_constraints_are_mutually_assignable(
+        &self,
+        left: TypeId,
+        right: TypeId,
+        evaluated_left: TypeId,
+        evaluated_right: TypeId,
+    ) -> bool {
+        let choose_keyof = |candidate, evaluated| {
+            if keyof_inner_type(self.interner(), evaluated).is_some() {
+                Some(evaluated)
+            } else if keyof_inner_type(self.interner(), candidate).is_some() {
+                Some(candidate)
+            } else {
+                None
+            }
+        };
+        let Some(left_keyof) = choose_keyof(left, evaluated_left) else {
+            return false;
+        };
+        let Some(right_keyof) = choose_keyof(right, evaluated_right) else {
+            return false;
+        };
+
+        let policy = crate::RelationPolicy::default();
+        let context = crate::RelationContext {
+            query_db: self.query_db(),
+            inheritance_graph: None,
+            class_check: None,
+        };
+        crate::query_relation_with_resolver(
+            self.interner(),
+            self.resolver(),
+            left_keyof,
+            right_keyof,
+            crate::RelationKind::Assignable,
+            policy,
+            context,
+        )
+        .is_related()
+            && crate::query_relation_with_resolver(
+                self.interner(),
+                self.resolver(),
+                right_keyof,
+                left_keyof,
+                crate::RelationKind::Assignable,
+                policy,
+                context,
+            )
+            .is_related()
     }
 
     fn index_type_overlaps_optional_props(
