@@ -609,21 +609,17 @@ impl Project {
 
     /// Search for symbols across the entire project.
     ///
-    /// This implements the LSP `workspace/symbol` request (Cmd+T / Ctrl+T in most editors).
-    /// Returns symbols matching the given query string, sorted by relevance:
-    /// 1. Exact matches (case-insensitive)
-    /// 2. Prefix matches
-    /// 3. Substring matches
-    ///
-    /// At most 100 results are returned.
-    ///
-    /// # Arguments
-    /// * `query` - The search query string. An empty query returns no results.
-    ///
-    /// # Returns
-    /// A vector of `SymbolInformation` for matching symbols, sorted by relevance.
+    /// This implements the LSP `workspace/symbol` request (Cmd+T / Ctrl+T in
+    /// most editors). Results are fuzzy-ranked: exact > prefix > camel-case
+    /// acronym > substring; ties break by proximity to the file the user
+    /// most recently focused (`focused_file`), then by symbol-name length,
+    /// then alphabetically. At most 100 results are returned. An empty
+    /// query returns no results.
     pub fn get_workspace_symbols(&self, query: &str) -> Vec<SymbolInformation> {
-        let provider = WorkspaceSymbolsProvider::new(&self.symbol_index);
+        let provider = WorkspaceSymbolsProvider::with_active_file(
+            &self.symbol_index,
+            self.focused_file.as_deref(),
+        );
         provider.find_symbols(query)
     }
 

@@ -1040,6 +1040,7 @@ impl LspServer {
             Some((uri, text))
         })() {
             let file_name = Self::uri_to_file_name(&uri);
+            self.project.mark_file_open(&file_name);
             self.project.set_file(file_name, text);
             self.publish_diagnostics(&uri);
         }
@@ -1056,6 +1057,7 @@ impl LspServer {
                 None => return,
             };
             let file_name = Self::uri_to_file_name(&uri);
+            self.project.set_focused_file(&file_name);
             let changes = match p.get("contentChanges").and_then(|c| c.as_array()) {
                 Some(c) => c,
                 None => return,
