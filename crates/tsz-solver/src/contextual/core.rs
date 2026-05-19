@@ -1136,6 +1136,17 @@ impl<'a> ContextualTypeContext<'a> {
                 TypeData::Mapped(_) | TypeData::Conditional(_) | TypeData::Lazy(_)
             )
         {
+            // Deferred mapped: substitute K with the index literal before
+            // evaluation so same-name source/key collisions inside nested
+            // templates preserve the source object instead of letting generic
+            // evaluation rewrite both sides by name.
+            if let TypeData::Mapped(mapped_id) = expected_key
+                && let Some(per_index) =
+                    try_mapped_per_index_template(self.interner, mapped_id, index)
+            {
+                return Some(per_index);
+            }
+
             if let TypeData::Conditional(cond_id) = expected_key {
                 let cond = self.interner.get_conditional(cond_id);
                 let mut branch_elem_types = Vec::new();
@@ -1157,15 +1168,6 @@ impl<'a> ContextualTypeContext<'a> {
             if evaluated != expected {
                 let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
                 return ctx.get_tuple_element_type_inner(index, element_count);
-            }
-
-            // Deferred mapped: substitute K with the index literal so each
-            // position retains references to T[index] for downstream inference.
-            if let TypeData::Mapped(mapped_id) = expected_key
-                && let Some(per_index) =
-                    try_mapped_per_index_template(self.interner, mapped_id, index)
-            {
-                return Some(per_index);
             }
         }
 

@@ -2216,6 +2216,55 @@ fn test_homomorphic_mapped_per_index_contextual_renamed_iter_var() {
     assert_eq!(elem2, expected2);
 }
 
+/// Same-name source and iteration parameters must not collide when the
+/// homomorphic template nests `Source[P]` inside another type such as a
+/// callback. The mapped key `P` should become the numeric position, while the
+/// outer source type parameter named `P` remains the indexed object.
+#[test]
+fn test_homomorphic_mapped_per_index_contextual_nested_same_name_source_and_key() {
+    let interner = TypeInterner::new();
+
+    let source_constraint = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+    let p_param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("P"),
+        constraint: Some(source_constraint),
+        default: None,
+        is_const: false,
+    });
+    let mapped = build_homomorphic_mapped(&interner, "P", p_param, |db, p| {
+        let p_index_p = db.index_access(p_param, p);
+        build_consumer_fn(db, p_index_p)
+    });
+
+    let ctx = ContextualTypeContext::with_expected(&interner, mapped);
+    let elem0 = ctx
+        .get_tuple_element_type_with_count(0, 2)
+        .expect("position 0 contextual missing");
+    let elem1 = ctx
+        .get_tuple_element_type_with_count(1, 2)
+        .expect("position 1 contextual missing");
+
+    let zero_lit = interner.literal_number(0.0);
+    let one_lit = interner.literal_number(1.0);
+    let expected0 = build_consumer_fn(&interner, interner.index_access(p_param, zero_lit));
+    let expected1 = build_consumer_fn(&interner, interner.index_access(p_param, one_lit));
+    assert_eq!(elem0, expected0);
+    assert_eq!(elem1, expected1);
+}
+
 /// Mapped over a different source name (`X` instead of `T`) — substitution
 /// must follow the source through the constraint, not be keyed on `T`.
 #[test]

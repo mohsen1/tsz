@@ -10,7 +10,11 @@ use super::content_predicates::{
 use crate::TypeDatabase;
 use crate::evaluation::evaluate::TypeEvaluator;
 use crate::relations::subtype::SubtypeChecker;
-use crate::types::{IntrinsicKind, LiteralValue, TypeData, TypeId};
+use crate::types::{
+    CallSignature, CallableShape, ConditionalType, FunctionShape, IndexSignature, IntrinsicKind,
+    LiteralValue, MappedType, ObjectShape, ParamInfo, PropertyInfo, TemplateSpan, TupleElement,
+    TypeData, TypeId,
+};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 use tsz_common::Atom;
@@ -928,33 +932,591 @@ pub fn instantiate_mapped_template_for_property(
     key_param_name: Atom,
     key_literal: TypeId,
 ) -> TypeId {
-    use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+    let mut cache = FxHashMap::default();
+    instantiate_mapped_template_for_property_inner(
+        db,
+        template,
+        key_param_name,
+        key_literal,
+        &mut cache,
+    )
+}
 
-    // Check if template is IndexAccess(obj, key) where:
-    // Case 1: The key is a TypeParameter matching the mapped key param.
-    //   Construct Source[key_literal] directly to avoid name-based substitution
-    //   corrupting the source when it contains a same-named outer type parameter
-    //   (e.g., `Readonly<Props<P> & P>` where mapped key is also "P").
-    // Case 2 (original): The object is a TypeParameter with the same name as the
-    //   mapped key parameter (e.g., `Readonly<P>` where T=P from outer scope).
-    if let Some((idx_obj, idx_key)) = get_index_access_types(db, template)
-        && idx_obj != idx_key
-    {
-        if let Some(info) = get_type_parameter_info(db, idx_key)
-            && info.name == key_param_name
-        {
-            return db.index_access(idx_obj, key_literal);
-        }
-        if let Some(info) = get_type_parameter_info(db, idx_obj)
-            && info.name == key_param_name
-        {
-            return db.index_access(idx_obj, key_literal);
-        }
+fn instantiate_mapped_template_for_property_inner(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    key_param_name: Atom,
+    key_literal: TypeId,
+    cache: &mut FxHashMap<TypeId, TypeId>,
+) -> TypeId {
+    if type_id.is_intrinsic() {
+        return type_id;
     }
+    if let Some(cached) = cache.get(&type_id) {
+        return *cached;
+    }
+    cache.insert(type_id, type_id);
 
-    // Normal path: substitute the key parameter name with the key literal
-    let subst = TypeSubstitution::single(key_param_name, key_literal);
-    instantiate_type(db, template, &subst)
+    let Some(key) = db.lookup(type_id) else {
+        return type_id;
+    };
+
+    let result = match key {
+        TypeData::TypeParameter(info) | TypeData::Infer(info) if info.name == key_param_name => {
+            key_literal
+        }
+        TypeData::IndexAccess(obj, idx) if obj != idx => {
+            let key_matches =
+                get_type_parameter_info(db, idx).is_some_and(|info| info.name == key_param_name);
+            let obj_matches =
+                get_type_parameter_info(db, obj).is_some_and(|info| info.name == key_param_name);
+            if key_matches || obj_matches {
+                db.index_access(obj, key_literal)
+            } else {
+                let obj = instantiate_mapped_template_for_property_inner(
+                    db,
+                    obj,
+                    key_param_name,
+                    key_literal,
+                    cache,
+                );
+                let idx = instantiate_mapped_template_for_property_inner(
+                    db,
+                    idx,
+                    key_param_name,
+                    key_literal,
+                    cache,
+                );
+                db.index_access(obj, idx)
+            }
+        }
+        TypeData::Function(shape_id) => {
+            let shape = db.function_shape(shape_id);
+            if shape
+                .type_params
+                .iter()
+                .any(|param| param.name == key_param_name)
+            {
+                type_id
+            } else {
+                let params = rewrite_params_for_mapped_property(
+                    db,
+                    &shape.params,
+                    key_param_name,
+                    key_literal,
+                    cache,
+                );
+                let this_type = shape.this_type.map(|this_type| {
+                    instantiate_mapped_template_for_property_inner(
+                        db,
+                        this_type,
+                        key_param_name,
+                        key_literal,
+                        cache,
+                    )
+                });
+                let return_type = instantiate_mapped_template_for_property_inner(
+                    db,
+                    shape.return_type,
+                    key_param_name,
+                    key_literal,
+                    cache,
+                );
+                let type_predicate = shape.type_predicate.map(|mut predicate| {
+                    predicate.type_id = predicate.type_id.map(|type_id| {
+                        instantiate_mapped_template_for_property_inner(
+                            db,
+                            type_id,
+                            key_param_name,
+                            key_literal,
+                            cache,
+                        )
+                    });
+                    predicate
+                });
+                db.function(FunctionShape {
+                    type_params: shape.type_params.clone(),
+                    params,
+                    this_type,
+                    return_type,
+                    type_predicate,
+                    is_constructor: shape.is_constructor,
+                    is_method: shape.is_method,
+                })
+            }
+        }
+        TypeData::Callable(shape_id) => {
+            let shape = db.callable_shape(shape_id);
+            let call_signatures = rewrite_signatures_for_mapped_property(
+                db,
+                &shape.call_signatures,
+                key_param_name,
+                key_literal,
+                cache,
+            );
+            let construct_signatures = rewrite_signatures_for_mapped_property(
+                db,
+                &shape.construct_signatures,
+                key_param_name,
+                key_literal,
+                cache,
+            );
+            let properties = rewrite_properties_for_mapped_property(
+                db,
+                &shape.properties,
+                key_param_name,
+                key_literal,
+                cache,
+            );
+            let string_index = shape.string_index.map(|index| {
+                rewrite_index_signature_for_mapped_property(
+                    db,
+                    index,
+                    key_param_name,
+                    key_literal,
+                    cache,
+                )
+            });
+            let number_index = shape.number_index.map(|index| {
+                rewrite_index_signature_for_mapped_property(
+                    db,
+                    index,
+                    key_param_name,
+                    key_literal,
+                    cache,
+                )
+            });
+            db.callable(CallableShape {
+                call_signatures,
+                construct_signatures,
+                properties,
+                string_index,
+                number_index,
+                symbol: shape.symbol,
+                is_abstract: shape.is_abstract,
+            })
+        }
+        TypeData::Object(shape_id) => {
+            let shape = db.object_shape(shape_id);
+            let properties = rewrite_properties_for_mapped_property(
+                db,
+                &shape.properties,
+                key_param_name,
+                key_literal,
+                cache,
+            );
+            db.object_with_flags_and_symbol(properties, shape.flags, shape.symbol)
+        }
+        TypeData::ObjectWithIndex(shape_id) => {
+            let shape = db.object_shape(shape_id);
+            let properties = rewrite_properties_for_mapped_property(
+                db,
+                &shape.properties,
+                key_param_name,
+                key_literal,
+                cache,
+            );
+            let string_index = shape.string_index.map(|index| {
+                rewrite_index_signature_for_mapped_property(
+                    db,
+                    index,
+                    key_param_name,
+                    key_literal,
+                    cache,
+                )
+            });
+            let number_index = shape.number_index.map(|index| {
+                rewrite_index_signature_for_mapped_property(
+                    db,
+                    index,
+                    key_param_name,
+                    key_literal,
+                    cache,
+                )
+            });
+            db.object_with_index(ObjectShape {
+                flags: shape.flags,
+                properties,
+                string_index,
+                number_index,
+                symbol: shape.symbol,
+            })
+        }
+        TypeData::Union(list_id) => db.union(
+            db.type_list(list_id)
+                .iter()
+                .map(|&member| {
+                    instantiate_mapped_template_for_property_inner(
+                        db,
+                        member,
+                        key_param_name,
+                        key_literal,
+                        cache,
+                    )
+                })
+                .collect(),
+        ),
+        TypeData::Intersection(list_id) => db.intersection(
+            db.type_list(list_id)
+                .iter()
+                .map(|&member| {
+                    instantiate_mapped_template_for_property_inner(
+                        db,
+                        member,
+                        key_param_name,
+                        key_literal,
+                        cache,
+                    )
+                })
+                .collect(),
+        ),
+        TypeData::Array(element) => db.array(instantiate_mapped_template_for_property_inner(
+            db,
+            element,
+            key_param_name,
+            key_literal,
+            cache,
+        )),
+        TypeData::Tuple(list_id) => db.tuple(
+            db.tuple_list(list_id)
+                .iter()
+                .map(|element| TupleElement {
+                    type_id: instantiate_mapped_template_for_property_inner(
+                        db,
+                        element.type_id,
+                        key_param_name,
+                        key_literal,
+                        cache,
+                    ),
+                    ..*element
+                })
+                .collect(),
+        ),
+        TypeData::Application(app_id) => {
+            let app = db.type_application(app_id);
+            let base = instantiate_mapped_template_for_property_inner(
+                db,
+                app.base,
+                key_param_name,
+                key_literal,
+                cache,
+            );
+            let args = app
+                .args
+                .iter()
+                .map(|&arg| {
+                    instantiate_mapped_template_for_property_inner(
+                        db,
+                        arg,
+                        key_param_name,
+                        key_literal,
+                        cache,
+                    )
+                })
+                .collect();
+            db.application(base, args)
+        }
+        TypeData::Conditional(cond_id) => {
+            let cond = db.get_conditional(cond_id);
+            db.conditional(ConditionalType {
+                check_type: instantiate_mapped_template_for_property_inner(
+                    db,
+                    cond.check_type,
+                    key_param_name,
+                    key_literal,
+                    cache,
+                ),
+                extends_type: instantiate_mapped_template_for_property_inner(
+                    db,
+                    cond.extends_type,
+                    key_param_name,
+                    key_literal,
+                    cache,
+                ),
+                true_type: instantiate_mapped_template_for_property_inner(
+                    db,
+                    cond.true_type,
+                    key_param_name,
+                    key_literal,
+                    cache,
+                ),
+                false_type: instantiate_mapped_template_for_property_inner(
+                    db,
+                    cond.false_type,
+                    key_param_name,
+                    key_literal,
+                    cache,
+                ),
+                is_distributive: cond.is_distributive,
+            })
+        }
+        TypeData::Mapped(mapped_id) => {
+            let mapped = db.get_mapped(mapped_id);
+            if mapped.type_param.name == key_param_name {
+                type_id
+            } else {
+                db.mapped(MappedType {
+                    constraint: instantiate_mapped_template_for_property_inner(
+                        db,
+                        mapped.constraint,
+                        key_param_name,
+                        key_literal,
+                        cache,
+                    ),
+                    template: instantiate_mapped_template_for_property_inner(
+                        db,
+                        mapped.template,
+                        key_param_name,
+                        key_literal,
+                        cache,
+                    ),
+                    name_type: mapped.name_type.map(|name_type| {
+                        instantiate_mapped_template_for_property_inner(
+                            db,
+                            name_type,
+                            key_param_name,
+                            key_literal,
+                            cache,
+                        )
+                    }),
+                    type_param: mapped.type_param,
+                    readonly_modifier: mapped.readonly_modifier,
+                    optional_modifier: mapped.optional_modifier,
+                })
+            }
+        }
+        TypeData::TemplateLiteral(list_id) => db.template_literal(
+            db.template_list(list_id)
+                .iter()
+                .map(|span| match span {
+                    TemplateSpan::Text(text) => TemplateSpan::Text(*text),
+                    TemplateSpan::Type(type_id) => {
+                        TemplateSpan::Type(instantiate_mapped_template_for_property_inner(
+                            db,
+                            *type_id,
+                            key_param_name,
+                            key_literal,
+                            cache,
+                        ))
+                    }
+                })
+                .collect(),
+        ),
+        TypeData::KeyOf(inner) => db.keyof(instantiate_mapped_template_for_property_inner(
+            db,
+            inner,
+            key_param_name,
+            key_literal,
+            cache,
+        )),
+        TypeData::ReadonlyType(inner) => {
+            db.readonly_type(instantiate_mapped_template_for_property_inner(
+                db,
+                inner,
+                key_param_name,
+                key_literal,
+                cache,
+            ))
+        }
+        TypeData::StringIntrinsic { kind, type_arg } => db.string_intrinsic(
+            kind,
+            instantiate_mapped_template_for_property_inner(
+                db,
+                type_arg,
+                key_param_name,
+                key_literal,
+                cache,
+            ),
+        ),
+        TypeData::NoInfer(inner) => db.no_infer(instantiate_mapped_template_for_property_inner(
+            db,
+            inner,
+            key_param_name,
+            key_literal,
+            cache,
+        )),
+        TypeData::Enum(def_id, member_type) => db.enum_type(
+            def_id,
+            instantiate_mapped_template_for_property_inner(
+                db,
+                member_type,
+                key_param_name,
+                key_literal,
+                cache,
+            ),
+        ),
+        TypeData::ThisType
+        | TypeData::Intrinsic(_)
+        | TypeData::Literal(_)
+        | TypeData::TypeParameter(_)
+        | TypeData::Infer(_)
+        | TypeData::UnresolvedTypeName(_)
+        | TypeData::Error
+        | TypeData::Lazy(_)
+        | TypeData::Recursive(_)
+        | TypeData::BoundParameter(_)
+        | TypeData::TypeQuery(_)
+        | TypeData::UniqueSymbol(_)
+        | TypeData::ModuleNamespace(_) => db.intern(key),
+        TypeData::IndexAccess(obj, idx) => {
+            let obj = instantiate_mapped_template_for_property_inner(
+                db,
+                obj,
+                key_param_name,
+                key_literal,
+                cache,
+            );
+            let idx = instantiate_mapped_template_for_property_inner(
+                db,
+                idx,
+                key_param_name,
+                key_literal,
+                cache,
+            );
+            db.index_access(obj, idx)
+        }
+    };
+
+    cache.insert(type_id, result);
+    result
+}
+
+fn rewrite_properties_for_mapped_property(
+    db: &dyn TypeDatabase,
+    properties: &[PropertyInfo],
+    key_param_name: Atom,
+    key_literal: TypeId,
+    cache: &mut FxHashMap<TypeId, TypeId>,
+) -> Vec<PropertyInfo> {
+    properties
+        .iter()
+        .map(|property| {
+            let mut property = property.clone();
+            property.type_id = instantiate_mapped_template_for_property_inner(
+                db,
+                property.type_id,
+                key_param_name,
+                key_literal,
+                cache,
+            );
+            property.write_type = instantiate_mapped_template_for_property_inner(
+                db,
+                property.write_type,
+                key_param_name,
+                key_literal,
+                cache,
+            );
+            property
+        })
+        .collect()
+}
+
+fn rewrite_index_signature_for_mapped_property(
+    db: &dyn TypeDatabase,
+    index: IndexSignature,
+    key_param_name: Atom,
+    key_literal: TypeId,
+    cache: &mut FxHashMap<TypeId, TypeId>,
+) -> IndexSignature {
+    IndexSignature {
+        key_type: instantiate_mapped_template_for_property_inner(
+            db,
+            index.key_type,
+            key_param_name,
+            key_literal,
+            cache,
+        ),
+        value_type: instantiate_mapped_template_for_property_inner(
+            db,
+            index.value_type,
+            key_param_name,
+            key_literal,
+            cache,
+        ),
+        ..index
+    }
+}
+
+fn rewrite_params_for_mapped_property(
+    db: &dyn TypeDatabase,
+    params: &[ParamInfo],
+    key_param_name: Atom,
+    key_literal: TypeId,
+    cache: &mut FxHashMap<TypeId, TypeId>,
+) -> Vec<ParamInfo> {
+    params
+        .iter()
+        .map(|param| ParamInfo {
+            type_id: instantiate_mapped_template_for_property_inner(
+                db,
+                param.type_id,
+                key_param_name,
+                key_literal,
+                cache,
+            ),
+            ..*param
+        })
+        .collect()
+}
+
+fn rewrite_signatures_for_mapped_property(
+    db: &dyn TypeDatabase,
+    signatures: &[CallSignature],
+    key_param_name: Atom,
+    key_literal: TypeId,
+    cache: &mut FxHashMap<TypeId, TypeId>,
+) -> Vec<CallSignature> {
+    signatures
+        .iter()
+        .map(|signature| {
+            if signature
+                .type_params
+                .iter()
+                .any(|param| param.name == key_param_name)
+            {
+                return signature.clone();
+            }
+            CallSignature {
+                type_params: signature.type_params.clone(),
+                params: rewrite_params_for_mapped_property(
+                    db,
+                    &signature.params,
+                    key_param_name,
+                    key_literal,
+                    cache,
+                ),
+                this_type: signature.this_type.map(|this_type| {
+                    instantiate_mapped_template_for_property_inner(
+                        db,
+                        this_type,
+                        key_param_name,
+                        key_literal,
+                        cache,
+                    )
+                }),
+                return_type: instantiate_mapped_template_for_property_inner(
+                    db,
+                    signature.return_type,
+                    key_param_name,
+                    key_literal,
+                    cache,
+                ),
+                type_predicate: signature.type_predicate.map(|mut predicate| {
+                    predicate.type_id = predicate.type_id.map(|type_id| {
+                        instantiate_mapped_template_for_property_inner(
+                            db,
+                            type_id,
+                            key_param_name,
+                            key_literal,
+                            cache,
+                        )
+                    });
+                    predicate
+                }),
+                is_method: signature.is_method,
+            }
+        })
+        .collect()
 }
 
 fn collect_exact_literal_property_keys_with_symbol_info_inner(
