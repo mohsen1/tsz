@@ -1748,6 +1748,23 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
 
+        // Symlinked-monorepo / nested-package case: when the source path is
+        // `<X>/node_modules/<P>/<sub>` but `<X>` is not an ancestor of the
+        // consumer's directory, the package was reached only by traversing
+        // a symlinked / nested `node_modules` outside the consumer's normal
+        // Node.js resolution scope. Writing `<P>` as a bare specifier from
+        // the consumer would not resolve to the same file. tsc emits TS2883
+        // with the resolved relative path; tsz must do the same.
+        //
+        // Keep this before the package-root export suppression below: the
+        // target package may have a public root, but that root is not the same
+        // package instance the consumer would resolve from its own directory.
+        if let Some(reference) =
+            self.symlinked_nested_package_reference(&source_path, &type_name, current_file_path)
+        {
+            return Some(reference);
+        }
+
         // If the symbol is re-exported from a module accessible via a bare
         // package specifier (no subpath), the type IS portable -- consumers
         // can reference it through the package root.  tsc does not emit
@@ -1759,19 +1776,6 @@ impl<'a> DeclarationEmitter<'a> {
             .is_some()
         {
             return None;
-        }
-
-        // Symlinked-monorepo / nested-package case: when the source path is
-        // `<X>/node_modules/<P>/<sub>` but `<X>` is not an ancestor of the
-        // consumer's directory, the package was reached only by traversing
-        // a symlinked / nested `node_modules` outside the consumer's normal
-        // Node.js resolution scope. Writing `<P>` as a bare specifier from
-        // the consumer would not resolve to the same file. tsc emits TS2883
-        // with the resolved relative path; tsz must do the same.
-        if let Some(reference) =
-            self.symlinked_nested_package_reference(&source_path, &type_name, current_file_path)
-        {
-            return Some(reference);
         }
 
         // Parse node_modules segments from the source path
