@@ -1,5 +1,5 @@
 use crate::query_boundaries::common::{self, LiteralTypeKind};
-use crate::query_boundaries::state::type_resolution as query;
+use crate::query_boundaries::type_computation::complex as type_query;
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
 use tsz_solver::computation::TypeSubstitution;
@@ -167,18 +167,12 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let source_app = query::get_application_info(self.ctx.types, source_return).or_else(|| {
-            self.ctx
-                .types
-                .get_display_alias(source_return)
-                .and_then(|alias| query::get_application_info(self.ctx.types, alias))
-        });
-        let target_app = query::get_application_info(self.ctx.types, target_return).or_else(|| {
-            self.ctx
-                .types
-                .get_display_alias(target_return)
-                .and_then(|alias| query::get_application_info(self.ctx.types, alias))
-        });
+        let source_app = type_query::application_infos_for_type(self.ctx.types, source_return)
+            .into_iter()
+            .next();
+        let target_app = type_query::application_infos_for_type(self.ctx.types, target_return)
+            .into_iter()
+            .next();
         let (Some((source_base, source_args)), Some((target_base, target_args))) =
             (source_app, target_app)
         else {
@@ -214,12 +208,9 @@ impl<'a> CheckerState<'a> {
         target_type: TypeId,
         type_params: &[tsz_solver::TypeParamInfo],
     ) {
-        let source_app = query::get_application_info(self.ctx.types, source_return).or_else(|| {
-            self.ctx
-                .types
-                .get_display_alias(source_return)
-                .and_then(|alias| query::get_application_info(self.ctx.types, alias))
-        });
+        let source_app = type_query::application_infos_for_type(self.ctx.types, source_return)
+            .into_iter()
+            .next();
         let Some((_source_base, source_args)) = source_app else {
             return;
         };
