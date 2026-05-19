@@ -299,9 +299,9 @@ pub use types::{
 };
 // unsoundness_audit: accessed via tsz_solver::unsoundness_audit module path
 pub use operations::widening::{
-    apply_const_assertion, display_widen_for_redeclaration, get_base_type_for_comparison,
-    widen_argument_type_for_display, widen_literal_type, widen_type, widen_type_deep,
-    widen_type_for_display, widen_type_for_inference,
+    display_widen_for_redeclaration, get_base_type_for_comparison, widen_argument_type_for_display,
+    widen_literal_type, widen_type, widen_type_deep, widen_type_for_display,
+    widen_type_for_inference,
 };
 
 // Test modules: Most are loaded by their source files via #[path = "tests/..."] declarations.
