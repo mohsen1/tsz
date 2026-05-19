@@ -35,11 +35,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         let shape = self.interner().object_shape(shape_id);
 
-        // Pre-scan: check whether any property evaluation produces a different TypeId
-        // before allocating. Properties in already-evaluated objects are usually concrete,
-        // so evaluate() returns the same TypeId (fast cache hit). Deferring the clone
-        // until we know a change is needed avoids an O(P) allocation on every conditional
-        // evaluation for the common no-change case (e.g. ts-toolbelt's large object types).
+        // Pre-scan: evaluate every property to prime the evaluator cache and check
+        // whether any TypeId changed. Use |= (not .any()) so that every property is
+        // evaluated unconditionally — short-circuiting would leave later properties
+        // un-cached, defeating the guarantee that the update pass below is cache-only.
+        // Deferring the clone until we know a change is needed avoids an O(P) allocation
+        // on every conditional evaluation for the common no-change case.
         let str_val = shape
             .string_index
             .as_ref()
@@ -48,22 +49,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             .number_index
             .as_ref()
             .map(|idx| self.evaluate(idx.value_type));
-        let any_changed = shape.properties.iter().any(|prop| {
-            self.evaluate(prop.type_id) != prop.type_id
-                || self.evaluate(prop.write_type) != prop.write_type
-        }) || str_val
+        let mut any_changed = str_val
             .zip(shape.string_index.as_ref())
             .is_some_and(|(v, idx)| v != idx.value_type)
             || num_val
                 .zip(shape.number_index.as_ref())
                 .is_some_and(|(v, idx)| v != idx.value_type);
+        for prop in shape.properties.iter() {
+            let rt = self.evaluate(prop.type_id);
+            let wt = self.evaluate(prop.write_type);
+            any_changed |= rt != prop.type_id || wt != prop.write_type;
+        }
 
         if !any_changed {
             return type_id;
         }
 
-        // At least one property changed: clone and apply evaluated types.
-        // Second evaluate() calls are guaranteed cache hits from the pre-scan above.
+        // At least one property changed: clone and apply. Every evaluate() call below
+        // is a guaranteed cache hit because the pre-scan above evaluated every property.
         let flags = shape.flags;
         let symbol = shape.symbol;
         let mut properties = shape.properties.clone();
