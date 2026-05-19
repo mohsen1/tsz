@@ -1,7 +1,7 @@
 use crate::context::{CheckerContext, CheckerOptions, LibContext};
 use crate::query_boundaries::common::TypeInterner;
 use crate::state::CheckerState;
-use crate::test_utils::load_lib_files;
+use crate::test_utils::{check_source_with_libs, load_compiled_lib_files, load_lib_files};
 use std::sync::Arc;
 use tsz_binder::{BinderState, symbol_flags};
 use tsz_common::perf_counters::CrossArenaSymbolMissSource;
@@ -169,5 +169,198 @@ fn direct_cross_file_interface_lowering_handles_simple_builtin_dom_interfaces() 
             .lib_delegation_cache
             .contains_symbol_type(value_merged_sym_id),
         "declined value-merged dom interfaces should not populate lib delegation cache",
+    );
+}
+
+#[test]
+fn direct_value_merged_builtin_dom_interface_symbol_type_returns_type_position_lazy_ref() {
+    let lib_files = load_lib_files(&["es5.d.ts", "dom.d.ts"]);
+    let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+    let arena = Arc::new(parser.get_arena().clone());
+    let binder = Arc::new(binder);
+    let types = TypeInterner::new();
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "fixture.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    let lib_contexts: Vec<LibContext> = lib_files
+        .iter()
+        .map(|lib| LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    state.ctx.set_lib_contexts(lib_contexts);
+    state.ctx.set_actual_lib_file_count(lib_files.len());
+
+    let validity_sym_id = state
+        .ctx
+        .binder
+        .file_locals
+        .get("ValidityState")
+        .expect("ValidityState should resolve to a value-merged dom lib symbol");
+    let validity_arena = state
+        .ctx
+        .binder
+        .symbol_arenas
+        .get(&validity_sym_id)
+        .map(std::convert::AsRef::as_ref)
+        .expect("ValidityState should have a delegate arena");
+    assert!(super::is_builtin_lib_declaration_arena(validity_arena));
+    assert!(
+        state
+            .ctx
+            .symbol_is_from_actual_or_cloned_lib(validity_sym_id)
+    );
+    let validity_symbol = state
+        .get_cross_file_symbol(validity_sym_id)
+        .expect("ValidityState cross-file symbol");
+    assert!(
+        validity_symbol.flags & symbol_flags::INTERFACE != 0
+            && validity_symbol.flags & symbol_flags::VALUE != 0,
+        "ValidityState cross-file flags: {}",
+        validity_symbol.flags,
+    );
+    assert!(
+        validity_symbol.flags
+            & (symbol_flags::CLASS
+                | symbol_flags::TYPE_ALIAS
+                | symbol_flags::VALUE_MODULE
+                | symbol_flags::NAMESPACE_MODULE)
+            == 0,
+        "ValidityState flags: {}",
+        validity_symbol.flags,
+    );
+    assert!(!state.lib_name_locally_augmented("ValidityState"));
+    let (validity_state, params) = state
+        .direct_value_merged_builtin_lib_interface_symbol_type(
+            validity_sym_id,
+            CrossArenaSymbolMissSource::SymbolArena,
+            Some(validity_arena),
+            false,
+        )
+        .expect("value-merged builtin DOM interface should resolve through lib type identity");
+    assert!(params.is_empty());
+    assert!(
+        crate::query_boundaries::common::lazy_def_id(state.ctx.types, validity_state).is_some(),
+        "value-merged DOM interfaces should return a type-position Lazy ref",
+    );
+
+    let document_sym_id = state
+        .ctx
+        .binder
+        .file_locals
+        .get("Document")
+        .expect("Document should resolve to a value-merged dom lib symbol");
+    let document_arena = state
+        .ctx
+        .binder
+        .symbol_arenas
+        .get(&document_sym_id)
+        .map(std::convert::AsRef::as_ref)
+        .expect("Document should have a delegate arena");
+    assert!(
+        state
+            .direct_value_merged_builtin_lib_interface_symbol_type(
+                document_sym_id,
+                CrossArenaSymbolMissSource::SymbolArena,
+                Some(document_arena),
+                false,
+            )
+            .is_none(),
+        "value-merged DOM interfaces with declared method members should stay on the existing child/interface path",
+    );
+
+    let error_sym_id = state
+        .ctx
+        .binder
+        .file_locals
+        .get("Error")
+        .expect("Error should resolve to an es lib symbol");
+    let error_arena = state
+        .ctx
+        .binder
+        .symbol_arenas
+        .get(&error_sym_id)
+        .map(std::convert::AsRef::as_ref)
+        .expect("Error should have a delegate arena");
+    assert!(
+        state
+            .direct_value_merged_builtin_lib_interface_symbol_type(
+                error_sym_id,
+                CrossArenaSymbolMissSource::SymbolArena,
+                Some(error_arena),
+                false,
+            )
+            .is_none(),
+        "non-DOM value-merged lib interfaces have lib-set-sensitive shapes and should stay on the existing path",
+    );
+}
+
+#[test]
+fn value_merged_builtin_dom_interface_type_argument_keeps_inherited_members() {
+    let lib_files = load_compiled_lib_files(&[
+        "lib.es5.d.ts",
+        "lib.es2015.core.d.ts",
+        "lib.es2015.collection.d.ts",
+        "lib.es2015.generator.d.ts",
+        "lib.es2015.iterable.d.ts",
+        "lib.es2015.promise.d.ts",
+        "lib.es2015.proxy.d.ts",
+        "lib.es2015.reflect.d.ts",
+        "lib.es2015.symbol.d.ts",
+        "lib.es2015.symbol.wellknown.d.ts",
+        "lib.es2016.array.include.d.ts",
+        "lib.es2016.d.ts",
+        "lib.es2017.arraybuffer.d.ts",
+        "lib.es2017.date.d.ts",
+        "lib.es2017.object.d.ts",
+        "lib.es2017.sharedmemory.d.ts",
+        "lib.es2017.string.d.ts",
+        "lib.es2017.typedarrays.d.ts",
+        "lib.es2017.d.ts",
+        "lib.es2018.asyncgenerator.d.ts",
+        "lib.es2018.asynciterable.d.ts",
+        "lib.es2018.promise.d.ts",
+        "lib.es2018.regexp.d.ts",
+        "lib.es2018.d.ts",
+        "lib.es2019.array.d.ts",
+        "lib.es2019.object.d.ts",
+        "lib.es2019.string.d.ts",
+        "lib.es2019.symbol.d.ts",
+        "lib.es2019.d.ts",
+        "lib.es2020.bigint.d.ts",
+        "lib.es2020.date.d.ts",
+        "lib.es2020.number.d.ts",
+        "lib.es2020.promise.d.ts",
+        "lib.es2020.sharedmemory.d.ts",
+        "lib.es2020.string.d.ts",
+        "lib.es2020.symbol.wellknown.d.ts",
+        "lib.es2020.d.ts",
+        "lib.dom.d.ts",
+        "lib.dom.iterable.d.ts",
+    ]);
+    let diagnostics = check_source_with_libs(
+        r##"
+const app = document.querySelector<HTMLDivElement>("#app");
+if (app) {
+  app.innerHTML = "";
+}
+"##,
+        "fixture.ts",
+        CheckerOptions::default(),
+        &lib_files,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected DOM querySelector type argument to keep inherited members, got: {diagnostics:?}",
     );
 }
