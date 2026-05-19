@@ -11,6 +11,7 @@
 
 use super::*;
 use crate::caches::query_cache::QueryCache;
+use crate::construction::RelationCacheProbe;
 use crate::intern::TypeInterner;
 use crate::relations::relation_queries::RelationPolicy;
 use crate::relations::subtype::SubtypeChecker;
@@ -543,7 +544,7 @@ fn probe_returns_miss_before_check() {
     );
     assert_eq!(
         db.probe_subtype_cache(key),
-        crate::RelationCacheProbe::MissNotCached
+        RelationCacheProbe::MissNotCached
     );
 }
 
@@ -563,10 +564,7 @@ fn probe_returns_hit_after_check() {
         TypeId::STRING,
         RelationPolicy::from_flags(0).cache_config(),
     );
-    assert_eq!(
-        db.probe_subtype_cache(key),
-        crate::RelationCacheProbe::Hit(true)
-    );
+    assert_eq!(db.probe_subtype_cache(key), RelationCacheProbe::Hit(true));
 }
 
 #[test]
@@ -581,10 +579,7 @@ fn probe_negative_hit_after_failed_check() {
         TypeId::NUMBER,
         RelationPolicy::from_flags(0).cache_config(),
     );
-    assert_eq!(
-        db.probe_subtype_cache(key),
-        crate::RelationCacheProbe::Hit(false)
-    );
+    assert_eq!(db.probe_subtype_cache(key), RelationCacheProbe::Hit(false));
 }
 
 // =============================================================================

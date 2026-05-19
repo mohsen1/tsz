@@ -195,7 +195,7 @@ pub struct CompilationResult {
     /// Estimated heap memory of the `TypeInterner` in bytes (populated for `--extendedDiagnostics`).
     pub interner_estimated_bytes: usize,
     /// Aggregate query-cache statistics (populated for `--extendedDiagnostics`).
-    pub query_cache_stats: Option<tsz_solver::QueryCacheStatistics>,
+    pub query_cache_stats: Option<tsz_solver::construction::QueryCacheStatistics>,
     /// Aggregate definition-store statistics (populated for `--extendedDiagnostics`).
     pub def_store_stats: Option<tsz_solver::StoreStatistics>,
     /// Phase timing breakdown for `--diagnostics` / `--extendedDiagnostics`.

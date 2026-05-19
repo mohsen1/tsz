@@ -1,8 +1,8 @@
+use crate::construction::{QueryCacheStatistics, RelationCacheProbe};
 use crate::relations::relation_queries::RelationPolicy;
 use crate::{
-    LiteralValue, ObjectFlags, PropertyInfo, QueryCache, QueryCacheStatistics, QueryDatabase,
-    RelationCacheConfig, RelationCacheKey, RelationCacheProbe, TupleElement, TypeData,
-    TypeDatabase, TypeId, TypeInterner, Visibility,
+    LiteralValue, ObjectFlags, PropertyInfo, QueryCache, QueryDatabase, RelationCacheConfig,
+    RelationCacheKey, TupleElement, TypeData, TypeDatabase, TypeId, TypeInterner, Visibility,
 };
 
 impl<'a> QueryCache<'a> {
