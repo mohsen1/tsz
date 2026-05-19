@@ -439,6 +439,25 @@ impl<'a> IRPrinter<'a> {
         }
     }
 
+    /// Build a nested `AstPrinter` that inherits this IR printer's transforms,
+    /// printer options, and source text. Callers that need namespace
+    /// qualification on the embedded output must invoke
+    /// `configure_ast_printer_namespace` themselves; keeping it opt-in avoids
+    /// silently changing emission for arms (e.g. `ASTRefWithGeneratorThis`)
+    /// that historically ran without namespace context.
+    fn build_nested_ast_printer(&self, arena: &'a NodeArena) -> AstPrinter<'a> {
+        let transforms = self.transforms.clone().unwrap_or_default();
+        let mut printer = AstPrinter::with_transforms_and_options(
+            arena,
+            transforms,
+            self.make_ast_printer_options(),
+        );
+        if let Some(source_text) = self.source_text {
+            printer.set_source_text(source_text);
+        }
+        printer
+    }
+
     /// Write a runtime helper name, prefixing with `tslib_1.` when `tslib_prefix` is active.
     fn write_helper(&mut self, name: &str) {
         if self.tslib_prefix {
@@ -2159,34 +2178,27 @@ impl<'a> IRPrinter<'a> {
                     }
                 }
 
-                // Delegate to AstPrinter when transforms exist or when base
-                // printer options require JSX transformation.
-                if let Some(arena) = self.arena
-                    && (self.transforms.as_ref().is_some_and(|t| !t.is_empty())
-                        || self.base_printer_options.is_some())
-                {
-                    let transforms = self.transforms.clone().unwrap_or_default();
-                    let mut printer = AstPrinter::with_transforms_and_options(
-                        arena,
-                        transforms,
-                        self.make_ast_printer_options(),
-                    );
+                // Delegate to AstPrinter whenever an arena is available so
+                // output is canonically formatted; `write_embedded_output`
+                // re-applies the IR printer's current indent to every interior
+                // newline. The raw source-text fallback below is only reached
+                // for arena-less callers (mostly tests) and is otherwise unsafe
+                // because a statement's `node.end` may extend past its
+                // terminating `;` when that `;` was consumed via
+                // `parse_optional`/`parse_semicolon`.
+                if let Some(arena) = self.arena {
+                    let mut printer = self.build_nested_ast_printer(arena);
                     self.configure_ast_printer_namespace(&mut printer);
-                    if let Some(source_text) = self.source_text {
-                        printer.set_source_text(source_text);
-                    }
                     printer.emit(*idx);
-                    let output = printer.get_output().to_string();
-                    let trimmed = output.trim();
+                    let trimmed = printer.get_output().trim();
                     if !trimmed.is_empty() {
-                        self.write(trimmed);
+                        self.write_embedded_output(trimmed);
                         return;
                     }
                 }
 
-                // Emit AST node by using its source text.
-                // For expressions, just emit the trimmed text directly.
-                // For statements, we need to find the statement end.
+                // Last-resort source-text fallback when no arena is attached
+                // or AstPrinter produced empty output for the node.
                 if let Some(arena) = self.arena
                     && let Some(text) = self.source_text
                     && let Some(node) = arena.get(*idx)
@@ -2195,7 +2207,6 @@ impl<'a> IRPrinter<'a> {
                     let end = std::cmp::min(node.end as usize, text.len());
                     if start < end {
                         let raw = &text[start..end];
-                        // Trim both leading and trailing whitespace for expressions
                         let trimmed = raw.trim();
                         if !trimmed.is_empty() {
                             self.write(trimmed);
@@ -2212,15 +2223,7 @@ impl<'a> IRPrinter<'a> {
                 generator_this,
             } => {
                 if let Some(arena) = self.arena {
-                    let transforms = self.transforms.clone().unwrap_or_default();
-                    let mut printer = AstPrinter::with_transforms_and_options(
-                        arena,
-                        transforms,
-                        self.make_ast_printer_options(),
-                    );
-                    if let Some(source_text) = self.source_text {
-                        printer.set_source_text(source_text);
-                    }
+                    let mut printer = self.build_nested_ast_printer(arena);
                     printer.emit_expression(*node);
                     let output = printer.get_output();
                     let rewritten = output.replacen(

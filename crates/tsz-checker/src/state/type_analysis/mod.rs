@@ -13,9 +13,14 @@ mod core_type_query;
 pub(crate) mod cross_file;
 mod cross_file_cache;
 pub(crate) mod cross_file_direct;
+mod cross_file_direct_alias_chain;
+#[cfg(test)]
+mod cross_file_direct_alias_chain_tests;
+mod cross_file_direct_functions;
 mod cross_file_env_merge;
 mod cross_file_globals;
 pub(crate) mod cross_file_query_types;
 mod cross_file_residue;
 mod cross_file_shared_cache;
+mod source_alias_attribution;
 mod symbol_type_helpers;

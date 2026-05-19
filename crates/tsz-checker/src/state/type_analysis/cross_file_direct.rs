@@ -1,5 +1,6 @@
 //! Direct cross-file query fast paths that avoid constructing child checkers.
 
+use super::source_alias_attribution::record_source_file_type_alias_body_rejection_kind;
 use crate::query_boundaries::common;
 use crate::state::CheckerState;
 use tsz_binder::{BinderState, SymbolId, symbol_flags};
@@ -24,9 +25,7 @@ struct DirectActualLibAliasBodyProof {
     outcome: DirectActualLibAliasBodyOutcome,
 }
 
-/// Track 7 transitional allowlist for actual-lib type-alias bodies that can be
-/// lowered directly across checker arenas. Additions should move toward stable
-/// lib identity queries instead of expanding name-only admissions.
+// Track 7 transitional allowlist; prefer stable lib identity over additions.
 const DIRECT_ACTUAL_LIB_ALIAS_BODY_ADMISSIONS: &[&str] = &[
     "Capitalize",
     "DecoratorMetadata",
@@ -90,7 +89,7 @@ pub(crate) fn is_builtin_lib_file_name(file_name: &str) -> bool {
         || (stem.starts_with("es") && stem.as_bytes().get(2).is_some_and(u8::is_ascii_digit))
 }
 
-fn is_builtin_lib_declaration_arena(arena: &NodeArena) -> bool {
+pub(crate) fn is_builtin_lib_declaration_arena(arena: &NodeArena) -> bool {
     arena.source_files.first().is_some_and(|source_file| {
         if !source_file.is_declaration_file {
             return false;
@@ -135,17 +134,13 @@ pub(crate) fn is_external_package_declaration_file_name(file_name: &str) -> bool
     false
 }
 
-/// Classification of a delegated arena's first source file for the
-/// cross-arena symbol-type cache eligibility decision. All file-name
-/// string matching that the cache layer relies on lives in this module.
-/// See `cross_file_cache.rs` for the per-variant cache routing.
+/// Delegated arena class for cross-arena symbol-type cache routing.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum DeclarationFileCacheClass {
     UserSource,
     DomOrExternalPackage,
-    /// Excluded from the symbol-id-keyed cache because the name-keyed
-    /// `shared_actual_lib_delegation_cache` already owns dedup for these
-    /// symbols across virtual programs.
+    /// Excluded because `shared_actual_lib_delegation_cache` already dedups
+    /// these symbols across virtual programs.
     NonDomBuiltinLib,
 }
 
@@ -177,7 +172,7 @@ fn is_direct_lowering_declaration_arena(arena: &NodeArena) -> bool {
     })
 }
 
-fn is_direct_lowering_source_file_arena(arena: &NodeArena) -> bool {
+pub(super) fn is_direct_lowering_source_file_arena(arena: &NodeArena) -> bool {
     arena
         .source_files
         .first()
@@ -916,7 +911,10 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn source_file_type_node_is_scope_independent(arena: &NodeArena, node_idx: NodeIndex) -> bool {
+    pub(super) fn source_file_type_node_is_scope_independent(
+        arena: &NodeArena,
+        node_idx: NodeIndex,
+    ) -> bool {
         if node_idx.is_none() {
             return false;
         }
@@ -999,7 +997,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn source_file_type_node_is_option_bag_lowerable<'b>(
+    pub(super) fn source_file_type_node_is_option_bag_lowerable<'b>(
         arena: &'b NodeArena,
         delegate_binder: &BinderState,
         node_idx: NodeIndex,
@@ -1169,7 +1167,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn source_file_local_name_def_id_for_lowering(
+    pub(super) fn source_file_local_name_def_id_for_lowering(
         &self,
         delegate_binder: &BinderState,
         symbol_arena: &NodeArena,
@@ -1665,6 +1663,11 @@ impl<'a> CheckerState<'a> {
         let type_param_names = Self::type_alias_type_param_names(symbol_arena, type_alias);
         let body_is_direct_lowerable = if type_param_names.is_empty() {
             Self::source_file_type_node_is_scope_independent(symbol_arena, type_alias.type_node)
+                || Self::source_file_type_node_is_non_generic_local_alias_chain_lowerable(
+                    symbol_arena,
+                    delegate_binder,
+                    type_alias.type_node,
+                )
         } else {
             Self::source_file_type_node_is_generic_scope_independent(
                 symbol_arena,
@@ -1673,13 +1676,13 @@ impl<'a> CheckerState<'a> {
             )
         };
         if !body_is_direct_lowerable {
+            record_source_file_type_alias_body_rejection_kind(symbol_arena, type_alias.type_node);
             record(DirectSourceFileTypeAliasLoweringOutcome::BodyNotDirectLowerable);
             return None;
         }
 
         // Keep flow-sensitive `typeof` aliases and direct self/cycle cases on
-        // the child-checker path, where the declaring file's diagnostics and
-        // resolution stack are already handled.
+        // the child-checker path, where diagnostics and resolution are handled.
         if Self::source_file_type_node_contains_kind(
             symbol_arena,
             type_alias.type_node,

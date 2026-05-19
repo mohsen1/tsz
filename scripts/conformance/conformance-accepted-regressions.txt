@@ -1,6 +1,7 @@
-# Temporary accepted conformance regressions for the 2026-05-16 aggregate runway.
-# The aggregate gate treats this as a set, not a budget: any failing test that
-# is not listed here fails CI, even if the total deficit does not grow.
+# Accepted conformance regressions.
+# Add a test path here (one per line) to allow it to fail in CI without
+# blocking the aggregate gate. Remove the entry once the regression is fixed.
+# Format: TypeScript/tests/cases/<subpath>.ts (one path per line, comments with #)
 TypeScript/tests/cases/compiler/coAndContraVariantInferences2.ts
 TypeScript/tests/cases/compiler/coAndContraVariantInferences3.ts
 TypeScript/tests/cases/compiler/coAndContraVariantInferences4.ts
@@ -37,7 +38,6 @@ TypeScript/tests/cases/compiler/reverseMappedTypeIntersectionConstraint.ts
 TypeScript/tests/cases/compiler/spyComparisonChecking.ts
 TypeScript/tests/cases/compiler/styledComponentsInstantiaionLimitNotReached.ts
 TypeScript/tests/cases/compiler/temporal.ts
-TypeScript/tests/cases/compiler/thislessFunctionsNotContextSensitive1.ts
 TypeScript/tests/cases/compiler/thislessFunctionsNotContextSensitive3.ts
 TypeScript/tests/cases/compiler/undefinedAssignableToGenericMappedIntersection.ts
 TypeScript/tests/cases/compiler/unionPropertyOfProtectedAndIntersectionProperty.ts

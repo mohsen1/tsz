@@ -41,6 +41,7 @@ pub(crate) struct EmitOutputsContext<'a> {
     pub(crate) out_dir: Option<&'a Path>,
     pub(crate) declaration_dir: Option<&'a Path>,
     pub(crate) dirty_paths: Option<&'a FxHashSet<PathBuf>>,
+    pub(crate) outfile_bundle_paths: Option<&'a FxHashSet<PathBuf>>,
     pub(crate) type_caches: &'a FxHashMap<std::path::PathBuf, tsz::checker::TypeCache>,
 }
 
@@ -195,6 +196,15 @@ pub(crate) fn emit_outputs(
                 &input_path,
             )
         {
+            if js_bundle_path.is_some()
+                && matches!(context.options.printer.module, ModuleKind::None)
+                && context
+                    .outfile_bundle_paths
+                    .is_some_and(|paths| !paths.contains(&input_path))
+            {
+                continue;
+            }
+
             if is_js_input
                 && js_input_skipped_by_node_modules_depth(
                     &input_path,
