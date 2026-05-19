@@ -1061,9 +1061,6 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
-        // TypeScript 4.7+ supports @overload JSDoc tags in both JS and TS files.
-        // Only check for JSDoc overloads on implementation functions (those with a body),
-        // since overload declarations (no body) use standard TS-syntax overload handling.
         if is_implementation {
             let jsdoc_overload_signatures = self.jsdoc_overload_signatures_for_node(func_idx);
             if self.source_is_js_file && !jsdoc_overload_signatures.is_empty() {

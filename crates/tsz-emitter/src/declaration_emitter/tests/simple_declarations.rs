@@ -2298,10 +2298,6 @@ export class Foo {
     );
 }
 
-// --- TypeScript @overload JSDoc tests (TS 4.7+) ---
-// These mirror the JS tests above but use .ts source (emit_dts).
-// @overload is valid in both .js and .ts files.
-
 #[test]
 fn test_ts_function_declaration_emits_separate_jsdoc_overload_signatures() {
     let output = emit_dts(
@@ -2342,7 +2338,6 @@ function kind(value: unknown): string {
 
 #[test]
 fn test_ts_function_declaration_jsdoc_overload_with_different_param_names() {
-    // Prove the fix is not name-dependent: use X/Y instead of value/result.
     let output = emit_dts(
         r#"
 /**

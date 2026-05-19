@@ -1554,7 +1554,6 @@ impl<'a> DeclarationEmitter<'a> {
         }
         let late_bound_members = self.collect_ts_late_bound_assignment_members(func.name);
 
-        // TypeScript 4.7+ supports @overload JSDoc tags in both JS and TS files.
         if is_implementation {
             let jsdoc_overload_signatures = self.jsdoc_overload_signatures_for_node(func_idx);
             if self.emit_jsdoc_overload_function_signatures(

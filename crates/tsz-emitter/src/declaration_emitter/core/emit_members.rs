@@ -93,8 +93,6 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
-        // TypeScript 4.7+ supports @overload JSDoc tags in both JS and TS files.
-        // Only check on implementations (methods with bodies) that are not private.
         if is_implementation && !is_private {
             let jsdoc_overload_signatures = self.jsdoc_overload_signatures_for_node(method_idx);
             if self.emit_jsdoc_overload_method_signatures(method_idx, &jsdoc_overload_signatures) {
@@ -736,7 +734,6 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
-        // TypeScript 4.7+ supports @overload JSDoc tags in both JS and TS files.
         if is_implementation {
             let jsdoc_overload_signatures = self.jsdoc_overload_signatures_for_node(ctor_idx);
             if self.emit_jsdoc_overload_constructor_signatures(ctor_idx, &jsdoc_overload_signatures)
