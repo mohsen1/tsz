@@ -476,17 +476,18 @@ tsz_write_type_challenges_solutions_config() {
   local generated=0
   local manifest_tsv="$compile_dir/type-challenges-solutions-manifest.tsv"
   local manifest_json="$compile_dir/type-challenges-solutions-manifest.json"
-  printf 'output\tsource\tid\tlevel\ttitle\n' > "$manifest_tsv"
+  printf 'output\tsource\tsourceSha256\tid\tlevel\ttitle\n' > "$manifest_tsv"
 
   local markdown
   while IFS= read -r markdown; do
-    local id title level base output tmp
+    local id title level base output tmp source_sha256
     id="$(awk -F': ' '/^id: / { print $2; exit }' "$markdown")"
     title="$(awk -F': ' '/^title: / { print $2; exit }' "$markdown")"
     level="$(awk -F': ' '/^level: / { print $2; exit }' "$markdown")"
     base="$(basename "$markdown" .md)"
     output="$compile_dir/solutions/${base}.ts"
     tmp="$compile_dir/solutions/.${base}.tmp"
+    source_sha256="$(perl -MDigest::SHA=sha256_hex -0777 -ne 'print sha256_hex($_)' "$markdown")"
 
     perl -0ne '
       my ($solution) = /## Solution\n(.*?)(?:\n## References|\z)/s;
@@ -533,9 +534,10 @@ tsz_write_type_challenges_solutions_config() {
     } > "$output"
     rm -f "$tmp"
     generated=$((generated + 1))
-    printf '%s\t%s\t%s\t%s\t%s\n' \
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
       "solutions/${base}.ts" \
       "en/${base}.md" \
+      "$source_sha256" \
       "$id" \
       "$level" \
       "${title//$'\t'/ }" \

@@ -97,7 +97,7 @@ const {
 const lines = fs.readFileSync(tsvPath, "utf8").trimEnd().split(/\r?\n/);
 const header = lines.shift();
 
-if (header !== "output\tsource\tid\tlevel\ttitle") {
+if (header !== "output\tsource\tsourceSha256\tid\tlevel\ttitle") {
   console.error(`error: unexpected manifest TSV header: ${header ?? "<empty>"}`);
   process.exit(1);
 }
@@ -172,6 +172,15 @@ function validateChallengeLevel(level, source) {
   }
 }
 
+function validateSha256Hex(value, label, source) {
+  if (!/^[0-9a-f]{64}$/.test(value)) {
+    console.error(
+      `error: Type Challenges solution ${label} must be a lowercase sha256 hex digest: ${source}`,
+    );
+    process.exit(1);
+  }
+}
+
 function validateManifestPath(value, label, requiredPrefix) {
   if (
     path.isAbsolute(value) ||
@@ -200,16 +209,17 @@ function parseSourceStem(source) {
 const entries = lines
   .filter((line) => line.length > 0)
   .map((line, index) => {
-    const [output, source, id, level, ...titleParts] = line.split("\t");
+    const [output, source, sourceSha256, id, level, ...titleParts] = line.split("\t");
     const title = titleParts.join("\t");
 
-    if (!output || !source || !id || !level || !title) {
+    if (!output || !source || !sourceSha256 || !id || !level || !title) {
       console.error(`error: incomplete manifest row ${index + 2}: ${line}`);
       process.exit(1);
     }
 
     validateManifestPath(output, "output", "solutions/");
     validateManifestPath(source, "source", "en/");
+    validateSha256Hex(sourceSha256, "sourceSha256", source);
     validateChallengeLevel(level, source);
 
     const outputPath = path.join(manifestRoot, output);
@@ -240,6 +250,7 @@ const entries = lines
         level,
         title,
         sourceStem: parseSourceStem(source),
+        sourceSha256,
       },
       declarations,
       semanticFamilies,
