@@ -192,6 +192,29 @@ withTempDir((dir) => {
       ],
       expected: { oracle: "both-fail-different", state: "yellow", counts: { tsc: 1, tsz: 2, tsgo: 0 }, tscCodes: ["TS2304"], tszCodes: ["TS2322", "TS2345"] },
     }),
+    // tsz-fails-only requires an explicit tsc success signal; without one → unknown.
+    makeOracleCase({
+      name: "no-tsc-signal-tsz-exit-fail",
+      exitClass: "nonzero exit",
+      diagnosticStatus: "diagnostic mismatch or compiler error",
+      tszExit: "1",
+      expected: { oracle: "unknown", state: "yellow", counts: { tsc: 0, tsz: 0, tsgo: 0 }, tscCodes: [], tszCodes: [] },
+    }),
+    makeOracleCase({
+      name: "no-tsc-signal-tsz-diagnostic-only",
+      exitClass: "nonzero exit",
+      diagnosticStatus: "diagnostic mismatch or compiler error",
+      tszLines: ["src/a.ts(1,1): error TS2322: assignability failed."],
+      expected: { oracle: "unknown", state: "yellow", counts: { tsc: 0, tsz: 1, tsgo: 0 }, tscCodes: [], tszCodes: ["TS2322"] },
+    }),
+    makeOracleCase({
+      name: "no-tsc-signal-tsz-exit-and-diagnostic",
+      exitClass: "nonzero exit",
+      diagnosticStatus: "diagnostic mismatch or compiler error",
+      tszExit: "2",
+      tszLines: ["src/b.ts(3,3): error TS2345: argument type mismatch."],
+      expected: { oracle: "unknown", state: "yellow", counts: { tsc: 0, tsz: 1, tsgo: 0 }, tscCodes: [], tszCodes: ["TS2345"] },
+    }),
   ];
 
   for (const testCase of cases) {
