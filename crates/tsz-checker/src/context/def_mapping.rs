@@ -658,6 +658,10 @@ impl<'a> CheckerContext<'a> {
     /// Wiring only `type_env` and leaving `type_environment` without the store
     /// forces callers to clone one environment over the other just to propagate
     /// the pointer — this helper eliminates that need.
+    ///
+    /// `set_definition_store` is idempotent when the same `Arc` pointer is
+    /// reinstalled (checked via `Arc::ptr_eq`), so calling this function
+    /// multiple times across registration sites is safe.
     pub fn ensure_both_envs_have_definition_store(&self) {
         self.with_envs_for_register("set_definition_store", |env| {
             env.set_definition_store(std::sync::Arc::clone(&self.definition_store));
