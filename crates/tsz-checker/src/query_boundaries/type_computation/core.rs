@@ -88,7 +88,7 @@ pub(crate) fn compute_conditional_expression_type(
     true_type: TypeId,
     false_type: TypeId,
 ) -> TypeId {
-    tsz_solver::expression_ops::compute_conditional_expression_type(
+    tsz_solver::operations::expression_ops::compute_conditional_expression_type(
         db, condition, true_type, false_type,
     )
 }
@@ -99,7 +99,7 @@ pub(crate) fn compute_best_common_type<R: TypeResolver>(
     types: &[TypeId],
     resolver: Option<&R>,
 ) -> TypeId {
-    tsz_solver::expression_ops::compute_best_common_type(db, types, resolver)
+    tsz_solver::operations::expression_ops::compute_best_common_type(db, types, resolver)
 }
 
 /// Cache-aware variant: thread `&dyn QueryDatabase` so the cross-call
@@ -111,12 +111,14 @@ pub(crate) fn compute_best_common_type_cached<R: TypeResolver>(
     types: &[TypeId],
     resolver: Option<&R>,
 ) -> TypeId {
-    tsz_solver::expression_ops::compute_best_common_type_cached(db, query_db, types, resolver)
+    tsz_solver::operations::expression_ops::compute_best_common_type_cached(
+        db, query_db, types, resolver,
+    )
 }
 
 /// Check whether a contextual type is suitable for template literal narrowing.
 pub(crate) fn is_template_literal_contextual_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::expression_ops::is_template_literal_contextual_type(db, type_id)
+    tsz_solver::operations::expression_ops::is_template_literal_contextual_type(db, type_id)
 }
 
 /// Compute the type of a template literal expression with contextual typing.
@@ -125,7 +127,9 @@ pub(crate) fn compute_template_expression_type_contextual(
     texts: &[String],
     parts: &[TypeId],
 ) -> TypeId {
-    tsz_solver::expression_ops::compute_template_expression_type_contextual(db, texts, parts)
+    tsz_solver::operations::expression_ops::compute_template_expression_type_contextual(
+        db, texts, parts,
+    )
 }
 
 /// Compute the type of a template literal expression without contextual typing.
@@ -134,7 +138,7 @@ pub(crate) fn compute_template_expression_type(
     texts: &[String],
     parts: &[TypeId],
 ) -> TypeId {
-    tsz_solver::expression_ops::compute_template_expression_type(db, texts, parts)
+    tsz_solver::operations::expression_ops::compute_template_expression_type(db, texts, parts)
 }
 
 pub(crate) fn is_fresh_literal_indexed_object(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
