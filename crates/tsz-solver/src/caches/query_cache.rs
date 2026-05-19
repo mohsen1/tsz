@@ -36,6 +36,9 @@ type ApplicationEvalCacheKey = (DefId, smallvec::SmallVec<[TypeId; 4]>, bool);
 type ElementAccessTypeCacheKey = (TypeId, TypeId, Option<u32>, bool);
 type PropertyAccessCacheKey = (TypeId, Atom, bool, bool);
 
+const SUBTYPE_POLICY_TRACE_OP: &str = "is_subtype_of_with_policy";
+const ASSIGNABILITY_POLICY_TRACE_OP: &str = "is_assignable_to_with_policy";
+
 /// Thread-safe shared query cache for cross-file type checking.
 ///
 /// In multi-file projects (e.g., ts-toolbelt with 242 files), each file checker
@@ -1507,7 +1510,7 @@ impl QueryDatabase for QueryCache<'_> {
             let query_id = query_trace::next_query_id();
             query_trace::relation_start(
                 query_id,
-                "is_subtype_of_with_flags",
+                SUBTYPE_POLICY_TRACE_OP,
                 source,
                 target,
                 policy.flags,
@@ -1521,7 +1524,7 @@ impl QueryDatabase for QueryCache<'_> {
             self.subtype_cache_hits
                 .set(self.subtype_cache_hits.get() + 1);
             if let Some(query_id) = trace_query_id {
-                query_trace::relation_end(query_id, "is_subtype_of_with_flags", result, true);
+                query_trace::relation_end(query_id, SUBTYPE_POLICY_TRACE_OP, result, true);
             }
             return result;
         }
@@ -1534,7 +1537,7 @@ impl QueryDatabase for QueryCache<'_> {
             self.subtype_cache_hits
                 .set(self.subtype_cache_hits.get() + 1);
             if let Some(query_id) = trace_query_id {
-                query_trace::relation_end(query_id, "is_subtype_of_with_flags", result, true);
+                query_trace::relation_end(query_id, SUBTYPE_POLICY_TRACE_OP, result, true);
             }
             return result;
         }
@@ -1557,7 +1560,7 @@ impl QueryDatabase for QueryCache<'_> {
             shared.subtype_cache.insert(key, result);
         }
         if let Some(query_id) = trace_query_id {
-            query_trace::relation_end(query_id, "is_subtype_of_with_flags", result, false);
+            query_trace::relation_end(query_id, SUBTYPE_POLICY_TRACE_OP, result, false);
         }
         result
     }
@@ -1599,7 +1602,7 @@ impl QueryDatabase for QueryCache<'_> {
             let query_id = query_trace::next_query_id();
             query_trace::relation_start(
                 query_id,
-                "is_assignable_to_with_flags",
+                ASSIGNABILITY_POLICY_TRACE_OP,
                 source,
                 target,
                 policy.flags,
@@ -1612,7 +1615,7 @@ impl QueryDatabase for QueryCache<'_> {
             self.assignability_cache_hits
                 .set(self.assignability_cache_hits.get() + 1);
             if let Some(query_id) = trace_query_id {
-                query_trace::relation_end(query_id, "is_assignable_to_with_flags", result, true);
+                query_trace::relation_end(query_id, ASSIGNABILITY_POLICY_TRACE_OP, result, true);
             }
             return result;
         }
@@ -1625,7 +1628,7 @@ impl QueryDatabase for QueryCache<'_> {
             self.assignability_cache_hits
                 .set(self.assignability_cache_hits.get() + 1);
             if let Some(query_id) = trace_query_id {
-                query_trace::relation_end(query_id, "is_assignable_to_with_flags", result, true);
+                query_trace::relation_end(query_id, ASSIGNABILITY_POLICY_TRACE_OP, result, true);
             }
             return result;
         }
@@ -1649,7 +1652,7 @@ impl QueryDatabase for QueryCache<'_> {
             shared.assignability_cache.insert(key, result);
         }
         if let Some(query_id) = trace_query_id {
-            query_trace::relation_end(query_id, "is_assignable_to_with_flags", result, false);
+            query_trace::relation_end(query_id, ASSIGNABILITY_POLICY_TRACE_OP, result, false);
         }
         result
     }
