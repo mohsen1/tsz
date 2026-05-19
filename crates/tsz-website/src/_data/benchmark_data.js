@@ -340,6 +340,16 @@ function missingCompatibilityMetadata(row, artifact) {
   return missing;
 }
 
+function hasCompleteCompatibilityMetadata(compatibility) {
+  if (!compatibility || typeof compatibility !== "object") return false;
+  return COMPATIBILITY_METADATA_FIELDS.every(([field]) => (
+    Object.prototype.hasOwnProperty.call(compatibility, field)
+  )) && (
+    !Object.prototype.hasOwnProperty.call(compatibility, "fixture_sources") ||
+    hasCompleteFixtureSources(compatibility)
+  );
+}
+
 function hasCompleteFixtureSources(compatibility) {
   const sources = Array.isArray(compatibility?.fixture_sources)
     ? compatibility.fixture_sources
@@ -504,6 +514,20 @@ function withExpectedProjectRows(results) {
 function compatibilityState(row) {
   const compatibility = row?.compatibility || {};
   const diagnosticStatus = String(compatibility.diagnostic_status || "").toLowerCase();
+  const compatibilityGreen = (
+    String(compatibility.state || "").toLowerCase() === "green" ||
+    String(compatibility.exit_class || "").toLowerCase() === "exit success"
+  ) && diagnosticStatus === "none";
+  if (compatibilityGreen && hasCompleteCompatibilityMetadata(compatibility)) {
+    return {
+      className: "green",
+      stateLabel: "Green",
+      exitClass: firstPresent(compatibility.exit_class, "exit success"),
+      phase: firstPresent(compatibility.phase, "check"),
+      diagnosticDeltas: firstPresent(compatibility.diagnostic_deltas, "none recorded"),
+    };
+  }
+
   if (hasSuccessfulTiming(row)) {
     if (diagnosticStatus && diagnosticStatus !== "none") {
       return {
@@ -2203,4 +2227,3 @@ export function getProjectCompatibilityDashboard() {
   </ul>
 </section>`;
 }
-

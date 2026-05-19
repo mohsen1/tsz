@@ -862,6 +862,26 @@ jobs:
           path: bench-artifacts
           merge-multiple: true
 
+      - name: Download benchmark prep artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: bench-prep-ready
+          path: .
+
+      - name: Run PGO compile canaries
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tar -xf bench-prep.tar
+          test -x .target-bench/dist/tsz
+          test -f .target-bench/dist/.bench-pgo-optimized
+
+          TSZ_BIN="$GITHUB_WORKSPACE/.target-bench/dist/tsz" \
+          TSZ_PROJECT_COMPILE_SET=canary \
+          TSZ_PROJECT_COMPILE_FILTER='type-challenges-solutions-project' \
+          scripts/ci/project-compile-guard.sh
+
       - name: Merge benchmark results
         shell: bash
         run: |
@@ -879,7 +899,10 @@ jobs:
             find bench-artifacts -maxdepth 2 -type f -print || true
             exit 1
           fi
-          node scripts/bench/merge-results.mjs "$GITHUB_WORKSPACE/bench-results.json" "${json_files[@]}"
+          node scripts/bench/merge-results.mjs \
+            "$GITHUB_WORKSPACE/bench-results.json" \
+            --compat-jsonl "$GITHUB_WORKSPACE/.target/project-compile-guard/project-compatibility.jsonl" \
+            "${json_files[@]}"
 
       - name: Summarize green tsgo winners
         shell: bash

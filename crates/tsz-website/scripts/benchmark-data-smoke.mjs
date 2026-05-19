@@ -57,6 +57,59 @@ await fs.writeFile(artifact, `${JSON.stringify({
       tsgo_ms: 30,
       winner: "tsz",
     },
+    {
+      name: "type-challenges-solutions-project",
+      lines: 78,
+      kb: 0,
+      tsz_ms: null,
+      tsgo_ms: null,
+      winner: "error",
+      status: "compile canary tracked in CI; not timed by vs-tsgo benchmarks",
+      compatibility: {
+        generated_at: "2026-05-16T00:00:00.000Z",
+        source_commit: "local",
+        workflow_name: "Bench",
+        workflow_run_id: "1001",
+        workflow_run_url: "https://github.com/mohsen1/tsz/actions/runs/1001",
+        workflow_run_attempt: "1",
+        run_status: "completed",
+        state: "green",
+        exit_class: "exit success",
+        first_failure_class: null,
+        owner_track: null,
+        phase: "check",
+        last_successful_phase: "check",
+        diagnostic_status: "none",
+        diagnostic_deltas: [],
+        diagnostic_subsystems: [],
+        known_blockers: [],
+        reduced_repro_path: "type-challenges-solutions/.tsz-compile/solutions",
+        repro: {
+          tsconfig_path: "type-challenges-solutions/.tsz-compile/tsconfig.tsz-guard.json",
+          source_root: "type-challenges-solutions/.tsz-compile/solutions",
+          first_failure_path: null,
+          first_failure_line: null,
+          first_failure_column: null,
+          first_failure_code: null,
+          reduced_repro_path: "type-challenges-solutions/.tsz-compile/solutions",
+          command: "$TSZ_BIN --noEmit -p type-challenges-solutions/.tsz-compile/tsconfig.tsz-guard.json",
+        },
+        exit_codes: { tsc: [0], tsz: [0], tsgo: [] },
+        files_reached: 78,
+        files_reached_reason: null,
+        peak_memory_bytes: null,
+        peak_memory_bytes_reason: "not measured on platform",
+        fixture_sources: [
+          {
+            name: "type-challenges-solutions",
+            repository: "https://github.com/ghaiklor/type-challenges-solutions.git",
+            ref: "91a6d2986650475f29eeb3bd18ebd025128aa07e",
+          },
+        ],
+        emit_status: "not in scope (noEmit project check)",
+        dts_status: "not in scope (noEmit project check)",
+      },
+    },
   ],
 }, null, 2)}\n`, "utf8");
 
@@ -260,6 +313,7 @@ try {
   assert.match(charts, /type-challenges solutions project/);
 
   const compatibilityDashboard = getProjectCompatibilityDashboard();
+  assert.match(compatibilityDashboard, /type-challenges solutions[\s\S]*compat-state green/);
   assert.doesNotMatch(compatibilityDashboard, /type-challenges assertions/);
 
   process.env.TSZ_WEBSITE_BENCHMARK_ARTIFACT = failedOnlyArtifact;
