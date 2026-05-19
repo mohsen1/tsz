@@ -41,3 +41,6 @@ binder_oversized      1
 
 emitter_max_loc     5724
 emitter_oversized   33
+
+parser_max_loc      3304
+parser_oversized    11
