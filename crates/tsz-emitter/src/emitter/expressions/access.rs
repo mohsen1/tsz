@@ -1739,6 +1739,84 @@ mod tests {
         );
     }
 
+    /// A normal call whose callee is a parenthesized optional member access
+    /// still needs tsc's method-call binding preservation:
+    /// `(o?.b)(x)` -> `(o === null || o === void 0 ? void 0 : o.b).call(o, x)`.
+    #[test]
+    fn parenthesized_optional_member_call_preserves_simple_receiver() {
+        let source = "const o = { b(n: number) { return n; } };\n(o?.b)(1);\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("(o === null || o === void 0 ? void 0 : o.b).call(o, 1)"),
+            "Parenthesized optional member callee must preserve `this` with .call(o).\nOutput:\n{output}"
+        );
+    }
+
+    /// When the final member receiver is produced inside the optional branch,
+    /// capture that receiver once and use it as the `.call(...)` receiver.
+    #[test]
+    fn parenthesized_optional_member_call_preserves_nested_receiver() {
+        let source = "\
+const o = { nested() { return { b(n: number) { return n; } }; } };
+(o?.nested().b)(2);
+";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains(
+                "(o === null || o === void 0 ? void 0 : (_a = o.nested()).b).call(_a, 2)"
+            ),
+            "Parenthesized optional member callee must capture the nested receiver for .call(_a).\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn parenthesized_optional_element_call_preserves_nested_receiver() {
+        let source = "\
+const o = { nested() { return { b(n: number) { return n; } }; } };
+(o?.nested()[\"b\"])(2);
+";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains(
+                "(o === null || o === void 0 ? void 0 : (_a = o.nested())[\"b\"]).call(_a, 2)"
+            ),
+            "Parenthesized optional element callee must capture the nested receiver for .call(_a).\nOutput:\n{output}"
+        );
+    }
+
     /// Complex (non-identifier) expression in optional method call MUST use a temp.
     /// `f()?.b()` needs a temp to avoid calling `f()` twice.
     #[test]

@@ -450,6 +450,15 @@ impl<'a> Printer<'a> {
             }
         }
 
+        if !self.ctx.options.target.supports_es2020()
+            && self.emit_parenthesized_optional_access_call_expression(
+                call.expression,
+                &call.arguments,
+            )
+        {
+            return;
+        }
+
         // Signal access position so `(new a)()` keeps parens (vs `new a()`).
         let prev = self.paren_in_access_position;
         let prev_call = self.paren_is_direct_call_callee;
@@ -507,6 +516,171 @@ impl<'a> Printer<'a> {
         // Map the closing `)` to its source position
         self.map_closing_paren(node);
         self.write(")");
+    }
+
+    fn emit_parenthesized_optional_access_call_expression(
+        &mut self,
+        callee: NodeIndex,
+        args: &Option<tsz_parser::parser::NodeList>,
+    ) -> bool {
+        let unwrapped = self.unwrap_paren_and_type_assertion(callee);
+        if unwrapped == callee {
+            return false;
+        }
+        let Some(access_node) = self.arena.get(unwrapped).copied() else {
+            return false;
+        };
+        if access_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && access_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return false;
+        }
+        let Some(access) = self.arena.get_access_expr(&access_node) else {
+            return false;
+        };
+        let access_expression = access.expression;
+        let access_name_or_argument = access.name_or_argument;
+        let access_question_dot_token = access.question_dot_token;
+        if !access_node.is_optional_chain()
+            && !access_question_dot_token
+            && !self.expression_is_optional_chain_continuation(access_expression)
+        {
+            return false;
+        }
+
+        if self.emit_parenthesized_optional_receiver_tail_call(
+            access_node.kind,
+            access_expression,
+            access_name_or_argument,
+            access_question_dot_token,
+            args,
+        ) {
+            return true;
+        }
+
+        if !access_question_dot_token {
+            return false;
+        }
+
+        let receiver_temp = if self.is_simple_nullish_expression(access_expression) {
+            None
+        } else {
+            Some(self.make_unique_name_hoisted())
+        };
+
+        self.write("(");
+        if let Some(temp) = receiver_temp.as_deref() {
+            self.write("(");
+            self.write(temp);
+            self.write(" = ");
+            self.emit(access_expression);
+            self.write(") === null || ");
+            self.write(temp);
+            self.write(" === void 0 ? void 0 : ");
+            self.write(temp);
+        } else {
+            self.emit(access_expression);
+            self.write(" === null || ");
+            self.emit(access_expression);
+            self.write(" === void 0 ? void 0 : ");
+            self.emit(access_expression);
+        }
+        self.emit_access_suffix(access_node.kind, access_name_or_argument);
+        self.write(").call(");
+        if let Some(temp) = receiver_temp.as_deref() {
+            self.write(temp);
+        } else {
+            self.emit(access_expression);
+        }
+        self.emit_optional_call_tail_arguments(args.as_ref());
+        true
+    }
+
+    fn emit_parenthesized_optional_receiver_tail_call(
+        &mut self,
+        access_kind: u16,
+        access_expression: NodeIndex,
+        access_name_or_argument: NodeIndex,
+        access_question_dot_token: bool,
+        args: &Option<tsz_parser::parser::NodeList>,
+    ) -> bool {
+        if access_question_dot_token {
+            return false;
+        }
+        let Some(receiver_node) = self.arena.get(access_expression).copied() else {
+            return false;
+        };
+        if receiver_node.kind != syntax_kind_ext::CALL_EXPRESSION
+            || !self.expression_is_optional_chain_continuation(access_expression)
+        {
+            return false;
+        }
+        let Some(receiver_call) = self.arena.get_call_expr(&receiver_node).cloned() else {
+            return false;
+        };
+        let Some(receiver_access_node) = self.arena.get(receiver_call.expression).copied() else {
+            return false;
+        };
+        if receiver_access_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && receiver_access_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return false;
+        }
+        let Some(receiver_access) = self.arena.get_access_expr(&receiver_access_node) else {
+            return false;
+        };
+        let receiver_base_expression = receiver_access.expression;
+        let receiver_name_or_argument = receiver_access.name_or_argument;
+        if !receiver_access.question_dot_token {
+            return false;
+        }
+
+        self.write("(");
+        let receiver_temp;
+        if self.is_simple_nullish_expression(receiver_base_expression) {
+            receiver_temp = self.make_unique_name_hoisted();
+            self.emit(receiver_base_expression);
+            self.write(" === null || ");
+            self.emit(receiver_base_expression);
+            self.write(" === void 0 ? void 0 : ");
+            self.write("(");
+            self.write(&receiver_temp);
+            self.write(" = ");
+            self.emit(receiver_base_expression);
+        } else {
+            let base_temp = self.make_unique_name_hoisted();
+            receiver_temp = self.make_unique_name_hoisted();
+            self.write("(");
+            self.write(&base_temp);
+            self.write(" = ");
+            self.emit(receiver_base_expression);
+            self.write(") === null || ");
+            self.write(&base_temp);
+            self.write(" === void 0 ? void 0 : ");
+            self.write("(");
+            self.write(&receiver_temp);
+            self.write(" = ");
+            self.write(&base_temp);
+        }
+        self.emit_access_suffix(receiver_access_node.kind, receiver_name_or_argument);
+        self.emit_call_arguments(&receiver_node, receiver_call.arguments.as_ref());
+        self.write(")");
+        self.emit_access_suffix(access_kind, access_name_or_argument);
+        self.write(").call(");
+        self.write(&receiver_temp);
+        self.emit_optional_call_tail_arguments(args.as_ref());
+        true
+    }
+
+    fn emit_access_suffix(&mut self, kind: u16, name_or_argument: NodeIndex) {
+        if kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            self.write(".");
+            self.emit_property_name_without_import_substitution(name_or_argument);
+        } else {
+            self.write("[");
+            self.emit(name_or_argument);
+            self.write("]");
+        }
     }
 
     fn emit_system_dynamic_import_call(
@@ -983,6 +1157,32 @@ impl<'a> Printer<'a> {
             self.emit_comma_separated(&args.nodes);
         }
         self.write(")");
+    }
+
+    fn expression_is_optional_chain_continuation(&self, expression: NodeIndex) -> bool {
+        let expression = self.unwrap_paren_and_type_assertion(expression);
+        let Some(node) = self.arena.get(expression) else {
+            return false;
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+            {
+                self.arena.get_access_expr(node).is_some_and(|access| {
+                    node.is_optional_chain()
+                        || access.question_dot_token
+                        || self.expression_is_optional_chain_continuation(access.expression)
+                })
+            }
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                node.is_optional_chain()
+                    || self.arena.get_call_expr(node).is_some_and(|call| {
+                        self.expression_is_optional_chain_continuation(call.expression)
+                    })
+            }
+            _ => false,
+        }
     }
 
     const fn is_optional_chain(&self, node: &Node) -> bool {
