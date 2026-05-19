@@ -617,6 +617,14 @@ impl CodeFixRegistry {
                 vec![("fixInvalidImportSyntax", "fixInvalidImportSyntax", "Fix invalid import syntax", "Fix all invalid import syntax")]
             }
 
+            // === fixMissingTypeAnnotationOnExports ===
+            // Variable must have an explicit type annotation with --isolatedDeclarations.
+            9010 |
+            // Function must have an explicit return type annotation with --isolatedDeclarations.
+            9007 => {
+                vec![("fixMissingTypeAnnotationOnExports", "fixMissingTypeAnnotationOnExports", "Add annotation of type", "Add annotations of inferred types to all items with missing annotations")]
+            }
+
             _ => vec![],
         }
     }
@@ -706,6 +714,7 @@ impl CodeFixRegistry {
             1205, // convertToTypeOnlyExport
             2412, 2375, 2379, // addOptionalPropertyUndefined
             1259, // fixInvalidImportSyntax
+            9010, 9007, // fixMissingTypeAnnotationOnExports
         ]
     }
 }
