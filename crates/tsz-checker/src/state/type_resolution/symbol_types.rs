@@ -5,7 +5,9 @@ use crate::query_boundaries::state::type_resolution as query;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use crate::symbols_domain::name_text::{entity_name_text_in_arena, expression_name_text_in_arena};
-use crate::types_domain::queries::lib_resolution::resolve_name_to_lib_symbol;
+use crate::types_domain::queries::lib_resolution::{
+    collect_lib_decls_with_arenas_in_contexts, dedup_decl_arenas, resolve_name_to_lib_symbol,
+};
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
@@ -1080,8 +1082,31 @@ impl<'a> CheckerState<'a> {
         } else {
             lowering
         };
+        // When resolving a multi-lib built-in (e.g., Map<K,V> spans
+        // es2015.collection, es2015.iterable, and esnext.collection), each lib
+        // file has its own NodeArena with an independent NodeIndex space. Using
+        // self.ctx.arena for every declaration causes `arena.get(N)` to silently
+        // fetch an unrelated AST node when N happens to be valid in the current
+        // arena but belongs to a declaration from another lib arena. The wrong
+        // node (often an Iterable interface member) gets merged into the resolved
+        // type and later surfaces as a false-positive TS2416 or TS2322.
         let interface_type =
-            lowering.lower_interface_declarations_with_symbol(&declarations, sym_id);
+            if Self::in_cross_arena_interface_delegation() && !self.ctx.lib_contexts.is_empty() {
+                let decls_with_arenas = collect_lib_decls_with_arenas_in_contexts(
+                    self.ctx.binder,
+                    sym_id,
+                    &declarations,
+                    self.ctx.arena,
+                    &self.ctx.lib_contexts,
+                    None,
+                );
+                let deduped = dedup_decl_arenas(&decls_with_arenas);
+                lowering
+                    .lower_merged_interface_declarations_with_symbol(&deduped, Some(sym_id))
+                    .0
+            } else {
+                lowering.lower_interface_declarations_with_symbol(&declarations, sym_id)
+            };
         // Seed a partial structural interface type before heritage merging so
         // recursive interface/namespace resolution can reuse the current shape
         // instead of re-entering the full lowering + heritage pipeline.

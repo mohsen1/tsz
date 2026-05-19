@@ -4487,3 +4487,115 @@ fn test_synthesized_array_iterator_methods_see_es2025_helpers() {
         "Expected synthesized ArrayIterator methods to inherit es2025 iterator helpers. Got: {diagnostics:#?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Regression tests for issue #8422: cross-arena NodeIndex collision in
+// multi-lib built-in interface type lowering.
+//
+// Map<K,V> and Set<T> are declared across multiple lib files. Using the wrong
+// arena per-declaration injects spurious [Symbol.iterator] signatures and
+// produces false-positive TS2416 / TS2322.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_map_subclass_symbol_iterator_compatible_override_no_ts2416() {
+    let lib_files = load_lib_files_with_es2015_sublibs();
+    if lib_files.is_empty() {
+        return;
+    }
+    // Verify with two different class names to prove name-independence.
+    for (label, source) in [
+        (
+            "MyMap",
+            r#"
+class MyMap extends Map<string, number> {
+    [Symbol.iterator](): MapIterator<[string, number]> {
+        return super[Symbol.iterator]();
+    }
+}
+"#,
+        ),
+        (
+            "Bag",
+            r#"
+class Bag extends Map<string, number> {
+    [Symbol.iterator](): MapIterator<[string, number]> {
+        return super[Symbol.iterator]();
+    }
+}
+"#,
+        ),
+    ] {
+        let diagnostics = compile_with_es2015_sublibs(source);
+        let ts2416 = diagnostics_with_code(&diagnostics, 2416);
+        assert!(
+            ts2416.is_empty(),
+            "class {label} extending Map<string,number> with compatible [Symbol.iterator] \
+             override should NOT emit TS2416 — cross-arena collision was injecting extra \
+             Iterable signatures. Got: {ts2416:#?}"
+        );
+    }
+}
+
+#[test]
+fn test_set_subclass_symbol_iterator_compatible_override_no_ts2416() {
+    let lib_files = load_lib_files_with_es2015_sublibs();
+    if lib_files.is_empty() {
+        return;
+    }
+    // Set<T> also spans multiple lib arenas; verify the same fix applies.
+    for (label, source) in [
+        (
+            "NumberSet",
+            r#"
+class NumberSet extends Set<number> {
+    [Symbol.iterator](): SetIterator<number> {
+        return super[Symbol.iterator]();
+    }
+}
+"#,
+        ),
+        (
+            "TypedSet<E>",
+            r#"
+class TypedSet<E> extends Set<E> {
+    [Symbol.iterator](): SetIterator<E> {
+        return super[Symbol.iterator]();
+    }
+}
+"#,
+        ),
+    ] {
+        let diagnostics = compile_with_es2015_sublibs(source);
+        let ts2416 = diagnostics_with_code(&diagnostics, 2416);
+        assert!(
+            ts2416.is_empty(),
+            "class {label} extending Set<T> with compatible [Symbol.iterator] override \
+             should NOT emit TS2416. Got: {ts2416:#?}"
+        );
+    }
+}
+
+#[test]
+fn test_map_subclass_symbol_iterator_wrong_return_still_gets_ts2416() {
+    let lib_files = load_lib_files_with_es2015_sublibs();
+    if lib_files.is_empty() {
+        return;
+    }
+    // A genuinely incompatible override must still produce TS2416.
+    let diagnostics = compile_with_es2015_sublibs(
+        r#"
+class BadMap extends Map<string, number> {
+    [Symbol.iterator](): MapIterator<string> {
+        return null as any;
+    }
+}
+"#,
+    );
+    let ts2416_count = diagnostic_count(&diagnostics, 2416);
+    assert!(
+        ts2416_count >= 1,
+        "class with incompatible [Symbol.iterator] return type should emit TS2416. \
+         Got: {diagnostics:#?}"
+    );
+}
