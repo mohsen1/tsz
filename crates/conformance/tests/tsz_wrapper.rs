@@ -346,6 +346,130 @@ fn test_prepare_test_dir_no_implicit_references_uses_last_unit_as_root_file() {
 }
 
 #[test]
+fn test_prepare_test_dir_no_implicit_references_keeps_authored_declaration_roots() {
+    let content = "";
+    let filenames = vec![
+        (
+            "foo.d.ts".to_string(),
+            "export var x: number; export as namespace Foo;".to_string(),
+        ),
+        ("a.ts".to_string(), "Foo.x;".to_string()),
+    ];
+    let options: HashMap<String, String> =
+        HashMap::from([("noImplicitReferences".to_string(), "true".to_string())]);
+
+    let prepared = prepare_test_dir(content, &filenames, &options, None, &[], None).unwrap();
+    let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
+    let tsconfig_raw = std::fs::read_to_string(tsconfig_path).unwrap();
+    let tsconfig_json: serde_json::Value = serde_json::from_str(&tsconfig_raw).unwrap();
+    let files = tsconfig_json["files"].as_array().expect("files array");
+    let file_values: Vec<_> = files.iter().filter_map(|value| value.as_str()).collect();
+
+    assert!(
+        file_values.contains(&"foo.d.ts"),
+        "authored declaration roots should stay in noImplicitReferences files, got {file_values:?}"
+    );
+    assert!(
+        file_values.contains(&"a.ts"),
+        "source roots should stay in noImplicitReferences files, got {file_values:?}"
+    );
+}
+
+#[test]
+fn test_prepare_test_dir_no_implicit_references_keeps_type_roots_declarations() {
+    let content = "";
+    let filenames = vec![
+        (
+            "/a/types/jquery/index.d.ts".to_string(),
+            "declare var $: { foo(): void };".to_string(),
+        ),
+        (
+            "/a/types/jquery2/index.d.ts".to_string(),
+            "declare var $2: { foo(): void };".to_string(),
+        ),
+        (
+            "/a/b/consumer.ts".to_string(),
+            "$.foo(); $2.foo();".to_string(),
+        ),
+    ];
+    let options: HashMap<String, String> = HashMap::from([
+        ("noImplicitReferences".to_string(), "true".to_string()),
+        ("types".to_string(), "jquery".to_string()),
+        ("typeRoots".to_string(), "/a/types".to_string()),
+    ]);
+
+    let prepared = prepare_test_dir(content, &filenames, &options, None, &[], None).unwrap();
+    let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
+    let tsconfig_raw = std::fs::read_to_string(tsconfig_path).unwrap();
+    let tsconfig_json: serde_json::Value = serde_json::from_str(&tsconfig_raw).unwrap();
+    let files = tsconfig_json["files"].as_array().expect("files array");
+    let file_values: Vec<_> = files.iter().filter_map(|value| value.as_str()).collect();
+
+    assert!(
+        file_values.contains(&"a/types/jquery/index.d.ts"),
+        "declared typeRoots package should stay in noImplicitReferences files, got {file_values:?}"
+    );
+    assert!(
+        file_values.contains(&"a/types/jquery2/index.d.ts"),
+        "adjacent typeRoots package should stay in noImplicitReferences files, got {file_values:?}"
+    );
+    assert!(
+        file_values.contains(&"a/b/consumer.ts"),
+        "consumer should stay in noImplicitReferences files, got {file_values:?}"
+    );
+}
+
+#[test]
+fn test_prepare_test_dir_no_implicit_references_excludes_linked_package_declarations() {
+    let content = r#"
+// @filename: Folder/monorepo/package-a/index.d.ts
+export declare const styles: import("styled-components").InterpolationValue[];
+
+// @filename: Folder/monorepo/core/index.ts
+import { styles } from "package-a";
+
+// @link: Folder/monorepo/package-a -> Folder/monorepo/core/node_modules/package-a
+"#;
+    let filenames = vec![
+        (
+            "Folder/monorepo/package-a/index.d.ts".to_string(),
+            "export declare const styles: number;".to_string(),
+        ),
+        (
+            "Folder/monorepo/core/index.ts".to_string(),
+            "import { styles } from 'package-a';".to_string(),
+        ),
+    ];
+    let options: HashMap<String, String> =
+        HashMap::from([("noImplicitReferences".to_string(), "true".to_string())]);
+
+    let prepared =
+        prepare_test_dir(content, &filenames, &options, None, &[], Some(&[2883])).unwrap();
+    let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
+    let tsconfig_raw = std::fs::read_to_string(tsconfig_path).unwrap();
+    let tsconfig_json: serde_json::Value = serde_json::from_str(&tsconfig_raw).unwrap();
+    let files = tsconfig_json["files"].as_array().expect("files array");
+    let file_values: Vec<_> = files.iter().filter_map(|value| value.as_str()).collect();
+
+    assert!(
+        !file_values.contains(&"Folder/monorepo/package-a/index.d.ts"),
+        "linked package declarations should remain resolution-only, got {file_values:?}"
+    );
+    assert!(
+        file_values.contains(&"Folder/monorepo/core/index.ts"),
+        "source file should remain a root, got {file_values:?}"
+    );
+    assert!(
+        prepared
+            .temp_dir
+            .path()
+            .join("Folder/monorepo/core/node_modules/package-a/index.d.ts")
+            .exists(),
+        "linked package declaration should still be available through node_modules"
+    );
+}
+
+#[test]
 fn test_prepare_test_dir_threads_no_types_and_symbols_into_generated_tsconfig() {
     let content = "";
     let filenames = vec![("usage.ts".to_string(), "export {};".to_string())];

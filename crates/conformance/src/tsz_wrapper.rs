@@ -269,17 +269,18 @@ pub fn prepare_test_dir_with_lib_dir(
                 if normalized.ends_with("tsconfig.json") {
                     return None;
                 }
-                if normalized.ends_with(".d.ts")
-                    || normalized.ends_with(".d.mts")
-                    || normalized.ends_with(".d.cts")
-                {
-                    return None;
-                }
                 // When types is set, @types files are discovered via that
                 // mechanism — don't also add them as explicit root files.
                 // tsc's harness only adds non-node_modules files as roots.
                 if normalized.contains("/node_modules/") || normalized.starts_with("node_modules/")
                 {
+                    return None;
+                }
+                // Package roots linked into node_modules are resolution inputs,
+                // not explicit roots. Keeping their declarations out of the
+                // root list preserves declaration-emit provenance for package
+                // references while leaving normal authored .d.ts roots intact.
+                if declaration_file_linked_into_node_modules(&normalized, &link_map) {
                     return None;
                 }
                 // tsc's harness also excludes typings/ directories and package.json
@@ -1231,6 +1232,35 @@ fn atypes_package_in(lower_path: &str) -> Option<String> {
     } else {
         Some(segment.to_string())
     }
+}
+
+fn declaration_file_linked_into_node_modules(
+    normalized_path: &str,
+    link_map: &[(String, String)],
+) -> bool {
+    let lower_path = normalized_path.to_ascii_lowercase();
+    if !(lower_path.ends_with(".d.ts")
+        || lower_path.ends_with(".d.mts")
+        || lower_path.ends_with(".d.cts"))
+    {
+        return false;
+    }
+
+    link_map.iter().any(|(target, link)| {
+        let target = target
+            .replace("..", "_")
+            .trim_start_matches('/')
+            .replace('\\', "/");
+        let link = link
+            .replace("..", "_")
+            .trim_start_matches('/')
+            .replace('\\', "/");
+        (link.contains("/node_modules/") || link.starts_with("node_modules/"))
+            && (normalized_path == target
+                || normalized_path
+                    .strip_prefix(target.as_str())
+                    .is_some_and(|rest| rest.starts_with('/')))
+    })
 }
 
 /// Convert test directive options to tsconfig compiler options
