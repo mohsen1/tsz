@@ -708,9 +708,7 @@ impl<'a> CheckerState<'a> {
             mods.nodes
                 .iter()
                 .filter_map(|&mod_idx| {
-                    let Some(mod_node) = self.ctx.arena.get(mod_idx) else {
-                        return None;
-                    };
+                    let mod_node = self.ctx.arena.get(mod_idx)?;
                     let text = if mod_node.kind == SyntaxKind::InKeyword as u16 {
                         "in"
                     } else if mod_node.kind == SyntaxKind::OutKeyword as u16 {
