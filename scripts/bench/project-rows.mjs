@@ -140,6 +140,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     guard_set: null,
     benchmark_set: "required",
     category: "generated",
+    generated_by: "scripts/bench/generate-vite-app-fixture.mjs",
   },
   {
     name: "nextjs-fresh-app",
@@ -152,6 +153,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     guard_set: null,
     benchmark_set: "required",
     category: "generated",
+    generated_by: "scripts/bench/generate-next-app-fixture.mjs",
   },
   {
     name: "large-ts-repo",
