@@ -13,6 +13,7 @@ mod core_type_query;
 pub(crate) mod cross_file;
 mod cross_file_cache;
 pub(crate) mod cross_file_direct;
+mod cross_file_direct_actual_lib;
 mod cross_file_direct_functions;
 mod cross_file_env_merge;
 mod cross_file_globals;
