@@ -2498,7 +2498,7 @@ fn test_homomorphic_mapped_per_index_contextual_same_name_outer_param_collision(
 
 /// Same collision shape as above but `idx_obj` is the inner binder and
 /// `idx_key` is the outer same-name parameter — verifies that the order
-/// doesn't matter and the top-level IndexAccess shortcut also uses full info
+/// doesn't matter and the top-level `IndexAccess` shortcut also uses full info
 /// equality. Substitution should replace only the binder.
 #[test]
 fn test_homomorphic_mapped_per_index_contextual_same_name_outer_param_in_key_position() {
