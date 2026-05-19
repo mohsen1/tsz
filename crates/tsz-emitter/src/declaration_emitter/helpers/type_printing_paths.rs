@@ -454,6 +454,23 @@ impl<'a> DeclarationEmitter<'a> {
                 .map(|symbol| symbol.escaped_name.clone());
         }
 
+        // Check local import-equals aliases (import alias = LocalNs).
+        // Key is (parent_sym_id, escaped_name) to avoid SymbolId ambiguity: the binder
+        // may assign different IDs to the same namespace in exports vs parent-chain.
+        if let Some(sym) = binder.symbols.get(sym_id) {
+            let key = (sym.parent, sym.escaped_name.clone());
+            if let Some(alias_name) = self.local_namespace_alias_targets.get(&key) {
+                tracing::debug!(
+                    sym_id = sym_id.0,
+                    parent = sym.parent.0,
+                    name = %sym.escaped_name,
+                    alias = %alias_name,
+                    "resolve_namespace_import_alias: local alias hit"
+                );
+                return Some(alias_name.clone());
+            }
+        }
+
         let module_path = self.resolve_symbol_module_path(sym_id)?;
 
         let mut local_imports: Vec<SymbolId> = self.import_symbol_map.keys().copied().collect();

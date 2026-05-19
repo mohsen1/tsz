@@ -282,6 +282,12 @@ pub struct DeclarationEmitter<'a> {
     /// can be resolved.
     pub(super) all_enum_values:
         FxHashMap<String, FxHashMap<String, crate::enums::evaluator::EnumValue>>,
+    /// Maps `(parent_sym_id, target_name)` → local alias name for `import alias = LocalNs`
+    /// declarations (non-require import-equals). Using the parent-and-name pair as the key
+    /// avoids SymbolId ambiguity: the binder may assign different IDs to the same namespace
+    /// in exports tables vs parent-chain traversal, but both share the same parent SymbolId
+    /// and `escaped_name`. Used to substitute alias names when printing qualified type names.
+    pub(super) local_namespace_alias_targets: FxHashMap<(SymbolId, String), String>,
 }
 
 pub(super) struct SourceMapState {

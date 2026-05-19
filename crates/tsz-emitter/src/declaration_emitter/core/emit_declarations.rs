@@ -19,6 +19,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.reserved_names.clear();
         self.symbol_module_specifier_cache.clear();
         self.import_plan = ImportPlan::default();
+        self.local_namespace_alias_targets.clear();
 
         self.reset_writer();
         self.indent_level = 0;
