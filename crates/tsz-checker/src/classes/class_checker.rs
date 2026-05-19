@@ -57,6 +57,36 @@ const fn base_class_name_for_diagnostic(name: &str) -> Cow<'_, str> {
     Cow::Borrowed(name)
 }
 
+fn instantiated_base_class_name_for_diagnostic<'a>(
+    checker: &CheckerState<'_>,
+    source_name: &'a str,
+    base_type: TypeId,
+) -> Cow<'a, str> {
+    if !source_name.contains('<') {
+        return base_class_name_for_diagnostic(source_name);
+    }
+
+    let root_name = source_name
+        .split('<')
+        .next()
+        .map(str::trim)
+        .unwrap_or(source_name);
+    if root_name.is_empty() {
+        return base_class_name_for_diagnostic(source_name);
+    }
+
+    let instantiated = checker.format_type_diagnostic(base_type);
+    if instantiated.len() > source_name.len()
+        && instantiated
+            .strip_prefix(root_name)
+            .is_some_and(|suffix| suffix.starts_with('<'))
+    {
+        Cow::Owned(instantiated)
+    } else {
+        base_class_name_for_diagnostic(source_name)
+    }
+}
+
 /// Extracted info about a single class member (property, method, or accessor).
 #[derive(Clone)]
 pub(crate) struct ClassMemberInfo {
@@ -539,7 +569,11 @@ impl<'a> CheckerState<'a> {
                                     .array_or_tuple_alias_target_text_for_name(base_class_name)
                                     .map(Cow::Owned)
                                     .unwrap_or_else(|| {
-                                        base_class_name_for_diagnostic(base_class_name)
+                                        instantiated_base_class_name_for_diagnostic(
+                                            self,
+                                            base_class_name,
+                                            base_type_id,
+                                        )
                                     });
                                 self.error_at_node(
                                     info.name_idx,
