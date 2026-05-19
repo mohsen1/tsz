@@ -1975,8 +1975,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // `(I1 | I2)["f"]` indexed-access pattern).
                 //
                 // Non-optional, non-nullable function properties (e.g.
-                // `interface Prop { children: (user: User) => JSX.Element }`)
-                // are intentionally NOT covered: their union simplification
+                // `interface Prop { children: (user: User) => JSX.Element }`)\n                // are intentionally NOT covered: their union simplification
                 // is well-behaved and the JSX render-prop diagnostic
                 // prioritisation depends on it.
                 shape.properties.iter().any(|p| {
@@ -2685,10 +2684,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Visit a lazy type reference: Lazy(DefId)
     fn visit_lazy(&mut self, def_id: DefId, original_type_id: TypeId) -> TypeId {
         if let Some(resolved) = self.resolver.resolve_lazy(def_id, self.interner) {
-            if self.is_self_recursive_promise_union(resolved, def_id) {
-                return original_type_id;
-            }
-
             let resolved = if !self.suppress_this_binding
                 && crate::contains_this_type(self.interner, resolved)
             {
@@ -2701,6 +2696,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             } else {
                 resolved
             };
+
+            // When the union body directly contains a recursive Promise<Self> arm
+            // (e.g. `type ReactNode = string | ... | Promise<ReactNode>`), return the
+            // raw union body without recursively evaluating its members.  This exposes
+            // the non-recursive members (primitives, etc.) to structural subtype checks
+            // — in particular the fast-path TypeId-equality scan — while keeping
+            // `Promise<T>` as an opaque Application TypeId so the evaluator never
+            // tries to expand Promise's method signatures and chase `T → Promise<T> → T`
+            // indefinitely.  The subtype checker's own RecursionGuard handles any
+            // structural recursion that occurs during actual compatibility tests.
+            if self.is_self_recursive_promise_union(resolved, def_id) {
+                return resolved;
+            }
 
             // When a bare Lazy(DefId) is used without an Application wrapper,
             // but the underlying type has type parameters that all have defaults
