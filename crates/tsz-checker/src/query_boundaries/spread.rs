@@ -159,7 +159,7 @@ mod tests {
         let prop = make_prop(&db, "x", TypeId::STRING, false);
         merge_spread_property_into_map(&db, false, &mut map, &prop);
         assert_eq!(map.len(), 1);
-        let stored = map.get(&prop.name).unwrap();
+        let stored = &map[&prop.name];
         assert_eq!(stored.type_id, TypeId::STRING);
         assert!(!stored.optional);
     }
@@ -172,7 +172,7 @@ mod tests {
         let later = make_prop(&db, "x", TypeId::NUMBER, false);
         merge_spread_property_into_map(&db, false, &mut map, &earlier);
         merge_spread_property_into_map(&db, false, &mut map, &later);
-        let stored = map.get(&earlier.name).unwrap();
+        let stored = &map[&earlier.name];
         assert_eq!(stored.type_id, TypeId::NUMBER);
         assert!(!stored.optional);
     }
@@ -187,7 +187,7 @@ mod tests {
         later.write_type = num_or_undef;
         merge_spread_property_into_map(&db, false, &mut map, &earlier);
         merge_spread_property_into_map(&db, false, &mut map, &later);
-        let stored = map.get(&earlier.name).unwrap();
+        let stored = &map[&earlier.name];
         assert!(!stored.optional);
         assert_ne!(stored.type_id, TypeId::UNDEFINED);
     }
@@ -202,7 +202,7 @@ mod tests {
         later.write_type = num_or_undef;
         merge_spread_property_into_map(&db, false, &mut map, &earlier);
         merge_spread_property_into_map(&db, true, &mut map, &later);
-        let stored = map.get(&earlier.name).unwrap();
+        let stored = &map[&earlier.name];
         assert!(!stored.optional);
         let members = tsz_solver::type_queries::get_union_members(&db, stored.type_id);
         assert!(members.is_some(), "result should be a union");
@@ -216,7 +216,7 @@ mod tests {
         let later = make_prop(&db, "x", TypeId::NUMBER, true);
         merge_spread_property_into_map(&db, false, &mut map, &earlier);
         merge_spread_property_into_map(&db, false, &mut map, &later);
-        let stored = map.get(&earlier.name).unwrap();
+        let stored = &map[&earlier.name];
         assert!(stored.optional);
     }
 
