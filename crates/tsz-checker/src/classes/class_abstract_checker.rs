@@ -84,11 +84,20 @@ impl<'a> CheckerState<'a> {
         // symbol-with-type-arguments formatter first so lib classes render as
         // `Iterator<number, undefined, unknown>` instead of bare `Iterator`.
         let prefer_symbol_type_args = type_arguments.is_some_and(|ta| !ta.nodes.is_empty());
-        let mut type_base_name =
-            self.format_heritage_class_symbol_reference(heritage_sym_id, type_arguments);
+        let is_actual_lib_iterator = self.heritage_reference_is_actual_lib_iterator(h_expr_idx);
+        let heritage_sym_id_for_display =
+            self.heritage_symbol_id_for_expression_display(heritage_sym_id, is_actual_lib_iterator);
+        let mut type_base_name = if is_actual_lib_iterator {
+            self.format_builtin_iterator_reference_with_type_arguments(type_arguments)
+        } else {
+            None
+        }
+        .or_else(|| {
+            self.format_heritage_class_symbol_reference(heritage_sym_id_for_display, type_arguments)
+        });
         if type_base_name.is_none()
             && prefer_symbol_type_args
-            && let Some(sym_id) = heritage_sym_id
+            && let Some(sym_id) = heritage_sym_id_for_display
         {
             type_base_name =
                 self.format_symbol_reference_with_type_arguments(sym_id, type_arguments);
@@ -379,13 +388,6 @@ impl<'a> CheckerState<'a> {
         if name.is_empty() || name == "__type" {
             return None;
         }
-        if self.class_symbol_is_actual_lib_iterator(sym_id)
-            && let Some(formatted) =
-                self.format_builtin_iterator_reference_with_type_arguments(type_arguments)
-        {
-            return Some(formatted);
-        }
-
         let type_params = self
             .class_type_params_for_symbol(sym_id)
             .filter(|params| !params.is_empty())
@@ -441,7 +443,7 @@ impl<'a> CheckerState<'a> {
         ))
     }
 
-    fn format_builtin_iterator_reference_with_type_arguments(
+    pub(crate) fn format_builtin_iterator_reference_with_type_arguments(
         &mut self,
         type_arguments: Option<&tsz_parser::parser::base::NodeList>,
     ) -> Option<String> {
