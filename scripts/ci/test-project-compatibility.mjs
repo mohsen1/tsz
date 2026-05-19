@@ -105,6 +105,38 @@ withTempDir((dir) => {
   const jsonl = path.join(dir, "compat.jsonl");
   const cases = [
     {
+      name: "",
+      message: "COMPAT_NAME must be a lowercase hyphenated project row slug",
+    },
+    {
+      name: "TypeFest",
+      message: "COMPAT_NAME must be a lowercase hyphenated project row slug",
+    },
+    {
+      name: "../type-fest-project",
+      message: "COMPAT_NAME must be a lowercase hyphenated project row slug",
+    },
+  ];
+
+  for (const testCase of cases) {
+    const result = runProjectCompatibility(["record"], {
+      COMPAT_JSONL_FILE: jsonl,
+      COMPAT_NAME: testCase.name,
+      COMPAT_EXIT_CLASS: "exit success",
+      COMPAT_PHASE: "check",
+      COMPAT_DIAGNOSTIC_STATUS: "none",
+    });
+
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, new RegExp(testCase.message));
+  }
+  assert.equal(fs.existsSync(jsonl), false);
+});
+
+withTempDir((dir) => {
+  const jsonl = path.join(dir, "compat.jsonl");
+  const cases = [
+    {
       source: "malformed",
       message: "line 1 must be name|repository|ref",
     },
