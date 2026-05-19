@@ -252,6 +252,60 @@ For any O(N^2)-admitted path, additionally record:
 4. counter or test proving the cap/fallback path is exercised,
 5. adjacent shape that would catch a spelling-only fast path.
 
+## Performance Evidence Packet
+
+Use this packet in PR bodies or review comments when a PR claims a performance
+effect. The goal is to make reviews compare like with like and to prevent
+"fast on my machine" claims from replacing structural evidence.
+
+```markdown
+## Performance Evidence
+
+Row/family:
+- <benchmark row, project row, or reduced family>
+
+Correctness status:
+- `tsc`: <exit/status>
+- `tsz`: <exit/status before -> after>
+- Diagnostic policy: <green/yellow/red/runtime, plus first blocker if any>
+
+Timing mode:
+- Command: `<exact command>`
+- Counters/tracing: off
+- Before: <tsz wall/RSS> vs <tsgo wall>, <ratio>
+- After: <tsz wall/RSS> vs <tsgo wall>, <ratio>
+- Noise notes: <runner, cache state, warm/cold, repeated runs if used>
+
+Attribution mode:
+- Command: `<exact command>`
+- Counters/tracing: <counters on, trace off/on, binary profile>
+- Dominant before counters: <top repeated operation/count/RSS>
+- Dominant after counters: <same counters after>
+
+Invariant:
+- When <structural condition over types/files/flows>, tsz previously
+  <repeated or retained work>; this change makes <owner layer> <skip/cache/
+  partition/reuse> while preserving <diagnostic/semantic rule>.
+
+Closure guard:
+- Reduced fixture/test: <path or reason not applicable>
+- Scale/counter guard: <path, counter, or follow-up issue>
+- Cache contract: <owner, key, invalidation, memory/counter accounting>
+```
+
+Rules for using the packet:
+
+1. Fill timing mode only from counter-off and trace-off runs.
+2. Fill attribution mode only from runs that are explicitly not compared to
+   `tsgo` timing.
+3. If a row is red/yellow for diagnostics, leave timing claims blank and use
+   the correctness status to route the work to a benchmark-blocker PR.
+4. If the PR is docs-only, shell-only, or guard-only, say "not applicable" and
+   identify the artifact or policy that changed.
+5. If before/after data is unavailable because the PR only adds a guard, the
+   guard must name the regression it would catch and the historical artifact or
+   row that motivated it.
+
 ## Tooling Workflow
 
 Use the narrowest tool that answers the question.
