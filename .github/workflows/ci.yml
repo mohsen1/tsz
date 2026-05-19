@@ -581,7 +581,23 @@ jobs:
           fi
           cargo install cargo-shear --version "${CARGO_SHEAR_VERSION}" --locked
       - name: Run cargo shear
-        run: cargo shear
+        shell: bash
+        run: |
+          set -euo pipefail
+          (
+            while true; do
+              sleep "${TSZ_CI_CARGO_SHEAR_HEARTBEAT_SECONDS:-60}"
+              echo "cargo shear still running at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            done
+          ) &
+          heartbeat_pid="$!"
+          set +e
+          cargo shear
+          cargo_shear_rc="$?"
+          set -e
+          kill "$heartbeat_pid" >/dev/null 2>&1 || true
+          wait "$heartbeat_pid" 2>/dev/null || true
+          exit "$cargo_shear_rc"
 
   cargo-deny:
     name: cargo-deny
