@@ -10,7 +10,8 @@ use tsz_checker::context::CheckerOptions;
 use tsz_checker::diagnostics::{Diagnostic, diagnostic_codes};
 use tsz_checker::state::CheckerState;
 use tsz_checker::test_utils::{
-    HasDiagnosticCode, diagnostic_codes as project_diagnostic_codes, load_lib_files,
+    HasDiagnosticCode, check_source_with_libs, diagnostic_codes as project_diagnostic_codes,
+    load_lib_files,
 };
 use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_parser::parser::ParserState;
@@ -4902,6 +4903,46 @@ class Comp<T extends Foo, S> extends Component<S & State<T>>
         ts2322.iter().any(|(_, msg)| msg
             .contains("Type 'T' is not assignable to type '(S & State<T>)[\"a\"] | undefined'.")),
         "Expected top-level TS2322 to preserve the contextual indexed-access target surface, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn indexed_access_on_intersection_real_pick_preserves_deferred_constraints() {
+    // Same conformance case as above, but using the real library `Pick`.
+    // The no-lib reduced test can pass while the lib mapped type loses the
+    // deferred `(S & State<T>)["a"]` constraint and incorrectly accepts `T`.
+    let source = r#"
+class Component<S> {
+    setState<K extends keyof S>(state: Pick<S, K>) {}
+}
+
+export interface State<T> {
+    a?: T;
+}
+
+class Foo {}
+
+class Comp<T extends Foo, S> extends Component<S & State<T>>
+{
+    foo(a: T) {
+        this.setState({ a: a });
+    }
+}
+"#;
+    let libs = load_lib_files_for_test();
+    let diagnostics = check_source_with_libs(
+        source,
+        "indexedAccessRelation.ts",
+        CheckerOptions::default(),
+        &libs,
+    );
+    let ts2322 = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect::<Vec<_>>();
+    assert!(
+        !ts2322.is_empty(),
+        "Expected TS2322 for real Pick indexed access on intersection with unconstrained type parameter. Actual diagnostics: {diagnostics:?}"
     );
 }
 
