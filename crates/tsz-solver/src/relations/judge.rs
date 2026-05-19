@@ -371,6 +371,27 @@ pub struct DefaultJudge<'a> {
     eval_cache: RefCell<FxHashMap<TypeId, TypeId>>,
 }
 
+/// Operation-local cache statistics for [`DefaultJudge`].
+///
+/// Owner: one judge request family. Relation and evaluation memos are dropped
+/// with the judge or cleared through [`DefaultJudge::clear_caches`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DefaultJudgeCacheStatistics {
+    /// Entries in the subtype memo keyed by source and target `TypeId`.
+    pub subtype_entries: usize,
+    /// Entries in the evaluation memo keyed by input `TypeId`.
+    pub eval_entries: usize,
+    estimated_size_bytes: usize,
+}
+
+impl DefaultJudgeCacheStatistics {
+    /// Estimated heap bytes owned by judge memo tables.
+    #[must_use]
+    pub const fn estimated_size_bytes(self) -> usize {
+        self.estimated_size_bytes
+    }
+}
+
 impl<'a> DefaultJudge<'a> {
     /// Create a new Judge with the given database and configuration.
     pub fn new(db: &'a dyn TypeDatabase, env: &'a TypeEnvironment, config: JudgeConfig) -> Self {
@@ -392,6 +413,21 @@ impl<'a> DefaultJudge<'a> {
     pub fn clear_caches(&self) {
         self.subtype_cache.borrow_mut().clear();
         self.eval_cache.borrow_mut().clear();
+    }
+
+    /// Return entry and size accounting for this judge's operation-local caches.
+    #[must_use]
+    pub fn cache_statistics(&self) -> DefaultJudgeCacheStatistics {
+        let subtype_entries = self.subtype_cache.borrow().len();
+        let eval_entries = self.eval_cache.borrow().len();
+        let estimated_size_bytes = subtype_entries
+            .saturating_mul(std::mem::size_of::<((TypeId, TypeId), bool)>())
+            .saturating_add(eval_entries.saturating_mul(std::mem::size_of::<(TypeId, TypeId)>()));
+        DefaultJudgeCacheStatistics {
+            subtype_entries,
+            eval_entries,
+            estimated_size_bytes,
+        }
     }
 
     /// Get the underlying database.

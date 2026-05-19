@@ -7,6 +7,7 @@
 
 mod fixtures;
 
+mod cache_statistics;
 mod diagnostics_ts2307;
 mod diagnostics_ts2792;
 mod diagnostics_ts2835;

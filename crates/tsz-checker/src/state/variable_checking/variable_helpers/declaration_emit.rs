@@ -410,10 +410,11 @@ impl<'a> CheckerState<'a> {
         let Some(source_path) = self.symbol_source_path(sym_id) else {
             return false;
         };
-        if !source_path.contains("/node_modules/") && !source_path.contains("\\node_modules\\") {
+        let node_modules_segments = Self::node_modules_segment_count(&source_path);
+        if node_modules_segments == 0 {
             return false;
         }
-        if Self::node_modules_segment_count(&source_path) >= 2 {
+        if node_modules_segments >= 2 {
             return false;
         }
         let Some(symbol) = self.get_symbol_from_any_binder(sym_id) else {

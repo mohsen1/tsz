@@ -31,33 +31,6 @@ impl<'a> CheckerState<'a> {
         CROSS_ARENA_INTERFACE_DEPTH.with(|c| c.get() > 0)
     }
 
-    fn resolve_cross_file_global_type_symbol(&self, name: &str) -> Option<tsz_binder::SymbolId> {
-        let normalized = name.strip_prefix("globalThis.").unwrap_or(name);
-        let lib_binders = self.get_lib_binders();
-        self.ctx
-            .binder
-            .file_locals
-            .get(normalized)
-            .or_else(|| {
-                self.ctx
-                    .binder
-                    .get_global_type_with_libs(normalized, &lib_binders)
-            })
-            .or_else(|| {
-                normalized
-                    .rsplit('.')
-                    .next()
-                    .filter(|tail| *tail != normalized)
-                    .and_then(|tail| {
-                        self.ctx.binder.file_locals.get(tail).or_else(|| {
-                            self.ctx
-                                .binder
-                                .get_global_type_with_libs(tail, &lib_binders)
-                        })
-                    })
-            })
-    }
-
     fn resolve_cross_file_heritage_type_arg(
         &mut self,
         arena: &tsz_parser::NodeArena,
@@ -363,6 +336,66 @@ impl<'a> CheckerState<'a> {
         tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(AliasOutcome::Success);
 
         Some((result, params))
+    }
+
+    fn cached_symbol_arena_or_cross_file_symbol_type(
+        &self,
+        sym_id: SymbolId,
+        file_idx: usize,
+        source_cache_scope: u64,
+        symbol_type_cache_from_symbol_arena: bool,
+    ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+        let file_idx = file_idx as u32;
+        if !symbol_type_cache_from_symbol_arena {
+            return self.ctx.cached_cross_file_symbol_type(sym_id, file_idx);
+        }
+
+        self.ctx
+            .cached_stable_source_file_symbol_arena_type(sym_id, file_idx, source_cache_scope)
+            .or_else(|| {
+                self.ctx.cached_source_file_symbol_arena_type(
+                    sym_id,
+                    file_idx,
+                    source_cache_scope,
+                    self.ctx.current_file_idx as u32,
+                )
+            })
+    }
+
+    fn cache_symbol_arena_or_cross_file_symbol_type(
+        &self,
+        sym_id: SymbolId,
+        file_idx: usize,
+        source_cache_scope: u64,
+        symbol_type_cache_from_symbol_arena: bool,
+        type_id: TypeId,
+        type_params: Vec<tsz_solver::TypeParamInfo>,
+    ) {
+        let file_idx = file_idx as u32;
+        if !symbol_type_cache_from_symbol_arena {
+            self.ctx
+                .cache_cross_file_symbol_type(sym_id, file_idx, type_id, type_params);
+            return;
+        }
+
+        if type_params.is_empty() {
+            self.ctx.cache_stable_source_file_symbol_arena_type(
+                sym_id,
+                file_idx,
+                source_cache_scope,
+                type_id,
+                type_params,
+            );
+        } else {
+            self.ctx.cache_source_file_symbol_arena_type(
+                sym_id,
+                file_idx,
+                source_cache_scope,
+                self.ctx.current_file_idx as u32,
+                type_id,
+                type_params,
+            );
+        }
     }
 
     /// Delegate symbol resolution to a checker using the correct arena.
@@ -690,16 +723,13 @@ impl<'a> CheckerState<'a> {
             }
 
             if let Some(cache_file_idx) = symbol_type_cache_file_idx
-                && let Some((cached_type, cached_params)) = if symbol_type_cache_from_symbol_arena {
-                    self.ctx.cached_stable_source_file_symbol_arena_type(
+                && let Some((cached_type, cached_params)) = self
+                    .cached_symbol_arena_or_cross_file_symbol_type(
                         sym_id,
-                        cache_file_idx as u32,
+                        cache_file_idx,
                         source_cache_scope,
+                        symbol_type_cache_from_symbol_arena,
                     )
-                } else {
-                    self.ctx
-                        .cached_cross_file_symbol_type(sym_id, cache_file_idx as u32)
-                }
             {
                 if let Some(p) = perf {
                     p.delegate_cross_arena_cache_hits_cross_file
@@ -770,22 +800,14 @@ impl<'a> CheckerState<'a> {
             {
                 self.ctx.symbol_types.insert(sym_id, direct_type);
                 if let Some(file_idx) = symbol_type_cache_file_idx {
-                    if symbol_type_cache_from_symbol_arena {
-                        self.ctx.cache_stable_source_file_symbol_arena_type(
-                            sym_id,
-                            file_idx as u32,
-                            source_cache_scope,
-                            direct_type,
-                            direct_params.clone(),
-                        );
-                    } else {
-                        self.ctx.cache_cross_file_symbol_type(
-                            sym_id,
-                            file_idx as u32,
-                            direct_type,
-                            direct_params.clone(),
-                        );
-                    }
+                    self.cache_symbol_arena_or_cross_file_symbol_type(
+                        sym_id,
+                        file_idx,
+                        source_cache_scope,
+                        symbol_type_cache_from_symbol_arena,
+                        direct_type,
+                        direct_params.clone(),
+                    );
                 }
                 if symbol_type_cache_file_idx.is_none() && !needs_cross_file_delegation {
                     self.ctx
@@ -828,22 +850,14 @@ impl<'a> CheckerState<'a> {
             ) {
                 self.ctx.symbol_types.insert(sym_id, direct_type);
                 if let Some(file_idx) = symbol_type_cache_file_idx {
-                    if symbol_type_cache_from_symbol_arena {
-                        self.ctx.cache_stable_source_file_symbol_arena_type(
-                            sym_id,
-                            file_idx as u32,
-                            source_cache_scope,
-                            direct_type,
-                            direct_params.clone(),
-                        );
-                    } else {
-                        self.ctx.cache_cross_file_symbol_type(
-                            sym_id,
-                            file_idx as u32,
-                            direct_type,
-                            direct_params.clone(),
-                        );
-                    }
+                    self.cache_symbol_arena_or_cross_file_symbol_type(
+                        sym_id,
+                        file_idx,
+                        source_cache_scope,
+                        symbol_type_cache_from_symbol_arena,
+                        direct_type,
+                        direct_params.clone(),
+                    );
                 }
                 return Some((direct_type, direct_params));
             }
@@ -1121,22 +1135,14 @@ impl<'a> CheckerState<'a> {
             // other parallel checkers can reuse this result without rebuilding
             // a child checker.
             if let Some(target_file_idx) = symbol_type_cache_file_idx {
-                if symbol_type_cache_from_symbol_arena {
-                    self.ctx.cache_stable_source_file_symbol_arena_type(
-                        sym_id,
-                        target_file_idx as u32,
-                        source_cache_scope,
-                        result,
-                        result_params.clone(),
-                    );
-                } else {
-                    self.ctx.cache_cross_file_symbol_type(
-                        sym_id,
-                        target_file_idx as u32,
-                        result,
-                        result_params.clone(),
-                    );
-                }
+                self.cache_symbol_arena_or_cross_file_symbol_type(
+                    sym_id,
+                    target_file_idx,
+                    source_cache_scope,
+                    symbol_type_cache_from_symbol_arena,
+                    result,
+                    result_params.clone(),
+                );
             }
 
             self.ctx.leave_recursion();
@@ -1984,3 +1990,7 @@ impl<'a> CheckerState<'a> {
 #[cfg(test)]
 #[path = "cross_file_query_kind_tests.rs"]
 mod cross_file_query_kind_tests;
+
+#[cfg(test)]
+#[path = "cross_file_cache_tests.rs"]
+mod tests;

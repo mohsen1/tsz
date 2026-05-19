@@ -236,6 +236,26 @@ pub struct CompatChecker<'a, R: TypeResolver = NoopResolver> {
     cache: FxHashMap<(TypeId, TypeId), bool>,
 }
 
+/// Operation-local cache statistics for [`CompatChecker`].
+///
+/// Owner: one compatibility-checking request family. The relation memo is
+/// cleared when policy-affecting checker options change and is dropped with the
+/// checker.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CompatCheckerCacheStatistics {
+    /// Entries in the compatibility relation memo keyed by source and target `TypeId`.
+    pub relation_entries: usize,
+    estimated_size_bytes: usize,
+}
+
+impl CompatCheckerCacheStatistics {
+    /// Estimated heap bytes owned by compatibility memo tables.
+    #[must_use]
+    pub const fn estimated_size_bytes(self) -> usize {
+        self.estimated_size_bytes
+    }
+}
+
 impl<'a> CompatChecker<'a, NoopResolver> {
     /// Create a new compatibility checker without a resolver.
     /// Note: Callers should configure `strict_function_types` explicitly via `set_strict_function_types()`
@@ -259,6 +279,18 @@ impl<'a> CompatChecker<'a, NoopResolver> {
 }
 
 impl<'a, R: TypeResolver> CompatChecker<'a, R> {
+    /// Return entry and size accounting for this checker's operation-local caches.
+    #[must_use]
+    pub fn cache_statistics(&self) -> CompatCheckerCacheStatistics {
+        let relation_entries = self.cache.len();
+        let estimated_size_bytes =
+            relation_entries.saturating_mul(std::mem::size_of::<((TypeId, TypeId), bool)>());
+        CompatCheckerCacheStatistics {
+            relation_entries,
+            estimated_size_bytes,
+        }
+    }
+
     fn function_like_weak_type_properties(
         &self,
         mut props: Vec<PropertyInfo>,

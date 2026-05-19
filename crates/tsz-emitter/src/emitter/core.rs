@@ -165,6 +165,9 @@ pub struct PrinterOptions {
     pub jsx_import_source: Option<String>,
     /// Module name to use for AMD/System outFile bundles.
     pub bundled_module_name: Option<String>,
+    /// Per-base AMD factory-parameter counters from preceding files in the bundle.
+    /// Seeds `module_temp_counters` so each file's parameters are globally unique.
+    pub bundle_module_counters: FxHashMap<String, u32>,
     /// When true, suppress "use strict" emission even if module kind is CJS.
     /// Set when module was overridden from ESM/preserve to CJS for .cts/.cjs files.
     pub suppress_use_strict: bool,
@@ -219,6 +222,7 @@ impl Default for PrinterOptions {
             jsx_fragment_factory: None,
             jsx_import_source: None,
             bundled_module_name: None,
+            bundle_module_counters: FxHashMap::default(),
             suppress_use_strict: false,
             strict_null_checks: false,
             verbatim_module_syntax: false,
@@ -1495,6 +1499,12 @@ impl<'a> Printer<'a> {
     /// Take the output.
     pub fn take_output(self) -> String {
         self.writer.take_output()
+    }
+
+    /// Returns AMD factory-parameter counters accumulated during emission, for
+    /// threading into the next file's `PrinterOptions::bundle_module_counters`.
+    pub const fn bundle_module_counters(&self) -> &FxHashMap<String, u32> {
+        &self.ctx.module_state.module_temp_counters
     }
     // =========================================================================
     // Main Emit Method

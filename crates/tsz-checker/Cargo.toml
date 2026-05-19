@@ -1405,5 +1405,13 @@ path = "tests/public_package_unique_symbol_emit_tests.rs"
 name = "ts2536_keyof_string_index_signature_tests"
 path = "tests/ts2536_keyof_string_index_signature_tests.rs"
 
+[[test]]
+name = "recovery_any_sites_tests"
+path = "tests/recovery_any_sites_tests.rs"
+
+[[test]]
+name = "arbitrary_ext_decl_module_resolution_tests"
+path = "tests/arbitrary_ext_decl_module_resolution_tests.rs"
+
 [lints]
 workspace = true

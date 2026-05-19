@@ -9,7 +9,7 @@ import sys
 import tomllib
 from collections import Counter
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, Optional
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 POLICY_PATH = pathlib.Path(__file__).resolve().parent / "arch_guard_policy.toml"
@@ -130,6 +130,11 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/types/utilities/enum_utils.rs",
         },
     ),
+    (
+        "Checker computation boundary: type-computation monoliths must stay below 3169 LOC (#8226)",
+        ROOT / "crates" / "tsz-checker" / "src" / "types" / "computation",
+        3169,
+    ),
 ]
 
 FILE_LINE_LIMIT_CHECKS = [
@@ -146,7 +151,32 @@ FILE_LINE_LIMIT_CHECKS = [
         / "src"
         / "query_boundaries"
         / "common.rs",
-        1996,
+        1926,
+    ),
+    (
+        "Solver engine boundary: generic call resolver must stay at current 3381 LOC baseline (#8209)",
+        ROOT
+        / "crates"
+        / "tsz-solver"
+        / "src"
+        / "operations"
+        / "generic_call"
+        / "resolve.rs",
+        3381,
+    ),
+    # Pin the async ES5 IR transformer file size while #8277 splits the
+    # monolith into staged lowering modules. The cap should ratchet down
+    # as more phases (helper scheduling, temp/hoist planning, suspended
+    # target lowering, ...) are extracted into sibling submodules.
+    (
+        "Emitter boundary: async ES5 IR engine size ratchet (#8277)",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "transforms"
+        / "async_es5_ir.rs",
+        5150,
     ),
 ]
 
@@ -163,7 +193,7 @@ STRUCT_FIELD_COUNT_CHECKS = [
         "Checker boundary: CheckerContext field count (architecture health metric 1)",
         ROOT / "crates" / "tsz-checker" / "src" / "context" / "mod.rs",
         "CheckerContext",
-        235,
+        236,
     ),
 ]
 
@@ -189,6 +219,17 @@ VALID_CHECKER_CONTEXT_LIFETIMES = {
     "SpeculationScoped",
     "DiagnosticsOnly",
     "LspPersistent",
+}
+
+VALID_CHECKER_CONTEXT_CAPABILITIES = {
+    "CheckerInputs",
+    "DiagnosticState",
+    "EmitSummaryState",
+    "FileTypeCache",
+    "FlowSessionState",
+    "ProgramLookupContext",
+    "RelationSessionState",
+    "SpeculationState",
 }
 
 CHECKER_CONTEXT_LIFETIME_MANIFEST_CHECKS = [
@@ -279,6 +320,35 @@ ROOT_SOLVER_COMPUTATION_IMPORT_COUNT_CHECKS = [
     ),
 ]
 
+# Pin the producer-side compatibility surface that still re-exports solver
+# computation/construction APIs from the crate root. The zero wildcard guard
+# below prevents broad `pub use module::*` growth; this count makes explicit
+# root re-export growth visible too.
+#
+# Each entry:
+#   (description, file_path, root_module_prefixes, max_reexports).
+ROOT_SOLVER_EXPLICIT_REEXPORT_COUNT_CHECKS = [
+    (
+        "Solver API boundary: flat root explicit computation re-exports (#8204)",
+        ROOT / "crates" / "tsz-solver" / "src" / "lib.rs",
+        (
+            "caches",
+            "canonicalize",
+            "classes",
+            "contextual",
+            "evaluation",
+            "instantiation",
+            "intern",
+            "narrowing",
+            "objects",
+            "operations",
+            "relations",
+            "widening",
+        ),
+        144,
+    ),
+]
+
 # Pin direct checker call sites into `query_boundaries::common`, the broad
 # compatibility/quarantine barrel tracked by #8225. Existing sites are
 # tolerated as migration debt; new checker code should prefer a narrower
@@ -300,7 +370,7 @@ SNAPSHOT_ROLLBACK_FILE_COUNT_CHECKS = [
         "Checker speculation boundary: snapshot-rollback call sites outside speculation.rs (architecture health metric 5)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         ("crates/tsz-checker/src/context/speculation.rs",),
-        8,
+        6,
     ),
 ]
 
@@ -349,7 +419,7 @@ REGEX_LINE_COUNT_CHECKS = [
         "Checker diagnostic boundary: file-name/path substring decisions (Track 10)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         re.compile(r"\b(?:\w+\.)?file_name\.contains\s*\(|\bsource_path\.contains\s*\("),
-        9,
+        1,
     ),
     (
         "Checker diagnostic boundary: rendered type strings as semantic input (Track 10)",
@@ -358,7 +428,21 @@ REGEX_LINE_COUNT_CHECKS = [
             r"\bformat_type(?:_diagnostic)?\s*\([^\n]*"
             r"(?:\.contains\s*\(|\.starts_with\s*\(|\.ends_with\s*\(|\.as_str\s*\(\))"
         ),
-        3,
+        0,
+    ),
+    (
+        "Checker diagnostic boundary: rendered message predicates (Track 10)",
+        [
+            ROOT / "crates" / "tsz-checker" / "src" / "checkers" / "jsx",
+            ROOT / "crates" / "tsz-checker" / "src" / "checkers" / "call_checker",
+            ROOT / "crates" / "tsz-checker" / "src" / "types" / "type_checking",
+        ],
+        re.compile(
+            r"\b(?:display|source_display|target_display|stripped_display|"
+            r"diagnostic\.message_text|raw|evaluated)"
+            r"\.(?:contains|starts_with|ends_with|as_str)\s*\("
+        ),
+        16,
     ),
     (
         "Emitter boundary: source_text.contains recovery decisions (Track 9/10)",
@@ -370,7 +454,7 @@ REGEX_LINE_COUNT_CHECKS = [
         "Solver API boundary: flat root wildcard compatibility re-exports (#8204)",
         [ROOT / "crates" / "tsz-solver" / "src" / "lib.rs"],
         re.compile(r"^pub use (?:[A-Za-z_][A-Za-z0-9_]*::)+\*;"),
-        12,
+        0,
     ),
     (
         "Checker relation boundary: raw diagnostic assignability predicates (#8227)",
@@ -388,7 +472,7 @@ REGEX_LINE_COUNT_CHECKS = [
             r"\b(?:self|self\.ctx\.types|self\.interner)"
             r"\.is_assignable_to(?:_[A-Za-z0-9_]+)?\s*\("
         ),
-        136,
+        135,
     ),
     (
         "Checker relation boundary: diagnostic-local RelationRequest constructors (#8227)",
@@ -417,7 +501,7 @@ REGEX_LINE_COUNT_CHECKS = [
             r"RelationFlags::from_bits_truncate\s*\(|"
             r"CachedAnyMode::from_legacy_u8\s*\()"
         ),
-        1,
+        0,
     ),
 ]
 
@@ -533,10 +617,7 @@ GENERATED_PROJECT_ROWS_WITHOUT_PINNED_SOURCE = {
 }
 
 COMPILE_GUARD_ONLY_PROJECT_ROWS = {
-    "type-challenges-project",
     "type-challenges-solutions-project",
-    "type-challenges-assertion-candidates",
-    "type-challenges-assertions-tsc-clean",
 }
 
 BENCHMARK_ONLY_PROJECT_ROWS = {
@@ -878,6 +959,99 @@ def scan_root_solver_computation_import_count(
             f"query boundaries: {len(matching_lines)} (cap {max_references}; "
             f"bump cap intentionally, or route the new site through a named "
             f"solver facade / checker query-boundary helper — #8204)"
+        )
+        return hits
+    return []
+
+
+def _iter_root_pub_use_statements(text: str) -> Iterable[tuple[int, str]]:
+    """Yield top-level `pub use` statements from a Rust module text.
+
+    The solver `lib.rs` compatibility exports are plain top-level statements.
+    Nested tiered-module re-exports are intentionally ignored because their
+    lines are indented and represent the preferred facade modules.
+    """
+    lines = text.splitlines()
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if not line.startswith("pub use "):
+            index += 1
+            continue
+
+        start_line = index + 1
+        statement_lines = [line.strip()]
+        while ";" not in lines[index] and index + 1 < len(lines):
+            index += 1
+            statement_lines.append(lines[index].strip())
+        yield start_line, " ".join(statement_lines)
+        index += 1
+
+
+def _root_pub_use_export_names(statement: str) -> list[str]:
+    """Return exported leaf names from a top-level `pub use` statement."""
+    body = statement.removeprefix("pub use ").removesuffix(";").strip()
+    if "*" in body:
+        return ["*"]
+
+    if "{" not in body:
+        return [body.rsplit("::", 1)[-1].strip()]
+
+    inner = body.split("{", 1)[1].rsplit("}", 1)[0]
+    names: list[str] = []
+    for part in inner.split(","):
+        item = part.strip()
+        if not item:
+            continue
+        item = item.split(" as ", 1)[0].strip()
+        names.append(item.rsplit("::", 1)[-1])
+    return names
+
+
+def scan_solver_root_explicit_reexport_count(
+    file_path: pathlib.Path,
+    root_module_prefixes: tuple[str, ...],
+    max_reexports: int,
+) -> list[str]:
+    """Count explicit high-risk solver root compatibility re-exports.
+
+    #8204 is retiring the flat `tsz_solver` root surface in favor of tiered
+    facades. Wildcard exports are already forbidden; this guard pins the
+    remaining explicit root exports from computation/construction-heavy
+    modules so new compatibility surface must be an intentional cap change.
+    """
+    if not file_path.exists():
+        return []
+
+    try:
+        text = file_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return []
+
+    prefix_set = set(root_module_prefixes)
+    matches: list[tuple[int, str]] = []
+    for line_no, statement in _iter_root_pub_use_statements(text):
+        body = statement.removeprefix("pub use ").strip()
+        root_prefix = body.split("::", 1)[0]
+        if root_prefix not in prefix_set:
+            continue
+        for name in _root_pub_use_export_names(statement):
+            matches.append((line_no, name))
+
+    if len(matches) > max_reexports:
+        try:
+            rel_path = file_path.relative_to(ROOT).as_posix()
+        except ValueError:
+            rel_path = str(file_path)
+        hits = [
+            f"flat solver root explicit re-export #{i + 1}: {rel_path}:{line_no} {name}"
+            for i, (line_no, name) in enumerate(matches)
+        ]
+        hits.append(
+            f"total flat solver root explicit computation re-exports: "
+            f"{len(matches)} (cap {max_reexports}; bump cap intentionally, "
+            f"or move the API behind a named facade / checker query-boundary "
+            f"helper — #8204)"
         )
         return hits
     return []
@@ -1809,6 +1983,7 @@ def parse_checker_context_lifetime_manifest(
     inline_entry_pattern = re.compile(
         r'^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\{\s*'
         r'lifetime\s*=\s*"([^"]*)"\s*,\s*'
+        r'capability\s*=\s*"([^"]*)"\s*,\s*'
         r'reason\s*=\s*"([^"]*)"\s*'
         r'\}\s*(?:#.*)?$'
     )
@@ -1826,13 +2001,14 @@ def parse_checker_context_lifetime_manifest(
 
         inline_entry_match = inline_entry_pattern.match(line)
         if inline_entry_match and current is None:
-            field, lifetime, reason = inline_entry_match.groups()
+            field, lifetime, capability, reason = inline_entry_match.groups()
             if field in entries:
                 errors.append(f"{rel}:{line_no} duplicate manifest entry [{field}]")
             else:
                 entries[field] = {
                     "line": line_no,
                     "lifetime": lifetime,
+                    "capability": capability,
                     "reason": reason,
                 }
             continue
@@ -1896,6 +2072,7 @@ def scan_checker_context_lifetime_manifest(
     ):
         line = entry.get("line", 0)
         lifetime = entry.get("lifetime")
+        capability = entry.get("capability")
         reason = entry.get("reason")
         if lifetime is None:
             hits.append(f"{manifest_rel}:{line} [{field}] missing lifetime")
@@ -1904,6 +2081,14 @@ def scan_checker_context_lifetime_manifest(
         elif lifetime not in VALID_CHECKER_CONTEXT_LIFETIMES:
             hits.append(
                 f"{manifest_rel}:{line} [{field}] invalid lifetime {lifetime!r}"
+            )
+        if capability is None:
+            hits.append(f"{manifest_rel}:{line} [{field}] missing capability")
+        elif capability == "Unknown":
+            hits.append(f"{manifest_rel}:{line} [{field}] capability must not be Unknown")
+        elif capability not in VALID_CHECKER_CONTEXT_CAPABILITIES:
+            hits.append(
+                f"{manifest_rel}:{line} [{field}] invalid capability {capability!r}"
             )
         if not isinstance(reason, str) or not reason.strip():
             hits.append(f"{manifest_rel}:{line} [{field}] missing reason")
@@ -1923,14 +2108,15 @@ def checker_context_lifetime_markdown(
     fields = extract_struct_field_names(struct_path, struct_name)
     entries, _errors = parse_checker_context_lifetime_manifest(manifest_path)
     lines = [
-        "| Field | Lifetime | Reason |",
-        "| --- | --- | --- |",
+        "| Field | Lifetime | Capability | Reason |",
+        "| --- | --- | --- | --- |",
     ]
     for field in fields:
         entry = entries.get(field, {})
         lifetime = escape_markdown_cell(entry.get("lifetime", "MISSING"))
+        capability = escape_markdown_cell(entry.get("capability", "MISSING"))
         reason = escape_markdown_cell(entry.get("reason", "MISSING"))
-        lines.append(f"| `{field}` | `{lifetime}` | {reason} |")
+        lines.append(f"| `{field}` | `{lifetime}` | `{capability}` | {reason} |")
     return "\n".join(lines)
 
 
@@ -2252,6 +2438,19 @@ def main() -> int:
     ) in ROOT_SOLVER_COMPUTATION_IMPORT_COUNT_CHECKS:
         hits = scan_root_solver_computation_import_count(
             search_roots, exclude_path_prefixes, max_references
+        )
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for (
+        name,
+        file_path,
+        root_module_prefixes,
+        max_reexports,
+    ) in ROOT_SOLVER_EXPLICIT_REEXPORT_COUNT_CHECKS:
+        hits = scan_solver_root_explicit_reexport_count(
+            file_path, root_module_prefixes, max_reexports
         )
         total_hits += len(hits)
         if hits:

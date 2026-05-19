@@ -1166,6 +1166,18 @@ impl<'a> DeclarationEmitter<'a> {
         type_id: tsz_solver::types::TypeId,
         outer_type_params: &NodeList,
     ) -> String {
+        self.print_type_id_with_outer_type_param_nodes(type_id, &outer_type_params.nodes)
+    }
+
+    /// Like [`print_type_id_with_outer_type_params`] but accepts a flat slice of `NodeIndex`
+    /// values, enabling callers to combine type parameter lists from multiple scopes (e.g.
+    /// a class's type parameters together with a method's type parameters) without building
+    /// an intermediate `NodeList`.
+    pub(crate) fn print_type_id_with_outer_type_param_nodes(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+        param_nodes: &[NodeIndex],
+    ) -> String {
         let elided_alias_names = self.function_local_type_alias_application_names(type_id);
         let Some(interner) = self.type_interner else {
             return "any".to_string();
@@ -1186,7 +1198,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.display_alias_for_declaration_emit(evaluated, interner)
         };
         let mut outer_names = Vec::new();
-        for &param_idx in &outer_type_params.nodes {
+        for &param_idx in param_nodes {
             if let Some(param_node) = self.arena.get(param_idx)
                 && let Some(param) = self.arena.get_type_parameter(param_node)
                 && let Some(name_text) = self.get_identifier_text(param.name)

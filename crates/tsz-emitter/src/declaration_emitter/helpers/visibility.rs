@@ -1024,6 +1024,24 @@ impl<'a> DeclarationEmitter<'a> {
         idx
     }
 
+    pub(in crate::declaration_emitter) fn leftmost_qualified_name_ident(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<String> {
+        let mut current = idx;
+        loop {
+            let node = self.arena.get(current)?;
+            if let Some(qn) = self.arena.get_qualified_name(node) {
+                current = qn.left;
+            } else {
+                return self
+                    .arena
+                    .get_identifier(node)
+                    .map(|id| id.escaped_text.clone());
+            }
+        }
+    }
+
     /// Check if a symbol is value-only (plain variable, no type/namespace/class flags).
     /// Value-only entities resolve to primitive types in .d.ts and don't need aliases.
     const fn symbol_is_value_only(&self, symbol: &tsz_binder::Symbol) -> bool {

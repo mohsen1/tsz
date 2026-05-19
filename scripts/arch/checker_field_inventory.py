@@ -25,11 +25,23 @@ What this script does:
        LspPersistent       — survives requests, invalidated by version
        Unknown             — CI failure (must be classified)
 
+   The manifest also records the owner capability group that should mediate
+   access to the field:
+
+       CheckerInputs
+       ProgramLookupContext
+       FileTypeCache
+       SpeculationState
+       DiagnosticState
+       FlowSessionState
+       RelationSessionState
+       EmitSummaryState
+
 3. Verify every CheckerContext field is present in the manifest with a
-   non-`Unknown` classification. Exit non-zero on:
+   non-`Unknown` lifetime and capability classification. Exit non-zero on:
    - Field defined in struct but missing from manifest.
    - Field in manifest but no longer in struct (stale entry).
-   - Field classified as `Unknown`.
+   - Field classified as `Unknown` for lifetime or capability.
 
 4. Optionally generate a markdown table of the classification (`--render`).
 
@@ -76,9 +88,23 @@ VALID_LIFETIMES = frozenset(
     }
 )
 
+VALID_CAPABILITIES = frozenset(
+    {
+        "CheckerInputs",
+        "DiagnosticState",
+        "EmitSummaryState",
+        "FileTypeCache",
+        "FlowSessionState",
+        "ProgramLookupContext",
+        "RelationSessionState",
+        "SpeculationState",
+    }
+)
+
 SIMPLE_INLINE_ENTRY_RE = re.compile(
     r'^\s*([A-Za-z_][A-Za-z_0-9]*)\s*=\s*\{\s*'
     r'lifetime\s*=\s*"([^"]*)"\s*,\s*'
+    r'capability\s*=\s*"([^"]*)"\s*,\s*'
     r'reason\s*=\s*"([^"]*)"\s*'
     r"\}\s*(?:#.*)?$"
 )
@@ -149,7 +175,7 @@ def parse_checker_context_fields(rs_path: pathlib.Path) -> list[Field]:
 
 
 def load_manifest(toml_path: pathlib.Path) -> dict[str, dict[str, str]]:
-    """Load the lifetime manifest. Returns `{ field_name: {lifetime, reason} }`.
+    """Load the manifest. Returns `{ field_name: {lifetime, capability, reason} }`.
 
     Returns an empty dict if the file does not exist (first-run case before
     the manifest is created in T2.1.A.2).
@@ -166,8 +192,13 @@ def load_manifest(toml_path: pathlib.Path) -> dict[str, dict[str, str]]:
         if not isinstance(entry, dict):
             continue
         lifetime = entry.get("lifetime", "")
+        capability = entry.get("capability", "")
         reason = entry.get("reason", "")
-        out[field_name] = {"lifetime": lifetime, "reason": reason}
+        out[field_name] = {
+            "lifetime": lifetime,
+            "capability": capability,
+            "reason": reason,
+        }
     return out
 
 
@@ -175,7 +206,7 @@ def load_simple_inline_manifest(toml_path: pathlib.Path) -> dict[str, dict[str, 
     """Parse the simple inline-table manifest shape on Python < 3.11.
 
     The checked-in manifest intentionally uses one inline table per field:
-    `field = { lifetime = "...", reason = "..." }`.
+    `field = { lifetime = "...", capability = "...", reason = "..." }`.
     """
     out: dict[str, dict[str, str]] = {}
     lines = toml_path.read_text(encoding="utf-8").splitlines()
@@ -188,10 +219,14 @@ def load_simple_inline_manifest(toml_path: pathlib.Path) -> dict[str, dict[str, 
             raise RuntimeError(
                 f"{toml_path.relative_to(ROOT)}:{line_number}: unsupported TOML syntax "
                 "for Python < 3.11 fallback parser; use one inline table with "
-                '`lifetime` and `reason`, or run with Python 3.11+.'
+                '`lifetime`, `capability`, and `reason`, or run with Python 3.11+.'
             )
-        field_name, lifetime, reason = match.groups()
-        out[field_name] = {"lifetime": lifetime, "reason": reason}
+        field_name, lifetime, capability, reason = match.groups()
+        out[field_name] = {
+            "lifetime": lifetime,
+            "capability": capability,
+            "reason": reason,
+        }
     return out
 
 
@@ -220,27 +255,57 @@ def check_inventory(
         for name in stale:
             failures.append(f"  - {name}")
 
-    bad_class: list[tuple[str, str]] = []
-    unknown: list[str] = []
+    bad_lifetime: list[tuple[str, str]] = []
+    unknown_lifetime: list[str] = []
+    bad_capability: list[tuple[str, str]] = []
+    unknown_capability: list[str] = []
+    missing_capability: list[str] = []
     for name in sorted(field_names & manifest.keys()):
         lifetime = manifest[name]["lifetime"]
         if lifetime == "Unknown":
-            unknown.append(name)
+            unknown_lifetime.append(name)
         elif lifetime not in VALID_LIFETIMES:
-            bad_class.append((name, lifetime))
+            bad_lifetime.append((name, lifetime))
+        capability = manifest[name].get("capability", "")
+        if not capability:
+            missing_capability.append(name)
+        elif capability == "Unknown":
+            unknown_capability.append(name)
+        elif capability not in VALID_CAPABILITIES:
+            bad_capability.append((name, capability))
 
-    if unknown:
+    if unknown_lifetime:
         failures.append(
-            f"{len(unknown)} field(s) classified as `Unknown` (must classify "
+            f"{len(unknown_lifetime)} field(s) with lifetime classified as `Unknown` (must classify "
             "before merge per PERFORMANCE_PLAN.md §6):"
         )
-        for name in unknown:
+        for name in unknown_lifetime:
             failures.append(f"  - {name}")
 
-    if bad_class:
+    if bad_lifetime:
         valid = ", ".join(sorted(VALID_LIFETIMES)) + ", or `Unknown`"
-        failures.append(f"{len(bad_class)} field(s) with invalid lifetime class (must be one of: {valid}):")
-        for name, cls in bad_class:
+        failures.append(f"{len(bad_lifetime)} field(s) with invalid lifetime class (must be one of: {valid}):")
+        for name, cls in bad_lifetime:
+            failures.append(f"  - {name}: {cls!r}")
+
+    if missing_capability:
+        failures.append(
+            f"{len(missing_capability)} field(s) missing capability group:"
+        )
+        for name in missing_capability:
+            failures.append(f"  - {name}")
+
+    if unknown_capability:
+        failures.append(
+            f"{len(unknown_capability)} field(s) with capability classified as `Unknown`:"
+        )
+        for name in unknown_capability:
+            failures.append(f"  - {name}")
+
+    if bad_capability:
+        valid = ", ".join(sorted(VALID_CAPABILITIES)) + ", or `Unknown`"
+        failures.append(f"{len(bad_capability)} field(s) with invalid capability group (must be one of: {valid}):")
+        for name, cls in bad_capability:
             failures.append(f"  - {name}: {cls!r}")
 
     return failures
@@ -253,9 +318,12 @@ def render_markdown(
     """Render a markdown table grouped by lifetime class for PR review."""
     by_class: dict[str, list[tuple[str, str, str]]] = {}
     for f in fields:
-        entry = manifest.get(f.name, {"lifetime": "Unknown", "reason": ""})
+        entry = manifest.get(
+            f.name,
+            {"lifetime": "Unknown", "capability": "Unknown", "reason": ""},
+        )
         by_class.setdefault(entry["lifetime"], []).append(
-            (f.name, f.rust_type, entry.get("reason", ""))
+            (f.name, f.rust_type, entry.get("capability", "Unknown"), entry.get("reason", ""))
         )
 
     lines = [
@@ -286,12 +354,13 @@ def render_markdown(
         seen_classes.add(cls)
         lines.append(f"## {cls} ({len(rows)})")
         lines.append("")
-        lines.append("| Field | Type | Reason |")
-        lines.append("| --- | --- | --- |")
-        for name, ty, reason in sorted(rows):
+        lines.append("| Field | Type | Capability | Reason |")
+        lines.append("| --- | --- | --- | --- |")
+        for name, ty, capability, reason in sorted(rows):
             ty_md = ty.replace("|", r"\|")
+            capability_md = capability.replace("|", r"\|") if capability else ""
             reason_md = reason.replace("|", r"\|") if reason else ""
-            lines.append(f"| `{name}` | `{ty_md}` | {reason_md} |")
+            lines.append(f"| `{name}` | `{ty_md}` | `{capability_md}` | {reason_md} |")
         lines.append("")
 
     extra = sorted(set(by_class.keys()) - seen_classes)
@@ -299,7 +368,7 @@ def render_markdown(
         rows = by_class[cls]
         lines.append(f"## {cls} ({len(rows)}) — INVALID CLASS")
         lines.append("")
-        for name, _ty, _reason in sorted(rows):
+        for name, _ty, _capability, _reason in sorted(rows):
             lines.append(f"- `{name}`")
         lines.append("")
 

@@ -85,9 +85,12 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(jsdoc) = self.function_like_jsdoc_for_node(decl_idx) else {
             return false;
         };
-        let Some(enum_type) = Self::parse_jsdoc_enum_type_text(&jsdoc) else {
+        let Some(raw_enum_type) = Self::parse_jsdoc_enum_type_text(&jsdoc) else {
             return false;
         };
+        let enum_type = self.jsdoc_type_text_for_declaration_emit(&raw_enum_type);
+        let enum_uses_bare_module_import_surface =
+            raw_enum_type != enum_type && Self::type_text_starts_with_import_type(&raw_enum_type);
 
         self.suppress_current_statement_jsdoc_comments = true;
         self.write_indent();
@@ -100,6 +103,24 @@ impl<'a> DeclarationEmitter<'a> {
         self.write(&enum_type);
         self.write(";");
         self.write_line();
+
+        if enum_uses_bare_module_import_surface {
+            if let Some(decl_node) = self.arena.get(decl_idx) {
+                let chain = self.leading_jsdoc_comment_chain_for_pos(decl_node.pos);
+                self.emit_jsdoc_comment_chain(&chain);
+            }
+            self.write_indent();
+            if is_exported {
+                self.write("export ");
+            } else if self.should_emit_declare_keyword(false) {
+                self.write("declare ");
+            }
+            self.write("const ");
+            self.emit_node(decl_name);
+            self.write(": {};");
+            self.write_line();
+            return true;
+        }
 
         self.write_indent();
         if is_exported {

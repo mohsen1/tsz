@@ -1,6 +1,7 @@
 //! ES5 destructuring - binding element patterns and parameter bindings.
 
 use super::super::{ParamTransformPlan, Printer};
+use crate::transforms::emit_utils;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{BindingElementData, ForInOfData, Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
@@ -1528,6 +1529,9 @@ impl<'a> Printer<'a> {
         {
             let has_inner_class_temp =
                 self.reserve_es5_computed_key_inner_class_temps(computed.expression);
+            let expression_text = self
+                .computed_key_expression_generates_downlevel_temp(computed.expression)
+                .then(|| self.capture_emit(computed.expression));
             let temp_name = if has_inner_class_temp {
                 self.make_unique_name_fresh()
             } else {
@@ -1536,11 +1540,23 @@ impl<'a> Printer<'a> {
             self.emit_param_assignment_prefix(started);
             self.write(&temp_name);
             self.write(" = ");
-            self.emit(computed.expression);
+            if let Some(expression_text) = expression_text {
+                self.write(&expression_text);
+            } else {
+                self.emit(computed.expression);
+            }
             return Some(temp_name);
         }
 
         None
+    }
+
+    fn computed_key_expression_generates_downlevel_temp(&self, idx: NodeIndex) -> bool {
+        emit_utils::parameter_expression_generates_downlevel_temp(
+            self.arena,
+            self.ctx.needs_es2020_lowering,
+            idx,
+        )
     }
 
     pub(in crate::emitter) fn emit_param_array_binding_element(

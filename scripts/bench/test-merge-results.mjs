@@ -10,8 +10,22 @@ import { COMPILE_CANARY_PROJECT_ROWS, REQUIRED_PROJECT_ROWS } from "./project-ro
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
 const MERGE_SCRIPT = path.join(ROOT, "scripts", "bench", "merge-results.mjs");
+const COMPILE_ONLY_CANARY_PROJECT_ROWS = COMPILE_CANARY_PROJECT_ROWS.filter(
+  (name) => !REQUIRED_PROJECT_ROWS.includes(name),
+);
+assert.ok(
+  COMPILE_ONLY_CANARY_PROJECT_ROWS.length > 0,
+  "test fixture expects at least one compile-canary row outside REQUIRED_PROJECT_ROWS",
+);
 
 const REQUIRED_COMPATIBILITY_FIELDS = {
+  generated_at: "2026-05-19T01:02:03.000Z",
+  source_commit: "abcdef1234567890",
+  workflow_name: "Bench",
+  workflow_run_id: "12345",
+  workflow_run_url: "https://github.com/mohsen1/tsz/actions/runs/12345",
+  workflow_run_attempt: "1",
+  run_status: "completed",
   state: "green",
   exit_class: "exit success",
   first_failure_class: null,
@@ -79,6 +93,17 @@ function runMergeInputs(dir, inputs) {
   const output = path.join(dir, "merged.json");
   const result = spawnSync(process.execPath, [MERGE_SCRIPT, output, ...inputs], {
     cwd: ROOT,
+    env: {
+      ...process.env,
+      BENCH_TARGET_SHA: "",
+      GITHUB_ACTIONS: "",
+      GITHUB_REPOSITORY: "",
+      GITHUB_RUN_ATTEMPT: "",
+      GITHUB_RUN_ID: "",
+      GITHUB_SERVER_URL: "",
+      GITHUB_SHA: "",
+      GITHUB_WORKFLOW: "",
+    },
     encoding: "utf8",
   });
   return { ...result, output };
@@ -101,15 +126,19 @@ withTempDir((dir) => {
   const result = runMerge(dir, REQUIRED_PROJECT_ROWS.map((name) => projectRow(name)));
   assert.equal(result.status, 0, result.stderr);
   const merged = JSON.parse(fs.readFileSync(result.output, "utf8"));
+  assert.equal(merged.source_commit, "local");
+  assert.equal(merged.workflow_run_id, "local");
+  assert.equal(merged.run_status, "local");
   assert.equal(merged.validation.project_compatibility_required_fields, true);
 });
 
 withTempDir((dir) => {
-  const rows = REQUIRED_PROJECT_ROWS.filter((name) => name !== "utility-types-project")
+  const missingRow = REQUIRED_PROJECT_ROWS[0];
+  const rows = REQUIRED_PROJECT_ROWS.filter((name) => name !== missingRow)
     .map((name) => projectRow(name));
   const result = runMerge(dir, rows);
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /utility-types-project: missing project row/);
+  assert.match(result.stderr, new RegExp(`${missingRow}: missing project row`));
 });
 
 withTempDir((dir) => {
@@ -124,51 +153,55 @@ withTempDir((dir) => {
 });
 
 withTempDir((dir) => {
+  const duplicateRow = REQUIRED_PROJECT_ROWS[0];
   const rows = [
     ...REQUIRED_PROJECT_ROWS.map((name) => projectRow(name)),
-    projectRow("utility-types-project"),
+    projectRow(duplicateRow),
   ];
   const result = runMerge(dir, rows);
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /utility-types-project: duplicate project row/);
+  assert.match(result.stderr, new RegExp(`${duplicateRow}: duplicate project row`));
 });
 
 withTempDir((dir) => {
+  const canaryRow = COMPILE_ONLY_CANARY_PROJECT_ROWS[0];
   const result = runMerge(dir, [
-    projectRow(COMPILE_CANARY_PROJECT_ROWS[0]),
-    projectRow(COMPILE_CANARY_PROJECT_ROWS[0]),
+    projectRow(canaryRow),
+    projectRow(canaryRow),
   ]);
   assert.equal(result.status, 1);
   assert.match(
     result.stderr,
-    new RegExp(`${COMPILE_CANARY_PROJECT_ROWS[0]}: duplicate project row`),
+    new RegExp(`${canaryRow}: duplicate project row`),
   );
 });
 
 withTempDir((dir) => {
-  const result = runMerge(dir, [projectRow(COMPILE_CANARY_PROJECT_ROWS[0])]);
+  const result = runMerge(dir, [projectRow(COMPILE_ONLY_CANARY_PROJECT_ROWS[0])]);
   assert.equal(result.status, 0, result.stderr);
   const merged = JSON.parse(fs.readFileSync(result.output, "utf8"));
   assert.equal(merged.validation.project_compatibility_required_fields, true);
 });
 
 withTempDir((dir) => {
+  const canaryRow = COMPILE_ONLY_CANARY_PROJECT_ROWS[0];
   const { diagnostic_subsystems: _diagnosticSubsystems, ...compatibility } = REQUIRED_COMPATIBILITY_FIELDS;
-  const result = runMerge(dir, [projectRow(COMPILE_CANARY_PROJECT_ROWS[0], compatibility)]);
+  const result = runMerge(dir, [projectRow(canaryRow, compatibility)]);
   assert.equal(result.status, 1);
   assert.match(
     result.stderr,
-    new RegExp(`${COMPILE_CANARY_PROJECT_ROWS[0]}: missing compatibility\\.diagnostic_subsystems`),
+    new RegExp(`${canaryRow}: missing compatibility\\.diagnostic_subsystems`),
   );
 });
 
 withTempDir((dir) => {
+  const canaryRow = COMPILE_ONLY_CANARY_PROJECT_ROWS[0];
   const { owner_track: _ownerTrack, ...compatibility } = REQUIRED_COMPATIBILITY_FIELDS;
-  const result = runMerge(dir, [projectRow(COMPILE_CANARY_PROJECT_ROWS[0], compatibility)]);
+  const result = runMerge(dir, [projectRow(canaryRow, compatibility)]);
   assert.equal(result.status, 1);
   assert.match(
     result.stderr,
-    new RegExp(`${COMPILE_CANARY_PROJECT_ROWS[0]}: missing compatibility\\.owner_track`),
+    new RegExp(`${canaryRow}: missing compatibility\\.owner_track`),
   );
 });
 

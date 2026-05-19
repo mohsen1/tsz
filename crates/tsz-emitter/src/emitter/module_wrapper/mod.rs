@@ -18,6 +18,7 @@ pub(super) struct SystemDependencyPlan {
 #[derive(Clone)]
 pub(super) enum SystemDependencyAction {
     Assign(String),
+    ExportStar,
     NamedExports(Vec<(String, String)>),
     NamespaceExport(String),
 }
