@@ -378,12 +378,7 @@ pub(crate) fn emit_outputs(
             // Capture AMD counters before consuming printer output so the next
             // file in this bundle starts numbering where this file left off.
             if is_amd_system_bundle {
-                bundle_amd_counters.extend(
-                    printer
-                        .bundle_module_counters()
-                        .iter()
-                        .map(|(k, v)| (k.clone(), *v)),
-                );
+                bundle_amd_counters = printer.bundle_module_counters().clone();
             }
             let map_json = map_info
                 .as_ref()

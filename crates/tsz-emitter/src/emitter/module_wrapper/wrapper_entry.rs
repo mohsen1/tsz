@@ -1085,13 +1085,14 @@ impl<'a> Printer<'a> {
     /// In AMD bundled output (`--outFile`), relative specifiers like `"./m1"`
     /// must be resolved to their AMD module ID (e.g. `"m1"`), because the
     /// `define()` dep array uses module IDs, not file-relative paths.
-    /// When not in bundled mode the raw specifier is returned unchanged.
-    fn resolve_amd_bundled_spec<'s>(&self, raw: &'s str) -> std::borrow::Cow<'s, str> {
+    /// When not in bundled mode, or for non-relative specifiers, returns the
+    /// input unchanged.
+    fn resolve_amd_bundled_spec(&self, raw: &str) -> String {
         let Some(module_name) = &self.ctx.options.bundled_module_name else {
-            return std::borrow::Cow::Borrowed(raw);
+            return raw.to_owned();
         };
         if !raw.starts_with('.') {
-            return std::borrow::Cow::Borrowed(raw);
+            return raw.to_owned();
         }
         let base_dir = module_name
             .rsplit_once('/')
@@ -1107,7 +1108,7 @@ impl<'a> Printer<'a> {
                 "" | "." => {}
                 ".." => {
                     if parts.pop().is_none() {
-                        return std::borrow::Cow::Borrowed(raw);
+                        return raw.to_owned();
                     }
                 }
                 p => parts.push(p),
@@ -1122,9 +1123,9 @@ impl<'a> Printer<'a> {
                 .unwrap_or(last);
         }
         if parts.is_empty() {
-            return std::borrow::Cow::Borrowed(raw);
+            return raw.to_owned();
         }
-        std::borrow::Cow::Owned(parts.join("/"))
+        parts.join("/")
     }
 
     fn collect_amd_dependency_groups(
@@ -1174,7 +1175,7 @@ impl<'a> Printer<'a> {
                     if let Some(spec) =
                         self.system_module_specifier_text(import_decl.module_specifier)
                     {
-                        rejected_deps.insert(self.resolve_amd_bundled_spec(&spec).into_owned());
+                        rejected_deps.insert(self.resolve_amd_bundled_spec(&spec));
                     }
                     continue;
                 }
@@ -1183,7 +1184,7 @@ impl<'a> Printer<'a> {
                 else {
                     continue;
                 };
-                let module_spec = self.resolve_amd_bundled_spec(&raw_spec).into_owned();
+                let module_spec = self.resolve_amd_bundled_spec(&raw_spec);
                 let local_name = self.get_identifier_text_idx(import_decl.import_clause);
                 if local_name.is_empty() {
                     continue;
@@ -1211,7 +1212,7 @@ impl<'a> Printer<'a> {
                 if let Some(raw_spec) =
                     self.system_module_specifier_text(export_decl.module_specifier)
                 {
-                    let module_spec = self.resolve_amd_bundled_spec(&raw_spec).into_owned();
+                    let module_spec = self.resolve_amd_bundled_spec(&raw_spec);
                     seen_value.insert(module_spec.clone());
                     if collect_for_amd {
                         let dep_var = self.next_commonjs_module_var(&module_spec);
@@ -1238,7 +1239,7 @@ impl<'a> Printer<'a> {
             else {
                 continue;
             };
-            let module_spec = self.resolve_amd_bundled_spec(&raw_spec).into_owned();
+            let module_spec = self.resolve_amd_bundled_spec(&raw_spec);
             let Some(clause_node) = self.arena.get(import_decl.import_clause) else {
                 if seen_side_effect.insert(module_spec.clone()) {
                     side_effect_deps.push(module_spec);
@@ -1321,15 +1322,14 @@ impl<'a> Printer<'a> {
 
         for dep in dependencies {
             let resolved = self.resolve_amd_bundled_spec(dep);
-            let resolved: &str = &resolved;
-            if seen_value.contains(resolved)
-                || seen_side_effect.contains(resolved)
-                || rejected_deps.contains(resolved)
+            if seen_value.contains(&resolved)
+                || seen_side_effect.contains(&resolved)
+                || rejected_deps.contains(&resolved)
             {
                 continue;
             }
-            if seen_side_effect.insert(resolved.to_owned()) {
-                side_effect_deps.push(resolved.to_owned());
+            if seen_side_effect.insert(resolved.clone()) {
+                side_effect_deps.push(resolved);
             }
         }
 
