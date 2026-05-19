@@ -2270,6 +2270,68 @@ class Box implements Array<number> {}
 }
 
 #[test]
+fn test_module_local_regexp_interface_in_implements_shadows_global_regexp() {
+    let source = r#"
+export {};
+
+interface RegExp {
+    localOnly(): string;
+}
+
+class Pattern implements RegExp {
+    localOnly() {
+        return "";
+    }
+}
+
+const value: string = new Pattern().localOnly();
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_lib(source);
+
+    assert!(
+        !has_error(&diagnostics, 2420),
+        "Expected module-local RegExp to be checked instead of global RegExp. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Expected Pattern.localOnly to remain visible after the implements check. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_module_local_regexp_interface_missing_member_uses_local_display() {
+    let source = r#"
+export {};
+
+interface RegExp {
+    localOnly(): string;
+}
+
+class Pattern implements RegExp {}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_lib(source);
+    let ts2420 = diagnostics
+        .iter()
+        .find(|(code, _)| *code == 2420)
+        .expect("Expected TS2420 for missing local RegExp.localOnly member");
+
+    assert!(
+        ts2420.1.contains("interface 'RegExp'"),
+        "Expected local interface display name in TS2420. Actual diagnostic: {ts2420:#?}"
+    );
+    assert!(
+        ts2420.1.contains("localOnly"),
+        "Expected TS2420 to mention the local RegExp.localOnly member. Actual diagnostic: {ts2420:#?}"
+    );
+    assert!(
+        !ts2420.1.contains("exec"),
+        "Did not expect global RegExp member requirements for module-local RegExp. Actual diagnostic: {ts2420:#?}"
+    );
+}
+
+#[test]
 fn test_module_local_array_type_alias_shadows_global_array_reference() {
     let source = r#"
 export {};
