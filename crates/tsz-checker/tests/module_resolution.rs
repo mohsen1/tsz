@@ -1105,23 +1105,21 @@ fn test_build_module_resolution_maps_registers_arbitrary_ext_decl_under_user_for
         Some(&3),
     );
 
-    // The naive `<base>.d.<ext>` strip form is NOT registered: TS does not
-    // accept it and registering it would shadow real `.d.<ext>` imports if
-    // they ever existed in a project.
-    assert!(!paths.contains_key(&(0, "./component.d.html".to_string())));
-    assert!(!paths.contains_key(&(0, "./styles.d.css".to_string())));
-    assert!(!paths.contains_key(&(0, "./widgets/Button.d.svelte".to_string())));
-
-    // The `<base>.d.<ext>.ts` and `<base>.<ext>.ts` forms are NOT registered:
-    // they are not user-written spellings for arbitrary-ext decl files.
-    assert!(!paths.contains_key(&(0, "./component.d.html.ts".to_string())));
-    assert!(!paths.contains_key(&(0, "./component.html.ts".to_string())));
+    // Additive: the legacy naive `<base>.d.<ext>` strip form and the
+    // `<base>.d.<ext>.ts` extension form remain registered for fixture
+    // compatibility. The user-form is the new addition; both spellings
+    // resolve to the same target file.
+    assert_eq!(paths.get(&(0, "./component.d.html".to_string())), Some(&1));
+    assert_eq!(
+        paths.get(&(0, "./component.d.html.ts".to_string())),
+        Some(&1)
+    );
 
     // Module set mirrors the path map.
     assert!(modules.contains("./component.html"));
     assert!(modules.contains("./styles.css"));
     assert!(modules.contains("./widgets/Button.svelte"));
-    assert!(!modules.contains("./component.d.html"));
+    assert!(modules.contains("./component.d.html"));
 }
 
 #[test]
@@ -1196,10 +1194,11 @@ fn test_fast_resolver_arbitrary_ext_decl() {
         Some(3),
     );
 
-    // The naive `.d.<ext>` form must NOT resolve via the fast path.
+    // Additive: the legacy naive `.d.<ext>` form also resolves (preserved
+    // for fixture compatibility).
     assert_eq!(
         resolve_specifier_via_file_index("/proj/main.ts", "./component.d.html", &idx),
-        None,
+        Some(1),
     );
 
     // Parent traversal works.
