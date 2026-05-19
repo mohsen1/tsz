@@ -96,8 +96,8 @@ pub mod query {
     pub use crate::visitors::visitor::{
         application_id, array_element_type, bound_parameter_index, callable_shape_id,
         collect_enum_def_ids, collect_infer_bindings, collect_lazy_def_ids,
-        collect_referenced_types, collect_type_queries, conditional_type_id,
-        constraint_references_type_param_in_resolution_path,
+        collect_referenced_types, collect_resolution_refs, collect_type_queries,
+        conditional_type_id, constraint_references_type_param_in_resolution_path,
         contains_concrete_application_with_def, contains_error_type, contains_free_infer_types,
         contains_infer_types, contains_this_type, contains_type_matching,
         contains_type_parameter_named, contains_type_parameter_named_shallow,
@@ -182,7 +182,7 @@ pub use operations::widening;
 pub use visitors::visitor::{
     apparent_intrinsic_kind, application_id, array_element_type, bound_parameter_index,
     callable_shape_id, collect_enum_def_ids, collect_infer_bindings, collect_lazy_def_ids,
-    collect_referenced_types, collect_type_queries, conditional_type_id,
+    collect_referenced_types, collect_resolution_refs, collect_type_queries, conditional_type_id,
     constraint_references_type_param_in_resolution_path, contains_concrete_application_with_def,
     contains_error_type, contains_free_infer_types, contains_infer_types, contains_this_type,
     contains_type_by_id, contains_type_matching, contains_type_parameter_named,

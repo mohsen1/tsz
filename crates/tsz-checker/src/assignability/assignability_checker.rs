@@ -4,12 +4,11 @@
 use crate::query_boundaries::assignability::{
     AssignabilityEvalKind, AssignabilityQueryInputs, are_types_overlapping_with_env,
     assignability_cache_key, check_application_variance_assignability,
-    classify_for_assignability_eval, contains_free_infer_types, get_allowed_keys, get_keyof_type,
-    get_string_literal_value, get_union_members, is_assignable_bivariant_with_resolver,
-    is_assignable_with_overrides, is_relation_cacheable, is_type_parameter_like,
-    keyof_object_properties, map_compound_members,
+    classify_for_assignability_eval, collect_resolution_refs, contains_free_infer_types,
+    get_allowed_keys, get_keyof_type, get_string_literal_value, get_union_members,
+    is_assignable_bivariant_with_resolver, is_assignable_with_overrides, is_relation_cacheable,
+    is_type_parameter_like, keyof_object_properties, map_compound_members,
 };
-use crate::query_boundaries::common::{collect_lazy_def_ids, collect_type_queries};
 use crate::state::{CheckerOverrideProvider, CheckerState};
 use rustc_hash::FxHashSet;
 use tracing::trace;
@@ -1380,23 +1379,33 @@ impl<'a> CheckerState<'a> {
         if self.ctx.refs_resolved.contains(&type_id) {
             return;
         }
+        if type_id.is_intrinsic() {
+            self.ctx.refs_resolved.insert(type_id);
+            return;
+        }
 
         let is_outermost = enter_refs_resolution_scope();
 
         let mut visited_types = FxHashSet::default();
         let mut visited_def_ids = FxHashSet::default();
         let mut worklist = vec![type_id];
+        let mut completed = true;
 
         while let Some(current) = worklist.pop() {
             if refs_resolution_fuel_exhausted() {
+                completed = false;
                 break;
             }
 
             if !visited_types.insert(current) {
                 continue;
             }
+            if current.is_intrinsic() {
+                continue;
+            }
 
-            for symbol_ref in collect_type_queries(self.ctx.types, current) {
+            let resolution_refs = collect_resolution_refs(self.ctx.types, current);
+            for symbol_ref in resolution_refs.type_queries {
                 let sym_id = tsz_binder::SymbolId(symbol_ref.0);
                 let _ = self.get_type_of_symbol(sym_id);
                 // Populate type_env with the VALUE type (constructor for classes) so that
@@ -1410,8 +1419,9 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            for def_id in collect_lazy_def_ids(self.ctx.types, current) {
+            for def_id in resolution_refs.lazy_def_ids {
                 if refs_resolution_fuel_exhausted() {
+                    completed = false;
                     break;
                 }
                 if !visited_def_ids.insert(def_id) {
@@ -1420,6 +1430,7 @@ impl<'a> CheckerState<'a> {
                 increment_refs_resolution_fuel();
                 increment_global_resolution_fuel();
                 if global_resolution_fuel_exhausted() {
+                    completed = false;
                     break;
                 }
                 if let Some(result) = self.resolve_and_insert_def_type(def_id)
@@ -1430,7 +1441,11 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
-        self.ctx.refs_resolved.insert(type_id);
+        if completed {
+            self.ctx.refs_resolved.extend(visited_types);
+        } else {
+            self.ctx.refs_resolved.insert(type_id);
+        }
 
         if is_outermost {
             exit_refs_resolution_scope();
