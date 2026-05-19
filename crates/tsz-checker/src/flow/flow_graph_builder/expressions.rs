@@ -606,7 +606,9 @@ impl<'a> FlowGraphBuilder<'a> {
                     if let Some(prop) = self.arena.get_property_decl(member_node) {
                         let prop_name = prop.name;
                         let prop_initializer = prop.initializer;
-                        let prop_modifiers = prop.modifiers.clone();
+                        let is_static_property = self
+                            .arena
+                            .has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword);
 
                         // Computed property name executes
                         if let Some(name_node) = self.arena.get(prop_name)
@@ -617,11 +619,7 @@ impl<'a> FlowGraphBuilder<'a> {
                         }
 
                         // Static initializer executes
-                        if self
-                            .arena
-                            .has_modifier(&prop_modifiers, SyntaxKind::StaticKeyword)
-                            && prop_initializer.is_some()
-                        {
+                        if is_static_property && prop_initializer.is_some() {
                             self.handle_expression_for_suspension_points(prop_initializer);
                             // Track assignment for static fields
                             let flow = self.create_flow_node(
