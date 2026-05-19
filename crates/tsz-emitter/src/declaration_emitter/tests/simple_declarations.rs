@@ -1820,9 +1820,11 @@ const p = {};
 "#,
     );
 
+    // tsc joins single-line @type comments to the following declaration even when
+    // they appear on a separate source line, so check for the joined form.
     assert!(
         output.starts_with(
-            "/**\n * @template T\n * @typedef {{\n  value: {\n    [K in keyof T]?: Box<T[K]>[]\n  }\n}} Box<T> */\n/** @type {Box<{foo:string}>} */\ndeclare const p: Box<{"
+            "/**\n * @template T\n * @typedef {{\n  value: {\n    [K in keyof T]?: Box<T[K]>[]\n  }\n}} Box<T> */\n/** @type {Box<{foo:string}>} */ declare const p: Box<{"
         ),
         "Expected unstarred typedef lines and following @type comment to preserve source text: {output}"
     );

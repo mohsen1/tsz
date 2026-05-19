@@ -356,7 +356,7 @@ TRAIT_METHOD_COUNT_CHECKS = [
         "Solver boundary: TypeDatabase method count (#8205)",
         ROOT / "crates" / "tsz-solver" / "src" / "caches" / "db.rs",
         "TypeDatabase",
-        97,
+        96,
     ),
 ]
 
@@ -493,7 +493,7 @@ ROOT_SOLVER_EXPLICIT_REEXPORT_COUNT_CHECKS = [
             "relations",
             "widening",
         ),
-        137,
+        132,
     ),
 ]
 
@@ -649,6 +649,12 @@ REGEX_LINE_COUNT_CHECKS = [
             r"RelationFlags::from_bits_truncate\s*\(|"
             r"CachedAnyMode::from_legacy_u8\s*\()"
         ),
+        0,
+    ),
+    (
+        "Solver relation boundary: query cache uses relation facade (#8207)",
+        [ROOT / "crates" / "tsz-solver" / "src" / "caches" / "query_cache.rs"],
+        re.compile(r"\b(?:configured_compat_checker|configured_subtype_checker)\s*\("),
         0,
     ),
 ]

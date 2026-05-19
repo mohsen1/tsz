@@ -2079,6 +2079,70 @@ impl<'a> Printer<'a> {
             }
             return true;
         }
+        if self.in_system_execute_body
+            && self.ctx.target_es5
+            && !has_decorators
+            && let Some(export_name) = export_name.as_ref()
+            && export_name != "default"
+        {
+            let mut es5_emitter = ClassES5Emitter::new(self.arena);
+            es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
+            es5_emitter.set_async_generator_inner_name_counts(
+                self.async_generator_inner_name_counts.clone(),
+            );
+            self.configure_es5_class_emitter_disposable_context(&mut es5_emitter);
+            es5_emitter.set_indent_level(self.writer.indent_level());
+            es5_emitter.set_transforms(self.transforms.clone());
+            es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
+            es5_emitter.set_printer_options(self.ctx.options.clone());
+            es5_emitter.set_module_kind(
+                self.ctx
+                    .original_module_kind
+                    .unwrap_or(self.ctx.options.module),
+            );
+            if let Some(text) = self.source_text_for_map() {
+                es5_emitter.set_source_text(text);
+            }
+            es5_emitter
+                .set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
+
+            let (mut assignment, static_blocks) =
+                es5_emitter.emit_class_assignment_split_statics(idx, &binding_name);
+            self.sync_es5_class_emitter_state(&mut es5_emitter);
+
+            if !assignment.is_empty() {
+                let leading_indent = "    ".repeat(self.writer.indent_level() as usize);
+                if let Some(stripped) = assignment.strip_prefix(&leading_indent) {
+                    assignment = stripped.to_string();
+                }
+                self.write(&assignment);
+                if !assignment.trim_end().ends_with(';') {
+                    self.write(";");
+                }
+                if !self.writer.is_at_line_start() {
+                    self.write_line();
+                }
+                self.write_export_binding_start(export_name);
+                self.write(&binding_name);
+                self.write_export_binding_end();
+
+                for mut static_block in static_blocks {
+                    if let Some(stripped) = static_block.strip_prefix(&leading_indent) {
+                        static_block = stripped.to_string();
+                    }
+                    self.write_line();
+                    self.write(&static_block);
+                    if !static_block.trim_end().ends_with(';') {
+                        self.write(";");
+                    }
+                }
+                self.mark_top_level_using_inline_cjs_export(Some(export_name), is_es_module_output);
+                if let Some(prev) = prev_anon_default_name {
+                    self.anonymous_default_export_name = prev;
+                }
+                return true;
+            }
+        }
         let before_len = self.writer.len();
         self.emit(idx);
         let after_len = self.writer.len();
