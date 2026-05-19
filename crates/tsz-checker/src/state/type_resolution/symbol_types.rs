@@ -130,6 +130,17 @@ impl<'a> CheckerState<'a> {
                         flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0;
                     let should_force_interface_decl_path =
                         has_interface_decl && (flags & symbol_flags::INTERFACE) == 0;
+                    if let Some(lazy_type) = self.try_lazy_actual_lib_interface_reference(
+                        sym_id,
+                        escaped_name,
+                        flags,
+                        declarations,
+                        is_merged_with_namespace,
+                        should_force_interface_decl_path,
+                    ) {
+                        self.ctx.leave_recursion();
+                        return lazy_type;
+                    }
                     // Cross-file interface symbols can share SymbolIds with locals, so
                     // resolve them through the symbol's home arena first.
                     let prefer_cross_file_interface = self
