@@ -10,21 +10,30 @@
 //! - Re-exports: `export { x } from "./module"`
 //! - Triple-slash reference directives: `/// <reference path="./module.ts" />`
 //!
-//! # Pipeline
+//! # Resolution pipeline (canonical)
 //!
 //! ```text
-//! raw specifier string ──▶ normalize_import_specifier ──▶ CanonicalSpecifier
-//! project file list    ──▶ build_target_index          ──▶ TargetIndex
-//! (source, canonical, index) ─▶ resolve_from_source    ──▶ Option<file_idx>
+//! arenas  ──▶ build_file_name_index ──▶ FileNameIndex (O(N), set_all_arenas)
+//! (source_file_name, specifier, index) ──▶ resolve_specifier_via_file_index ──▶ Option<file_idx>
 //! ```
 //!
-//! `build_module_resolution_maps` materializes the cross product (source
-//! file × target entry) into a flat `(src_idx, specifier) → tgt_idx` map for
-//! legacy consumers, but the expensive alias fan-out that previously generated
-//! quoted / backslash / extension-stripped / chain variants is gone. Each
-//! target now registers a small, deliberate set of *canonical* specifier
-//! strings (see `register_canonical_forms` below for the exact list and
-//! justifications).
+//! `CheckerContext::resolve_import_target_from_file` is the single public
+//! entry-point for the checker.  It uses `global_file_name_index` (built by
+//! `set_all_arenas` or `ProgramContext`) as the primary resolver, then falls
+//! back to the driver-populated `resolved_module_paths` for path-mapped and
+//! package-exports entries that the structural index cannot compute.
+//!
+//! # Legacy map (`build_module_resolution_maps`)
+//!
+//! `build_module_resolution_maps` materializes the O(N²) cross-product
+//! `(src_idx, specifier) → tgt_idx` map.  It is still used by:
+//! - `tsz-core` driver to build the module dependency graph for topological
+//!   ordering, augmentation walking, and incremental scheduling.
+//! - `ProgramContext.resolved_module_paths` as the driver-computed fallback.
+//!
+//! Checker resolution no longer depends on this map as the primary path.
+//! New checker code should call `resolve_import_target_from_file` instead of
+//! querying `resolved_module_paths` directly.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::{Component, Path};
@@ -200,7 +209,7 @@ pub fn normalize_import_specifier(specifier: &str) -> Option<CanonicalSpecifier>
         SpecifierKind::Bare
     };
 
-    // A pure dot chain is something like "." / "./" / ".." / "../" / "../.."
+    // A pure dot chain is something like "." / "./" / ".." / "../" / "../..."
     // etc. We keep these exactly as written — both `.` and `./` are legitimate
     // specifiers for the current-directory index and the map registers both.
     let core_without_trailing = slashed.trim_end_matches('/');
@@ -421,9 +430,11 @@ fn directory_specifier(from_dir: &Path, to_dir: &Path) -> Option<DirectorySpecif
 /// Resolve `specifier` as imported from `source_file` against the precomputed
 /// `TargetIndex`.
 ///
-/// Intentionally unused by the legacy map today — it exists as the natural
-/// "do one lookup" API for callers that want to skip the precomputed map.
-/// Callers that already use `build_module_resolution_maps` do not need this.
+/// Used for single-specifier lookups against a `TargetIndex` (returned by
+/// `build_target_index`).  For the canonical checker resolution path use
+/// `resolve_specifier_via_file_index` together with the `FileNameIndex`
+/// returned by `build_file_name_index`; that path avoids the O(N²)
+/// cross-product materialization.
 pub fn resolve_from_source(
     source_file: &str,
     specifier: &CanonicalSpecifier,
@@ -466,10 +477,16 @@ pub fn resolve_from_source(
 /// Build the flat `(source_file_idx, specifier) → target_file_idx` map and
 /// the set of all recognized specifier strings.
 ///
-/// This is the legacy entrypoint consumed by the checker, CLI, server, and a
-/// large number of integration tests. Behavior-compatible with the previous
-/// implementation for intentional cases; accidental cases (quoted-key
-/// variants, extension-stripped variants) are no longer registered.
+/// Primary consumers are the **driver** (module dependency graph for topological
+/// ordering, augmentation resolution, and incremental scheduling) and the
+/// `resolved_modules` set used by checker diagnostics.
+///
+/// **Checker module resolution** should call
+/// `CheckerContext::resolve_import_target_from_file` instead of querying this
+/// map directly.  The checker uses `build_file_name_index` +
+/// `resolve_specifier_via_file_index` as its primary path, falling back to the
+/// driver-populated `resolved_module_paths` only for specifiers the structural
+/// index cannot resolve (path mappings, package exports).
 ///
 /// See `register_canonical_forms` for the exact set of strings registered per
 /// target.
@@ -843,6 +860,16 @@ pub fn resolve_specifier_via_file_index(
     // resolve the resulting `./`, `../`, and doubled slashes. Pure
     // dot-chain specifiers (`.`, `./`, `..`, `../..`) fall through here
     // and resolve to src_dir (or an ancestor) + `/index.<ext>` below.
+    //
+    // Detect directory-hint specifiers before normalization while the trailing
+    // slash is still visible: `"./foo/"` and `"."` both target a DIRECTORY,
+    // not a file. For these, the extension fan-out must be skipped — e.g.
+    // `"."` from `a/b.ts` normalizes to `base = "a"`, and trying `"a.ts"`
+    // via fan-out would incorrectly resolve to a sibling file instead of the
+    // intended directory index `a/index.ts`.
+    let core_spec = spec_norm.trim_end_matches('/');
+    let is_directory_hint = spec_norm.ends_with('/') || is_pure_dot_chain(core_spec);
+
     let joined = if src_dir.is_empty() {
         spec_norm
     } else {
@@ -867,6 +894,80 @@ pub fn resolve_specifier_via_file_index(
     let stem = strip_ts_extension(&base);
     let mut buf = String::with_capacity(stem.len() + 8);
 
+    // Extension fan-out and arbitrary-ext probe are skipped for directory-hint
+    // specifiers. A trailing slash (`./foo/`) or dot-chain (`.`, `./`) signals
+    // that the user explicitly wants the directory index, not a same-name file.
+    if !is_directory_hint {
+        for ext in TS_EXTENSIONS {
+            buf.clear();
+            buf.push_str(stem);
+            buf.push_str(ext);
+            if let Some(&idx) = filename_idx.get(&buf) {
+                return Some(idx);
+            }
+        }
+
+        // Arbitrary-extension declaration file probe (`./component.html` →
+        // `/proj/component.d.html.ts`). Additive — only fires when the standard
+        // TS fan-out above missed and the specifier carries a non-TS/JS/JSON
+        // trailing extension.
+        if let Some((stem_base, ext)) = base.rsplit_once('.')
+            && !ext.is_empty()
+            && !ext.contains('/')
+            && !is_recognized_inner_module_ext(ext)
+        {
+            buf.clear();
+            buf.push_str(stem_base);
+            buf.push_str(".d.");
+            buf.push_str(ext);
+            buf.push_str(".ts");
+            if let Some(&idx) = filename_idx.get(&buf) {
+                return Some(idx);
+            }
+        }
+    }
+
+    // Directory-index fallback (`./lib` → `./lib/index.ts`). Don't append
+    // `/index` when the base is already empty (root directory). We always
+    // probe the stem, not `base`, to also cover `./lib.ts` → `./lib/index.ts`
+    // (unusual, but cheap and symmetric with the extension fan-out).
+    if !stem.is_empty() {
+        for ext in TS_EXTENSIONS {
+            buf.clear();
+            buf.push_str(stem);
+            buf.push_str("/index");
+            buf.push_str(ext);
+            if let Some(&idx) = filename_idx.get(&buf) {
+                return Some(idx);
+            }
+        }
+    }
+
+    None
+}
+
+/// Probe the filename index directly with a specifier, without joining against
+/// a source directory.
+///
+/// Unlike [`resolve_specifier_via_file_index`], this function does not compute
+/// a source-relative path. It handles direct spellings and extension fan-out
+/// only, so it is appropriate for project-relative bare paths such as
+/// `packages/foo/src/bar` that have no `./` prefix. The index contains only
+/// actual project files, so external package subpaths like `react/jsx-runtime`
+/// will naturally miss.
+pub fn probe_file_name_index(specifier: &str, filename_idx: &FileNameIndex) -> Option<usize> {
+    let spec_norm = if specifier.contains('\\') {
+        specifier.replace('\\', "/")
+    } else {
+        specifier.to_string()
+    };
+
+    if let Some(&idx) = filename_idx.get(&spec_norm) {
+        return Some(idx);
+    }
+
+    let stem = strip_ts_extension(&spec_norm);
+    let mut buf = String::with_capacity(stem.len() + 8);
     for ext in TS_EXTENSIONS {
         buf.clear();
         buf.push_str(stem);
@@ -876,29 +977,6 @@ pub fn resolve_specifier_via_file_index(
         }
     }
 
-    // Arbitrary-extension declaration file probe (`./component.html` →
-    // `/proj/component.d.html.ts`). Additive — only fires when the standard
-    // TS fan-out above missed and the specifier carries a non-TS/JS/JSON
-    // trailing extension.
-    if let Some((stem_base, ext)) = base.rsplit_once('.')
-        && !ext.is_empty()
-        && !ext.contains('/')
-        && !is_recognized_inner_module_ext(ext)
-    {
-        buf.clear();
-        buf.push_str(stem_base);
-        buf.push_str(".d.");
-        buf.push_str(ext);
-        buf.push_str(".ts");
-        if let Some(&idx) = filename_idx.get(&buf) {
-            return Some(idx);
-        }
-    }
-
-    // Directory-index fallback (`./lib` → `./lib/index.ts`). Don't append
-    // `/index` when the base is already empty (root directory). We always
-    // probe the stem, not `base`, to also cover `./lib.ts` → `./lib/index.ts`
-    // (unusual, but cheap and symmetric with the extension fan-out).
     if !stem.is_empty() {
         for ext in TS_EXTENSIONS {
             buf.clear();

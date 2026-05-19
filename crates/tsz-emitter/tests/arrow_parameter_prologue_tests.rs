@@ -42,6 +42,138 @@ fn es2015_arrow_binding_param_class_static_uses_native_prologue() {
 }
 
 #[test]
+fn es2015_arrow_binding_param_nullish_key_uses_native_prologue() {
+    let output = emit_with_target(
+        "const a = () => undefined;\n(({ [a() ?? \"d\"]: c = \"\" }) => {})();",
+        ScriptTarget::ES2015,
+    );
+
+    assert!(
+        output.contains(
+            "((_a) => { var _b; var { [(_b = a()) !== null && _b !== void 0 ? _b : \"d\"]: c = \"\" } = _a; })();"
+        ),
+        "Arrow binding parameter with a downlevel nullish key should move the pattern into a native body prologue.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("(({ [(_a = a())"),
+        "Downlevel nullish temp should not be hoisted outside the arrow parameter prologue.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es2015_arrow_binding_param_wrapped_nullish_key_uses_native_prologue() {
+    let output = emit_with_target(
+        "const a = () => undefined;\n(({ [+(a() ?? \"d\")]: c = \"\" }) => {})();",
+        ScriptTarget::ES2015,
+    );
+
+    assert!(
+        output.contains(
+            "((_a) => { var _b; var { [+((_b = a()) !== null && _b !== void 0 ? _b : \"d\")]: c = \"\" } = _a; })();"
+        ),
+        "Arrow binding parameter with a wrapped downlevel nullish key should move the pattern into a native body prologue.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("(({ [+((_a = a())"),
+        "Wrapped downlevel nullish temp should not be hoisted outside the arrow parameter prologue.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es2015_arrow_binding_param_optional_chain_key_uses_native_prologue() {
+    let output = emit_with_target(
+        "const a = () => undefined;\n(({ [a()?.d]: c = \"\" }) => {})();",
+        ScriptTarget::ES2015,
+    );
+
+    assert!(
+        output.contains(
+            "((_a) => { var _b; var { [(_b = a()) === null || _b === void 0 ? void 0 : _b.d]: c = \"\" } = _a; })();"
+        ),
+        "Arrow binding parameter with a downlevel optional-chain key should move the pattern into a native body prologue.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("(({ [(_a = a())"),
+        "Downlevel optional-chain temp should not be hoisted outside the arrow parameter prologue.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_arrow_binding_param_nullish_key_allocates_inner_temp_first() {
+    let output = emit_with_target(
+        "const a = () => undefined;\n(({ [a() ?? \"d\"]: c = \"\" }) => {})();",
+        ScriptTarget::ES5,
+    );
+
+    assert!(
+        output.contains(
+            "var _b;\n    var _c = (_b = a()) !== null && _b !== void 0 ? _b : \"d\", _d = _a[_c], c = _d === void 0 ? \"\" : _d;"
+        ),
+        "ES5 arrow parameter destructuring should allocate the nullish temp before the computed-key temp.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_arrow_binding_param_wrapped_nullish_key_allocates_inner_temp_first() {
+    let output = emit_with_target(
+        "const a = () => undefined;\n(({ [+(a() ?? \"d\")]: c = \"\" }) => {})();",
+        ScriptTarget::ES5,
+    );
+
+    assert!(
+        output.contains(
+            "var _b;\n    var _c = +((_b = a()) !== null && _b !== void 0 ? _b : \"d\"), _d = _a[_c], c = _d === void 0 ? \"\" : _d;"
+        ),
+        "ES5 arrow parameter destructuring should allocate the wrapped nullish temp before the computed-key temp.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_arrow_binding_param_array_wrapped_nullish_key_allocates_inner_temp_first() {
+    let output = emit_with_target(
+        "const a = () => undefined;\n(({ [[a() ?? \"d\"][0]]: c = \"\" }) => {})();",
+        ScriptTarget::ES5,
+    );
+
+    assert!(
+        output.contains(
+            "var _b;\n    var _c = [(_b = a()) !== null && _b !== void 0 ? _b : \"d\"][0], _d = _a[_c], c = _d === void 0 ? \"\" : _d;"
+        ),
+        "ES5 arrow parameter destructuring should capture downlevel temps inside array/access wrappers before the computed-key temp.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_arrow_binding_param_object_wrapped_nullish_key_allocates_inner_temp_first() {
+    let output = emit_with_target(
+        "const a = () => undefined;\n(({ [{ value: a() ?? \"d\" }.value]: c = \"\" }) => {})();",
+        ScriptTarget::ES5,
+    );
+
+    assert!(
+        output.contains(
+            "var _b;\n    var _c = { value: (_b = a()) !== null && _b !== void 0 ? _b : \"d\" }.value, _d = _a[_c], c = _d === void 0 ? \"\" : _d;"
+        ),
+        "ES5 arrow parameter destructuring should capture downlevel temps inside object/member wrappers before the computed-key temp.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_arrow_binding_param_optional_chain_key_allocates_inner_temp_first() {
+    let output = emit_with_target(
+        "const a = () => undefined;\n(({ [a()?.d]: c = \"\" }) => {})();",
+        ScriptTarget::ES5,
+    );
+
+    assert!(
+        output.contains(
+            "var _b;\n    var _c = (_b = a()) === null || _b === void 0 ? void 0 : _b.d, _d = _a[_c], c = _d === void 0 ? \"\" : _d;"
+        ),
+        "ES5 arrow parameter destructuring should allocate the optional-chain temp before the computed-key temp.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn es2015_simple_optional_chain_arrow_stays_concise_with_comment() {
     let output = emit_with_target(
         "// https://github.com/microsoft/TypeScript/issues/41814\n\

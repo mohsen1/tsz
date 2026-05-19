@@ -11,7 +11,6 @@
 //! - `substitute_infer`: Replace infer types with their bindings
 //! - `bind_infer`: Bind a type to an infer parameter
 
-use crate::instantiation::application::ApplicationEvaluator;
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::{
     LiteralValue, ParamInfo, TemplateSpan, TupleElement, TypeData, TypeId, TypeParamInfo,
@@ -1354,6 +1353,27 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             }
                             return true;
                         }
+                        if source_app.args.len() == pattern_app.args.len() {
+                            let candidate_pattern = self
+                                .interner()
+                                .application(pattern_app.base, source_app.args.clone());
+                            if checker.is_subtype_of(current_source, candidate_pattern) {
+                                for (source_arg, pattern_arg) in
+                                    source_app.args.iter().zip(pattern_app.args.iter())
+                                {
+                                    if !self.match_infer_pattern(
+                                        *source_arg,
+                                        *pattern_arg,
+                                        bindings,
+                                        visited,
+                                        checker,
+                                    ) {
+                                        return false;
+                                    }
+                                }
+                                return true;
+                            }
+                        }
                     }
                     let Some(peeled) = self.peel_alias_application(current_source) else {
                         break;
@@ -1364,11 +1384,31 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // Fallback: Structural expansion
                 // Expand the pattern Application to its structural form and recurse
                 // This handles cases like: Reducer<infer S> matching a structural function type
-                let evaluator = ApplicationEvaluator::new(self.interner(), self.resolver());
-                let expanded_pattern = evaluator.evaluate_or_original(pattern);
+                let mut evaluator = TypeEvaluator::with_resolver(self.interner(), self.resolver());
+                evaluator.set_no_unchecked_indexed_access(self.no_unchecked_indexed_access());
+                if let Some(query_db) = self.query_db() {
+                    evaluator = evaluator.with_query_db(query_db);
+                }
+                let expanded_pattern = evaluator.evaluate(pattern);
 
                 // Only recurse if expansion actually changed the type
                 if expanded_pattern != pattern {
+                    if let Some(alias) = self.interner().get_display_alias(source)
+                        && alias != source
+                    {
+                        let mut alias_bindings = bindings.clone();
+                        let mut alias_visited = visited.clone();
+                        if self.match_infer_pattern(
+                            alias,
+                            expanded_pattern,
+                            &mut alias_bindings,
+                            &mut alias_visited,
+                            checker,
+                        ) {
+                            *bindings = alias_bindings;
+                            return true;
+                        }
+                    }
                     return self.match_infer_pattern(
                         source,
                         expanded_pattern,

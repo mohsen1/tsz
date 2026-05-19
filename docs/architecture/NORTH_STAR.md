@@ -67,7 +67,9 @@ Rules:
 3. Checker code does not invent identity in hot paths when binder/project state
    can provide it earlier.
 4. Built-in and lib concepts resolve through binder/global tables or builtin
-   IDs, not string matching over user spelling.
+   IDs, not string matching over user spelling. See
+   [`WELL_KNOWN_NAME_REFERENCES.md`](WELL_KNOWN_NAME_REFERENCES.md) for the
+   current exception inventory and migration policy.
 
 ## Explicit Requests
 

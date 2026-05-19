@@ -1762,7 +1762,7 @@ impl<'a> Printer<'a> {
         // Start scanning after the `declare` keyword (7 chars: "declare")
         let declare_end = node.pos as usize + 7;
         let node_end = node.end as usize;
-        if declare_end >= bytes.len() || declare_end >= node_end {
+        if declare_end >= bytes.len() || declare_end > node_end {
             return false;
         }
         // Skip leading trivia (whitespace) to find where `declare` actually starts

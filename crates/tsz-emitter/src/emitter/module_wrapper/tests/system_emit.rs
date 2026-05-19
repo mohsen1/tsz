@@ -467,6 +467,165 @@ export class A {
 }
 
 #[test]
+fn system_es5_named_exported_class_with_renamed_binding_static_block_runs_after_export() {
+    // Class-name-independent variant: static-block ordering applies regardless of identifier spelling.
+    let source = r#"declare function side(x: any): void;
+export class Cls {
+    static {
+        side(Cls);
+    }
+}
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    let assignment_pos = output
+        .find("Cls = /** @class */ (function () {")
+        .expect("System ES5 named class export should assign an ES5 class IIFE");
+    let export_pos = output
+        .find("exports_1(\"Cls\", Cls);")
+        .expect("System named export should publish the class binding after assignment");
+    let static_block_pos = output
+        .find("side(Cls);")
+        .expect("System ES5 static block should lower to an IIFE");
+
+    assert!(
+        assignment_pos < export_pos && export_pos < static_block_pos,
+        "System ES5 named class static block should run after the export call.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_es5_default_exported_class_static_block_runs_before_export() {
+    // For `export default class`, tsc emits the static block IIFE before
+    // exports_1("default", ...) — opposite of named exports.
+    let source = r#"declare function side(x: any): void;
+export default class MyClass {
+    static {
+        side(MyClass);
+    }
+}
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    let static_block_pos = output
+        .find("side(MyClass);")
+        .expect("System ES5 static block should lower to an IIFE");
+    let export_pos = output
+        .find("exports_1(\"default\",")
+        .expect("System default export should publish the class binding");
+
+    assert!(
+        static_block_pos < export_pos,
+        "System ES5 default class static block should run before the export call.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_es5_anonymous_default_exported_class_static_block_runs_before_export() {
+    // Anonymous `export default class` (no identifier): same rule as named default —
+    // static block IIFE runs before exports_1("default", ...).
+    let source = r#"declare function side(x: any): void;
+export default class {
+    static {
+        side(42);
+    }
+}
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    let static_block_pos = output
+        .find("side(42);")
+        .expect("System ES5 static block should lower to an IIFE");
+    let export_pos = output
+        .find("exports_1(\"default\",")
+        .expect("System default export should publish the class binding");
+
+    assert!(
+        static_block_pos < export_pos,
+        "System ES5 anonymous default class static block should run before the export call.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_es5_non_exported_class_static_block_runs_after_assignment() {
+    // Non-exported classes have no exports_1; the static block must still run
+    // after the class assignment (not inside the IIFE before `return`).
+    let source = r#"declare function side(x: any): void;
+class Internal {
+    static {
+        side(Internal);
+    }
+}
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    let assignment_pos = output
+        .find("Internal = /** @class */ (function () {")
+        .expect("System ES5 non-exported class should assign an ES5 class IIFE");
+    let static_block_pos = output
+        .find("side(Internal);")
+        .expect("System ES5 static block should lower to an IIFE");
+
+    assert!(
+        assignment_pos < static_block_pos,
+        "System ES5 non-exported class static block should run after the assignment.\nOutput:\n{output}"
+    );
+    // The static block must not be folded into the assignment expression.
+    assert!(
+        !output.contains("Internal = (_a ="),
+        "Static-block-only classes should not fold the static block into the assignment RHS.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn system_wrapper_inlines_const_enum_member_accesses() {
     let source = r#"declare function use(a: any);
 const enum TopLevelConstEnum { X }

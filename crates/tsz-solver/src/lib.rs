@@ -260,11 +260,6 @@ pub use operations::compound_assignment::{
     fallback_compound_assignment_result, is_assignment_operator, is_compound_assignment_operator,
     is_logical_compound_assignment_operator, map_compound_assignment_to_binary,
 };
-pub use operations::expression_ops::{
-    compute_best_common_type, compute_best_common_type_cached, compute_conditional_expression_type,
-    compute_template_expression_type, compute_template_expression_type_contextual,
-    is_template_literal_contextual_type, normalize_object_union_members_for_write_target,
-};
 pub use operations::{
     AssignabilityChecker, BinaryOpEvaluator, BinaryOpResult, CallEvaluator, CallResult,
     MAX_CONSTRAINT_RECURSION_DEPTH, get_contextual_signature_cached_with_compat_checker,

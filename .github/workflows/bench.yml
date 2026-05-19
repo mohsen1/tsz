@@ -35,6 +35,7 @@ env:
   BENCH_COLD: "1"
   BENCH_PGO: "1"
   BENCH_REQUIRE_PGO: "1"
+  HYPERFINE_VER: "1.18.0"
   GITHUB_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
   BENCH_TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
   CARGO_HOME: ${{ github.workspace }}/.ci-cache/cargo-home
@@ -695,13 +696,10 @@ jobs:
     name: bench-${{ matrix.label }}
     needs: bench-prep-artifact
     if: needs.bench-prep-artifact.outputs.should_run == 'true'
-    runs-on: [self-hosted, tsz-cloud-run]
+    runs-on: ubuntu-latest
     timeout-minutes: ${{ matrix.timeout }}
     strategy:
       fail-fast: false
-      # Keep one benchmark shard running at a time so main benchmarks do not
-      # saturate the self-hosted runner pool or overlap with each other.
-      max-parallel: 1
       matrix:
         include:
           - label: compiler-files
@@ -734,10 +732,23 @@ jobs:
           ref: ${{ env.BENCH_TARGET_SHA }}
           fetch-depth: 1
 
-      - name: Restore GCS caches
-        env:
-          _TSZ_CI_SUITE: bench
-        run: scripts/ci/gcp-cache.sh restore
+      - name: Restore tools cache
+        id: tools-cache
+        uses: actions/cache@v4
+        with:
+          path: .target-bench/tools
+          key: bench-tools-${{ runner.os }}-hyperfine-${{ env.HYPERFINE_VER }}-${{ hashFiles('scripts/bench/project-fixtures.sh') }}
+
+      - name: Install hyperfine
+        if: steps.tools-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p .target-bench/tools/bin
+          curl -fsSL "https://github.com/sharkdp/hyperfine/releases/download/v${HYPERFINE_VER}/hyperfine-v${HYPERFINE_VER}-x86_64-unknown-linux-musl.tar.gz" \
+            | tar xz --strip-components=1 -C .target-bench/tools/bin \
+                "hyperfine-v${HYPERFINE_VER}-x86_64-unknown-linux-musl/hyperfine"
+
+      - name: Add tools bin to PATH
+        run: echo "$GITHUB_WORKSPACE/.target-bench/tools/bin" >> "$GITHUB_PATH"
 
       - name: Restore external fixture cache
         uses: actions/cache@v4

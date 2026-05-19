@@ -12,6 +12,9 @@ permissions:
   issues: read
   pull-requests: read
 
+env:
+  _BENCH_ARTIFACT_NAME: bench-results-merged
+
 jobs:
   wip-state-comments:
     name: wip-state-comments
@@ -188,3 +191,80 @@ jobs:
           if [[ "${AAAA_COUNT}" -eq 0 ]]; then
             echo "::warning::No AAAA records for ${DOMAIN} — IPv6 clients cannot reach the site (see issue #5098)"
           fi
+
+  bench-artifact-readiness:
+    name: bench-artifact-readiness
+    runs-on: ubuntu-latest
+    # Advisory only — a missing artifact is surfaced as a warning, not a blocker.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Find latest bench-results-merged artifact
+        id: find-artifact
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          repo="${{ github.repository }}"
+          artifact_name="${_BENCH_ARTIFACT_NAME}"
+
+          # Walk recent successful bench.yml runs on main until we find one with
+          # a non-expired bench-results-merged artifact (artifacts expire after 30 days).
+          RUN_ID="$(
+            gh run list \
+              --repo "${repo}" \
+              --workflow bench.yml \
+              --branch main \
+              --status success \
+              --limit 20 \
+              --json databaseId \
+              --jq '.[].databaseId' |
+            while IFS= read -r candidate; do
+              artifact_id="$(
+                gh api "repos/${repo}/actions/runs/${candidate}/artifacts" \
+                  --jq ".artifacts[]? | select(.name == \"${artifact_name}\" and .expired == false) | .id" |
+                head -n 1
+              )"
+              if [[ -n "${artifact_id}" ]]; then
+                echo "${candidate}"
+                break
+              fi
+            done
+          )"
+
+          if [[ -z "${RUN_ID}" ]]; then
+            echo "run_id=" >> "$GITHUB_OUTPUT"
+            echo "::warning::No recent successful bench.yml run has a non-expired ${artifact_name} artifact."
+          else
+            echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
+            echo "Found bench run ${RUN_ID} with ${artifact_name} artifact."
+          fi
+
+      - name: Download bench-results-merged artifact
+        if: steps.find-artifact.outputs.run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env._BENCH_ARTIFACT_NAME }}
+          path: bench-artifact
+          run-id: ${{ steps.find-artifact.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+      - name: Run artifact readiness check
+        run: |
+          set -euo pipefail
+          artifact="bench-artifact/bench-results.json"
+
+          check_exit=0
+          node scripts/bench/check-artifact-readiness.mjs "${artifact}" \
+            || check_exit=$?
+
+          if [[ "${check_exit}" -eq 1 ]]; then
+            echo "::warning::bench artifact is present but missing required project rows"
+          elif [[ "${check_exit}" -eq 2 ]]; then
+            echo "::warning::bench artifact absent or could not be parsed — bench did not complete for latest main"
+          fi
+          exit 0

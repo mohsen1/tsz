@@ -27,6 +27,17 @@ pub(super) fn is_broad_index_type(db: &dyn tsz_solver::TypeDatabase, ty: TypeId)
     })
 }
 
+pub(super) fn generic_constrained_index(
+    db: &dyn tsz_solver::TypeDatabase,
+    object_type: TypeId,
+    index_type: TypeId,
+    index_constraint: Option<TypeId>,
+) -> bool {
+    index_constraint.is_some()
+        && crate::query_boundaries::common::is_type_parameter_like(db, object_type)
+        && crate::query_boundaries::common::is_type_parameter_like(db, index_type)
+}
+
 pub(super) fn same_type_param_name(
     db: &dyn tsz_solver::TypeDatabase,
     left: TypeId,

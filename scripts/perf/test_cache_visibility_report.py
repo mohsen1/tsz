@@ -357,6 +357,30 @@ class CacheVisibilityReportTests(unittest.TestCase):
         self.assertEqual(len(candidates), 1)
         self.assertFalse(candidates[0].needs_review)
 
+    def test_solver_visitor_predicate_memos_are_visible(self):
+        root = Path(__file__).resolve().parents[2]
+        candidates = self.module.scan([root / "crates/tsz-solver/src/visitors"])
+        predicate_memos = {
+            candidate.owner: candidate
+            for candidate in candidates
+            if candidate.path == "crates/tsz-solver/src/visitors/visitor_predicates.rs"
+            and candidate.name == "memo"
+        }
+
+        self.assertEqual(
+            set(predicate_memos),
+            {
+                "ContainsTypeChecker",
+                "FreeTypeParamChecker",
+                "FreeInferChecker",
+                "ShallowContainsTypeChecker",
+            },
+        )
+        self.assertFalse(
+            any(candidate.needs_review for candidate in predicate_memos.values()),
+            predicate_memos,
+        )
+
     def test_default_roots_include_binder_cache_surfaces(self):
         self.assertIn("crates/tsz-binder/src", self.module.DEFAULT_ROOTS)
 
