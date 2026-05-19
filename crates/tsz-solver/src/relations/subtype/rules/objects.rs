@@ -476,10 +476,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
-        // Check optional compatibility
-        // Optional in source can't satisfy required in target
+        // Optional source properties cannot satisfy required target properties.
+        // In standard mode, optional_property_type() widens the read type to `T | undefined`,
+        // but the property may still be absent.
         if source.optional && !target.optional {
-            // Trace: Optional property cannot satisfy required property
             if let Some(tracer) = &mut self.tracer
                 && !tracer.on_mismatch_dyn(
                     crate::diagnostics::SubtypeFailureReason::OptionalPropertyRequired {
@@ -1121,7 +1121,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     return SubtypeResult::False;
                 }
 
-                // Check optional compatibility
+                // Check optional compatibility (see check_property_compatibility for rationale)
                 if sp.optional && !t_prop.optional {
                     return SubtypeResult::False;
                 }

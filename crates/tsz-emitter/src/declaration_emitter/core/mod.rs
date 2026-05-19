@@ -112,6 +112,15 @@ pub struct DeclarationEmitter<'a> {
     pub(super) inside_non_ambient_namespace: bool,
     /// Whether we're emitting constructor parameters (don't emit accessibility modifiers)
     pub(super) in_constructor_params: bool,
+    /// Whether we're emitting class members as the body of an anonymous
+    /// constructor object type (`{ new(...): { ...members... } }`), e.g. the
+    /// inferred return type of a function returning a class expression.
+    ///
+    /// Object-type-literal syntax does not permit class-declaration-only forms
+    /// like `readonly name = "value"` (initializer syntax). Member emit must
+    /// use `:` annotation form (`readonly name: "value"`) when this flag is
+    /// set.
+    pub(super) in_object_type_class_body: bool,
     /// Track function names that have overload signatures (to skip implementation signatures)
     pub(super) function_names_with_overloads: FxHashSet<String>,
     /// Track whether current class has constructor overloads (to skip implementation constructor)

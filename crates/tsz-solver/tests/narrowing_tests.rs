@@ -1756,6 +1756,269 @@ fn test_narrow_type_instanceof_any_target_returns_source_unchanged() {
 }
 
 // =============================================================================
+// Symbol.hasInstance-aware instanceof narrowing
+// =============================================================================
+//
+// Structural rule: when the right operand of `instanceof` declares a non-asserting
+// `[Symbol.hasInstance](value: ...): value is T` type predicate, the predicate
+// target `T` is the instance type — overriding `prototype` and construct
+// signature return types. Mirrors tsc's `getNarrowedTypeForInstanceofPredicate`.
+
+/// Build a constructor whose `[Symbol.hasInstance]` method has the given
+/// predicate target, with an optional construct signature return type.
+fn make_constructor_with_has_instance(
+    interner: &TypeInterner,
+    construct_return: Option<TypeId>,
+    predicate_target: Option<TypeId>,
+    predicate_asserts: bool,
+    param_name: &str,
+) -> TypeId {
+    use crate::types::{
+        CallSignature, CallableShape, FunctionShape, ParamInfo, PropertyInfo, TypePredicate,
+        TypePredicateTarget,
+    };
+
+    let name_atom = interner.intern_string(param_name);
+    let has_instance_atom = interner.intern_string("[Symbol.hasInstance]");
+
+    let has_instance_fn = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo::required(name_atom, TypeId::UNKNOWN)],
+        this_type: None,
+        return_type: TypeId::BOOLEAN,
+        type_predicate: predicate_target.map(|target| TypePredicate {
+            asserts: predicate_asserts,
+            target: TypePredicateTarget::Identifier(name_atom),
+            type_id: Some(target),
+            parameter_index: Some(0),
+        }),
+        is_constructor: false,
+        is_method: true,
+    });
+
+    let construct_signatures = construct_return
+        .map(|ret| vec![CallSignature::new(vec![], ret)])
+        .unwrap_or_default();
+
+    interner.callable(CallableShape {
+        construct_signatures,
+        properties: vec![PropertyInfo::method(has_instance_atom, has_instance_fn)],
+        ..CallableShape::default()
+    })
+}
+
+/// `x instanceof RHS` where `RHS` has `[Symbol.hasInstance](v: unknown): value is STRING`
+/// narrows by `STRING` and ignores the construct signature return type (`NUMBER`).
+#[test]
+fn test_narrow_by_instanceof_uses_symbol_has_instance_predicate() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let constructor = make_constructor_with_has_instance(
+        &interner,
+        Some(TypeId::NUMBER), // construct sig says new (): NUMBER
+        Some(TypeId::STRING), // hasInstance says value is STRING
+        false,
+        "value",
+    );
+
+    let source = interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN]);
+    let narrowed = ctx.narrow_by_instanceof(source, constructor, true);
+
+    assert_eq!(
+        narrowed,
+        TypeId::STRING,
+        "narrow_by_instanceof must use the [Symbol.hasInstance] predicate target \
+         (STRING) instead of the construct signature return (NUMBER)"
+    );
+}
+
+/// The structural rule is parameter-name-independent: renaming `value` to `x`
+/// must not change the narrowed result. Locks in §25 of `CLAUDE.md` (no
+/// hardcoded user-chosen names).
+#[test]
+fn test_narrow_by_instanceof_has_instance_independent_of_param_name() {
+    for param_name in ["value", "x", "v"] {
+        let interner = TypeInterner::new();
+        let ctx = NarrowingContext::new(&interner);
+
+        let constructor = make_constructor_with_has_instance(
+            &interner,
+            None,
+            Some(TypeId::NUMBER),
+            false,
+            param_name,
+        );
+
+        let source = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+        let narrowed = ctx.narrow_by_instanceof(source, constructor, true);
+
+        assert_eq!(
+            narrowed,
+            TypeId::NUMBER,
+            "predicate narrowing must not depend on parameter name (got param={param_name})"
+        );
+    }
+}
+
+/// `asserts value is T` predicates do NOT participate in instanceof narrowing
+/// per tsc — only non-asserting predicates carry through.
+#[test]
+fn test_narrow_by_instanceof_ignores_asserts_has_instance_predicate() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let constructor = make_constructor_with_has_instance(
+        &interner,
+        Some(TypeId::NUMBER),
+        Some(TypeId::STRING),
+        true, // asserts
+        "value",
+    );
+
+    let source = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let narrowed = ctx.narrow_by_instanceof(source, constructor, true);
+
+    assert_eq!(
+        narrowed,
+        TypeId::NUMBER,
+        "asserts-only predicate must NOT drive instanceof narrowing — \
+         construct signature return must be used instead"
+    );
+}
+
+/// When the constructor has no `[Symbol.hasInstance]` method, narrowing falls
+/// back to the construct signature return type.
+#[test]
+fn test_narrow_by_instanceof_without_has_instance_uses_construct_return() {
+    use crate::types::{CallSignature, CallableShape};
+
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let constructor = interner.callable(CallableShape {
+        construct_signatures: vec![CallSignature::new(vec![], TypeId::NUMBER)],
+        ..CallableShape::default()
+    });
+
+    let source = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let narrowed = ctx.narrow_by_instanceof(source, constructor, true);
+
+    assert_eq!(
+        narrowed,
+        TypeId::NUMBER,
+        "Without Symbol.hasInstance, narrowing must use the construct signature return"
+    );
+}
+
+/// Union of constructors where EVERY member has `[Symbol.hasInstance]` —
+/// `instance_type_from_symbol_has_instance` returns the union of predicate
+/// targets, and narrowing must filter by that union.
+///
+/// Uses primitive predicate targets (STRING / NUMBER) so the assertion is
+/// unaffected by interface-overlap intersection fallbacks.
+#[test]
+fn test_narrow_by_instanceof_union_constructor_both_have_has_instance() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // Member A: [Symbol.hasInstance]: value is STRING.
+    let a_constructor =
+        make_constructor_with_has_instance(&interner, None, Some(TypeId::STRING), false, "value");
+
+    // Member B: [Symbol.hasInstance]: value is NUMBER. Renamed param ("v")
+    // ensures the rule isn't keyed on parameter name across union members.
+    let b_constructor =
+        make_constructor_with_has_instance(&interner, None, Some(TypeId::NUMBER), false, "v");
+
+    let union_constructor = interner.union2(a_constructor, b_constructor);
+    let source = interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN]);
+
+    let narrowed = ctx.narrow_by_instanceof(source, union_constructor, true);
+
+    // Predicate union STRING | NUMBER, applied to STRING | NUMBER | BOOLEAN.
+    let expected_union = interner.union2(TypeId::STRING, TypeId::NUMBER);
+    assert_eq!(
+        narrowed, expected_union,
+        "Union constructor where both members carry Symbol.hasInstance must \
+         narrow by the union of predicate targets"
+    );
+}
+
+/// When the `[Symbol.hasInstance]` predicate target erases to `any` (e.g., the
+/// predicate is generic and its type parameter collapses), tsc's
+/// `getInstanceType` falls back to the erased generic construct return rather
+/// than letting `any` widen the source. This test pins that precedence at the
+/// narrowing layer so the solver entry point can't diverge from
+/// `instance_type_from_constructor` (see #8670 review feedback).
+#[test]
+fn test_narrow_by_instanceof_collapsed_any_predicate_falls_back_to_generic_construct() {
+    use crate::def::DefId;
+    use crate::types::{
+        CallSignature, CallableShape, FunctionShape, ParamInfo, PropertyInfo, TypeParamInfo,
+        TypePredicate, TypePredicateTarget,
+    };
+
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let value_atom = interner.intern_string("value");
+    let t_name = interner.intern_string("T");
+    let t_info = TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.type_param(t_info);
+    let box_base = interner.lazy(DefId(4242));
+    let box_t = interner.application(box_base, vec![t_type]);
+    let box_any = interner.application(box_base, vec![TypeId::ANY]);
+    let has_instance_atom = interner.intern_string("[Symbol.hasInstance]");
+
+    // hasInstance predicate collapses to `any`.
+    let has_instance_fn = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo::required(value_atom, TypeId::UNKNOWN)],
+        this_type: None,
+        return_type: TypeId::BOOLEAN,
+        type_predicate: Some(TypePredicate {
+            asserts: false,
+            target: TypePredicateTarget::Identifier(value_atom),
+            type_id: Some(TypeId::ANY),
+            parameter_index: Some(0),
+        }),
+        is_constructor: false,
+        is_method: true,
+    });
+
+    // Constructor with both `any`-collapsing predicate AND a generic construct
+    // signature returning Box<T>. The any-fallback rule should select Box<any>
+    // (the erased generic construct return) rather than letting `any` widen.
+    let constructor = interner.callable(CallableShape {
+        construct_signatures: vec![CallSignature {
+            type_params: vec![t_info],
+            params: vec![],
+            this_type: None,
+            return_type: box_t,
+            type_predicate: None,
+            is_method: false,
+        }],
+        properties: vec![PropertyInfo::method(has_instance_atom, has_instance_fn)],
+        ..CallableShape::default()
+    });
+
+    let source = interner.union2(TypeId::STRING, box_any);
+    let narrowed = ctx.narrow_by_instanceof(source, constructor, true);
+
+    assert_eq!(
+        narrowed, box_any,
+        "Collapsed-any predicate must defer to the erased generic construct \
+         return (Box<any>) rather than narrowing source by `any`"
+    );
+}
+
+// =============================================================================
 // Enum narrowing tests (narrow_to_type for enum sources)
 // =============================================================================
 

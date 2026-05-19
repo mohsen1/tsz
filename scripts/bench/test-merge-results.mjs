@@ -6,6 +6,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { COMPILE_CANARY_PROJECT_ROWS, REQUIRED_PROJECT_ROWS } from "./project-rows.mjs";
+import { GREEN_COMPAT, YELLOW_COMPAT, RED_COMPAT } from "./row-utils.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
@@ -18,7 +19,7 @@ assert.ok(
   "test fixture expects at least one compile-canary row outside REQUIRED_PROJECT_ROWS",
 );
 
-const REQUIRED_COMPATIBILITY_FIELDS = {
+const SAMPLE_COMPATIBILITY = {
   generated_at: "2026-05-19T01:02:03.000Z",
   source_commit: "abcdef1234567890",
   workflow_name: "Bench",
@@ -38,7 +39,9 @@ const REQUIRED_COMPATIBILITY_FIELDS = {
   known_blockers: [],
   exit_codes: { tsc: [0], tsz: [0], tsgo: [0] },
   files_reached: 1,
+  files_reached_reason: null,
   peak_memory_bytes: 1024,
+  peak_memory_bytes_reason: null,
   fixture_sources: [{ name: "fixture", repository: "https://example.invalid/repo.git", ref: "abc123" }],
   emit_status: "not in scope (noEmit project check)",
   dts_status: "not in scope (noEmit project check)",
@@ -64,29 +67,17 @@ function withTempDir(fn) {
   }
 }
 
-function writePayload(file, results, extraPayload = {}) {
-  fs.writeFileSync(
-    file,
-    `${JSON.stringify({
-      quick_mode: false,
-      validation: { hyperfine_exit_codes_required: true },
-      totals: { benchmarks_run: results.length },
-      results,
-      ...extraPayload,
-    })}\n`,
-    "utf8",
-  );
-}
-
 function writeInput(dir, name, results, extraPayload = {}) {
   const input = path.join(dir, name);
-  writePayload(input, results, extraPayload);
+  const payload = {
+    quick_mode: false,
+    validation: { hyperfine_exit_codes_required: true },
+    totals: { benchmarks_run: results.length },
+    results,
+    ...extraPayload,
+  };
+  fs.writeFileSync(input, `${JSON.stringify(payload)}\n`, "utf8");
   return input;
-}
-
-function runMerge(dir, results, extraPayload = {}) {
-  const input = writeInput(dir, "input.json", results, extraPayload);
-  return runMergeInputs(dir, [input]);
 }
 
 function runMergeInputs(dir, inputs) {
@@ -109,7 +100,12 @@ function runMergeInputs(dir, inputs) {
   return { ...result, output };
 }
 
-function projectRow(name, compatibility = REQUIRED_COMPATIBILITY_FIELDS) {
+function runMerge(dir, results, extraPayload = {}) {
+  const input = writeInput(dir, "input.json", results, extraPayload);
+  return runMergeInputs(dir, [input]);
+}
+
+function projectRow(name, compatibility = SAMPLE_COMPATIBILITY) {
   return {
     name,
     lines: 1,
@@ -144,7 +140,7 @@ withTempDir((dir) => {
 withTempDir((dir) => {
   const rows = REQUIRED_PROJECT_ROWS.map((name) => {
     if (name !== "rxjs-project") return projectRow(name);
-    const { peak_memory_bytes: _peakMemoryBytes, ...compatibility } = REQUIRED_COMPATIBILITY_FIELDS;
+    const { peak_memory_bytes: _peakMemoryBytes, ...compatibility } = SAMPLE_COMPATIBILITY;
     return projectRow(name, compatibility);
   });
   const result = runMerge(dir, rows);
@@ -185,7 +181,7 @@ withTempDir((dir) => {
 
 withTempDir((dir) => {
   const canaryRow = COMPILE_ONLY_CANARY_PROJECT_ROWS[0];
-  const { diagnostic_subsystems: _diagnosticSubsystems, ...compatibility } = REQUIRED_COMPATIBILITY_FIELDS;
+  const { diagnostic_subsystems: _diagnosticSubsystems, ...compatibility } = SAMPLE_COMPATIBILITY;
   const result = runMerge(dir, [projectRow(canaryRow, compatibility)]);
   assert.equal(result.status, 1);
   assert.match(
@@ -196,7 +192,7 @@ withTempDir((dir) => {
 
 withTempDir((dir) => {
   const canaryRow = COMPILE_ONLY_CANARY_PROJECT_ROWS[0];
-  const { owner_track: _ownerTrack, ...compatibility } = REQUIRED_COMPATIBILITY_FIELDS;
+  const { owner_track: _ownerTrack, ...compatibility } = SAMPLE_COMPATIBILITY;
   const result = runMerge(dir, [projectRow(canaryRow, compatibility)]);
   assert.equal(result.status, 1);
   assert.match(
@@ -321,8 +317,50 @@ withTempDir((dir) => {
 // Non-artifact_missing rows must still fail if they have missing required fields.
 withTempDir((dir) => {
   const canaryRow = COMPILE_ONLY_CANARY_PROJECT_ROWS[0];
-  const { peak_memory_bytes: _peak, ...compatibility } = REQUIRED_COMPATIBILITY_FIELDS;
+  const { peak_memory_bytes: _peakMemoryBytes, ...compatibility } = SAMPLE_COMPATIBILITY;
   const result = runMerge(dir, [projectRow(canaryRow, compatibility)]);
   assert.equal(result.status, 1);
   assert.match(result.stderr, new RegExp(`${canaryRow}: missing compatibility\\.peak_memory_bytes`));
+});
+
+// artifact_missing row mixed with required green rows: the artifact_missing
+// row must not count as a green win even though its winner is set.
+withTempDir((dir) => {
+  const missingRow = REQUIRED_PROJECT_ROWS[0];
+  const rows = REQUIRED_PROJECT_ROWS.map((name) =>
+    name === missingRow
+      ? { name, artifact_missing: true, winner: "tsz", ratio: 1, tsz_ms: 1, tsgo_ms: 2 }
+      : projectRow(name),
+  );
+  const result = runMerge(dir, rows);
+  assert.equal(result.status, 0, result.stderr);
+  const merged = JSON.parse(fs.readFileSync(result.output, "utf8"));
+  assert.equal(merged.totals.rows, REQUIRED_PROJECT_ROWS.length);
+  assert.equal(merged.totals.green_tsz_wins, REQUIRED_PROJECT_ROWS.length - 1, "artifact_missing row must not count as a green win");
+});
+
+// green_tsz_wins / green_tsgo_wins: yellow/red rows with non-green compat do not count
+withTempDir((dir) => {
+  const greenRow = { name: "green", winner: "tsz", tsz_ms: 1, tsgo_ms: 2, compatibility: GREEN_COMPAT };
+  const yellowRow = { name: "yellow", winner: "tsz", tsz_ms: 1, tsgo_ms: 2, compatibility: YELLOW_COMPAT };
+  const redRow = { name: "red", winner: "tsz", tsz_ms: 1, tsgo_ms: 2, compatibility: RED_COMPAT };
+  const noCompatRow = { name: "no-compat", winner: "tsz", tsz_ms: 1, tsgo_ms: 2 };
+  const result = runMerge(dir, [greenRow, yellowRow, redRow, noCompatRow]);
+  assert.equal(result.status, 0, result.stderr);
+  const merged = JSON.parse(fs.readFileSync(result.output, "utf8"));
+  assert.equal(merged.totals.tsz_wins, 4);
+  assert.equal(merged.totals.green_tsz_wins, 2, "yellow/red compat rows must not count as green wins");
+  assert.equal(merged.totals.green_tsgo_wins, 0);
+});
+
+// artifact_missing row paired with a green tsgo row: only the green row
+// contributes to green win totals.
+withTempDir((dir) => {
+  const artifactMissingRow = { name: "missing", winner: "tsz", tsz_ms: 1, tsgo_ms: 2, artifact_missing: true };
+  const greenRow = { name: "green", winner: "tsgo", tsz_ms: 2, tsgo_ms: 1, compatibility: GREEN_COMPAT };
+  const result = runMerge(dir, [artifactMissingRow, greenRow]);
+  assert.equal(result.status, 0, result.stderr);
+  const merged = JSON.parse(fs.readFileSync(result.output, "utf8"));
+  assert.equal(merged.totals.green_tsz_wins, 0, "artifact_missing row must not count as a green win");
+  assert.equal(merged.totals.green_tsgo_wins, 1);
 });

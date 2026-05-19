@@ -1105,6 +1105,11 @@ impl<'a, F> ContainsTypeChecker<'a, F>
 where
     F: Fn(&TypeData) -> bool,
 {
+    #[cfg(test)]
+    fn memo_entries(&self) -> usize {
+        self.memo.len()
+    }
+
     fn check(&mut self, type_id: TypeId) -> bool {
         // Fast path: intrinsic types (primitives, any, never, etc.) have no subtypes
         // and can never contain nested type structures.
@@ -1276,6 +1281,11 @@ struct FreeTypeParamChecker<'a> {
 }
 
 impl<'a> FreeTypeParamChecker<'a> {
+    #[cfg(test)]
+    fn memo_entries(&self) -> usize {
+        self.memo.len()
+    }
+
     fn check(&mut self, type_id: TypeId) -> bool {
         if type_id.is_intrinsic() {
             return false;
@@ -1442,6 +1452,11 @@ struct FreeInferChecker<'a> {
 }
 
 impl<'a> FreeInferChecker<'a> {
+    #[cfg(test)]
+    fn memo_entries(&self) -> usize {
+        self.memo.len()
+    }
+
     fn check(&mut self, type_id: TypeId) -> bool {
         if type_id.is_intrinsic() {
             return false;
@@ -1716,6 +1731,11 @@ struct ShallowContainsTypeChecker<'a> {
 
 #[allow(dead_code)]
 impl<'a> ShallowContainsTypeChecker<'a> {
+    #[cfg(test)]
+    fn memo_entries(&self) -> usize {
+        self.memo.len()
+    }
+
     fn check(&mut self, type_id: TypeId) -> bool {
         if type_id.is_intrinsic() {
             return false;
@@ -2059,5 +2079,62 @@ impl<'a> EmptyObjectChecker<'a> {
             }
             _ => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::intern::TypeInterner;
+    use crate::types::TypeParamInfo;
+
+    fn traversal_guard() -> crate::recursion::RecursionGuard<TypeId> {
+        crate::recursion::RecursionGuard::with_profile(
+            crate::recursion::RecursionProfile::ShallowTraversal,
+        )
+    }
+
+    #[test]
+    fn predicate_checker_memo_entry_counts_are_observable() {
+        let interner = TypeInterner::new();
+        let t_name = interner.intern_string("T");
+        let u_name = interner.intern_string("U");
+        let t_param = interner.type_param(TypeParamInfo::simple(t_name));
+        let u_infer = interner.infer(TypeParamInfo::simple(u_name));
+        let wrapper = interner.readonly_type(t_param);
+
+        let mut contains_checker = ContainsTypeChecker {
+            types: &interner,
+            predicate: |key| matches!(key, TypeData::TypeParameter(_)),
+            memo: FxHashMap::default(),
+            guard: traversal_guard(),
+        };
+        assert!(contains_checker.check(wrapper));
+        assert!(contains_checker.memo_entries() > 0);
+
+        let mut free_type_param_checker = FreeTypeParamChecker {
+            types: &interner,
+            memo: FxHashMap::default(),
+            guard: traversal_guard(),
+        };
+        assert!(free_type_param_checker.check(wrapper));
+        assert!(free_type_param_checker.memo_entries() > 0);
+
+        let mut free_infer_checker = FreeInferChecker {
+            types: &interner,
+            memo: FxHashMap::default(),
+            guard: traversal_guard(),
+        };
+        assert!(free_infer_checker.check(u_infer));
+        assert!(free_infer_checker.memo_entries() > 0);
+
+        let mut shallow_checker = ShallowContainsTypeChecker {
+            types: &interner,
+            name: t_name,
+            memo: FxHashMap::default(),
+            guard: traversal_guard(),
+        };
+        assert!(shallow_checker.check(wrapper));
+        assert!(shallow_checker.memo_entries() > 0);
     }
 }

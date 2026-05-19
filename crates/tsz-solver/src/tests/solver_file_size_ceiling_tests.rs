@@ -307,3 +307,34 @@ fn test_emitter_file_size_ceiling() {
         &oversized,
     );
 }
+
+/// Ratchet guard: prevent the parser crate from growing oversized files.
+///
+/// The parser already ships several files well over 2000 LOC; the goal of
+/// the ratchet is to keep that count and the maximum from drifting upward
+/// while issue #8278 splits them by grammar responsibility.
+#[test]
+fn test_parser_file_size_ceiling() {
+    let parser_src = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("tsz-parser/src");
+    if !parser_src.exists() {
+        return;
+    }
+
+    let (max_lines, oversized) = measure_crate(&parser_src);
+
+    assert_within_ceiling(
+        "parser_oversized",
+        oversized.len(),
+        "Number of parser source files over 2000 LOC",
+        &oversized,
+    );
+    assert_within_ceiling(
+        "parser_max_loc",
+        max_lines,
+        "Largest parser source file",
+        &oversized,
+    );
+}

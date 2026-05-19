@@ -362,7 +362,7 @@ impl<'a> CheckerState<'a> {
             })
     }
 
-    fn cache_symbol_arena_or_cross_file_symbol_type(
+    pub(super) fn cache_symbol_arena_or_cross_file_symbol_type(
         &self,
         sym_id: SymbolId,
         file_idx: usize,
@@ -403,24 +403,10 @@ impl<'a> CheckerState<'a> {
     /// When a symbol's arena differs from the current arena (cross-file symbol),
     /// we create a child checker with the correct arena and delegate the resolution.
     /// This ensures symbols are resolved in their original context.
-    ///
-    /// ## Returns:
-    /// - `Some((type_id, params))`: Delegation occurred, use this result
-    /// - `None`: Symbol is in the local arena, proceed with local computation
-    ///
-    /// ## Critical Behavior:
-    /// - Removes the "in-progress" ERROR marker from cache before delegation
-    /// - Shares the parent's cache via `with_parent_cache` (fixes Cache Isolation Bug)
-    /// - Copies `lib_contexts` for global symbol resolution (Array, Promise, etc.)
-    /// - Copies resolution sets for cross-file cycle detection
     pub(crate) fn delegate_cross_arena_symbol_resolution(
         &mut self,
         sym_id: SymbolId,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
-        // Fast path: if this is a known cross-file symbol, skip the namespace guard
-        // (which would check the wrong symbol in the current binder) and go straight
-        // to cross-file delegation.
-        //
         // TYPE_ALIAS + value merge fix: When a user-defined type alias (e.g., `type Proxy<T>`)
         // has the same name as a global value (`declare var Proxy: ProxyConstructor`), the
         // merged symbol has both TYPE_ALIAS and value flags, and symbol_arenas may point to
@@ -835,6 +821,23 @@ impl<'a> CheckerState<'a> {
                 return Some((direct_type, Vec::new()));
             }
 
+            if let Some(direct_type) =
+                self.direct_source_file_function_declaration_result(sym_id, direct_target)
+            {
+                self.ctx.symbol_types.insert(sym_id, direct_type);
+                if let Some(file_idx) = symbol_type_cache_file_idx {
+                    self.cache_symbol_arena_or_cross_file_symbol_type(
+                        sym_id,
+                        file_idx,
+                        source_cache_scope,
+                        symbol_type_cache_from_symbol_arena,
+                        direct_type,
+                        Vec::new(),
+                    );
+                }
+                return Some((direct_type, Vec::new()));
+            }
+
             let direct_target_file_idx =
                 if symbol_type_cache_from_symbol_arena || needs_cross_file_delegation {
                     symbol_type_cache_file_idx
@@ -999,9 +1002,9 @@ impl<'a> CheckerState<'a> {
                 checker.ctx.class_constructor_resolution_set.insert(id);
             }
 
-            // Wire up the shared DefinitionStore in the child's TypeEnvironment so
-            // inner DefId→TypeId mappings survive child-checker teardown.
-            checker.ctx.ensure_type_env_has_definition_store();
+            // Wire up the shared DefinitionStore in both of the child's TypeEnvironments
+            // so inner DefId→TypeId mappings survive child-checker teardown.
+            checker.ctx.ensure_both_envs_have_definition_store();
 
             // Use get_type_of_symbol to ensure proper cycle detection.
             let result = checker.get_type_of_symbol(sym_id);
@@ -1270,9 +1273,9 @@ impl<'a> CheckerState<'a> {
             checker.ctx.class_constructor_resolution_set.insert(id);
         }
 
-        // Wire up the shared DefinitionStore in the child's TypeEnvironment so
-        // inner DefId→TypeId mappings survive child-checker teardown.
-        checker.ctx.ensure_type_env_has_definition_store();
+        // Wire up the shared DefinitionStore in both of the child's TypeEnvironments
+        // so inner DefId→TypeId mappings survive child-checker teardown.
+        checker.ctx.ensure_both_envs_have_definition_store();
 
         let result = checker.class_instance_type_with_params_from_symbol(sym_id);
         if self.ctx.share_owner_symbol_type_results
@@ -1434,12 +1437,12 @@ impl<'a> CheckerState<'a> {
         // DefId ↔ SymbolId mappings are resolved via DefinitionStore fallback
         // on cache miss — no parent-to-child copy needed.
 
-        // Wire up the shared DefinitionStore in the child's TypeEnvironment so
-        // that DefId→TypeId mappings for inner types (e.g., IServer inside
+        // Wire up the shared DefinitionStore in both of the child's TypeEnvironments
+        // so that DefId→TypeId mappings for inner types (e.g., IServer inside
         // IConfig's properties) are written through to the shared store. Without
         // this, the parent checker cannot resolve Lazy(DefId) references for
         // types nested inside the cross-file interface after the child is dropped.
-        checker.ctx.ensure_type_env_has_definition_store();
+        checker.ctx.ensure_both_envs_have_definition_store();
 
         // Try compute_interface_type_from_declarations first (more direct),
         // fall back to get_type_of_symbol for non-pure-interface symbols.

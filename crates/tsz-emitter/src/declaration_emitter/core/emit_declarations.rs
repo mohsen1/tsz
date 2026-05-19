@@ -1759,6 +1759,17 @@ impl<'a> DeclarationEmitter<'a> {
         false
     }
 
+    /// Separator preceding a readonly property's literal value: `" = "` for
+    /// class-declaration emit (`readonly x = 0`), `": "` for object-type-literal
+    /// emit (`readonly x: 0`). Object-type literals do not permit `=` syntax.
+    const fn readonly_literal_value_separator(&self) -> &'static str {
+        if self.in_object_type_class_body {
+            ": "
+        } else {
+            " = "
+        }
+    }
+
     pub(in crate::declaration_emitter) fn emit_property_declaration(
         &mut self,
         prop_idx: NodeIndex,
@@ -1855,19 +1866,23 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(" | undefined");
             }
         } else if !is_private {
-            // For readonly properties with an enum member access initializer (e.g., `readonly type = E.A`),
-            // emit the initializer expression directly, matching tsc behavior.
-            let use_enum_initializer = is_readonly
+            // For a readonly property whose initializer is a simple enum-member
+            // access (e.g. `readonly kind = E.A`), tsc uses the initializer form
+            // in class declarations and a literal-typed annotation in object-
+            // type-literal bodies. Separator selection is centralised.
+            let enum_initializer_text = if is_readonly
                 && !is_abstract
                 && !prop.question_token
                 && prop.initializer.is_some()
-                && self
-                    .simple_enum_access_member_text(prop.initializer)
-                    .is_some();
+            {
+                self.simple_enum_access_member_text(prop.initializer)
+            } else {
+                None
+            };
 
-            if use_enum_initializer {
-                self.write(" = ");
-                self.emit_expression(prop.initializer);
+            if let Some(enum_member_text) = enum_initializer_text {
+                self.write(self.readonly_literal_value_separator());
+                self.write(&enum_member_text);
             } else if let Some(enum_member_text) = const_asserted_enum_member {
                 self.write(": ");
                 self.write(&enum_member_text);
@@ -1901,15 +1916,14 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(": ");
                 self.write(&type_text);
             } else if let Some(type_id) = self.get_node_type_or_names(&[prop_idx, prop.name]) {
-                // For readonly properties with literal types, use `= value` form
-                // (same as const declarations in tsc)
+                // Readonly literal preservation (matches tsc `const`-like emit).
                 if is_readonly
                     && !is_abstract
                     && !prop.question_token
                     && let Some(interner) = self.type_interner
                     && let Some(lit) = tsz_solver::visitor::literal_value(interner, type_id)
                 {
-                    self.write(" = ");
+                    self.write(self.readonly_literal_value_separator());
                     self.write(&Self::format_literal_initializer(&lit, interner));
                 } else if is_readonly
                     && !is_abstract
@@ -1918,10 +1932,9 @@ impl<'a> DeclarationEmitter<'a> {
                     && let Some(lit_text) =
                         self.const_literal_initializer_text_deep(prop.initializer)
                 {
-                    // The type system widened the literal (e.g., `false` → `boolean`),
-                    // but for readonly properties tsc preserves the `= value` form
-                    // when the initializer is a simple literal.
-                    self.write(" = ");
+                    // Type system widened the literal (e.g. `false` → `boolean`);
+                    // recover the original from the initializer source text.
+                    self.write(self.readonly_literal_value_separator());
                     self.write(&lit_text);
                 } else if let Some(typeof_text) = self.typeof_prefix_for_value_entity(
                     prop.initializer,
@@ -2037,10 +2050,8 @@ impl<'a> DeclarationEmitter<'a> {
                 && prop.initializer.is_some()
                 && let Some(lit_text) = self.const_literal_initializer_text_deep(prop.initializer)
             {
-                // For readonly properties with simple literal initializers,
-                // emit `= value` form (matching tsc's const-like literal
-                // preservation for `static readonly` and `readonly` properties).
-                self.write(" = ");
+                // Readonly literal preservation via initializer source text.
+                self.write(self.readonly_literal_value_separator());
                 self.write(&lit_text);
             } else if prop.initializer.is_some()
                 && let Some(type_text) = self.allowlisted_initializer_type_text(prop.initializer)

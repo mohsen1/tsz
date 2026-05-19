@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { isGreen, isIncompleteCompat } from "./row-utils.mjs";
 
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, "utf8"));
@@ -12,86 +13,53 @@ function asNumber(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-// Fields that must be present in a compatibility object before a row
-// can be reported as a speed win. Missing any of these means the artifact
-// is incomplete and the row must render as gray/incomplete, not a win.
-const REQUIRED_PHASE_EXIT_FIELDS = [
-  "state",
-  "phase",
-  "last_successful_phase",
-  "exit_class",
-  "diagnostic_status",
-];
-
-function hasCompletePhaseMetadata(compatibility) {
-  return REQUIRED_PHASE_EXIT_FIELDS.every((f) =>
-    Object.prototype.hasOwnProperty.call(compatibility, f),
-  );
+// Null factors sort last (treated as the lowest possible value) so that rows
+// with a real factor always appear before rows with an unknown factor.
+function factorForSort(value) {
+  return value ?? -Infinity;
 }
 
-function isGreen(row) {
-  if (row.status) return false;
-  if (row.artifact_missing === true) return false;
-  const compatibility = row.compatibility;
-  if (!compatibility) return true;
-  if (!hasCompletePhaseMetadata(compatibility)) return false;
-  return (
-    compatibility.state === "green" &&
-    compatibility.exit_class === "exit success" &&
-    compatibility.diagnostic_status === "none"
-  );
+function compareWinnersByFactorDesc(a, b) {
+  const factorDelta = factorForSort(b.factor) - factorForSort(a.factor);
+  if (factorDelta !== 0) return factorDelta;
+  return String(a.name).localeCompare(String(b.name));
 }
 
-function isIncompleteCompat(row) {
-  if (row.status) return false;
-  if (row.artifact_missing === true) return true;
-  const compatibility = row.compatibility;
-  if (!compatibility) return false;
-  return !hasCompletePhaseMetadata(compatibility);
-}
-
-function ownerFamily(row) {
-  return row.compatibility?.semantic_owner_family ?? null;
+function compareFamiliesByWorstFactorDesc(a, b) {
+  const factorDelta = factorForSort(b.worst_factor) - factorForSort(a.worst_factor);
+  if (factorDelta !== 0) return factorDelta;
+  return a.family.localeCompare(b.family);
 }
 
 export function createTsgoWinnerReport(input, inputPath) {
   const rows = Array.isArray(input.results) ? input.results : [];
-  const incompleteCompatExcluded = rows.filter((row) => isIncompleteCompat(row)).length;
+  const incompleteCompatExcluded = rows.filter(isIncompleteCompat).length;
+
   const winners = rows
     .filter((row) => row?.winner === "tsgo" && isGreen(row))
-    .map((row) => {
-      const factor = asNumber(row.factor);
-      const tszMs = asNumber(row.tsz_ms);
-      const tsgoMs = asNumber(row.tsgo_ms);
-      return {
-        name: row.name,
-        factor,
-        tsz_ms: tszMs,
-        tsgo_ms: tsgoMs,
-        lines: asNumber(row.lines),
-        kb: asNumber(row.kb),
-        project_files: asNumber(row.project_files),
-        semantic_owner_family: ownerFamily(row),
-      };
-    })
-    .sort((a, b) => {
-      const factorDelta = (b.factor ?? -Infinity) - (a.factor ?? -Infinity);
-      if (factorDelta !== 0) {
-        return factorDelta;
-      }
-      return String(a.name).localeCompare(String(b.name));
-    });
+    .map((row) => ({
+      name: row.name,
+      factor: asNumber(row.factor),
+      tsz_ms: asNumber(row.tsz_ms),
+      tsgo_ms: asNumber(row.tsgo_ms),
+      lines: asNumber(row.lines),
+      kb: asNumber(row.kb),
+      project_files: asNumber(row.project_files),
+      semantic_owner_family: row.compatibility?.semantic_owner_family ?? null,
+    }))
+    .sort(compareWinnersByFactorDesc);
 
   const projects = winners.filter((row) => row.semantic_owner_family);
   const byOwnerFamily = new Map();
   for (const row of projects) {
     const family = row.semantic_owner_family;
-    if (!byOwnerFamily.has(family)) {
-      byOwnerFamily.set(family, { family, rows: 0, worst_factor: null, worst_row: null });
+    let bucket = byOwnerFamily.get(family);
+    if (!bucket) {
+      bucket = { family, rows: 0, worst_factor: null, worst_row: null };
+      byOwnerFamily.set(family, bucket);
     }
-    const bucket = byOwnerFamily.get(family);
     bucket.rows += 1;
-    if ((row.factor ?? -Infinity) > (bucket.worst_factor ?? -Infinity)) {
+    if (factorForSort(row.factor) > factorForSort(bucket.worst_factor)) {
       bucket.worst_factor = row.factor;
       bucket.worst_row = row.name;
     }
@@ -112,13 +80,7 @@ export function createTsgoWinnerReport(input, inputPath) {
       incomplete_compat_excluded: incompleteCompatExcluded,
     },
     worst: winners[0] ?? null,
-    by_owner_family: [...byOwnerFamily.values()].sort((a, b) => {
-      const factorDelta = (b.worst_factor ?? -Infinity) - (a.worst_factor ?? -Infinity);
-      if (factorDelta !== 0) {
-        return factorDelta;
-      }
-      return a.family.localeCompare(b.family);
-    }),
+    by_owner_family: [...byOwnerFamily.values()].sort(compareFamiliesByWorstFactorDesc),
     rows: winners,
   };
 }

@@ -1409,6 +1409,11 @@ impl<'a> Printer<'a> {
         self.source_map_text.or(self.source_text)
     }
 
+    /// Returns `source_text.len()` as `u32`, or `fallback` when no source text is attached.
+    pub(crate) fn source_text_end_or(&self, fallback: u32) -> u32 {
+        self.source_text.map_or(fallback, |t| t.len() as u32)
+    }
+
     /// Compute a `SourcePosition` from a byte offset, using the precomputed
     /// line map for O(log n) lookup when available, falling back to the O(n)
     /// linear scan otherwise.
