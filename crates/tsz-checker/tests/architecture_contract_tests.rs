@@ -549,7 +549,7 @@ fn test_ambient_signature_checks_uses_assignability_query_boundary_helpers() {
 }
 
 /// Architecture contract: checker code outside `query_boundaries/` and `tests/`
-/// must not construct `tsz_solver::TypeEvaluator` directly.
+/// must not construct `tsz_solver::computation::TypeEvaluator` directly.
 ///
 /// `TypeEvaluator` is the solver's internal evaluation engine. Checker code should
 /// use the boundary wrappers in `query_boundaries/state/type_environment.rs`
@@ -592,7 +592,7 @@ fn test_no_direct_type_evaluator_construction_outside_query_boundaries() {
             }
             if line.contains("TypeEvaluator::with_resolver")
                 || line.contains("TypeEvaluator::new(")
-                || line.contains("use tsz_solver::TypeEvaluator")
+                || line.contains("use tsz_solver::computation::TypeEvaluator")
             {
                 violations.push(format!("{}:{}: {}", rel, line_index + 1, trimmed));
             }

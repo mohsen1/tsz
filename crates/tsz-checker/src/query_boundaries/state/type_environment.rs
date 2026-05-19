@@ -9,7 +9,7 @@ pub(crate) use tsz_solver::type_queries::{
     MappedConstraintKind, PropertyAccessResolutionKind, TypeResolutionKind,
 };
 
-/// Thin wrapper around `tsz_solver::TypeEvaluator`.
+/// Thin wrapper around `tsz_solver::computation::TypeEvaluator`.
 ///
 /// Evaluates a complex type (conditional, mapped, index access, etc.) using
 /// the provided `TypeResolver` to resolve lazy references. This delegates to
@@ -19,7 +19,7 @@ pub(crate) fn evaluate_type_with_resolver<R: tsz_solver::TypeResolver>(
     resolver: &R,
     type_id: TypeId,
 ) -> TypeId {
-    let mut evaluator = tsz_solver::TypeEvaluator::with_resolver(db, resolver);
+    let mut evaluator = tsz_solver::computation::TypeEvaluator::with_resolver(db, resolver);
     evaluator.evaluate(type_id)
 }
 
@@ -371,7 +371,7 @@ pub(crate) fn evaluate_type_with_cache<R: tsz_solver::TypeResolver>(
     has_seed: bool,
     expand_application_display_alias_args: bool,
 ) -> EvalWithCacheResult {
-    let mut evaluator = tsz_solver::TypeEvaluator::with_resolver(db, resolver);
+    let mut evaluator = tsz_solver::computation::TypeEvaluator::with_resolver(db, resolver);
     if expand_application_display_alias_args {
         evaluator = evaluator.with_expanded_application_display_alias_args();
     }
@@ -398,8 +398,8 @@ pub(crate) fn evaluate_type_for_ts2589<R: tsz_solver::TypeResolver>(
     resolver: &R,
     type_id: TypeId,
 ) -> EvalWithCacheResult {
-    let mut evaluator =
-        tsz_solver::TypeEvaluator::with_resolver(db, resolver).with_flag_depth_on_app_cycle();
+    let mut evaluator = tsz_solver::computation::TypeEvaluator::with_resolver(db, resolver)
+        .with_flag_depth_on_app_cycle();
     let result = evaluator.evaluate(type_id);
     EvalWithCacheResult {
         result,
@@ -418,8 +418,8 @@ pub(crate) fn evaluate_type_suppressing_this<R: tsz_solver::TypeResolver>(
     resolver: &R,
     type_id: TypeId,
 ) -> TypeId {
-    let mut evaluator =
-        tsz_solver::TypeEvaluator::with_resolver(db, resolver).with_suppress_this_binding();
+    let mut evaluator = tsz_solver::computation::TypeEvaluator::with_resolver(db, resolver)
+        .with_suppress_this_binding();
     evaluator.evaluate(type_id)
 }
 
