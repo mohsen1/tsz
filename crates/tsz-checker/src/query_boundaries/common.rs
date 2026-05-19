@@ -1,6 +1,6 @@
 use tsz_solver::{
     CallSignature, CallableShape, ObjectShape, TupleElement, TypeApplication, TypeDatabase, TypeId,
-    TypePredicate,
+    TypePredicate, operations::widening,
 };
 
 // Re-export solver value types used by checker call computation.
@@ -444,7 +444,7 @@ pub(crate) fn widen_function_literal_return_type(db: &dyn TypeDatabase, type_id:
     let Some(shape) = tsz_solver::type_queries::get_function_shape(db, type_id) else {
         return type_id;
     };
-    let widened_return = tsz_solver::widen_literal_type(db, shape.return_type);
+    let widened_return = widening::widen_literal_type(db, shape.return_type);
     if widened_return != shape.return_type {
         tsz_solver::type_queries::replace_function_return_type(db, type_id, widened_return)
     } else {
@@ -474,7 +474,7 @@ pub(crate) fn widen_callable_literal_return_types(
         .call_signatures
         .iter()
         .map(|sig| {
-            let widened = tsz_solver::widen_literal_type(db, sig.return_type);
+            let widened = widening::widen_literal_type(db, sig.return_type);
             if widened != sig.return_type {
                 any_changed = true;
                 let mut new_sig = sig.clone();
@@ -528,7 +528,7 @@ pub(crate) fn unwrap_readonly_or_noinfer(db: &dyn TypeDatabase, type_id: TypeId)
 
 /// Widen a literal type to its base primitive (e.g. `"hello"` → `string`).
 pub(crate) fn widen_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    tsz_solver::widen_type(db, type_id)
+    widening::widen_type(db, type_id)
 }
 
 /// Widen a type for diagnostic display, preserving boolean literal intrinsics.
@@ -536,7 +536,7 @@ pub(crate) fn widen_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
 /// Like `widen_type` but keeps `true`/`false` literals so narrowed types
 /// display correctly (e.g., `string | false` instead of `string | boolean`).
 pub(crate) fn widen_type_for_display(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    tsz_solver::widen_type_for_display(db, type_id)
+    widening::widen_type_for_display(db, type_id)
 }
 
 /// Widen a type for call-argument diagnostic display: widens boolean
@@ -544,7 +544,7 @@ pub(crate) fn widen_type_for_display(db: &dyn TypeDatabase, type_id: TypeId) -> 
 /// renders match tsc, e.g. `[number, number, boolean, boolean]` instead of
 /// `[number, number, false, true]`. Function param types are still skipped.
 pub(crate) fn widen_argument_type_for_display(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    tsz_solver::widen_argument_type_for_display(db, type_id)
+    widening::widen_argument_type_for_display(db, type_id)
 }
 
 /// Extract the element type from a rest-argument array/tuple type.
@@ -749,7 +749,7 @@ pub(crate) fn literal_value(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Li
 
 /// Widen a literal type to its base type (e.g., `3` → `number`).
 pub(crate) fn widen_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    tsz_solver::widen_literal_type(db, type_id)
+    widening::widen_literal_type(db, type_id)
 }
 
 /// Check if a type is a template literal type.
@@ -1801,17 +1801,17 @@ pub(crate) fn evaluate_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
 }
 
 pub(crate) fn widen_type_deep(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    tsz_solver::widen_type_deep(db, type_id)
+    widening::widen_type_deep(db, type_id)
 }
 
 /// Display-widen a type for TS2403 redeclaration messages.
 ///
-/// Thin boundary wrapper over `tsz_solver::display_widen_for_redeclaration`.
+/// Thin boundary wrapper over `tsz_solver::operations::widening::display_widen_for_redeclaration`.
 /// See the solver definition for semantics — preserves top-level literal /
 /// literal-union types while deep-widening fresh literals nested inside
 /// compound shapes.
 pub(crate) fn display_widen_for_redeclaration(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    tsz_solver::display_widen_for_redeclaration(db, type_id)
+    widening::display_widen_for_redeclaration(db, type_id)
 }
 
 pub(crate) fn string_intrinsic_components(
@@ -1884,7 +1884,7 @@ pub(crate) fn instantiate_type_preserving_meta(
 }
 
 pub(crate) fn get_base_type_for_comparison(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    tsz_solver::get_base_type_for_comparison(db, type_id)
+    widening::get_base_type_for_comparison(db, type_id)
 }
 
 pub(crate) fn apply_contextual_type(

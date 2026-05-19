@@ -2272,13 +2272,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                             || infer_ctx.all_candidates_from_array_elements(var))
                                         || crate::visitor::is_union_of_fresh_literals(db, result);
                                     if should_widen {
-                                        crate::widen_literal_type(db, result)
+                                        widening::widen_literal_type(db, result)
                                     } else {
                                         result
                                     }
                                 }
                             } else {
-                                crate::widen_literal_type(self.interner.as_type_database(), ty)
+                                widening::widen_literal_type(self.interner.as_type_database(), ty)
                             }
                         } else if self.inference_type_contains_fresh_object_or_array(ty)
                             && !infer_ctx.has_type_annotation_candidates(var)
