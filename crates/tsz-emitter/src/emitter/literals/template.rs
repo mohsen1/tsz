@@ -100,7 +100,7 @@ impl<'a> Printer<'a> {
         self.emit(span.expression);
         self.emit_template_span_trailing_comments(span);
         // The literal (middle / tail) raw_text supplies its own leading `}`
-        // and the trailing `${` or closing `; we don't synthesize them here.
+        // and trailing `${` or backtick; we don't synthesize them here.
         self.emit(span.literal);
     }
 
