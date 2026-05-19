@@ -193,6 +193,96 @@ class Holder<{tparam} extends keyof Things> {{
     }
 }
 
+/// JSX-like fixture: when `O[K]` values are type-alias applications
+/// (`DetailedHTMLProps<HTMLAttributes<T>, T>` style) whose expanded shapes
+/// have only optional properties, `{}` must remain assignable. The fast
+/// path must evaluate the application — without that step it sees an
+/// opaque generic and conservatively bails to the slow per-candidate
+/// relation, which is the path that produces the false positive on the
+/// `errorInfoForRelatedIndexTypesNoConstraintElaboration` corpus.
+#[test]
+fn type_alias_application_value_candidates_accept_empty_object_two_names() {
+    for tparam in ["K", "TagName"] {
+        let source = format!(
+            r#"
+interface DOMAttributes<T> {{ onClick?: () => void; }}
+interface HTMLAttributes<T> extends DOMAttributes<T> {{ id?: string; }}
+interface AnchorHTMLAttributes<T> extends HTMLAttributes<T> {{ href?: string; }}
+interface ClassAttributes<T> {{ ref?: T; }}
+type DetailedHTMLProps<E extends HTMLAttributes<T>, T> = ClassAttributes<T> & E;
+
+interface Anchor {{}}
+interface Div {{}}
+
+interface Things {{
+    a: DetailedHTMLProps<AnchorHTMLAttributes<Anchor>, Anchor>;
+    div: DetailedHTMLProps<HTMLAttributes<Div>, Div>;
+}}
+
+class Holder<{tparam} extends keyof Things> {{
+    M() {{
+        let c1: Things[{tparam}] = {{}};
+    }}
+}}
+"#
+        );
+        let diags = check_source_diagnostics(&source);
+        let assignability_errors = count(&diags, 2322) + count(&diags, 2741);
+        assert_eq!(
+            assignability_errors,
+            0,
+            "Things[{tparam}] with type-alias-application value props (all optional) must accept {{}}; got: {:?}",
+            diags
+                .iter()
+                .map(|d| (d.code, d.message_text.clone()))
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+/// The accept-empty-object fast path must not over-accept: distinct keys
+/// against type-alias-application values must still reject the cross-key
+/// assignment with TS2322. Two name pairs guarantee the rule lives in the
+/// structural relation, not in the spelling.
+#[test]
+fn type_alias_application_value_candidates_reject_distinct_keys_two_names() {
+    for (p1, p2) in [("T1", "T2"), ("Key1", "Key2")] {
+        let source = format!(
+            r#"
+interface DOMAttributes<T> {{ onClick?: () => void; }}
+interface HTMLAttributes<T> extends DOMAttributes<T> {{ id?: string; }}
+interface AnchorHTMLAttributes<T> extends HTMLAttributes<T> {{ href?: string; }}
+interface ClassAttributes<T> {{ ref?: T; }}
+type DetailedHTMLProps<E extends HTMLAttributes<T>, T> = ClassAttributes<T> & E;
+
+interface Anchor {{}}
+interface Div {{}}
+
+interface Things {{
+    a: DetailedHTMLProps<AnchorHTMLAttributes<Anchor>, Anchor>;
+    div: DetailedHTMLProps<HTMLAttributes<Div>, Div>;
+}}
+
+class Holder<{p1} extends keyof Things, {p2} extends keyof Things> {{
+    M() {{
+        let c1: Things[{p1}] = {{}} as Things[{p1}];
+        const c2: Things[{p2}] = c1;
+    }}
+}}
+"#
+        );
+        let diags = check_source_diagnostics(&source);
+        assert!(
+            count(&diags, 2322) >= 1,
+            "Things[{p1}] -> Things[{p2}] (alias-app values) must emit TS2322; got: {:?}",
+            diags
+                .iter()
+                .map(|d| (d.code, d.message_text.clone()))
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
 #[test]
 fn distinct_key_params_reject_assignment_between_deferred_indexed_accesses() {
     let source = r#"
