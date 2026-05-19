@@ -65,6 +65,11 @@ impl<'a> IRPrinter<'a> {
     ) {
         // Check if any params have defaults
         let has_defaults = params.iter().any(|p| p.default_value.is_some());
+        let (new_target_capture, body) = body
+            .split_first()
+            .filter(|(node, _)| matches!(node, IRNode::NewTargetCapture { .. }))
+            .map_or((None, body), |(capture, rest)| (Some(capture), rest));
+        let has_new_target_capture = new_target_capture.is_some();
 
         // Check if the body was single-line in the source
         let is_body_source_single_line = self.is_body_source_single_line(body_source_range);
@@ -75,7 +80,7 @@ impl<'a> IRPrinter<'a> {
         // TSC preserves multiline formatting from source but uses single-line for generated code.
         // Exception: IIFE constructors (force_multiline_empty_body) always need multiline.
         let has_rest = self.target_es5 && params.iter().any(|p| p.rest);
-        if !has_defaults && !has_rest && body.is_empty() {
+        if !has_defaults && !has_rest && !has_new_target_capture && body.is_empty() {
             let use_single_line = !force_multiline_empty_body
                 && (is_body_source_single_line || body_source_range.is_none());
             if use_single_line {
@@ -93,6 +98,7 @@ impl<'a> IRPrinter<'a> {
         // unless caller forced multiline style (used for class constructors in ES5 class IIFEs).
         if !has_defaults
             && !has_rest
+            && !has_new_target_capture
             && body.len() == 1
             && is_body_source_single_line
             && !force_multiline_empty_body
@@ -107,6 +113,12 @@ impl<'a> IRPrinter<'a> {
         self.write("{");
         self.write_line();
         self.increase_indent();
+
+        if let Some(capture) = new_target_capture {
+            self.write_indent();
+            self.emit_node(capture);
+            self.write_line();
+        }
 
         // Emit default parameter checks: if (param === void 0) { param = default; }
         for param in params {

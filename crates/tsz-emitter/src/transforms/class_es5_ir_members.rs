@@ -9,7 +9,9 @@ use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_parser::syntax::transform_utils::{contains_async_arrow_function, is_private_identifier};
+use tsz_parser::syntax::transform_utils::{
+    contains_async_arrow_function, contains_new_target_reference, is_private_identifier,
+};
 use tsz_scanner::SyntaxKind;
 
 use super::{
@@ -18,6 +20,32 @@ use super::{
 };
 
 impl<'a> ES5ClassTransformer<'a> {
+    fn member_contains_new_target(
+        &self,
+        body_idx: NodeIndex,
+        params: &tsz_parser::parser::NodeList,
+    ) -> bool {
+        (body_idx.is_some() && contains_new_target_reference(self.arena, body_idx))
+            || params.nodes.iter().any(|&param_idx| {
+                self.arena
+                    .get(param_idx)
+                    .and_then(|param_node| self.arena.get_parameter(param_node))
+                    .is_some_and(|param| {
+                        param.initializer.is_some()
+                            && contains_new_target_reference(self.arena, param.initializer)
+                    })
+            })
+    }
+
+    fn prepend_invalid_new_target_capture(body: &mut Vec<IRNode>) {
+        body.insert(
+            0,
+            IRNode::NewTargetCapture {
+                initializer: Box::new(IRNode::void_0()),
+            },
+        );
+    }
+
     fn method_has_async_generator_asterisk(
         &self,
         member_idx: NodeIndex,
@@ -145,6 +173,9 @@ impl<'a> ES5ClassTransformer<'a> {
             if let Some(alias) = this_capture_alias {
                 body.insert(0, IRNode::var_decl(alias, Some(IRNode::this())));
             }
+            if self.member_contains_new_target(accessor_data.body, &accessor_data.parameters) {
+                Self::prepend_invalid_new_target_capture(&mut body);
+            }
 
             body
         };
@@ -212,6 +243,9 @@ impl<'a> ES5ClassTransformer<'a> {
                 let mut full = accessor_destructuring;
                 full.append(&mut body);
                 body = full;
+            }
+            if self.member_contains_new_target(accessor_data.body, &accessor_data.parameters) {
+                Self::prepend_invalid_new_target_capture(&mut body);
             }
 
             body
@@ -466,6 +500,11 @@ impl<'a> ES5ClassTransformer<'a> {
                             full.append(&mut mbody);
                             mbody = full;
                         }
+                        if self
+                            .member_contains_new_target(method_data.body, &method_data.parameters)
+                        {
+                            Self::prepend_invalid_new_target_capture(&mut mbody);
+                        }
                         mbody
                     };
 
@@ -602,6 +641,11 @@ impl<'a> ES5ClassTransformer<'a> {
                         }
                         if let Some(alias) = this_capture_alias {
                             method_body.insert(0, IRNode::var_decl(alias, Some(IRNode::this())));
+                        }
+                        if self
+                            .member_contains_new_target(method_data.body, &method_data.parameters)
+                        {
+                            Self::prepend_invalid_new_target_capture(&mut method_body);
                         }
                         method_body
                     };

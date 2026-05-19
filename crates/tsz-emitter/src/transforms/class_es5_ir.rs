@@ -96,8 +96,9 @@ use tsz_common::common::ModuleKind;
 use tsz_parser::parser::node::{Node, NodeAccess, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
-use tsz_parser::syntax::transform_utils::contains_this_reference;
-use tsz_parser::syntax::transform_utils::is_private_identifier;
+use tsz_parser::syntax::transform_utils::{
+    contains_new_target_reference, contains_this_reference, is_private_identifier,
+};
 use tsz_scanner::SyntaxKind;
 
 struct Tc39Es5MemberDecorator {
@@ -2552,6 +2553,12 @@ impl<'a> ES5ClassTransformer<'a> {
                     &instance_props,
                 );
             }
+            if self.constructor_contains_new_target(ctor.body, &ctor.parameters) {
+                ctor_body.insert(
+                    0,
+                    IRNode::var_decl("_newTarget", Some(IRNode::Raw("this.constructor".into()))),
+                );
+            }
         } else {
             // Default constructor
             if self.has_extends && !self.extends_null {
@@ -3912,6 +3919,19 @@ impl<'a> ES5ClassTransformer<'a> {
         }
 
         false
+    }
+
+    fn constructor_contains_new_target(&self, body_idx: NodeIndex, params: &NodeList) -> bool {
+        (body_idx.is_some() && contains_new_target_reference(self.arena, body_idx))
+            || params.nodes.iter().any(|&param_idx| {
+                self.arena
+                    .get(param_idx)
+                    .and_then(|param_node| self.arena.get_parameter(param_node))
+                    .is_some_and(|param| {
+                        param.initializer.is_some()
+                            && contains_new_target_reference(self.arena, param.initializer)
+                    })
+            })
     }
 
     /// Check if instance property initializers contain arrow functions that capture `this`.

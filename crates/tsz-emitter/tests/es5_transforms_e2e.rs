@@ -71,6 +71,97 @@ fn emit_es5_downlevel_iteration(source: &str) -> String {
 }
 
 #[test]
+fn new_target_es5_captures_ordinary_function_and_lexical_arrow() {
+    let output = emit_es5(
+        "function F() { return new.target; }\n\
+         function Outer() { var f = () => new.target; return f; }\n",
+    );
+
+    assert!(
+        output.contains(
+            "function F() {\n    var _newTarget = this && this instanceof F ? this.constructor : void 0;\n    return _newTarget;\n}"
+        ),
+        "Ordinary functions should capture `new.target` with the tsc ES5 initializer.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "function Outer() {\n    var _newTarget = this && this instanceof Outer ? this.constructor : void 0;\n    var f = function () { return _newTarget; };\n    return f;\n}"
+        ),
+        "Arrows should reuse the containing function's `new.target` capture.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("new.target"),
+        "ES5 output must not retain raw `new.target` syntax.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn new_target_es5_names_anonymous_function_expressions_for_capture() {
+    let output = emit_es5(
+        "var A = function() { return new.target; };\n\
+         var obj = { p: function() { return new.target; } };\n",
+    );
+
+    assert!(
+        output.contains("var A = function A()"),
+        "Anonymous variable-assigned functions should receive the inferred name used by the capture initializer.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("this && this instanceof A ? this.constructor : void 0"),
+        "Variable-assigned capture should test the inferred function name.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("p: function p()"),
+        "Object property functions should receive the property name used by the capture initializer.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("this && this instanceof p ? this.constructor : void 0"),
+        "Property-assigned capture should test the inferred property function name.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn new_target_es5_class_constructor_and_invalid_method_use_tsc_recovery() {
+    let output = emit_es5(
+        "class C {\n\
+             constructor(x = new.target) { this.x = new.target; }\n\
+             m(x = new.target) { return new.target; }\n\
+         }\n",
+    );
+
+    assert!(
+        output.contains(
+            "function C(x) {\n        if (x === void 0) { x = _newTarget; }\n        var _newTarget = this.constructor;"
+        ),
+        "Class constructors should use `this.constructor`, with parameter defaults before the constructor capture.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "C.prototype.m = function (x) {\n        var _newTarget = void 0;\n        if (x === void 0) { x = _newTarget; }\n        return _newTarget;\n    };"
+        ),
+        "Invalid method `new.target` should recover as `void 0`, before method parameter defaults.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("new.target"),
+        "Class ES5 output must not retain raw `new.target` syntax.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn new_target_es5_top_level_arrow_reads_recovered_binding_without_capture() {
+    let output = emit_es5("var B = () => new.target;\n");
+
+    assert!(
+        output.contains("var B = function () { return _newTarget; };"),
+        "Top-level invalid arrow `new.target` should read the recovered `_newTarget` binding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var _newTarget"),
+        "No function owns top-level arrow `new.target`, so no capture should be emitted.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn async_es5_for_loop_captured_let_with_await_uses_loop_generator() {
     let output = emit_es5_with_comments(
         "async function f() {\n\
