@@ -76,18 +76,23 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
-        // Pattern 2: union [(T & undefined), X] where X is a narrowed form of T.
-        // The solver may distribute T & ({} | undefined) as (T & undefined) | NonNullable<T>.
+        // Pattern 2: union [(T & undefined), (T & {})] — the solver's distributive form of
+        // T & ({} | undefined).  Both arms must be verified: (T & undefined) and (T & {}).
         if let Some(union_members) = tsz_solver::type_queries::get_union_members(interner, type_id)
             && union_members.len() == 2
         {
-            for &candidate in union_members.iter() {
+            for idx in 0..2usize {
+                let candidate = union_members[idx];
+                let other = union_members[1 - idx];
                 if let Some(int_members) =
                     tsz_solver::type_queries::get_intersection_members(interner, candidate)
                     && let [a, b] = int_members.as_slice()
                     && (*a == tsz_solver::types::TypeId::UNDEFINED
                         || *b == tsz_solver::types::TypeId::UNDEFINED)
                     && let Some((type_param, _)) = find_type_param(*a, *b)
+                    && Self::is_intersection_of_type_param_with_empty_object(
+                        interner, other, type_param,
+                    )
                 {
                     return Some(
                         self.format_type_param_strict_null_predicate(type_param, outer_type_params),
@@ -97,6 +102,26 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         None
+    }
+
+    /// Returns `true` when `type_id` is a two-member intersection `[expected_param, {}]`
+    /// (in either order), confirming it is the non-nullish arm of the distributive
+    /// `(T & undefined) | (T & {})` pattern.
+    fn is_intersection_of_type_param_with_empty_object(
+        interner: &tsz_solver::TypeInterner,
+        type_id: tsz_solver::types::TypeId,
+        expected_param: tsz_solver::types::TypeId,
+    ) -> bool {
+        tsz_solver::type_queries::get_intersection_members(interner, type_id).is_some_and(
+            |members| {
+                let [a, b] = members.as_slice() else {
+                    return false;
+                };
+                (*a == expected_param || *b == expected_param)
+                    && (tsz_solver::type_queries::is_empty_object_type(interner, *a)
+                        || tsz_solver::type_queries::is_empty_object_type(interner, *b))
+            },
+        )
     }
 
     fn format_type_param_strict_null_predicate(
