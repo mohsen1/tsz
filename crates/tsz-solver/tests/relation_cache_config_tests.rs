@@ -281,6 +281,17 @@ fn policy_cache_config_preserves_packed_extended_bits() {
 }
 
 #[test]
+fn policy_cache_config_preserves_all_assigned_packed_bits() {
+    let all_flags = RelationFlags::all();
+    let config = RelationPolicy::from_flags(all_flags.bits() as u16).cache_config();
+
+    assert_eq!(
+        config.flags, all_flags,
+        "explicit packed-bit projection must preserve every assigned relation flag",
+    );
+}
+
+#[test]
 fn subtype_flags_entrypoint_uses_relation_policy_cache_config() {
     let flags =
         RelationCacheKey::FLAG_STRICT_NULL_CHECKS | RelationCacheKey::FLAG_NO_ERASE_GENERICS;
