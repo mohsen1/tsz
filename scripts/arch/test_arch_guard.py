@@ -2850,6 +2850,7 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertIn("db.rs:2", hits[1])
         self.assertIn("query_cache.rs:1", hits[2])
         self.assertIn("total matching lines: 3", hits[3])
+        self.assertEqual(max_lines, 0)
 
     def test_flags_checker_migration_with_parent_cache_callsite(self):
         pattern, _max_lines = self._check_by_name("with_parent_cache_attributed")
