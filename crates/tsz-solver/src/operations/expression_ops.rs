@@ -185,6 +185,57 @@ pub fn normalize_object_union_members_for_write_target(
     changed.then_some(normalized)
 }
 
+/// Merge a later object-spread property contribution with an earlier property.
+///
+/// This implements the AST-independent part of TypeScript's object spread merge
+/// rule for a single property name:
+/// - a later required property overrides the earlier contribution;
+/// - a later optional property is unioned with the earlier contribution because
+///   the runtime spread may omit it;
+/// - when `exactOptionalPropertyTypes` is disabled, `undefined` is removed from
+///   the later optional contribution before unioning with an earlier required
+///   property.
+pub fn merge_object_spread_property(
+    db: &dyn TypeDatabase,
+    exact_optional_property_types: bool,
+    earlier: Option<&PropertyInfo>,
+    spread: &PropertyInfo,
+) -> PropertyInfo {
+    let Some(earlier) = earlier else {
+        return spread.clone();
+    };
+
+    if !spread.optional {
+        return spread.clone();
+    }
+
+    let (spread_type, spread_write_type) = if !exact_optional_property_types && !earlier.optional {
+        (
+            crate::narrowing::utils::remove_undefined(db, spread.type_id),
+            crate::narrowing::utils::remove_undefined(db, spread.write_type),
+        )
+    } else {
+        (spread.type_id, spread.write_type)
+    };
+
+    PropertyInfo {
+        name: spread.name,
+        type_id: db.union2(earlier.type_id, spread_type),
+        write_type: db.union2(earlier.write_type, spread_write_type),
+        // Required wins on optionality.
+        optional: earlier.optional && spread.optional,
+        readonly: earlier.readonly && spread.readonly,
+        is_method: spread.is_method,
+        is_class_prototype: false,
+        visibility: spread.visibility,
+        parent_id: spread.parent_id,
+        declaration_order: spread.declaration_order,
+        is_string_named: spread.is_string_named,
+        is_symbol_named: spread.is_symbol_named,
+        single_quoted_name: spread.single_quoted_name,
+    }
+}
+
 fn complement_fresh_object_literal_union(
     interner: &dyn TypeDatabase,
     left: TypeId,
