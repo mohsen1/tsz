@@ -299,7 +299,9 @@
         },
         "semantic_owner_family": "utility type project surface",
         "files_reached": 5,
-        "peak_memory_bytes": null
+        "files_reached_reason": null,
+        "peak_memory_bytes": null,
+        "peak_memory_bytes_reason": "not measured on platform"
       }
     },
     {
@@ -342,7 +344,9 @@
         },
         "semantic_owner_family": "utility types plus recursive JSON shapes",
         "files_reached": 95,
-        "peak_memory_bytes": null
+        "files_reached_reason": null,
+        "peak_memory_bytes": null,
+        "peak_memory_bytes_reason": "not measured on platform"
       }
     },
     {
@@ -385,7 +389,9 @@
         },
         "semantic_owner_family": "reactive library generic project surface",
         "files_reached": 240,
-        "peak_memory_bytes": null
+        "files_reached_reason": null,
+        "peak_memory_bytes": null,
+        "peak_memory_bytes_reason": "not measured on platform"
       }
     },
     {
@@ -428,7 +434,9 @@
         },
         "semantic_owner_family": "mapped/conditional/key-space utility surface",
         "files_reached": 206,
-        "peak_memory_bytes": null
+        "files_reached_reason": null,
+        "peak_memory_bytes": null,
+        "peak_memory_bytes_reason": "not measured on platform"
       }
     },
     {
@@ -471,7 +479,9 @@
         },
         "semantic_owner_family": "generated Vite dependency graph",
         "files_reached": 4,
-        "peak_memory_bytes": null
+        "files_reached_reason": null,
+        "peak_memory_bytes": null,
+        "peak_memory_bytes_reason": "not measured on platform"
       }
     },
     {
@@ -514,7 +524,9 @@
         },
         "semantic_owner_family": "generated app-router dependency graph",
         "files_reached": 7,
-        "peak_memory_bytes": null
+        "files_reached_reason": null,
+        "peak_memory_bytes": null,
+        "peak_memory_bytes_reason": "not measured on platform"
       }
     },
     {
@@ -570,7 +582,9 @@
         },
         "semantic_owner_family": "residency/runtime/project graph stress",
         "files_reached": 6061,
-        "peak_memory_bytes": null
+        "files_reached_reason": null,
+        "peak_memory_bytes": null,
+        "peak_memory_bytes_reason": "not measured on platform"
       }
     },
     {
@@ -1616,7 +1630,9 @@
         },
         "semantic_owner_family": "recursive type evaluation pressure",
         "files_reached": 242,
-        "peak_memory_bytes": null
+        "files_reached_reason": null,
+        "peak_memory_bytes": null,
+        "peak_memory_bytes_reason": "not measured on platform"
       }
     },
     {
@@ -1737,7 +1753,9 @@
         },
         "semantic_owner_family": "recursive conditionals, object guards, class/generic identity",
         "files_reached": 8,
-        "peak_memory_bytes": null
+        "files_reached_reason": null,
+        "peak_memory_bytes": null,
+        "peak_memory_bytes_reason": "not measured on platform"
       }
     },
     {
@@ -1865,7 +1883,9 @@
         },
         "semantic_owner_family": "contextual generics, guards, indexed/property access",
         "files_reached": 272,
-        "peak_memory_bytes": null
+        "files_reached_reason": null,
+        "peak_memory_bytes": null,
+        "peak_memory_bytes_reason": "not measured on platform"
       }
     },
     {
@@ -1949,7 +1969,9 @@
         },
         "semantic_owner_family": "module graph plus generated app dependencies",
         "files_reached": 1396,
-        "peak_memory_bytes": null
+        "files_reached_reason": null,
+        "peak_memory_bytes": null,
+        "peak_memory_bytes_reason": "not measured on platform"
       }
     }
   ],

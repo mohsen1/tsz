@@ -111,7 +111,9 @@ await fs.writeFile(failedOnlyArtifact, `${JSON.stringify({
           tsgo: [0],
         },
         files_reached: 12,
+        files_reached_reason: null,
         peak_memory_bytes: 104857600,
+        peak_memory_bytes_reason: null,
         fixture_sources: [
           {
             name: "rxjs",
@@ -147,6 +149,7 @@ await fs.writeFile(failedOnlyArtifact, `${JSON.stringify({
         exit_codes: { tsc: [0], tsz: [0], tsgo: [0] },
         files_reached: 10,
         peak_memory_bytes: null,
+        peak_memory_bytes_reason: "not measured on platform",
         fixture_sources: [],
         emit_status: "not in scope (noEmit project check)",
         dts_status: "not in scope (noEmit project check)",
@@ -282,6 +285,10 @@ try {
     [...failedOnlyCompatibility.matchAll(/fixture sources missing\/malformed\/unpinned/g)].length,
     3,
   );
+  // utility-types-project has peak_memory_bytes: null with a reason; the row
+  // must surface "peak RSS: n/a (not measured on platform)" so the residency
+  // gap is triageable from the dashboard rather than appearing as a blank.
+  assert.match(failedOnlyCompatibility, /peak RSS: n\/a \(not measured on platform\)/);
 
   const slugs = new Map();
   for (const page of pages) {
