@@ -46,6 +46,23 @@ function ownerTrackForSubsystem(subsystem) {
   return OWNER_TRACK_BY_SUBSYSTEM.get(subsystem);
 }
 
+const DELTA_SOURCES = ["tsc", "tsz", "tsgo"];
+const DELTA_SOURCE_SET = new Set(DELTA_SOURCES);
+const SOURCE_LABEL_PATTERN = /^([a-z][\w-]*):\s+(.*)$/;
+
+const ORACLE_CLASSIFICATION_ORDER = [
+  "both-pass",
+  "tsc-fails-only",
+  "tsz-fails-only",
+  "both-fail-same",
+  "both-fail-different",
+  "unknown",
+];
+const ORACLE_CLASSIFICATIONS = new Set(ORACLE_CLASSIFICATION_ORDER);
+
+const ROW_STATE_DISPLAY_ORDER = ["green", "yellow", "red", "gray"];
+const ROW_STATE_PRIORITY = { red: 0, yellow: 1, gray: 2, green: 3 };
+
 function toNumber(value) {
   if (value === undefined || value === null || value === "") return null;
   const parsed = Number(value);
@@ -63,6 +80,97 @@ function toExitCodes(value) {
     codes.push(parsed);
   }
   return codes;
+}
+
+function splitDeltaLines(value) {
+  return String(value || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function stripSourceLabel(line) {
+  const text = String(line || "").trim();
+  const match = text.match(SOURCE_LABEL_PATTERN);
+  if (!match) return { source: null, body: text };
+  const source = match[1].toLowerCase();
+  if (!DELTA_SOURCE_SET.has(source)) return { source: null, body: text };
+  return { source, body: match[2].trim() };
+}
+
+// Unattributed lines are folded into the tsz bucket downstream because tsz
+// is the active failing side in the common project-row failure path.
+function partitionDeltaBySource(lines) {
+  const buckets = { unattributed: [] };
+  for (const source of DELTA_SOURCES) buckets[source] = [];
+  for (const line of lines) {
+    const { source, body } = stripSourceLabel(line);
+    (source ? buckets[source] : buckets.unattributed).push(body);
+  }
+  return buckets;
+}
+
+function perSourceDeltasFrom(env, unifiedLines) {
+  const explicit = {
+    tsc: env.COMPAT_TSC_DIAGNOSTIC_DELTA,
+    tsz: env.COMPAT_TSZ_DIAGNOSTIC_DELTA,
+    tsgo: env.COMPAT_TSGO_DIAGNOSTIC_DELTA,
+  };
+  const needsPartition = DELTA_SOURCES.some((source) => explicit[source] === undefined);
+  const partitioned = needsPartition
+    ? partitionDeltaBySource(unifiedLines)
+    : { tsc: [], tsz: [], tsgo: [], unattributed: [] };
+  return {
+    tsc: explicit.tsc !== undefined ? splitDeltaLines(explicit.tsc) : partitioned.tsc,
+    tsz: explicit.tsz !== undefined
+      ? splitDeltaLines(explicit.tsz)
+      : [...partitioned.tsz, ...partitioned.unattributed],
+    tsgo: explicit.tsgo !== undefined ? splitDeltaLines(explicit.tsgo) : partitioned.tsgo,
+  };
+}
+
+function codesFromLines(lines, limit) {
+  const codes = [];
+  const seen = new Set();
+  for (const line of lines) {
+    for (const match of String(line || "").matchAll(/\bTS\d{4,5}\b/g)) {
+      const code = match[0];
+      if (seen.has(code)) continue;
+      seen.add(code);
+      codes.push(code);
+      if (codes.length >= limit) return codes;
+    }
+  }
+  return codes;
+}
+
+// Single-sided failures classify as *-fails-only so dashboards can route
+// oracle-side failures away from tsz-divergence triage.
+function oracleClassificationFrom({ tscExitCodes, tszExitCodes, tscDiagnosticCodes, tszDiagnosticCodes }) {
+  const failed = (exitCodes, diagnosticCodes) => (
+    exitCodes.length > 0 ? exitCodes.some((code) => code !== 0) : diagnosticCodes.length > 0
+  );
+  const tscSignaled = tscExitCodes.length > 0 || tscDiagnosticCodes.length > 0;
+  const tszSignaled = tszExitCodes.length > 0 || tszDiagnosticCodes.length > 0;
+  const tscFailed = failed(tscExitCodes, tscDiagnosticCodes);
+  const tszFailed = failed(tszExitCodes, tszDiagnosticCodes);
+
+  if (!tscSignaled && !tszSignaled) return "unknown";
+  if (!tszSignaled) return tscFailed ? "tsc-fails-only" : "unknown";
+  if (!tscSignaled) return tszFailed ? "tsz-fails-only" : "unknown";
+
+  if (!tscFailed && !tszFailed) return "both-pass";
+  if (tscFailed && !tszFailed) return "tsc-fails-only";
+  if (!tscFailed && tszFailed) return "tsz-fails-only";
+
+  const tscSet = new Set(tscDiagnosticCodes);
+  const tszSet = new Set(tszDiagnosticCodes);
+  // Empty=empty counts as "same" so two failures with only exit-code signals
+  // (crashes, timeouts, etc.) classify together rather than as a divergence.
+  if (tscSet.size === tszSet.size && [...tscSet].every((code) => tszSet.has(code))) {
+    return "both-fail-same";
+  }
+  return "both-fail-different";
 }
 
 function firstNonEmpty(...values) {
@@ -268,18 +376,7 @@ function diagnosticSubsystemsForProject(projectName, deltas) {
 }
 
 function diagnosticCodesFrom(deltas) {
-  const codes = [];
-  const seen = new Set();
-  for (const line of deltas) {
-    for (const match of String(line || "").matchAll(/\bTS\d{4,5}\b/g)) {
-      const code = match[0];
-      if (seen.has(code)) continue;
-      seen.add(code);
-      codes.push(code);
-      if (codes.length >= 8) return codes;
-    }
-  }
-  return codes;
+  return codesFromLines(deltas, 8);
 }
 
 function knownBlockersFrom({ exitClass, phase, diagnosticSubsystems, diagnosticCodes }) {
@@ -469,11 +566,7 @@ function resolveWritableFile({ value, label, root, forbidden = [] }) {
 function record() {
   const generatedAt = new Date().toISOString();
   const delta = process.env.COMPAT_DIAGNOSTIC_DELTA || "";
-  const diagnosticDeltas = delta
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .slice(0, 20);
+  const diagnosticDeltas = splitDeltaLines(delta).slice(0, 20);
 
   const projectName = process.env.COMPAT_NAME || "";
   if (!isProjectRowName(projectName)) {
@@ -483,6 +576,27 @@ function record() {
 
   const diagnosticSubsystems = diagnosticSubsystemsForProject(projectName, diagnosticDeltas);
   const diagnosticCodes = diagnosticCodesFrom(diagnosticDeltas);
+
+  const tscExitCodes = toExitCodes(process.env.COMPAT_TSC_EXIT_CODES);
+  const tszExitCodes = toExitCodes(process.env.COMPAT_TSZ_EXIT_CODES);
+  const tsgoExitCodes = toExitCodes(process.env.COMPAT_TSGO_EXIT_CODES);
+
+  const perSourceDeltas = perSourceDeltasFrom(process.env, diagnosticDeltas);
+  const tscDiagnosticCodes = codesFromLines(perSourceDeltas.tsc, 8);
+  const tszDiagnosticCodes = codesFromLines(perSourceDeltas.tsz, 8);
+  const tsgoDiagnosticCodes = codesFromLines(perSourceDeltas.tsgo, 8);
+
+  const oracleClassification = oracleClassificationFrom({
+    tscExitCodes,
+    tszExitCodes,
+    tscDiagnosticCodes,
+    tszDiagnosticCodes,
+  });
+  if (!ORACLE_CLASSIFICATIONS.has(oracleClassification)) {
+    console.error(`error: computed oracle_classification "${oracleClassification}" is not in the accepted set`);
+    process.exit(1);
+  }
+
   const exitClass = process.env.COMPAT_EXIT_CLASS || "unknown";
   const diagnosticStatus = process.env.COMPAT_DIAGNOSTIC_STATUS || "unknown";
   const state = rowStateFrom({ exitClass, diagnosticStatus });
@@ -517,25 +631,74 @@ function record() {
     phase: process.env.COMPAT_PHASE || "unknown",
     last_successful_phase: lastSuccessfulPhaseFrom({ exitClass, diagnosticStatus }),
     diagnostic_status: diagnosticStatus,
+    oracle_classification: oracleClassification,
     diagnostic_deltas: diagnosticDeltas,
     diagnostic_subsystems: diagnosticSubsystems,
     primary_subsystem: diagnosticSubsystems[0]?.subsystem || null,
     diagnostic_codes: diagnosticCodes,
+    tsc_diagnostic_codes: tscDiagnosticCodes,
+    tsz_diagnostic_codes: tszDiagnosticCodes,
+    tsgo_diagnostic_codes: tsgoDiagnosticCodes,
     emit_status: "not in scope (noEmit project check)",
     dts_status: "not in scope (noEmit project check)",
     known_blockers: knownBlockers,
     reduced_repro_path: repro.reduced_repro_path,
     repro,
     exit_codes: {
-      tsc: toExitCodes(process.env.COMPAT_TSC_EXIT_CODES),
-      tsz: toExitCodes(process.env.COMPAT_TSZ_EXIT_CODES),
-      tsgo: toExitCodes(process.env.COMPAT_TSGO_EXIT_CODES),
+      tsc: tscExitCodes,
+      tsz: tszExitCodes,
+      tsgo: tsgoExitCodes,
+    },
+    diagnostic_counts: {
+      tsc: perSourceDeltas.tsc.length,
+      tsz: perSourceDeltas.tsz.length,
+      tsgo: perSourceDeltas.tsgo.length,
     },
     files_reached: toNumber(process.env.COMPAT_FILES_REACHED),
     peak_memory_bytes: toNumber(process.env.COMPAT_PEAK_MEMORY_BYTES),
     fixture_sources: fixtureSources,
   };
   fs.appendFileSync(outputFile, `${JSON.stringify(row)}\n`, "utf8");
+}
+
+function topDiagnosticDeltasFrom(rows, limit) {
+  const priority = (state) => ROW_STATE_PRIORITY[state] ?? 4;
+  const sorted = rows
+    .filter((row) => Array.isArray(row?.diagnostic_deltas) && row.diagnostic_deltas.length > 0)
+    .sort((a, b) => priority(a.state) - priority(b.state));
+
+  const items = [];
+  for (const row of sorted) {
+    const deltas = row.diagnostic_deltas;
+
+    const subsystemByLine = new Map();
+    const subsystems = Array.isArray(row.diagnostic_subsystems) ? row.diagnostic_subsystems : [];
+    for (const group of subsystems) {
+      if (!group?.subsystem) continue;
+      for (const example of group.examples || []) {
+        if (!subsystemByLine.has(example)) {
+          subsystemByLine.set(example, group.subsystem);
+        }
+      }
+    }
+
+    for (const delta of deltas) {
+      const parsed = parseDiagnosticDelta(delta);
+      const subsystem = subsystemByLine.get(delta)
+        || (parsed.code ? subsystemForCode(parsed.code) : "unattributed");
+      items.push({
+        project: row.name || null,
+        oracle_classification: row.oracle_classification || "unknown",
+        state: row.state || null,
+        code: parsed.code || null,
+        path: parsed.path || null,
+        subsystem,
+        delta,
+      });
+      if (items.length >= limit) return items;
+    }
+  }
+  return items;
 }
 
 function summarize() {
@@ -562,6 +725,16 @@ function summarize() {
     return counts;
   }, {});
 
+  const byOracleClassification = rows.reduce((counts, row) => {
+    const key = ORACLE_CLASSIFICATIONS.has(row.oracle_classification)
+      ? row.oracle_classification
+      : "unknown";
+    counts[key] = (counts[key] || 0) + 1;
+    return counts;
+  }, {});
+
+  const firstDiagnosticDeltas = topDiagnosticDeltasFrom(rows, 3);
+
   const summary = {
     ...artifactMetadata(process.env, "SUMMARY", generatedAt),
     project_set: process.env.SUMMARY_PROJECT_SET || "required",
@@ -572,10 +745,104 @@ function summarize() {
     malformed_jsonl_lines: malformedLineCount,
     malformed_jsonl_examples: malformedExamples,
     by_state: byState,
+    by_oracle_classification: byOracleClassification,
+    first_diagnostic_deltas: firstDiagnosticDeltas,
     rows,
   };
 
   fs.writeFileSync(outputFile, `${JSON.stringify(summary, null, 2)}\n`, "utf8");
+}
+
+function readSummary(file) {
+  if (!file) return null;
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function renderStepSummaryMarkdown(summary, options) {
+  const { title, artifactName, artifactUrl, jsonlPath, summaryPath } = options;
+  const lines = [];
+  lines.push(`### ${title || "Project compatibility artifact"}`);
+  if (artifactUrl) {
+    lines.push(`- Artifact: [${artifactName || "project-compatibility"}](${artifactUrl})`);
+  } else if (artifactName) {
+    lines.push(`- Artifact: ${artifactName}`);
+  }
+  if (jsonlPath) lines.push(`- JSONL: \`${jsonlPath}\``);
+  if (summaryPath) {
+    const suffix = summary?.missing ? " (not produced)" : "";
+    lines.push(`- Summary: \`${summaryPath}\`${suffix}`);
+  }
+  if (summary?.missing) {
+    return `${lines.join("\n")}\n`;
+  }
+
+  const byState = summary.by_state || {};
+  const byOracle = summary.by_oracle_classification || {};
+  const stateCounts = ROW_STATE_DISPLAY_ORDER
+    .filter((key) => byState[key])
+    .map((key) => `${key}=${byState[key]}`);
+  if (stateCounts.length) {
+    lines.push(`- Rows by state: ${stateCounts.join(", ")}`);
+  }
+  const oracleCounts = ORACLE_CLASSIFICATION_ORDER
+    .filter((key) => byOracle[key])
+    .map((key) => `${key}=${byOracle[key]}`);
+  if (oracleCounts.length) {
+    lines.push(`- Oracle classification: ${oracleCounts.join(", ")}`);
+  }
+
+  const deltas = Array.isArray(summary.first_diagnostic_deltas)
+    ? summary.first_diagnostic_deltas
+    : [];
+  if (deltas.length) {
+    lines.push("");
+    lines.push("#### First diagnostic deltas");
+    lines.push("");
+    lines.push("| Project | Oracle | Subsystem | Code | Delta |");
+    lines.push("| --- | --- | --- | --- | --- |");
+    for (const item of deltas) {
+      const project = escapeMarkdownCell(item.project || "—");
+      const oracle = escapeMarkdownCell(item.oracle_classification || "unknown");
+      const subsystem = escapeMarkdownCell(item.subsystem || "—");
+      const code = escapeMarkdownCell(item.code || "—");
+      const delta = escapeMarkdownCell(truncateForCell(item.delta || "", 160));
+      lines.push(`| ${project} | ${oracle} | ${subsystem} | ${code} | ${delta} |`);
+    }
+    if (jsonlPath || summaryPath) {
+      lines.push("");
+      lines.push("See artifact for the remaining diagnostic deltas.");
+    }
+  }
+
+  return `${lines.join("\n")}\n`;
+}
+
+function escapeMarkdownCell(value) {
+  return String(value || "").replace(/\|/g, "\\|").replace(/\n/g, " ").trim();
+}
+
+function truncateForCell(value, max) {
+  const text = String(value || "");
+  if (text.length <= max) return text;
+  return `${text.slice(0, max - 1)}…`;
+}
+
+function formatStepSummary() {
+  const inputFile = process.env.SUMMARY_INPUT_FILE;
+  const summary = readSummary(inputFile) || { missing: true };
+  const markdown = renderStepSummaryMarkdown(summary, {
+    title: process.env.SUMMARY_TITLE || "Project compatibility artifact",
+    artifactName: process.env.SUMMARY_ARTIFACT_NAME || "",
+    artifactUrl: process.env.SUMMARY_ARTIFACT_URL || "",
+    jsonlPath: process.env.SUMMARY_JSONL_PATH || "",
+    summaryPath: process.env.SUMMARY_SUMMARY_PATH || inputFile || "",
+  });
+  process.stdout.write(markdown);
 }
 
 const command = process.argv[2];
@@ -583,7 +850,9 @@ if (command === "record") {
   record();
 } else if (command === "summary") {
   summarize();
+} else if (command === "format-step-summary") {
+  formatStepSummary();
 } else {
-  console.error("usage: project-compatibility.mjs <record|summary>");
+  console.error("usage: project-compatibility.mjs <record|summary|format-step-summary>");
   process.exit(2);
 }
