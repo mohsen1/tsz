@@ -725,22 +725,11 @@ pub(super) fn collect_diagnostics(
                 }
 
                 // Map resolved path to file index.
-                //
-                // For TS6263 (module resolved to a `.d.<ext>.ts` file but
-                // `--allowArbitraryExtensions` is not set), the module IS
-                // successfully resolved and its types must be available for
-                // member type-checking.  TypeScript emits TS6263 as a flag
-                // warning but still checks the imported value types. We
-                // therefore add the path to the resolution maps even when
-                // the error is TS6263, so the checker can check members.
-                // For all other errors (TS2307 etc.) the module is not
-                // resolved, so we leave the maps empty to let the checker
-                // emit the appropriate diagnostic.
-                let is_flag_only_error = outcome.error.as_ref().is_some_and(|e| {
-                    e.code
-                        == tsz::module_resolver::MODULE_WAS_RESOLVED_TO_BUT_ALLOW_ARBITRARY_EXTENSIONS_IS_NOT_SET
-                });
-                if outcome.error.is_none() || is_flag_only_error {
+                // Only mark as resolved when there is no error. When there is a
+                // resolution error (TS2307, TS6263, etc.) the module should NOT
+                // be in resolved_module_specifiers so that the checker emits the
+                // appropriate diagnostic without triggering additional member checks.
+                if outcome.error.is_none() {
                     if let Some(ref resolved_path) = outcome.resolved_path {
                         resolved_module_specifiers.insert((file_idx, specifier.clone()));
                         let canonical = normalize_resolved_path(resolved_path, options);
