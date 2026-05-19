@@ -2830,3 +2830,160 @@ if (y instanceof Foo) {
         "regular instanceof (no hasInstance) true branch should see Foo.x: {diags:#?}"
     );
 }
+
+// ── Destructured discriminant narrows source binding (issue #8780) ───────────
+
+/// When `const { kind } = s` is destructured and then `kind === "a"` is checked,
+/// the source binding `s` should be narrowed to the matching discriminated-union
+/// variant.  tsc narrows `s` so `s.a` is reachable without TS2339.
+#[test]
+fn destructured_discriminant_equality_narrows_source_binding() {
+    let diagnostics = strict_diagnostics(
+        r#"
+type S = { kind: "a"; a: number } | { kind: "b"; b: string };
+function f(s: S) {
+    const { kind } = s;
+    if (kind === "a") {
+        const _x: number = s.a;
+    } else {
+        const _y: string = s.b;
+    }
+}
+"#,
+    );
+    let ts2339: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2339).collect();
+    let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
+    assert!(
+        ts2339.is_empty() && ts2322.is_empty(),
+        "Destructured discriminant `kind === \"a\"` must narrow source binding `s`; \
+         ts2339={ts2339:#?}, ts2322={ts2322:#?}"
+    );
+}
+
+/// Renamed destructuring: `const { kind: k } = s; if (k === "a") { s.a; }` must
+/// narrow `s` just like the shorthand form.
+#[test]
+fn renamed_destructured_discriminant_equality_narrows_source_binding() {
+    let diagnostics = strict_diagnostics(
+        r#"
+type S = { kind: "a"; a: number } | { kind: "b"; b: string };
+function f(s: S) {
+    const { kind: k } = s;
+    if (k === "a") {
+        const _x: number = s.a;
+    } else {
+        const _y: string = s.b;
+    }
+}
+"#,
+    );
+    let ts2339: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2339).collect();
+    let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
+    assert!(
+        ts2339.is_empty() && ts2322.is_empty(),
+        "Renamed destructured discriminant `k === \"a\"` must narrow source binding `s`; \
+         ts2339={ts2339:#?}, ts2322={ts2322:#?}"
+    );
+}
+
+/// Non-const destructured discriminant must NOT narrow the source binding.
+/// `let { kind } = s; if (kind === "a") { s.a; }` — `s` remains `S`, TS2339 expected.
+#[test]
+fn non_const_destructured_discriminant_equality_does_not_narrow_source_binding() {
+    let diagnostics = strict_diagnostics(
+        r#"
+type S = { kind: "a"; a: number } | { kind: "b"; b: string };
+function f(s: S) {
+    let { kind } = s;
+    if (kind === "a") {
+        s.a;
+    }
+}
+"#,
+    );
+    let ts2339_count = diagnostics.iter().filter(|(c, _)| *c == 2339).count();
+    assert_eq!(
+        ts2339_count, 1,
+        "Non-const destructured discriminant must not narrow source binding; \
+         got: {diagnostics:#?}"
+    );
+}
+
+/// Nested destructuring: `const { s: { kind } } = outer; if (kind === "a") { outer.s.a; }`
+/// must narrow `outer.s` through the two-level path ["s", "kind"].
+#[test]
+fn nested_destructured_discriminant_narrows_root_binding() {
+    let diagnostics = strict_diagnostics(
+        r#"
+type S = { kind: "a"; a: number } | { kind: "b"; b: string };
+function f(outer: { s: S }) {
+    const { s: { kind } } = outer;
+    if (kind === "a") {
+        const _x: number = outer.s.a;
+    } else {
+        const _y: string = outer.s.b;
+    }
+}
+"#,
+    );
+    let ts2339: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2339).collect();
+    let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
+    assert!(
+        ts2339.is_empty() && ts2322.is_empty(),
+        "Nested destructured discriminant `kind === \"a\"` must narrow `outer.s`; \
+         ts2339={ts2339:#?}, ts2322={ts2322:#?}"
+    );
+}
+
+/// Nested destructuring with a renamed leaf: `const { s: { kind: k } } = outer`
+/// should narrow just as well as the shorthand form.
+#[test]
+fn nested_destructured_renamed_discriminant_narrows_root_binding() {
+    let diagnostics = strict_diagnostics(
+        r#"
+type S = { kind: "a"; a: number } | { kind: "b"; b: string };
+function f(outer: { s: S }) {
+    const { s: { kind: k } } = outer;
+    if (k === "a") {
+        const _x: number = outer.s.a;
+    } else {
+        const _y: string = outer.s.b;
+    }
+}
+"#,
+    );
+    let ts2339: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2339).collect();
+    let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
+    assert!(
+        ts2339.is_empty() && ts2322.is_empty(),
+        "Renamed nested destructured discriminant `k === \"a\"` must narrow `outer.s`; \
+         ts2339={ts2339:#?}, ts2322={ts2322:#?}"
+    );
+}
+
+/// Three-level nesting: `const { a: { b: { kind } } } = d; if (kind === "x") { d.a.b.x; }`
+/// must narrow `d.a.b` through path ["a", "b", "kind"].
+#[test]
+fn triple_nested_destructured_discriminant_narrows_root_binding() {
+    let diagnostics = strict_diagnostics(
+        r#"
+type Leaf = { kind: "x"; x: number } | { kind: "y"; y: string };
+type Deep = { a: { b: Leaf } };
+function f(d: Deep) {
+    const { a: { b: { kind } } } = d;
+    if (kind === "x") {
+        const _x: number = d.a.b.x;
+    } else {
+        const _y: string = d.a.b.y;
+    }
+}
+"#,
+    );
+    let ts2339: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2339).collect();
+    let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
+    assert!(
+        ts2339.is_empty() && ts2322.is_empty(),
+        "Triple-nested destructured discriminant must narrow root binding; \
+         ts2339={ts2339:#?}, ts2322={ts2322:#?}"
+    );
+}

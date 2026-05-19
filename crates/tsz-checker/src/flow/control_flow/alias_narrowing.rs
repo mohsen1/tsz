@@ -415,9 +415,23 @@ impl<'a> FlowAnalyzer<'a> {
                     .is_some_and(|(path, _)| !path.is_empty());
             }
         }
-        // Case 2: `const { prop: alias } = reference` (destructuring alias)
-        if let Some((base, _)) = self.binding_element_property_alias(expr) {
-            return self.is_matching_reference(base, reference);
+        // Case 2: `const { prop: alias } = reference` (destructuring alias).
+        // Also handles nested: `const { s: { kind } } = outer` where `outer` or
+        // `outer.s` are valid references for the aliased discriminant.
+        if let Some((base, prop_names)) = self.binding_element_property_alias(expr) {
+            if self.is_matching_reference(base, reference) {
+                return true;
+            }
+            // Sub-expression match: reference is a proper prefix of base.prop_names.
+            if prop_names.len() > 1 {
+                if let Some((prefix, _)) = self.relative_discriminant_path(reference, base)
+                    && !prefix.is_empty()
+                    && prefix.len() < prop_names.len()
+                    && prop_names[..prefix.len()] == prefix[..]
+                {
+                    return true;
+                }
+            }
         }
         false
     }
