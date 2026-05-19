@@ -607,6 +607,9 @@ mod partial_pick_indexed_access_write_tests;
 #[path = "../tests/private_brands.rs"]
 mod private_brands;
 #[cfg(test)]
+#[path = "tests/promise_like_infer_tests.rs"]
+mod promise_like_infer_tests;
+#[cfg(test)]
 #[path = "tests/property_alias_display_tests.rs"]
 mod property_alias_display_tests;
 #[cfg(test)]
