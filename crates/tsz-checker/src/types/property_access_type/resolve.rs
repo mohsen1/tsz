@@ -617,13 +617,16 @@ impl<'a> CheckerState<'a> {
                 let resolver_generation = TypeResolver::resolver_generation(&self.ctx);
                 let cache_key = |base, name| (base, resolver_generation, name);
 
-                let cached_property_type = self
-                    .ctx
-                    .narrowing_cache
-                    .property_cache
-                    .borrow()
-                    .get(&cache_key(resolved_base, prop_atom))
-                    .copied();
+                let cached_property_type = if skip_flow_narrowing {
+                    None
+                } else {
+                    self.ctx
+                        .narrowing_cache
+                        .property_cache
+                        .borrow()
+                        .get(&cache_key(resolved_base, prop_atom))
+                        .copied()
+                };
                 if let Some(Some(entry)) = cached_property_type {
                     let mut result_type = self.refine_expando_property_read_type(
                         idx,
@@ -667,10 +670,39 @@ impl<'a> CheckerState<'a> {
                 );
                 match result {
                     PropertyAccessResult::Success {
-                        type_id,
-                        write_type,
+                        type_id: mut read_type_id,
+                        mut write_type,
                         from_index_signature,
                     } => {
+                        if !from_index_signature
+                            && read_type_id == TypeId::SYMBOL
+                            && let Some(member_type) = self.recover_lazy_interface_member_type(
+                                original_object_type,
+                                property_name,
+                            )
+                            && crate::query_boundaries::common::unique_symbol_ref(
+                                self.ctx.types,
+                                member_type.type_id,
+                            )
+                            .is_some()
+                        {
+                            read_type_id = member_type.type_id;
+                            write_type = member_type.write_type;
+                        }
+                        if !from_index_signature
+                            && crate::query_boundaries::common::is_symbol_or_unique_symbol(
+                                self.ctx.types,
+                                read_type_id,
+                            )
+                            && let Some(type_id) = self
+                                .declared_unique_symbol_property_type_for_value_receiver(
+                                    access.expression,
+                                    property_name,
+                                )
+                        {
+                            read_type_id = type_id;
+                            write_type = Some(type_id);
+                        }
                         let generic_mapped_missing_named_property = from_index_signature
                             && self.generic_mapped_receiver_lacks_property_access_name(
                                 original_object_type,
@@ -698,7 +730,7 @@ impl<'a> CheckerState<'a> {
                                 idx,
                                 access.expression,
                                 property_name,
-                                type_id,
+                                read_type_id,
                             );
                             self.ctx.narrowing_cache.property_cache.borrow_mut().insert(
                                 cache_key(resolved_base, prop_atom),
@@ -1642,6 +1674,24 @@ impl<'a> CheckerState<'a> {
                     }
                 });
 
+            if !enum_instance_like_access
+                && !hidden_qualified_namespace_member
+                && let Some(member_type) =
+                    self.recover_lazy_interface_member_type(object_type, property_name)
+            {
+                let type_id = if skip_flow_narrowing {
+                    member_type.write_type.unwrap_or(member_type.type_id)
+                } else {
+                    member_type.type_id
+                };
+                return self.finalize_property_access_result(
+                    idx,
+                    type_id,
+                    skip_flow_narrowing,
+                    false,
+                );
+            }
+
             let mut object_type_for_access = if enum_instance_like_access {
                 self.apparent_enum_instance_type(object_type)
                     .unwrap_or_else(|| self.resolve_type_for_property_access(object_type))
@@ -1659,6 +1709,48 @@ impl<'a> CheckerState<'a> {
             }
             if object_type_for_access == TypeId::ERROR {
                 return TypeId::ERROR; // Return ERROR instead of ANY to expose type errors
+            }
+            if !skip_flow_narrowing
+                && !enum_instance_like_access
+                && !hidden_qualified_namespace_member
+                && let Some(module_name) =
+                    self.ctx.namespace_module_names.get(&object_type).cloned()
+            {
+                let surface = self
+                    .resolve_js_export_surface_for_module(
+                        &module_name,
+                        Some(self.ctx.current_file_idx),
+                    )
+                    .or_else(|| {
+                        self.ctx
+                            .module_specifiers
+                            .get(&(self.ctx.current_file_idx as u32))
+                            .is_some_and(|current_name| current_name == &module_name)
+                            .then(|| self.resolve_js_export_surface(self.ctx.current_file_idx))
+                    });
+                if let Some(surface) = surface
+                    && let Some(direct_export_type) = surface.direct_export_type
+                {
+                    let direct_type_for_access =
+                        self.resolve_type_for_property_access(direct_export_type);
+                    match self
+                        .resolve_property_access_with_env(direct_type_for_access, property_name)
+                    {
+                        PropertyAccessResult::Success { type_id, .. }
+                        | PropertyAccessResult::PossiblyNullOrUndefined {
+                            property_type: Some(type_id),
+                            ..
+                        } => {
+                            return self.finalize_property_access_result(
+                                idx,
+                                type_id,
+                                skip_flow_narrowing,
+                                false,
+                            );
+                        }
+                        _ => {}
+                    }
+                }
             }
             // In write context (skip_flow_narrowing), skip this shortcut:
             // resolve_namespace_value_member returns the symbol's read type, which
@@ -1781,10 +1873,24 @@ impl<'a> CheckerState<'a> {
             match result {
                 PropertyAccessResult::Success {
                     type_id: mut prop_type,
-                    write_type,
+                    mut write_type,
                     from_index_signature,
                 } => {
                     let mut used_class_chain_method_type = false;
+                    if !from_index_signature
+                        && crate::query_boundaries::common::is_symbol_or_unique_symbol(
+                            self.ctx.types,
+                            prop_type,
+                        )
+                        && let Some(type_id) = self
+                            .declared_unique_symbol_property_type_for_value_receiver(
+                                access.expression,
+                                property_name,
+                            )
+                    {
+                        prop_type = type_id;
+                        write_type = Some(type_id);
+                    }
                     if property_name == "exports"
                         && prop_type == TypeId::ANY
                         && self.is_js_file()
@@ -2779,6 +2885,53 @@ impl<'a> CheckerState<'a> {
             }
         } else {
             TypeId::ANY
+        }
+    }
+
+    fn declared_unique_symbol_property_type_for_value_receiver(
+        &mut self,
+        object_expr_idx: NodeIndex,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        let object_expr_idx = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(object_expr_idx);
+        let object_node = self.ctx.arena.get(object_expr_idx)?;
+        if object_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let sym_id = self.resolve_identifier_symbol(object_expr_idx)?;
+        let base_type = {
+            let env = self.ctx.type_env.borrow();
+            TypeResolver::resolve_type_query(&*env, tsz_solver::SymbolRef(sym_id.0), self.ctx.types)
+        }
+        .or_else(|| self.ctx.symbol_types.get(&sym_id).copied());
+        let base_type = base_type?;
+        let evaluated = self.evaluate_type_with_env(base_type);
+        let base_type = if evaluated != TypeId::ERROR {
+            evaluated
+        } else {
+            base_type
+        };
+
+        let result = crate::query_boundaries::property_access::resolve_property_access(
+            self.ctx.types,
+            base_type,
+            property_name,
+        );
+        match result {
+            tsz_solver::operations::property::PropertyAccessResult::Success { type_id, .. }
+            | tsz_solver::operations::property::PropertyAccessResult::PossiblyNullOrUndefined {
+                property_type: Some(type_id),
+                ..
+            } if crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, type_id)
+                .is_some() =>
+            {
+                Some(type_id)
+            }
+            _ => None,
         }
     }
 

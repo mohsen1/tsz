@@ -25,7 +25,7 @@ fn dom_libs() -> &'static Vec<Arc<LibFile>> {
     })
 }
 
-fn compile_codes(files: &[(&str, &str)], entry: &str) -> Vec<u32> {
+fn compile_codes(files: &[(&str, &str)], entry: &str) -> Vec<(u32, String)> {
     tsz_checker::test_utils::check_multi_file_with_libs(
         files,
         entry,
@@ -41,7 +41,7 @@ fn compile_codes(files: &[(&str, &str)], entry: &str) -> Vec<u32> {
     // TS2318 ("Cannot find global type") is noise from the stripped lib bundle
     // and unrelated to assignability identity.
     .filter(|d| d.code != 2318)
-    .map(|d| d.code)
+    .map(|d| (d.code, d.message_text))
     .collect()
 }
 
@@ -114,6 +114,27 @@ fn imported_div_element_is_assignable_to_html_element_and_node() {
     let exporter = "export const div: HTMLDivElement;";
     let consumer = r#"
 import { div } from "./component";
+const he: HTMLElement = div;
+const e: Element = div;
+const n: Node = div;
+"#;
+
+    let codes = compile_codes(
+        &[("component.d.ts", exporter), ("main.ts", consumer)],
+        "main.ts",
+    );
+    assert!(codes.is_empty(), "Diagnostics: {codes:?}");
+}
+
+#[test]
+fn imported_div_element_stays_assignable_after_imported_html_element_is_used_first() {
+    let exporter = r#"
+export const html: HTMLElement;
+export const div: HTMLDivElement;
+"#;
+    let consumer = r#"
+import { html, div } from "./component";
+const first: Element = html;
 const he: HTMLElement = div;
 const e: Element = div;
 const n: Node = div;

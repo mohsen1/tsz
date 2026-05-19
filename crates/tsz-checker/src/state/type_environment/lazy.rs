@@ -2,7 +2,7 @@
 
 use crate::query_boundaries::common::{
     collect_type_queries, contains_lazy_or_recursive, enum_def_id, fill_application_defaults,
-    get_type_query_symbol_ref, lazy_def_id,
+    get_type_query_symbol_ref, lazy_def_id, type_id_is_known_to_db,
 };
 use crate::query_boundaries::state::type_environment as query;
 use crate::query_boundaries::type_predicates::contains_conditional_with_application_extends;
@@ -1335,21 +1335,72 @@ impl<'a> CheckerState<'a> {
         &mut self,
         def_id: tsz_solver::DefId,
     ) -> Option<TypeId> {
+        if let Ok(env) = self.ctx.type_env.try_borrow()
+            && let Some(body) = env.get_def(def_id)
+            && body != TypeId::ERROR
+            && body != TypeId::ANY
+            && lazy_def_id(self.ctx.types, body) != Some(def_id)
+        {
+            return Some(body);
+        }
+
+        let def_kind = self.ctx.definition_store.get(def_id).map(|info| info.kind);
+        let is_class_def = matches!(def_kind, Some(tsz_solver::def::DefKind::Class));
+        let def_identity = self.ctx.def_symbol_identity(def_id);
+        let owner_file_idx_for_body = def_identity.and_then(|(_, owner_file_idx)| owner_file_idx);
+        let is_current_file_def = owner_file_idx_for_body == Some(self.ctx.current_file_idx);
+
+        // The shared DefinitionStore is already the resolver fallback for concrete
+        // DefId bodies. Reuse that body before rebuilding it through a symbol/lib
+        // lookup, but never cache sentinel values, a direct self-lazy placeholder,
+        // a class value/constructor body in type position, or a same-file body
+        // whose named alias/class display should be preserved by the normal path.
+        if !is_class_def
+            && !is_current_file_def
+            && let Some(body) = self.ctx.definition_store.get_body(def_id)
+            && body != TypeId::ERROR
+            && body != TypeId::ANY
+            && lazy_def_id(self.ctx.types, body) != Some(def_id)
+        {
+            self.try_insert_def_in_type_env(def_id, body);
+            return Some(body);
+        }
+
         let lib_name = self.ctx.definition_store.get(def_id).and_then(|info| {
-            (info.file_id == Some(u32::MAX)).then(|| self.ctx.types.resolve_atom(info.name))
+            if !matches!(info.kind, tsz_solver::def::DefKind::Interface) {
+                return None;
+            }
+            let name = self.ctx.types.resolve_atom(info.name);
+            (self.ctx.actual_lib_def_id_for_bare_name(&name) == Some(def_id)).then_some(name)
         });
         if let Some(name) = lib_name
-            && Self::in_cross_arena_interface_delegation()
+            && self
+                .ctx
+                .get_def_type_params(def_id)
+                .is_none_or(|params| params.is_empty())
             && self.ctx.has_lib_loaded()
         {
+            // A local lib-type cache entry was produced or validated by
+            // resolve_lib_type_by_name in this checker. Reuse it for the same
+            // actual-lib interface DefId without re-walking its lazy graph.
+            if let Some(&Some(cached)) = self.ctx.lib_type_resolution_cache.get(&name)
+                && !self.ctx.file_local_type_shadow_for_lib_name(&name)
+                && type_id_is_known_to_db(self.ctx.types, cached)
+                && lazy_def_id(self.ctx.types, cached) != Some(def_id)
+            {
+                self.try_insert_def_in_type_env(def_id, cached);
+                return Some(cached);
+            }
             if let Some(resolved) = self.resolve_lib_type_by_name(&name) {
                 self.try_insert_def_in_type_env(def_id, resolved);
                 return Some(resolved);
             }
-            return Some(self.ctx.types.lazy(def_id));
+            if Self::in_cross_arena_interface_delegation() {
+                return Some(self.ctx.types.lazy(def_id));
+            }
         }
 
-        let (sym_id, owner_file_idx) = self.ctx.def_symbol_identity(def_id)?;
+        let (sym_id, owner_file_idx) = def_identity?;
         if let Some(file_idx) = owner_file_idx
             && file_idx != self.ctx.current_file_idx
         {
@@ -1384,7 +1435,9 @@ impl<'a> CheckerState<'a> {
         // fallback and cause the `resolved == type_id` guard in the caller to short-circuit.
         // Prefer the concrete body from DefinitionStore when it is already available.
         if lazy_def_id(self.ctx.types, resolved) == Some(def_id) {
-            if let Some(body) = self.ctx.definition_store.get_body(def_id)
+            if !is_class_def
+                && !is_current_file_def
+                && let Some(body) = self.ctx.definition_store.get_body(def_id)
                 && body != resolved
                 && body != TypeId::ERROR
                 && body != TypeId::ANY

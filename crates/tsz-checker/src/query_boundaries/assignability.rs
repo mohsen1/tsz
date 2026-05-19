@@ -5,7 +5,10 @@ use tsz_solver::{
     TypeResolver, TypeSubstitution,
 };
 
-pub(crate) use super::common::{contains_type_parameters, object_shape_for_type};
+pub(crate) use super::common::{
+    callable_shape_for_type, contains_type_parameters, function_shape_for_type,
+    intersection_members, lazy_def_id, object_shape_for_type, type_application, type_param_info,
+};
 
 pub(crate) fn collect_resolution_refs(
     db: &dyn TypeDatabase,

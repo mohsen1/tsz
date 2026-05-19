@@ -1,8 +1,9 @@
 //! Shared cross-file caches for actual library symbol delegation.
 
 use crate::state::CheckerState;
-use crate::state_type_analysis::cross_file_direct::is_direct_actual_lib_declaration_arena;
+use crate::state_type_analysis::cross_file_direct::is_builtin_lib_declaration_arena;
 use tsz_binder::SymbolId;
+use tsz_binder::symbol_flags;
 use tsz_solver::{TypeId, TypeParamInfo};
 
 fn shared_actual_lib_delegation_cache_key(name: &str) -> String {
@@ -17,7 +18,7 @@ impl<'a> CheckerState<'a> {
         needs_cross_file_delegation: bool,
     ) -> Option<String> {
         if needs_cross_file_delegation
-            || !delegate_arena.is_some_and(is_direct_actual_lib_declaration_arena)
+            || !delegate_arena.is_some_and(is_builtin_lib_declaration_arena)
         {
             return None;
         }
@@ -60,6 +61,59 @@ impl<'a> CheckerState<'a> {
             shared
                 .entry(shared_actual_lib_delegation_cache_key(shared_name))
                 .or_insert(Some(result));
+        }
+    }
+
+    pub(crate) fn cache_final_actual_lib_interface_type(
+        &mut self,
+        sym_id: SymbolId,
+        shared_name: &str,
+        result: TypeId,
+    ) {
+        if matches!(result, TypeId::ERROR | TypeId::UNKNOWN)
+            || self.lib_name_locally_augmented(shared_name)
+        {
+            return;
+        }
+        if !self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id) {
+            return;
+        }
+        let Some(arena) = self
+            .ctx
+            .binder
+            .symbol_arenas
+            .get(&sym_id)
+            .map(std::convert::AsRef::as_ref)
+        else {
+            return;
+        };
+        if !is_builtin_lib_declaration_arena(arena) {
+            return;
+        }
+        let Some(symbol) = self.get_cross_file_symbol(sym_id) else {
+            return;
+        };
+        if !symbol.has_any_flags(symbol_flags::INTERFACE) {
+            return;
+        }
+        if !self.cached_lib_type_is_usable(shared_name, Some(result)) {
+            return;
+        }
+
+        if self
+            .ctx
+            .lib_type_resolution_cache
+            .get(shared_name)
+            .is_none_or(Option::is_none)
+        {
+            self.ctx
+                .lib_type_resolution_cache
+                .insert(shared_name.to_string(), Some(result));
+        }
+        if let Some(shared) = self.ctx.shared_lib_type_cache.as_ref()
+            && shared.get(shared_name).is_none_or(|entry| entry.is_none())
+        {
+            shared.insert(shared_name.to_string(), Some(result));
         }
     }
 }
@@ -138,6 +192,39 @@ mod tests {
         assert!(
             state.ctx.lib_delegation_cache.contains_symbol_type(sym_id),
             "shared hits should warm the file-local delegation cache"
+        );
+    }
+
+    #[test]
+    fn shared_actual_lib_delegation_name_accepts_dom_builtin_libs() {
+        let lib_files = load_lib_files(&["dom.d.ts"]);
+        let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+        let arena = Arc::new(parser.get_arena().clone());
+        let binder = Arc::new(binder);
+        let types = TypeInterner::new();
+        let ctx = CheckerContext::new(
+            arena.as_ref(),
+            binder.as_ref(),
+            &types,
+            "fixture.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        let state = CheckerState { ctx };
+
+        let dom_arena = lib_files[0].arena.as_ref();
+        let sym_id = state
+            .ctx
+            .binder
+            .file_locals
+            .get("HTMLElement")
+            .expect("HTMLElement should resolve to a DOM lib symbol");
+
+        assert_eq!(
+            state.shared_actual_lib_delegation_name(sym_id, Some(dom_arena), false),
+            Some("HTMLElement".to_string())
         );
     }
 }

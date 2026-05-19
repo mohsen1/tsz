@@ -78,7 +78,7 @@ impl<'a> CheckerState<'a> {
 
     pub(crate) fn lower_cross_arena_type_alias_declaration(
         &mut self,
-        _sym_id: SymbolId,
+        sym_id: SymbolId,
         decl_idx: NodeIndex,
         decl_arena: &NodeArena,
         type_alias: &TypeAliasData,
@@ -333,6 +333,15 @@ impl<'a> CheckerState<'a> {
         let bindings = self.get_type_param_bindings();
         let lazy_type_params_resolver =
             |def_id: tsz_solver::def::DefId| self.ctx.get_def_type_params(def_id);
+        let preferred_self_reference = decl_arena
+            .get(type_alias.name)
+            .and_then(|name_node| decl_arena.get_identifier(name_node))
+            .map(|ident| {
+                (
+                    ident.escaped_text.clone(),
+                    self.ctx.get_or_create_def_id(sym_id),
+                )
+            });
         let lowering = TypeLowering::with_hybrid_resolver(
             decl_arena,
             self.ctx.types,
@@ -349,6 +358,11 @@ impl<'a> CheckerState<'a> {
             lowering
         } else {
             lowering.prefer_name_def_id_resolution()
+        };
+        let lowering = if let Some((name, def_id)) = preferred_self_reference {
+            lowering.with_preferred_self_reference(name, def_id)
+        } else {
+            lowering
         };
 
         lowering.lower_type_alias_declaration(type_alias)

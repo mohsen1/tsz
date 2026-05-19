@@ -25,6 +25,48 @@ impl<'a> CheckerState<'a> {
     // Core Type Computation
     // =========================================================================
 
+    pub(crate) fn wrap_readonly_property_signature_unique_symbol_type(
+        &mut self,
+        member_idx: NodeIndex,
+        type_annotation: NodeIndex,
+        modifiers: &Option<tsz_parser::parser::NodeList>,
+        raw_type: TypeId,
+    ) -> TypeId {
+        if !self.has_readonly_modifier(modifiers)
+            || !crate::types_domain::unique_symbol_arena::is_unique_symbol_type_annotation_unwrapped(
+                self.ctx.arena,
+                type_annotation,
+            )
+            || (raw_type != TypeId::SYMBOL
+                && !crate::query_boundaries::common::is_unique_symbol_type(
+                    self.ctx.types,
+                    raw_type,
+                ))
+        {
+            return raw_type;
+        }
+
+        let sym_id = self.ctx.binder.get_node_symbol(member_idx).or_else(|| {
+            let member = self.ctx.arena.get(member_idx)?;
+            let sig = self.ctx.arena.get_signature(member)?;
+            self.ctx.binder.get_node_symbol(sig.name)
+        });
+        let sym_ref = if let Some(sym_id) = sym_id {
+            tsz_solver::SymbolRef(sym_id.0)
+        } else if self
+            .ctx
+            .arena
+            .get_extended(member_idx)
+            .and_then(|ext| self.ctx.arena.get(ext.parent))
+            .is_some_and(|parent| parent.kind == syntax_kind_ext::INTERFACE_DECLARATION)
+        {
+            tsz_solver::SymbolRef(type_annotation.0)
+        } else {
+            return raw_type;
+        };
+        self.ctx.types.unique_symbol(sym_ref)
+    }
+
     fn declared_annotation_type_for_identifier_expression(
         &mut self,
         expr: NodeIndex,
@@ -1671,6 +1713,12 @@ impl<'a> CheckerState<'a> {
 
             if sig.type_annotation.is_some() {
                 let base = self.get_type_from_type_node_in_type_literal(sig.type_annotation);
+                let base = self.wrap_readonly_property_signature_unique_symbol_type(
+                    member_idx,
+                    sig.type_annotation,
+                    &sig.modifiers,
+                    base,
+                );
                 let evaluated = self.evaluate_type_with_env(base);
                 let base = if evaluated != TypeId::ERROR && evaluated != TypeId::UNKNOWN {
                     let has_members = crate::query_boundaries::common::object_shape_for_type(
@@ -1780,7 +1828,13 @@ impl<'a> CheckerState<'a> {
             }
 
             let type_id = if sig.type_annotation.is_some() {
-                self.get_type_from_type_node(sig.type_annotation)
+                let raw = self.get_type_from_type_node(sig.type_annotation);
+                self.wrap_readonly_property_signature_unique_symbol_type(
+                    member_idx,
+                    sig.type_annotation,
+                    &sig.modifiers,
+                    raw,
+                )
             } else {
                 TypeId::ANY
             };
@@ -1843,156 +1897,5 @@ impl<'a> CheckerState<'a> {
 }
 
 #[cfg(test)]
-mod tests {
-    use crate::test_utils::check_source_codes;
-
-    #[test]
-    fn template_expr_contextual_type_no_false_positive() {
-        // Template expression `\`${scope}:${event}\`` passed to a parameter expecting
-        // a template literal type should NOT produce TS2345
-        let source = r#"
-type Registry = { a: { a1: {} }; b: { b1: {} } };
-type Keyof<T> = keyof T & string;
-declare function f1<
-  Scope extends Keyof<Registry>,
-  Event extends Keyof<Registry[Scope]>,
->(eventPath: `${Scope}:${Event}`): void;
-function f2<
-  Scope extends Keyof<Registry>,
-  Event extends Keyof<Registry[Scope]>,
->(scope: Scope, event: Event) {
-  f1(`${scope}:${event}`);
-}
-"#;
-        let errors = check_source_codes(source);
-        assert!(
-            !errors.contains(&2345),
-            "Should not emit TS2345 for template literal matching contextual type, got: {errors:?}"
-        );
-    }
-
-    #[test]
-    fn generic_array_like_context_provides_element_type() {
-        // When contextual type is a generic Application like ReadonlyArray<[K, V]>,
-        // ensure the solver extracts the element type from the type arguments.
-        // This exercises the Application → evaluation path in get_array_element_type.
-        // The full Iterable<readonly [K, V]> path (used by Map constructor) is
-        // validated by conformance tests (for-of37, for-of40, for-of50) since it
-        // requires Symbol.iterator from lib definitions.
-        let source = r#"
-interface ReadonlyArray<T> {
-    readonly length: number;
-    readonly [n: number]: T;
-}
-declare function f<K, V>(entries: ReadonlyArray<readonly [K, V]>): [K, V];
-const r = f([["", true]]);
-"#;
-        let errors = check_source_codes(source);
-        let semantic_errors: Vec<_> = errors.into_iter().filter(|&c| c != 2318).collect();
-        assert!(
-            !semantic_errors.contains(&2345) && !semantic_errors.contains(&2769),
-            "ReadonlyArray<readonly [K, V]> should contextually type array elements as tuples, got: {semantic_errors:?}"
-        );
-    }
-
-    #[test]
-    fn array_param_context_still_works() {
-        // Ensure the fix doesn't break the already-working array parameter path.
-        // When the parameter is a plain array type (readonly (readonly [K, V])[]),
-        // contextual typing should still work without needing the fallback.
-        let source = r#"
-declare function f<K, V>(entries: readonly (readonly [K, V])[]): [K, V];
-const result = f([["", true]]);
-"#;
-        let errors = check_source_codes(source);
-        let semantic_errors: Vec<_> = errors.into_iter().filter(|&c| c != 2318).collect();
-        assert!(
-            !semantic_errors.contains(&2345) && !semantic_errors.contains(&2769),
-            "Array parameter should contextually type elements as tuples, got: {semantic_errors:?}"
-        );
-    }
-
-    #[test]
-    fn generic_iterable_context_preserves_heterogeneous_entries_for_type_mismatch() {
-        let source = r#"
-declare function f<K, V>(entries: readonly (readonly [K, V])[]): [K, V];
-const result = f([["", true], ["", 0]]);
-"#;
-        let errors = check_source_codes(source);
-        let semantic_errors: Vec<_> = errors.into_iter().filter(|&c| c != 2318).collect();
-        // tsc emits TS2322 ("Type 'number' is not assignable to type 'boolean'.")
-        // on the inner element when V is inferred from the first entry
-        // and the second entry's V mismatches. Earlier we incorrectly
-        // surfaced TS2345 on the whole array argument because element-wise
-        // elaboration was suppressed for any call argument targeting a
-        // generic parameter; we now elaborate when the resolved target
-        // element type is concrete.
-        assert!(
-            semantic_errors.contains(&2322),
-            "Heterogeneous generic entries should produce TS2322 element elaboration, got: {semantic_errors:?}"
-        );
-    }
-
-    #[test]
-    fn template_expr_without_context_stays_string() {
-        // Template expression assigned to `string` should still work (not break)
-        let source = r#"
-function f(x: string, y: number): string {
-    return `${x} is ${y}`;
-}
-"#;
-        let errors = check_source_codes(source);
-        // Filter out TS2318 (lib not found) since test env has no lib definitions
-        let semantic_errors: Vec<_> = errors.into_iter().filter(|&c| c != 2318).collect();
-        assert!(
-            semantic_errors.is_empty(),
-            "Template expression returning string should produce no semantic errors, got: {semantic_errors:?}"
-        );
-    }
-
-    /// Issue #2871: a local function named `Symbol` must not be treated as
-    /// the lib global `Symbol`. The const initializer should keep the local
-    /// function's return type (`string`) instead of being inferred as
-    /// `unique symbol`. Without the fix, the TS2322 lands on `asString`
-    /// instead of `asSymbol`.
-    #[test]
-    fn shadowed_symbol_call_keeps_local_return_type() {
-        let source = r#"
-function test() {
-    const Symbol = () => "local";
-    const value = Symbol();
-    const asSymbol: symbol = value;
-    const asString: string = value;
-    asSymbol;
-    asString;
-}
-"#;
-        let codes = check_source_codes(source);
-        let ts2322_count = codes.iter().filter(|&&c| c == 2322).count();
-        assert_eq!(
-            ts2322_count, 1,
-            "Expected exactly one TS2322 (string→symbol on asSymbol), got: {codes:?}"
-        );
-    }
-
-    /// Issue #2871: same rule, different declaration kind. A local
-    /// `function Symbol(): \"outer\"` shadows the global, so the const
-    /// initializer's type must come from the local return type, not the
-    /// global `Symbol()` special case.
-    #[test]
-    fn shadowed_symbol_call_function_decl_not_unique_symbol() {
-        let source = r#"
-function outer() {
-    function Symbol(): "outer" { return "outer"; }
-    const value = Symbol();
-    const taken: symbol = value;
-    taken;
-}
-"#;
-        let codes = check_source_codes(source);
-        assert!(
-            codes.contains(&2322),
-            "Expected TS2322 for string→symbol via shadowed Symbol(), got: {codes:?}"
-        );
-    }
-}
+#[path = "helpers_tests.rs"]
+mod tests;
