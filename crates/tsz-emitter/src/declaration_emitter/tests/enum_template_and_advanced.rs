@@ -1190,6 +1190,90 @@ fn symlinked_nested_package_reference_fires_even_when_canonical_package_is_reach
 }
 
 #[test]
+fn check_symbol_portability_prefers_symlinked_nested_package_over_public_root_export() {
+    let root = std::env::temp_dir().join(format!(
+        "tsz-ts2883-symlink-precedence-{}",
+        std::process::id()
+    ));
+    let top_level_pkg = root.join("Folder/node_modules/styled-components");
+    let top_level_source = top_level_pkg.join("typings/styled-components.d.ts");
+    let nested_source = root.join(
+        "Folder/monorepo/package-a/node_modules/styled-components/typings/styled-components.d.ts",
+    );
+    let current_path = root.join("Folder/monorepo/core/index.ts");
+
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(top_level_pkg.join("typings")).expect("create top-level package");
+    std::fs::create_dir_all(current_path.parent().unwrap()).expect("create consumer directory");
+    std::fs::write(
+        top_level_pkg.join("package.json"),
+        r#"{"name":"styled-components","typings":"typings/styled-components.d.ts"}"#,
+    )
+    .expect("write package.json");
+    std::fs::write(&top_level_source, "export interface InterpolationValue {}")
+        .expect("write declaration");
+
+    let (parser, _root) = parse_test_source("");
+    let source_arena = std::sync::Arc::new(parser.arena.clone());
+    let mut emitter = make_path_only_emitter(&parser);
+    let nested_source = nested_source.to_string_lossy().into_owned();
+    let top_level_source = top_level_source.to_string_lossy().into_owned();
+    let current_path = current_path.to_string_lossy().into_owned();
+    emitter.arena_to_path.insert(
+        std::sync::Arc::as_ptr(&source_arena) as usize,
+        nested_source,
+    );
+
+    let mut binder = tsz_binder::BinderState::new();
+    let sym_id = binder.symbols.alloc(
+        tsz_binder::symbol_flags::INTERFACE,
+        "InterpolationValue".to_string(),
+    );
+    let mut symbol_arenas = rustc_hash::FxHashMap::default();
+    symbol_arenas.insert(sym_id, source_arena);
+    binder.symbol_arenas = std::sync::Arc::new(symbol_arenas);
+
+    let mut exports = tsz_binder::SymbolTable::new();
+    exports.set("InterpolationValue".to_string(), sym_id);
+    let mut module_exports = rustc_hash::FxHashMap::default();
+    module_exports.insert(top_level_source, exports);
+    binder.module_exports = std::sync::Arc::new(module_exports);
+
+    assert!(
+        emitter
+            .package_root_export_reference_path(
+                sym_id,
+                "InterpolationValue",
+                &binder,
+                &current_path,
+            )
+            .is_some(),
+        "fixture should prove the package-root public-surface suppression would otherwise match"
+    );
+
+    let result = emitter.check_symbol_portability(
+        sym_id,
+        &binder,
+        &current_path,
+        &mut rustc_hash::FxHashSet::default(),
+        &mut rustc_hash::FxHashSet::default(),
+        &mut rustc_hash::FxHashSet::default(),
+        &mut rustc_hash::FxHashSet::default(),
+    );
+
+    assert_eq!(
+        result,
+        Some((
+            "../package-a/node_modules/styled-components/typings/styled-components".to_string(),
+            "InterpolationValue".to_string(),
+        )),
+        "nested symlink reachability should win over package-root public export suppression"
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn symlinked_nested_package_reference_independent_of_user_chosen_names() {
     // The fix must be structural: changing user-chosen package and type names
     // (the bound identifiers in this scenario) must not affect whether the
