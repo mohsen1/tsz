@@ -1278,7 +1278,38 @@ fn direct_cross_file_interface_lowering_handles_simple_builtin_dom_interfaces() 
                 false,
             )
             .is_none(),
-        "builtin dom interfaces with heritage stay on the fallback path",
+        "generic direct interface lowering still rejects heritage",
+    );
+    let (heritage_ty, heritage_params) = state
+        .direct_actual_lib_symbol_type(
+            heritage_sym_id,
+            CrossArenaSymbolMissSource::SymbolArena,
+            Some(heritage_arena),
+            false,
+        )
+        .expect("builtin dom interface with safe heritage should resolve through lib identity");
+    assert_ne!(heritage_ty, TypeId::UNKNOWN);
+    assert_ne!(heritage_ty, TypeId::ERROR);
+    assert!(heritage_params.is_empty());
+    let once = state.ctx.types.intern_string("once");
+    let capture = state.ctx.types.intern_string("capture");
+    assert!(
+        crate::query_boundaries::common::raw_property_type(
+            state.ctx.types.as_type_database(),
+            heritage_ty,
+            once,
+        )
+        .is_some(),
+        "direct lowering should keep own interface members",
+    );
+    assert!(
+        crate::query_boundaries::common::raw_property_type(
+            state.ctx.types.as_type_database(),
+            heritage_ty,
+            capture,
+        )
+        .is_some(),
+        "direct lowering should merge inherited EventListenerOptions members",
     );
 }
 
