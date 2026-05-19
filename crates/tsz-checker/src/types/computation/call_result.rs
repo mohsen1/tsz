@@ -3,6 +3,7 @@
 use crate::query_boundaries::assignability as assign_query;
 use crate::query_boundaries::common;
 use crate::query_boundaries::common::CallResult;
+use crate::query_boundaries::type_computation::core as expr_ops;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
@@ -463,10 +464,7 @@ impl<'a> CheckerState<'a> {
         {
             return true;
         }
-        matches!(
-            self.get_type_from_type_node(type_node),
-            TypeId::UNKNOWN | TypeId::ANY | TypeId::NEVER
-        )
+        expr_ops::is_literal_permissive_object_context(self.get_type_from_type_node(type_node))
     }
 
     fn expected_tuple_element_for_aggregate_actual(
