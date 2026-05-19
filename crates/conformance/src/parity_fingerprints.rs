@@ -36,6 +36,7 @@ pub(crate) enum ParityAction {
     /// Used only when tsz emits the wrong error code for an otherwise
     /// well-understood divergence (e.g. circular instantiation surfacing
     /// as TS2322 instead of TS2589).
+    #[allow(dead_code)]
     Remap(ParityRemap),
 }
 
