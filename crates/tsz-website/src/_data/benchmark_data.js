@@ -24,10 +24,43 @@ function formatMemory(bytes) {
   return `${(value / (1024 ** 3)).toFixed(1)} GiB RAM`;
 }
 
+function measurementProfileSummary(data) {
+  const profile = data?.measurement_profile;
+  if (!profile || typeof profile !== "object") return null;
+
+  const mode = String(profile.mode || "").trim();
+  if (!mode) return null;
+
+  const pgo = profile.profile_guided_optimization || {};
+  if (mode === "release-pgo" && pgo.optimized) {
+    const parts = ["tsz release-pgo"];
+    if (Number.isFinite(Number(pgo.training_input_count))) {
+      parts.push(`${Number(pgo.training_input_count)} PGO training inputs`);
+    }
+    if (pgo.profile_fingerprint) {
+      parts.push(`profile ${String(pgo.profile_fingerprint).slice(0, 12)}`);
+    }
+    if (pgo.profile_data_source === "cache") {
+      parts.push("cached profile data");
+    }
+    if (pgo.training_metadata_available === false) {
+      parts.push("training metadata unavailable");
+    }
+    return parts.join(", ");
+  }
+
+  if (mode === "release-untrained") return "tsz release build without PGO";
+  if (mode === "quick-untrained") return "quick-mode tsz build without PGO";
+  if (mode === "tsz-override") return "caller-provided tsz binary";
+  return `tsz ${mode}`;
+}
+
 function runnerEnvironmentSummary(data) {
   const parts = [];
   const generatedAt = formatUtcTimestamp(data?.generated_at);
   if (generatedAt) parts.push(`Generated ${generatedAt}`);
+  const measurement = measurementProfileSummary(data);
+  if (measurement) parts.push(measurement);
 
   const env = data?.runner_environment;
   if (!env || typeof env !== "object") {

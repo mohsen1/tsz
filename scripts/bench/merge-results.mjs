@@ -125,6 +125,74 @@ function validateRunnerEnvironmentConsistency(environments) {
   return warnings;
 }
 
+function measurementProfileSignature(profile) {
+  const pgo = profile?.profile_guided_optimization || {};
+  return {
+    mode: profile?.mode || null,
+    tsz_binary_source: profile?.tsz_binary_source || null,
+    profile_guided_optimization: {
+      requested: pgo.requested ?? null,
+      required: pgo.required ?? null,
+      optimized: pgo.optimized ?? null,
+      profile_fingerprint: pgo.profile_fingerprint || null,
+      training_fingerprint: pgo.training_fingerprint || null,
+      profile_data_source: pgo.profile_data_source || null,
+      training_metadata_available: pgo.training_metadata_available ?? null,
+      training_input_count: pgo.training_input_count ?? null,
+      training_failure_count: pgo.training_failure_count ?? null,
+      training_inputs: Array.isArray(pgo.training_inputs) ? pgo.training_inputs : [],
+      training_failed_inputs: Array.isArray(pgo.training_failed_inputs) ? pgo.training_failed_inputs : [],
+      config: {
+        synthetic: pgo.config?.synthetic ?? null,
+        fetch_utility_types: pgo.config?.fetch_utility_types ?? null,
+        fetch_core_projects: pgo.config?.fetch_core_projects ?? null,
+        panic_unwind: pgo.config?.panic_unwind ?? null,
+        extra_inputs: pgo.config?.extra_inputs || null,
+        training_timeout_seconds: pgo.config?.training_timeout_seconds ?? null,
+        cache_enabled: pgo.config?.cache_enabled ?? null,
+      },
+    },
+  };
+}
+
+function flattenForComparison(value, prefix = "", output = {}) {
+  if (Array.isArray(value)) {
+    output[prefix] = JSON.stringify(value);
+    return output;
+  }
+  if (value && typeof value === "object") {
+    for (const key of Object.keys(value).sort()) {
+      flattenForComparison(value[key], prefix ? `${prefix}.${key}` : key, output);
+    }
+    return output;
+  }
+  output[prefix] = value;
+  return output;
+}
+
+function validateMeasurementProfileConsistency(profiles) {
+  if (profiles.length <= 1) return [];
+
+  const baseline = flattenForComparison(measurementProfileSignature(profiles[0].profile));
+  const baselineSignature = measurementProfileSignature(profiles[0].profile);
+  const warnings = [];
+  for (const { file, profile } of profiles.slice(1)) {
+    const currentSignature = measurementProfileSignature(profile);
+    const current = flattenForComparison(currentSignature);
+    const allKeys = new Set([...Object.keys(baseline), ...Object.keys(current)]);
+    const mismatchedFields = [...allKeys].filter((key) => baseline[key] !== current[key]).sort();
+    if (mismatchedFields.length > 0) {
+      warnings.push({
+        file: path.basename(file),
+        mismatched_fields: mismatchedFields,
+        expected: baselineSignature,
+        actual: currentSignature,
+      });
+    }
+  }
+  return warnings;
+}
+
 function collectProjectCompatibilityFailures(rows) {
   const projectRows = rows.filter((row) => PROJECT_COMPATIBILITY_ROW_SET.has(row?.name));
   if (projectRows.length === 0) return [];
@@ -279,6 +347,11 @@ function main() {
     .filter(({ environment }) => environment && typeof environment === "object");
   const runnerEnvironment = runnerEnvironments[0]?.environment ?? null;
   const runnerEnvironmentWarnings = validateRunnerEnvironmentConsistency(runnerEnvironments);
+  const measurementProfiles = payloads
+    .map(({ file, payload }) => ({ file, profile: payload.measurement_profile }))
+    .filter(({ profile }) => profile && typeof profile === "object");
+  const measurementProfile = measurementProfiles[0]?.profile ?? null;
+  const measurementProfileWarnings = validateMeasurementProfileConsistency(measurementProfiles);
 
   const merged = {
     ...mergedArtifactMetadata(payloads, new Date().toISOString()),
@@ -288,8 +361,10 @@ function main() {
       hyperfine_exit_codes_required: hyperfineExitCodesRequired,
       project_compatibility_required_fields: hasProjectCompatibilityRows(results),
       runner_environment_warnings: runnerEnvironmentWarnings,
+      measurement_profile_warnings: measurementProfileWarnings,
     },
     ...(runnerEnvironment ? { runner_environment: runnerEnvironment } : {}),
+    ...(measurementProfile ? { measurement_profile: measurementProfile } : {}),
     quick_mode: payloads.every(({ payload }) => payload.quick_mode === true),
     filter: null,
     binaries: payloads.find(({ payload }) => payload.binaries)?.payload.binaries || {},
