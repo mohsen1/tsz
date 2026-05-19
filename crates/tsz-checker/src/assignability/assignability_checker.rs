@@ -9,7 +9,10 @@ use crate::query_boundaries::assignability::{
     is_assignable_with_overrides, is_relation_cacheable, is_type_parameter_like,
     keyof_object_properties, map_compound_members,
 };
-use crate::query_boundaries::common::{collect_lazy_def_ids, collect_type_queries};
+use crate::query_boundaries::common::{
+    collect_lazy_def_ids, collect_type_queries, intersection_members, object_shape_id,
+    object_with_index_shape_id, union_members,
+};
 use crate::state::{CheckerOverrideProvider, CheckerState};
 use rustc_hash::FxHashSet;
 use tracing::trace;
@@ -2716,25 +2719,20 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        if let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, probe)
-        {
+        if let Some(members) = union_members(self.ctx.types, probe) {
             return members
                 .iter()
                 .all(|&m| self.candidate_rejects_empty_object(m, visited));
         }
 
-        if let Some(members) =
-            crate::query_boundaries::common::intersection_members(self.ctx.types, probe)
-        {
+        if let Some(members) = intersection_members(self.ctx.types, probe) {
             return members
                 .iter()
                 .any(|&m| self.candidate_rejects_empty_object(m, visited));
         }
 
-        let shape_id = crate::query_boundaries::common::object_shape_id(self.ctx.types, probe)
-            .or_else(|| {
-                crate::query_boundaries::common::object_with_index_shape_id(self.ctx.types, probe)
-            });
+        let shape_id = object_shape_id(self.ctx.types, probe)
+            .or_else(|| object_with_index_shape_id(self.ctx.types, probe));
 
         if let Some(shape_id) = shape_id
             && self
