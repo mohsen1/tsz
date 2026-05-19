@@ -2977,6 +2977,26 @@ class ArchGuardVisitedCloneTests(unittest.TestCase):
         )
         self.assertEqual(hits, [], f"live visited.clone() allowlist is stale: {hits!r}")
 
+    def test_registered_check_covers_solver_sources(self):
+        _name, search_roots, allowlist = self._registered_check()
+        root_strings = {str(root) for root in search_roots}
+
+        self.assertIn(str(self.arch_guard.ROOT / "crates" / "tsz-solver" / "src"), root_strings)
+        self.assertIn(
+            (
+                "crates/tsz-solver/src/evaluation/evaluate_rules/infer_pattern.rs",
+                "let mut alias_visited = visited.clone();",
+            ),
+            allowlist,
+        )
+        self.assertIn(
+            (
+                "crates/tsz-solver/src/evaluation/evaluate_rules/infer_pattern_helpers.rs",
+                "let mut alias_visited = visited.clone();",
+            ),
+            allowlist,
+        )
+
 
 class ArchGuardPolicyTomlTests(unittest.TestCase):
     """Verify that CHECKS and MANIFEST_CHECKS are loaded from the TOML policy file.
