@@ -101,7 +101,8 @@ impl<'a> CheckerState<'a> {
     }
 
     fn types_are_mutually_assignable(&mut self, left: TypeId, right: TypeId) -> bool {
-        self.is_assignable_to(left, right) && self.is_assignable_to(right, left)
+        self.diagnostic_relation_boolean_guard(left, right)
+            && self.diagnostic_relation_boolean_guard(right, left)
     }
 
     pub(in crate::error_reporter::call_errors) fn contextual_constraint_parameter_display(
@@ -340,8 +341,7 @@ impl<'a> CheckerState<'a> {
             query_common::instantiate_type(self.ctx.types, candidate_source_type, &substitution);
         let evaluated_candidate = self.evaluate_type_for_assignability(candidate);
         let matches_evaluated = evaluated_candidate == evaluated_param
-            || (self.is_assignable_to(evaluated_candidate, evaluated_param)
-                && self.is_assignable_to(evaluated_param, evaluated_candidate));
+            || self.types_are_mutually_assignable(evaluated_candidate, evaluated_param);
         if !(matches_evaluated
             || from_type_param_constraint
                 && query_common::object_shape_for_type(self.ctx.types, evaluated_candidate)
@@ -394,8 +394,7 @@ impl<'a> CheckerState<'a> {
 
         let evaluated_constraint = self.evaluate_type_for_assignability(raw_constraint);
         let matches_evaluated = evaluated_constraint == evaluated_param
-            || (self.is_assignable_to(evaluated_constraint, evaluated_param)
-                && self.is_assignable_to(evaluated_param, evaluated_constraint));
+            || self.types_are_mutually_assignable(evaluated_constraint, evaluated_param);
         if !matches_evaluated {
             return;
         }
@@ -1589,7 +1588,10 @@ impl<'a> CheckerState<'a> {
                         self.get_type_of_node_with_request(prop_value_idx, &contextual_request);
                     if contextual_prop_type != TypeId::ERROR
                         && contextual_prop_type != TypeId::ANY
-                        && self.is_assignable_to(contextual_prop_type, target_prop_type)
+                        && self.diagnostic_relation_boolean_guard(
+                            contextual_prop_type,
+                            target_prop_type,
+                        )
                     {
                         contextual_prop_type
                     } else {
@@ -2521,7 +2523,8 @@ impl<'a> CheckerState<'a> {
                 && contextual_elem_type != TypeId::ANY
                 && target_element_type != TypeId::ERROR
                 && target_element_type != TypeId::ANY
-                && self.is_assignable_to(contextual_elem_type, target_element_type);
+                && self
+                    .diagnostic_relation_boolean_guard(contextual_elem_type, target_element_type);
 
             // When the target element type is an index-signature-only type
             // (e.g., `NamedTransform { [name: string]: Transform3D }`),
