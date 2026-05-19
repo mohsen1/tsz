@@ -1,7 +1,7 @@
-use tsz_solver::operations::CallResult;
+use tsz_solver::operations::{AssignabilityChecker, CallResult};
 use tsz_solver::{
-    AssignabilityChecker, ContextualTypeContext, FunctionShape, QueryDatabase, TypeDatabase,
-    TypeEnvironment, TypeId, TypeResolver, TypeSubstitution,
+    ContextualTypeContext, FunctionShape, QueryDatabase, TypeDatabase, TypeEnvironment, TypeId,
+    TypeResolver, TypeSubstitution,
 };
 
 pub(crate) use super::super::common::array_element_type as array_element_type_for_type;
@@ -20,7 +20,7 @@ pub(crate) fn get_contextual_signature(
     db: &dyn QueryDatabase,
     type_id: TypeId,
 ) -> Option<FunctionShape> {
-    tsz_solver::get_contextual_signature_cached_with_compat_checker(db, type_id)
+    tsz_solver::operations::get_contextual_signature_cached_with_compat_checker(db, type_id)
 }
 
 pub(crate) fn get_contextual_signature_for_arity(
@@ -28,7 +28,7 @@ pub(crate) fn get_contextual_signature_for_arity(
     type_id: TypeId,
     arg_count: usize,
 ) -> Option<FunctionShape> {
-    tsz_solver::get_contextual_signature_for_arity_cached_with_compat_checker(
+    tsz_solver::operations::get_contextual_signature_for_arity_cached_with_compat_checker(
         db, type_id, arg_count,
     )
 }

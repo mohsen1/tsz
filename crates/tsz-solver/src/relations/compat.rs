@@ -2,6 +2,7 @@
 
 use crate::caches::db::QueryDatabase;
 use crate::diagnostics::SubtypeFailureReason;
+use crate::operations::AssignabilityChecker;
 use crate::relations::subtype::{NoopResolver, SubtypeChecker, TypeResolver};
 use crate::types::{
     IntrinsicKind, LiteralValue, MappedModifier, MappedType, PropertyInfo, TypeData, TypeId,
@@ -11,7 +12,7 @@ use crate::visitor::{
     is_empty_object_type_through_type_constraints, is_error_type, keyof_inner_type, lazy_def_id,
     mapped_type_id, type_param_info, union_list_id,
 };
-use crate::{AnyPropagationRules, AssignabilityChecker, TypeDatabase};
+use crate::{AnyPropagationRules, TypeDatabase};
 use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
 

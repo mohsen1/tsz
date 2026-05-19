@@ -6,19 +6,19 @@ use tsz_solver::{
 // Re-export solver value types used by checker call computation.
 pub(crate) use tsz_solver::judge::{DefaultJudge, Judge, JudgeConfig};
 pub(crate) use tsz_solver::operations::property::PropertyAccessResult;
+pub(crate) use tsz_solver::operations::{AssignabilityChecker, CallResult};
 pub(crate) use tsz_solver::type_queries::{
     RemappedMappedIndexAccessResult, TypeTraversalKind, constraint_allows_mutable_array_like,
     is_remapped_mapped_index_access, remapped_mapped_index_access_result,
 };
 pub(crate) use tsz_solver::{
-    AssignabilityChecker, CallResult, ContextualTypeContext, FunctionShape, IndexKind,
-    IndexSignatureResolver, IntrinsicKind, MappedType, ObjectFlags, OptionalPropertyChainKey,
-    ParamInfo, PendingDiagnostic, PendingDiagnosticBuilder, QueryDatabase, SourceLocation,
-    SubtypeFailureReason, TypeEnvironment, TypeFormatter, TypeResolver, TypeSubstitution,
-    fill_application_defaults, instantiate_generic,
+    ContextualTypeContext, FunctionShape, IndexKind, IndexSignatureResolver, IntrinsicKind,
+    MappedType, ObjectFlags, OptionalPropertyChainKey, ParamInfo, PendingDiagnostic,
+    PendingDiagnosticBuilder, QueryDatabase, SourceLocation, SubtypeFailureReason, TypeEnvironment,
+    TypeFormatter, TypeResolver, TypeSubstitution, fill_application_defaults, instantiate_generic,
 };
 #[allow(unused_imports)]
-pub(crate) use tsz_solver::{BinaryOpEvaluator, TypeInstantiator, TypeInterner};
+pub(crate) use tsz_solver::{TypeInstantiator, TypeInterner};
 
 pub(crate) use super::construct_signatures::construct_signatures_for_type;
 pub(crate) use super::type_rewrite::replace_type_queries_and_lazies_with;
@@ -1103,7 +1103,7 @@ pub(crate) fn is_valid_mapped_type_key_type(
     db: &dyn tsz_solver::QueryDatabase,
     type_id: TypeId,
 ) -> bool {
-    let evaluator = tsz_solver::BinaryOpEvaluator::new(db);
+    let evaluator = tsz_solver::operations::BinaryOpEvaluator::new(db);
     evaluator.is_valid_mapped_type_key_type(type_id)
 }
 
@@ -1672,8 +1672,8 @@ pub(crate) fn union_list_id(
 /// through this function instead of calling `BinaryOpEvaluator::new()` directly.
 pub(crate) fn new_binary_op_evaluator(
     db: &dyn tsz_solver::QueryDatabase,
-) -> tsz_solver::BinaryOpEvaluator<'_> {
-    tsz_solver::BinaryOpEvaluator::new(db)
+) -> tsz_solver::operations::BinaryOpEvaluator<'_> {
+    tsz_solver::operations::BinaryOpEvaluator::new(db)
 }
 
 // ── Visitor aliases (same-name wrappers for inline-call migration) ─────────

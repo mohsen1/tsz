@@ -515,11 +515,13 @@ impl<'a> ContextualTypeContext<'a> {
         // discards instantiated parameter types like `Iterable<readonly [K, V]>`,
         // which in turn breaks nested generic call contextual typing.
         if let Some(TypeData::Application(app_id)) = self.interner.lookup(expected) {
-            if let Some(shape) = crate::get_contextual_signature_for_arity_with_compat_checker(
-                self.interner,
-                expected,
-                arg_count,
-            ) {
+            if let Some(shape) =
+                crate::operations::get_contextual_signature_for_arity_with_compat_checker(
+                    self.interner,
+                    expected,
+                    arg_count,
+                )
+            {
                 return extract_param_type_at_for_call(
                     self.interner,
                     &shape.params,
@@ -889,9 +891,10 @@ impl<'a> ContextualTypeContext<'a> {
 
         // Handle Application explicitly - unwrap to base type
         if let Some(TypeData::Application(app_id)) = self.interner.lookup(expected) {
-            if let Some(shape) =
-                crate::get_contextual_signature_with_compat_checker(self.interner, expected)
-            {
+            if let Some(shape) = crate::operations::get_contextual_signature_with_compat_checker(
+                self.interner,
+                expected,
+            ) {
                 return Some(shape.return_type);
             }
             let app = self.interner.type_application(app_id);
