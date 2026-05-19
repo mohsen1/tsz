@@ -1051,6 +1051,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         resolved
                     };
 
+                    // Homomorphic mapped-type union distribution: when the alias body is
+                    // `{ [K in keyof T]: ... }` and T's argument resolves to a union,
+                    // distribute over union members here — before calling
+                    // `instantiate_generic` — so that `try_distribute_mapped_over_union_source`
+                    // in mapped.rs can distinguish the post-instantiation constraint from the
+                    // declared constraint. After a standard instantiate_generic call with
+                    // T→(A|B), both `constraint` and `type_param.constraint` collapse to
+                    // `keyof (A|B)`, which causes that guard to treat it as a direct use and
+                    // skip distribution.
                     if let Some(TypeData::Mapped(mapped_id)) = self.interner.lookup(effective_body)
                     {
                         let mapped = self.interner.get_mapped(mapped_id);
@@ -1098,9 +1107,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                         evaluated,
                                     );
                                 }
-                                if let Some(d) = self.def_depth.get_mut(&def_id) {
-                                    *d = d.saturating_sub(1);
-                                }
+                                self.decrement_def_depth(def_id);
                                 return evaluated;
                             }
                         }
