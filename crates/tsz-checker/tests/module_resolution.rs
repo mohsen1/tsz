@@ -1425,3 +1425,63 @@ fn test_probe_misses_npm_packages_not_in_index() {
     assert_eq!(probe_file_name_index("react/jsx-runtime", &idx), None);
     assert_eq!(probe_file_name_index("lodash/merge", &idx), None);
 }
+
+// ---------------------------------------------------------------------------
+// Directory-hint specifiers: "." and trailing slash
+//
+// Regression guard for importFromDot and importWithTrailingSlash.
+// When a specifier is a directory hint (trailing slash OR pure dot-chain),
+// the extension fan-out must be skipped so a same-name sibling file (e.g.
+// `a.ts` next to `a/b.ts`) does not shadow the intended `a/index.ts`.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_dot_specifier_resolves_to_directory_index_not_sibling_file() {
+    // `"."` from `a/b.ts` must resolve to `a/index.ts`, not `a.ts`.
+    // Before the fix, extension fan-out turned base `a` into `a.ts` and
+    // returned the sibling file instead of the directory index.
+    let files = ["/proj/a.ts", "/proj/a/b.ts", "/proj/a/index.ts"];
+    let idx = file_index_from(&files);
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/a/b.ts", ".", &idx),
+        Some(2),
+        "'.' must resolve to a/index.ts (idx=2), not the sibling a.ts (idx=0)",
+    );
+}
+
+#[test]
+fn test_trailing_slash_resolves_to_directory_index_not_sibling_file() {
+    // `"./a/"` (trailing slash) must resolve to `a/a/index.ts`, not `a/a.ts`.
+    let files = ["/proj/a/a.ts", "/proj/a/test.ts", "/proj/a/a/index.ts"];
+    let idx = file_index_from(&files);
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/a/test.ts", "./a/", &idx),
+        Some(2),
+        "'./a/' must resolve to a/a/index.ts (idx=2), not the sibling a/a.ts (idx=0)",
+    );
+}
+
+#[test]
+fn test_dot_slash_resolves_to_directory_index() {
+    // `"./"` (trailing slash form of dot) must also resolve to `a/index.ts`.
+    let files = ["/proj/a.ts", "/proj/a/b.ts", "/proj/a/index.ts"];
+    let idx = file_index_from(&files);
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/a/b.ts", "./", &idx),
+        Some(2),
+        "'.' must resolve to a/index.ts (idx=2), not the sibling a.ts (idx=0)",
+    );
+}
+
+#[test]
+fn test_non_directory_hint_still_uses_extension_fan_out() {
+    // `"./a"` (no trailing slash) is NOT a directory hint; extension fan-out
+    // must still resolve it to `a/a.ts` when that file exists.
+    let files = ["/proj/a/a.ts", "/proj/a/test.ts", "/proj/a/a/index.ts"];
+    let idx = file_index_from(&files);
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/a/test.ts", "./a", &idx),
+        Some(0),
+        "'./a' (no slash) must resolve to a/a.ts via extension fan-out",
+    );
+}

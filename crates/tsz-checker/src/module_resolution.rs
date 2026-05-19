@@ -209,7 +209,7 @@ pub fn normalize_import_specifier(specifier: &str) -> Option<CanonicalSpecifier>
         SpecifierKind::Bare
     };
 
-    // A pure dot chain is something like "." / "./" / ".." / "../" / "../.."
+    // A pure dot chain is something like "." / "./" / ".." / "../" / "../..."
     // etc. We keep these exactly as written — both `.` and `./` are legitimate
     // specifiers for the current-directory index and the map registers both.
     let core_without_trailing = slashed.trim_end_matches('/');
@@ -860,6 +860,16 @@ pub fn resolve_specifier_via_file_index(
     // resolve the resulting `./`, `../`, and doubled slashes. Pure
     // dot-chain specifiers (`.`, `./`, `..`, `../..`) fall through here
     // and resolve to src_dir (or an ancestor) + `/index.<ext>` below.
+    //
+    // Detect directory-hint specifiers before normalization while the trailing
+    // slash is still visible: `"./foo/"` and `"."` both target a DIRECTORY,
+    // not a file. For these, the extension fan-out must be skipped — e.g.
+    // `"."` from `a/b.ts` normalizes to `base = "a"`, and trying `"a.ts"`
+    // via fan-out would incorrectly resolve to a sibling file instead of the
+    // intended directory index `a/index.ts`.
+    let core_spec = spec_norm.trim_end_matches('/');
+    let is_directory_hint = spec_norm.ends_with('/') || is_pure_dot_chain(core_spec);
+
     let joined = if src_dir.is_empty() {
         spec_norm
     } else {
@@ -884,31 +894,36 @@ pub fn resolve_specifier_via_file_index(
     let stem = strip_ts_extension(&base);
     let mut buf = String::with_capacity(stem.len() + 8);
 
-    for ext in TS_EXTENSIONS {
-        buf.clear();
-        buf.push_str(stem);
-        buf.push_str(ext);
-        if let Some(&idx) = filename_idx.get(&buf) {
-            return Some(idx);
+    // Extension fan-out and arbitrary-ext probe are skipped for directory-hint
+    // specifiers. A trailing slash (`./foo/`) or dot-chain (`.`, `./`) signals
+    // that the user explicitly wants the directory index, not a same-name file.
+    if !is_directory_hint {
+        for ext in TS_EXTENSIONS {
+            buf.clear();
+            buf.push_str(stem);
+            buf.push_str(ext);
+            if let Some(&idx) = filename_idx.get(&buf) {
+                return Some(idx);
+            }
         }
-    }
 
-    // Arbitrary-extension declaration file probe (`./component.html` →
-    // `/proj/component.d.html.ts`). Additive — only fires when the standard
-    // TS fan-out above missed and the specifier carries a non-TS/JS/JSON
-    // trailing extension.
-    if let Some((stem_base, ext)) = base.rsplit_once('.')
-        && !ext.is_empty()
-        && !ext.contains('/')
-        && !is_recognized_inner_module_ext(ext)
-    {
-        buf.clear();
-        buf.push_str(stem_base);
-        buf.push_str(".d.");
-        buf.push_str(ext);
-        buf.push_str(".ts");
-        if let Some(&idx) = filename_idx.get(&buf) {
-            return Some(idx);
+        // Arbitrary-extension declaration file probe (`./component.html` →
+        // `/proj/component.d.html.ts`). Additive — only fires when the standard
+        // TS fan-out above missed and the specifier carries a non-TS/JS/JSON
+        // trailing extension.
+        if let Some((stem_base, ext)) = base.rsplit_once('.')
+            && !ext.is_empty()
+            && !ext.contains('/')
+            && !is_recognized_inner_module_ext(ext)
+        {
+            buf.clear();
+            buf.push_str(stem_base);
+            buf.push_str(".d.");
+            buf.push_str(ext);
+            buf.push_str(".ts");
+            if let Some(&idx) = filename_idx.get(&buf) {
+                return Some(idx);
+            }
         }
     }
 
