@@ -309,12 +309,9 @@ impl EmitContext {
             needs_async_lowering: false,
             arrow_state: ArrowTransformState::default(),
             destructuring_state: DestructuringState::default(),
-            module_state: {
-                let mut state = ModuleTransformState::default();
-                if !initial_counters.is_empty() {
-                    state.module_temp_counters = initial_counters;
-                }
-                state
+            module_state: ModuleTransformState {
+                module_temp_counters: initial_counters,
+                ..Default::default()
             },
             block_scope_state: BlockScopeState::default(),
             private_field_state: PrivateFieldState::default(),
