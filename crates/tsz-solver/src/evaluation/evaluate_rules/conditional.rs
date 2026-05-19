@@ -34,34 +34,55 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         };
 
         let shape = self.interner().object_shape(shape_id);
+
+        // Pre-scan: evaluate every property to prime the evaluator cache and check
+        // whether any TypeId changed. Use |= (not .any()) so that every property is
+        // evaluated unconditionally — short-circuiting would leave later properties
+        // un-cached, defeating the guarantee that the update pass below is cache-only.
+        // Deferring the clone until we know a change is needed avoids an O(P) allocation
+        // on every conditional evaluation for the common no-change case.
+        let str_val = shape
+            .string_index
+            .as_ref()
+            .map(|idx| self.evaluate(idx.value_type));
+        let num_val = shape
+            .number_index
+            .as_ref()
+            .map(|idx| self.evaluate(idx.value_type));
+        let mut any_changed = str_val
+            .zip(shape.string_index.as_ref())
+            .is_some_and(|(v, idx)| v != idx.value_type)
+            || num_val
+                .zip(shape.number_index.as_ref())
+                .is_some_and(|(v, idx)| v != idx.value_type);
+        for prop in shape.properties.iter() {
+            let rt = self.evaluate(prop.type_id);
+            let wt = self.evaluate(prop.write_type);
+            any_changed |= rt != prop.type_id || wt != prop.write_type;
+        }
+
+        if !any_changed {
+            return type_id;
+        }
+
+        // At least one property changed: clone and apply. Every evaluate() call below
+        // is a guaranteed cache hit because the pre-scan above evaluated every property.
         let flags = shape.flags;
         let symbol = shape.symbol;
-        let mut changed = false;
         let mut properties = shape.properties.clone();
         for prop in &mut properties {
-            let read_type = self.evaluate(prop.type_id);
-            let write_type = self.evaluate(prop.write_type);
-            changed |= read_type != prop.type_id || write_type != prop.write_type;
-            prop.type_id = read_type;
-            prop.write_type = write_type;
+            prop.type_id = self.evaluate(prop.type_id);
+            prop.write_type = self.evaluate(prop.write_type);
         }
 
         let mut string_index = shape.string_index;
-        if let Some(index) = string_index.as_mut() {
-            let value_type = self.evaluate(index.value_type);
-            changed |= value_type != index.value_type;
-            index.value_type = value_type;
+        if let (Some(index), Some(v)) = (string_index.as_mut(), str_val) {
+            index.value_type = v;
         }
 
         let mut number_index = shape.number_index;
-        if let Some(index) = number_index.as_mut() {
-            let value_type = self.evaluate(index.value_type);
-            changed |= value_type != index.value_type;
-            index.value_type = value_type;
-        }
-
-        if !changed {
-            return type_id;
+        if let (Some(index), Some(v)) = (number_index.as_mut(), num_val) {
+            index.value_type = v;
         }
 
         if with_index {

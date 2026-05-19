@@ -1150,11 +1150,11 @@ impl<'a> CheckerState<'a> {
         &mut self,
         expr_idx: NodeIndex,
     ) -> TypeId {
-        let snap = self.ctx.snapshot_diagnostics();
+        let snap = crate::context::speculation::DiagnosticSpeculationSnapshot::new(&self.ctx);
 
         let ty = self.compute_type_of_node_with_request(expr_idx, &TypingRequest::NONE);
 
-        self.ctx.rollback_diagnostics(&snap);
+        snap.rollback(&mut self.ctx.diagnostic_state());
         ty
     }
 
