@@ -7943,6 +7943,70 @@ module.exports = Root;
 }
 
 #[test]
+fn test_jsdoc_bare_commonjs_import_preserves_import_when_static_surface_is_partial() {
+    let module_source = r#"
+function Root() {}
+class Supported {}
+const unsupported = 1;
+
+Root.Supported = Supported;
+Root.unsupported = unsupported;
+module.exports = Root;
+"#;
+    let mut module_parser = ParserState::new(
+        "/tmp/tsz-jsdoc-partial-surface/root.js".to_string(),
+        module_source.to_string(),
+    );
+    module_parser.parse_source_file();
+    let module_arena = Arc::new(module_parser.arena.clone());
+
+    let consumer_source = r#"
+/** @type {import("./root")} */
+let value;
+"#;
+    let mut consumer_parser = ParserState::new(
+        "/tmp/tsz-jsdoc-partial-surface/consumer.js".to_string(),
+        consumer_source.to_string(),
+    );
+    let consumer_root = consumer_parser.parse_source_file();
+    let consumer_arena = Arc::new(consumer_parser.arena.clone());
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&consumer_parser.arena, consumer_root);
+
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&consumer_parser.arena, type_cache, &interner, &binder);
+    emitter.set_current_arena(
+        consumer_arena,
+        "/tmp/tsz-jsdoc-partial-surface/consumer.js".to_string(),
+    );
+
+    let mut arena_to_path = FxHashMap::default();
+    arena_to_path.insert(
+        Arc::as_ptr(&module_arena) as usize,
+        "/tmp/tsz-jsdoc-partial-surface/root.js".to_string(),
+    );
+    emitter.set_arena_to_path(arena_to_path);
+
+    let mut global_symbol_arenas = FxHashMap::default();
+    global_symbol_arenas.insert(tsz_binder::SymbolId(1), module_arena);
+    emitter.set_global_symbol_arenas(global_symbol_arenas);
+
+    let output = emitter.emit(consumer_root);
+
+    assert!(
+        output.contains(r#"declare let value: import("./root");"#),
+        "Expected partial CommonJS static surface to keep original import type: {output}"
+    );
+    assert!(
+        !output.contains("Supported: {"),
+        "Did not expect a partial object surface that drops unsupported static members: {output}"
+    );
+}
+
+#[test]
 fn test_js_reordered_accessor_comments_keep_backing_field_comment() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
