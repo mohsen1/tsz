@@ -14,7 +14,6 @@ fn has_ts2367(source: &str) -> bool {
 
 #[test]
 fn test_basic_num_union_vs_str_union() {
-    // Direct repro from issue #8787
     assert!(
         has_ts2367(
             r#"
@@ -87,7 +86,6 @@ if (a === b) {}
 
 #[test]
 fn test_never_in_left_union_is_ignored() {
-    // `never` as a union member must not contribute overlap; TS2367 must still fire.
     assert!(
         has_ts2367(
             r#"
@@ -151,7 +149,6 @@ if (a === b) {}
 
 #[test]
 fn test_custom_exclude_conditional_type() {
-    // `MyExclude<1|2|3, 4>` = `1|2|3`, no overlap with `"x"|"y"`
     assert!(
         has_ts2367(
             r#"
@@ -239,7 +236,6 @@ if (typeof x === "number") {
 
 #[test]
 fn test_overlapping_number_literals_no_ts2367() {
-    // 1|2|3 and 1|4 share member 1 → they overlap → no TS2367
     assert!(
         !has_ts2367(
             r#"
@@ -254,7 +250,6 @@ if (a === b) {}
 
 #[test]
 fn test_number_type_vs_number_literal_no_ts2367() {
-    // `number` and `42` overlap (42 is a number)
     assert!(
         !has_ts2367(
             r#"
@@ -283,7 +278,6 @@ if (a === b) {}
 
 #[test]
 fn test_same_enum_member_no_ts2367() {
-    // Same-type comparison always overlaps
     assert!(
         !has_ts2367(
             r#"
