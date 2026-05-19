@@ -784,7 +784,7 @@ impl<'a> Printer<'a> {
                             return;
                         }
                         k if k == syntax_kind_ext::FUNCTION_EXPRESSION => {
-                            self.emit_function_expression_es5_params(func_node);
+                            self.emit_function_expression_es5_params(func_node, function_node);
                             return;
                         }
                         k if k == syntax_kind_ext::ARROW_FUNCTION && !self.ctx.target_es5 => {
@@ -1450,7 +1450,7 @@ impl<'a> Printer<'a> {
                             self.emit_function_declaration_es5_params(func_node);
                         }
                         k if k == syntax_kind_ext::FUNCTION_EXPRESSION => {
-                            self.emit_function_expression_es5_params(func_node);
+                            self.emit_function_expression_es5_params(func_node, *function_node);
                         }
                         k if k == syntax_kind_ext::ARROW_FUNCTION && !self.ctx.target_es5 => {
                             if let Some(func) = self.arena.get_function(func_node) {
@@ -1881,7 +1881,7 @@ impl<'a> Printer<'a> {
                             return;
                         }
                         k if k == syntax_kind_ext::FUNCTION_EXPRESSION => {
-                            self.emit_function_expression_es5_params(func_node);
+                            self.emit_function_expression_es5_params(func_node, *function_node);
                             return;
                         }
                         k if k == syntax_kind_ext::ARROW_FUNCTION && !self.ctx.target_es5 => {

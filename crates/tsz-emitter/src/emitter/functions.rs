@@ -1,7 +1,8 @@
 use super::{ParamTransformPlan, Printer};
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::Node;
+use tsz_parser::parser::node::{FunctionData, Node};
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::syntax::transform_utils::contains_new_target_reference;
 
 impl<'a> Printer<'a> {
     pub(super) fn emit_function_expression(&mut self, node: &Node, _idx: NodeIndex) {
@@ -62,6 +63,11 @@ impl<'a> Printer<'a> {
             self.write("async ");
         }
 
+        let needs_new_target_capture =
+            self.ctx.target_es5 && self.function_body_contains_new_target(func);
+        let function_name =
+            self.function_expression_emit_name(_idx, func.name, needs_new_target_capture);
+
         self.write("function");
 
         if func.asterisk_token {
@@ -69,9 +75,9 @@ impl<'a> Printer<'a> {
         }
 
         // Name (if any)
-        if func.name.is_some() {
+        if let Some(name) = function_name.as_deref() {
             self.write_space();
-            self.emit_decl_name(func.name);
+            self.write(name);
         } else {
             // Space before ( only for anonymous functions: function (x) vs function name(x)
             self.write(" ");
@@ -140,6 +146,11 @@ impl<'a> Printer<'a> {
         self.ctx.rewrite_arguments_to_arguments_1 = false;
         let prev_arguments_capture_name = self.ctx.arguments_capture_name.take();
         let prev_namespace_exported_names = self.namespace_exported_names.clone();
+        let previous_new_target_capture = needs_new_target_capture.then(|| {
+            self.push_new_target_capture_for_initializer(
+                self.ordinary_function_new_target_initializer(function_name.as_deref()),
+            )
+        });
         self.push_commonjs_exported_var_parameter_shadow_names(&func.parameters.nodes);
         for &param_idx in &func.parameters.nodes {
             if let Some(param) = self.arena.get_parameter_at(param_idx) {
@@ -155,6 +166,9 @@ impl<'a> Printer<'a> {
         self.ctx.rewrite_arguments_to_arguments_1 = prev_rewrite_args;
         self.ctx.arguments_capture_name = prev_arguments_capture_name;
         self.ctx.flags.in_generator = prev_in_generator;
+        if let Some(previous) = previous_new_target_capture {
+            self.restore_new_target_capture(previous);
+        }
         self.declared_namespace_names = prev_declared;
         self.pop_temp_scope();
         self.ctx.block_scope_state.exit_scope();
@@ -164,6 +178,138 @@ impl<'a> Printer<'a> {
         if self_paren {
             self.close_paren();
         }
+    }
+
+    pub(crate) fn function_body_contains_new_target(&self, func: &FunctionData) -> bool {
+        (func.body.is_some() && contains_new_target_reference(self.arena, func.body))
+            || func.parameters.nodes.iter().any(|&param_idx| {
+                let Some(param_node) = self.arena.get(param_idx) else {
+                    return false;
+                };
+                let Some(param) = self.arena.get_parameter(param_node) else {
+                    return false;
+                };
+                param.initializer.is_some()
+                    && contains_new_target_reference(self.arena, param.initializer)
+            })
+    }
+
+    pub(crate) fn ordinary_function_new_target_initializer(
+        &self,
+        function_name: Option<&str>,
+    ) -> String {
+        if let Some(function_name) = function_name
+            && !function_name.is_empty()
+        {
+            format!("this && this instanceof {function_name} ? this.constructor : void 0")
+        } else {
+            "this && this instanceof _a ? this.constructor : void 0".to_string()
+        }
+    }
+
+    pub(crate) fn function_expression_emit_name(
+        &self,
+        idx: NodeIndex,
+        explicit_name: NodeIndex,
+        needs_new_target_capture: bool,
+    ) -> Option<String> {
+        if explicit_name.is_some() {
+            return Some(self.get_identifier_text_idx(explicit_name));
+        }
+        if needs_new_target_capture {
+            self.infer_function_expression_name(idx)
+                .or_else(|| Some("_a".to_string()))
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn infer_function_expression_name(&self, idx: NodeIndex) -> Option<String> {
+        let parent_idx = self.arena.parent_of(idx)?;
+        if parent_idx.is_none() {
+            return None;
+        }
+        let parent = self.arena.get(parent_idx)?;
+        match parent.kind {
+            k if k == syntax_kind_ext::VARIABLE_DECLARATION => self
+                .arena
+                .get_variable_declaration(parent)
+                .map(|decl| decl.name)
+                .and_then(|name| self.get_simple_identifier_text(name)),
+            k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => self
+                .arena
+                .get_property_assignment(parent)
+                .map(|prop| prop.name)
+                .and_then(|name| self.get_simple_identifier_text(name)),
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                let binary = self.arena.get_binary_expr(parent)?;
+                if binary.right != idx {
+                    return None;
+                }
+                self.expression_name_for_named_evaluation(binary.left)
+            }
+            _ => None,
+        }
+    }
+
+    fn get_simple_identifier_text(&self, idx: NodeIndex) -> Option<String> {
+        self.arena.get(idx).and_then(|node| {
+            if node.is_identifier() {
+                Some(self.get_identifier_text_idx(idx))
+            } else {
+                None
+            }
+        })
+    }
+
+    fn expression_name_for_named_evaluation(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.arena.get(idx)?;
+        if node.is_identifier() {
+            return Some(self.get_identifier_text_idx(idx));
+        }
+        if (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            && let Some(access) = self.arena.get_access_expr(node)
+            && let Some(name_node) = self.arena.get(access.name_or_argument)
+        {
+            if name_node.is_identifier() {
+                return Some(self.get_identifier_text_idx(access.name_or_argument));
+            }
+            if name_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16 {
+                return self.get_string_literal_text(access.name_or_argument);
+            }
+        }
+        None
+    }
+
+    pub(crate) fn push_new_target_capture_for_initializer(
+        &mut self,
+        initializer: String,
+    ) -> Option<String> {
+        let previous = self
+            .current_new_target_substitution
+            .replace("_newTarget".into());
+        self.pending_new_target_capture_initializer = Some(initializer);
+        previous
+    }
+
+    pub(crate) fn restore_new_target_capture(&mut self, previous: Option<String>) {
+        self.current_new_target_substitution = previous;
+        self.pending_new_target_capture_initializer = None;
+    }
+
+    pub(crate) const fn has_pending_new_target_capture(&self) -> bool {
+        self.pending_new_target_capture_initializer.is_some()
+    }
+
+    pub(crate) fn emit_pending_new_target_capture(&mut self) {
+        let Some(initializer) = self.pending_new_target_capture_initializer.take() else {
+            return;
+        };
+        self.write("var _newTarget = ");
+        self.write(&initializer);
+        self.write(";");
+        self.write_line();
     }
 
     /// Check if a statement is a simple return statement (for single-line emission).
@@ -258,6 +404,7 @@ impl<'a> Printer<'a> {
         self.emitting_function_body_block = false;
         self.ctx.block_scope_state.enter_function_scope();
         self.skip_block_opening_line_comments(block_node, block);
+        self.emit_pending_new_target_capture();
         self.emit_param_prologue(transforms);
         let hoisted_var_byte_offset =
             is_function_body_block.then_some((self.writer.len(), self.writer.current_line()));

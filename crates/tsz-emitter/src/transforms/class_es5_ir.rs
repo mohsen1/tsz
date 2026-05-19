@@ -96,8 +96,9 @@ use tsz_common::common::ModuleKind;
 use tsz_parser::parser::node::{Node, NodeAccess, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
-use tsz_parser::syntax::transform_utils::contains_this_reference;
-use tsz_parser::syntax::transform_utils::is_private_identifier;
+use tsz_parser::syntax::transform_utils::{
+    contains_new_target_reference, contains_this_reference, is_private_identifier,
+};
 use tsz_scanner::SyntaxKind;
 
 struct Tc39Es5MemberDecorator {
@@ -2552,8 +2553,13 @@ impl<'a> ES5ClassTransformer<'a> {
                     &instance_props,
                 );
             }
+            if self.constructor_contains_new_target(ctor.body, &ctor.parameters, &instance_props) {
+                self.insert_class_new_target_capture(&mut ctor_body);
+            }
         } else {
             // Default constructor
+            let moved_initializers_contain_new_target =
+                self.moved_instance_initializers_contain_new_target(&instance_props);
             if self.has_extends && !self.extends_null {
                 if instance_props.is_empty() && !has_private_fields {
                     // Simple: return _super !== null && _super.apply(this, arguments) || this;
@@ -2590,6 +2596,9 @@ impl<'a> ES5ClassTransformer<'a> {
                             IRNode::this(),
                         )),
                     ));
+                    if moved_initializers_contain_new_target {
+                        ctor_body.push(Self::class_constructor_new_target_capture_ir());
+                    }
 
                     // Private field initializations
                     self.emit_private_field_initializations_ir(&mut ctor_body, true);
@@ -2612,6 +2621,9 @@ impl<'a> ES5ClassTransformer<'a> {
                 // Check if instance property initializers need _this capture
                 if self.instance_props_need_this_capture(&instance_props) {
                     ctor_body.push(IRNode::var_decl("_this", Some(IRNode::this())));
+                }
+                if moved_initializers_contain_new_target {
+                    ctor_body.push(Self::class_constructor_new_target_capture_ir());
                 }
 
                 // Emit private field initializations
@@ -3912,6 +3924,108 @@ impl<'a> ES5ClassTransformer<'a> {
         }
 
         false
+    }
+
+    fn constructor_contains_new_target(
+        &self,
+        body_idx: NodeIndex,
+        params: &NodeList,
+        instance_props: &[NodeIndex],
+    ) -> bool {
+        (body_idx.is_some() && contains_new_target_reference(self.arena, body_idx))
+            || params.nodes.iter().any(|&param_idx| {
+                self.arena
+                    .get(param_idx)
+                    .and_then(|param_node| self.arena.get_parameter(param_node))
+                    .is_some_and(|param| {
+                        param.initializer.is_some()
+                            && contains_new_target_reference(self.arena, param.initializer)
+                    })
+            })
+            || self.moved_instance_initializers_contain_new_target(instance_props)
+    }
+
+    fn class_constructor_new_target_capture_ir() -> IRNode {
+        IRNode::var_decl("_newTarget", Some(IRNode::Raw("this.constructor".into())))
+    }
+
+    fn insert_class_new_target_capture(&self, body: &mut Vec<IRNode>) {
+        let capture = Self::class_constructor_new_target_capture_ir();
+        if self.has_extends
+            && !self.extends_null
+            && let Some(super_capture_idx) = body
+                .iter()
+                .position(|node| self.is_generated_derived_super_capture(node))
+        {
+            body.insert(super_capture_idx + 1, capture);
+            return;
+        }
+
+        body.insert(0, capture);
+    }
+
+    fn is_generated_derived_super_capture(&self, node: &IRNode) -> bool {
+        let IRNode::VarDecl {
+            name,
+            initializer: Some(initializer),
+        } = node
+        else {
+            return false;
+        };
+        if name.as_ref() != "_this" {
+            return false;
+        }
+
+        matches!(
+            initializer.as_ref(),
+            IRNode::LogicalOr { left, right }
+                if matches!(right.as_ref(), IRNode::This { captured: false })
+                    && matches!(
+                        left.as_ref(),
+                        IRNode::CallExpr { callee, arguments }
+                            if arguments
+                                .first()
+                                .is_some_and(|arg| matches!(arg, IRNode::This { captured: false }))
+                                && matches!(
+                                    callee.as_ref(),
+                                    IRNode::PropertyAccess { object, property }
+                                        if property.as_ref() == "call"
+                                            && matches!(
+                                                object.as_ref(),
+                                                IRNode::Identifier(super_name)
+                                                    if super_name.as_ref() == self.super_name
+                                            )
+                                )
+                    )
+        )
+    }
+
+    fn instance_props_contain_new_target(&self, instance_props: &[NodeIndex]) -> bool {
+        instance_props.iter().any(|&prop_idx| {
+            self.arena
+                .get(prop_idx)
+                .and_then(|prop_node| self.arena.get_property_decl(prop_node))
+                .is_some_and(|prop| {
+                    prop.initializer.is_some()
+                        && contains_new_target_reference(self.arena, prop.initializer)
+                })
+        })
+    }
+
+    fn moved_instance_initializers_contain_new_target(&self, instance_props: &[NodeIndex]) -> bool {
+        self.instance_props_contain_new_target(instance_props)
+            || self.private_fields.iter().any(|field| {
+                !field.is_static
+                    && field.has_initializer
+                    && field.initializer.is_some()
+                    && contains_new_target_reference(self.arena, field.initializer)
+            })
+            || self.auto_accessors.iter().any(|accessor| {
+                !accessor.is_static
+                    && accessor.initializer.is_some_and(|initializer| {
+                        contains_new_target_reference(self.arena, initializer)
+                    })
+            })
     }
 
     /// Check if instance property initializers contain arrow functions that capture `this`.
