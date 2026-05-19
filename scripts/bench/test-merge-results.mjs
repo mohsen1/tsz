@@ -181,6 +181,27 @@ withTempDir((dir) => {
 
 withTempDir((dir) => {
   const canaryRow = COMPILE_ONLY_CANARY_PROJECT_ROWS[0];
+  const input = writeInput(dir, "input.json", [projectRow("standalone")]);
+  const compatibilityJsonl = path.join(dir, "project-compatibility.jsonl");
+  fs.writeFileSync(
+    compatibilityJsonl,
+    `${JSON.stringify({ ...SAMPLE_COMPATIBILITY, name: canaryRow, files_reached: 78 })}\n`,
+    "utf8",
+  );
+
+  const result = runMergeInputs(dir, ["--compat-jsonl", compatibilityJsonl, input]);
+  assert.equal(result.status, 0, result.stderr);
+  const merged = JSON.parse(fs.readFileSync(result.output, "utf8"));
+  const row = merged.results.find((candidate) => candidate.name === canaryRow);
+  assert.ok(row, "expected merge to add compile-canary compatibility row");
+  assert.equal(row.lines, 78);
+  assert.match(row.status, /compile canary tracked in CI/);
+  assert.equal(row.compatibility.state, "green");
+  assert.equal(merged.validation.project_compatibility_required_fields, true);
+});
+
+withTempDir((dir) => {
+  const canaryRow = COMPILE_ONLY_CANARY_PROJECT_ROWS[0];
   const { diagnostic_subsystems: _diagnosticSubsystems, ...compatibility } = SAMPLE_COMPATIBILITY;
   const result = runMerge(dir, [projectRow(canaryRow, compatibility)]);
   assert.equal(result.status, 1);
