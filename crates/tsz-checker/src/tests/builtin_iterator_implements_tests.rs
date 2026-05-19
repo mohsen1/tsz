@@ -162,3 +162,34 @@ function processSet(s: Set<number>) {
 ",
     );
 }
+
+// ---------------------------------------------------------------------------
+// WeakMap — another multi-lib built-in (spans lib.es2015.collection.d.ts
+// and lib.es2015.weakref-adjacent declarations)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn no_false_positive_ts2416_class_extends_weak_map() {
+    assert_no_2416(
+        "
+class TrackedWeakMap<K extends object, V> extends WeakMap<K, V> {
+    override set(key: K, value: V): this {
+        return super.set(key, value);
+    }
+}
+",
+    );
+}
+
+#[test]
+fn no_false_positive_ts2416_class_extends_weak_map_generic_name_a_b() {
+    assert_no_2416(
+        "
+class TrackedWeakMap<A extends object, B> extends WeakMap<A, B> {
+    override set(key: A, value: B): this {
+        return super.set(key, value);
+    }
+}
+",
+    );
+}
