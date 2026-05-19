@@ -917,7 +917,12 @@ impl<'a> CheckerState<'a> {
                     )
                     .is_some()
             });
-        let can_collapse_identical_argument_failures = argument_failures.len() == 1
+        let property_like_multi_arg_call = self.overload_callee_is_property_like(idx)
+            && self
+                .logical_call_argument_nodes(idx)
+                .is_some_and(|args| args.len() > 1);
+        let can_collapse_identical_argument_failures = (argument_failures.len() == 1
+            && !property_like_multi_arg_call)
             || (all_argument_failures_share_span && all_argument_failures_compare_callable_types);
         if all_failures_are_argument_mismatches
             && identical_argument_failures

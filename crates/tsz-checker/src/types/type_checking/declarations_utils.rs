@@ -10,6 +10,30 @@ use tsz_solver::TypeId;
 type TypeParamProfile = (String, Option<TypeId>, Option<TypeId>);
 
 impl<'a> CheckerState<'a> {
+    fn type_param_profile_types_are_identical_for_merge(
+        &mut self,
+        left: TypeId,
+        right: TypeId,
+    ) -> bool {
+        if left == right {
+            return true;
+        }
+
+        self.ensure_relation_input_ready(left);
+        self.ensure_relation_input_ready(right);
+        let flags = self.ctx.pack_relation_flags();
+        let env = self.ctx.type_env.borrow();
+        crate::query_boundaries::assignability::is_redeclaration_identical_with_resolver(
+            self.ctx.types,
+            &*env,
+            left,
+            right,
+            flags,
+            &self.ctx.inheritance_graph,
+            self.ctx.sound_mode(),
+        )
+    }
+
     /// Compare interface type parameters across declarations for declaration-merge compatibility.
     ///
     /// - Parameter names must match and appear in the same order.
@@ -44,14 +68,14 @@ impl<'a> CheckerState<'a> {
             // Only mismatch when BOTH have constraints and they differ.
             // If one has a constraint and the other doesn't, tsc considers them compatible.
             if let (Some(fc), Some(sc)) = (first_constraint, second_constraint)
-                && fc != sc
+                && !self.type_param_profile_types_are_identical_for_merge(*fc, *sc)
             {
                 return false;
             }
 
             // Defaults: only mismatch when BOTH have defaults and they differ.
             if let (Some(fd), Some(sd)) = (first_default, second_default)
-                && fd != sd
+                && !self.type_param_profile_types_are_identical_for_merge(*fd, *sd)
             {
                 return false;
             }
@@ -104,13 +128,13 @@ impl<'a> CheckerState<'a> {
                     }
 
                     if let (Some(ci), Some(cj)) = (constraint_i, constraint_j)
-                        && ci != cj
+                        && !self.type_param_profile_types_are_identical_for_merge(*ci, *cj)
                     {
                         return false;
                     }
 
                     if let (Some(di), Some(dj)) = (default_i, default_j)
-                        && di != dj
+                        && !self.type_param_profile_types_are_identical_for_merge(*di, *dj)
                     {
                         return false;
                     }
@@ -149,13 +173,13 @@ impl<'a> CheckerState<'a> {
             }
 
             if let (Some(fc), Some(sc)) = (first_constraint, second_constraint)
-                && fc != sc
+                && !self.type_param_profile_types_are_identical_for_merge(*fc, *sc)
             {
                 return false;
             }
 
             if let (Some(fd), Some(sd)) = (first_default, second_default)
-                && fd != sd
+                && !self.type_param_profile_types_are_identical_for_merge(*fd, *sd)
             {
                 return false;
             }

@@ -50,6 +50,7 @@ impl<'a> CheckerState<'a> {
     /// - `None` if there were no overload signatures to resolve
     pub(crate) fn resolve_overloaded_call_with_signatures(
         &mut self,
+        call_idx: NodeIndex,
         args: &[NodeIndex],
         signatures: &[tsz_solver::CallSignature],
         force_bivariant_callbacks: bool,
@@ -64,8 +65,10 @@ impl<'a> CheckerState<'a> {
         if signatures.is_empty() {
             return None;
         }
+        let preserve_property_like_overload_duplicates =
+            self.call_is_property_like_with_multiple_args(call_idx);
         let mut deduped_signatures = Vec::new();
-        if signatures.len() > 1 {
+        if signatures.len() > 1 && !preserve_property_like_overload_duplicates {
             let mut seen = FxHashSet::default();
             for signature in signatures {
                 if seen.insert(signature.clone()) {
@@ -1929,6 +1932,28 @@ impl<'a> CheckerState<'a> {
                 fallback_return,
             },
             selected_type_predicate: None,
+        })
+    }
+
+    fn call_is_property_like_with_multiple_args(&self, call_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(call_idx) else {
+            return false;
+        };
+        let Some(call) = self.ctx.arena.get_call_expr(node) else {
+            return false;
+        };
+        let Some(args) = call.arguments.as_ref() else {
+            return false;
+        };
+        if args.nodes.len() <= 1 {
+            return false;
+        }
+        self.ctx.arena.get(call.expression).is_some_and(|callee| {
+            matches!(
+                callee.kind,
+                k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            )
         })
     }
 

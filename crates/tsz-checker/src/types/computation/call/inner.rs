@@ -691,6 +691,7 @@ impl<'a> CheckerState<'a> {
 
         if let Some(signatures) = overload_signatures.as_deref()
             && let Some(overload_resolution) = self.resolve_overloaded_call_with_signatures(
+                idx,
                 args,
                 signatures,
                 force_bivariant_callbacks,

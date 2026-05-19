@@ -7,6 +7,7 @@
 use crate::query_boundaries::{common, state::checking as query};
 use crate::state::CheckerState;
 use crate::symbols_domain::name_text::{entity_name_text_in_arena, expression_name_text_in_arena};
+use crate::types_domain::type_node_helpers::type_node_includes_explicit_undefined;
 use rustc_hash::FxHashSet;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
@@ -15,6 +16,12 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 use tsz_solver::computation::TypeResolver;
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct RecoveredInterfaceMemberType {
+    pub(crate) type_id: TypeId,
+    pub(crate) write_type: Option<TypeId>,
+}
 
 impl<'a> CheckerState<'a> {
     fn simple_member_name_in_arena(arena: &NodeArena, member_idx: NodeIndex) -> Option<String> {
@@ -43,10 +50,94 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|signature| signature.question_token)
     }
 
+    fn recovered_interface_member_type_from_simple_type(
+        &self,
+        arena: &NodeArena,
+        member_idx: NodeIndex,
+        type_id: TypeId,
+    ) -> RecoveredInterfaceMemberType {
+        let type_id = self
+            .recovered_readonly_property_signature_unique_symbol_type(arena, member_idx, type_id);
+        let write_type = arena
+            .get(member_idx)
+            .and_then(|member| {
+                (member.kind == syntax_kind_ext::PROPERTY_SIGNATURE)
+                    .then(|| arena.get_signature(member))
+                    .flatten()
+            })
+            .map(|sig| {
+                if self.ctx.compiler_options.exact_optional_property_types
+                    && sig.question_token
+                    && sig.type_annotation.is_some()
+                    && !type_node_includes_explicit_undefined(arena, sig.type_annotation)
+                {
+                    crate::query_boundaries::common::remove_undefined(
+                        self.ctx.types.as_type_database(),
+                        type_id,
+                    )
+                } else {
+                    type_id
+                }
+            });
+
+        RecoveredInterfaceMemberType {
+            type_id,
+            write_type,
+        }
+    }
+
+    fn recovered_readonly_property_signature_unique_symbol_type(
+        &self,
+        arena: &NodeArena,
+        member_idx: NodeIndex,
+        raw_type: TypeId,
+    ) -> TypeId {
+        if raw_type != TypeId::SYMBOL
+            && !crate::query_boundaries::common::is_unique_symbol_type(self.ctx.types, raw_type)
+        {
+            return raw_type;
+        }
+
+        let Some(member) = arena.get(member_idx) else {
+            return raw_type;
+        };
+        if member.kind != syntax_kind_ext::PROPERTY_SIGNATURE {
+            return raw_type;
+        }
+        let Some(sig) = arena.get_signature(member) else {
+            return raw_type;
+        };
+        if !arena.has_modifier(&sig.modifiers, SyntaxKind::ReadonlyKeyword)
+            || !crate::types_domain::unique_symbol_arena::is_unique_symbol_type_annotation_unwrapped(
+                arena,
+                sig.type_annotation,
+            )
+        {
+            return raw_type;
+        }
+
+        let binder = if std::ptr::eq(arena, self.ctx.arena) {
+            Some(self.ctx.binder)
+        } else {
+            self.ctx
+                .get_file_idx_for_arena(arena)
+                .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx as usize))
+        };
+        let sym_ref = binder
+            .and_then(|binder| {
+                binder
+                    .get_node_symbol(member_idx)
+                    .or_else(|| binder.get_node_symbol(sig.name))
+            })
+            .map(|sym_id| tsz_solver::SymbolRef(sym_id.0))
+            .unwrap_or(tsz_solver::SymbolRef(sig.type_annotation.0));
+        self.ctx.types.unique_symbol(sym_ref)
+    }
+
     fn combine_recovered_interface_member_types(
         &self,
-        member_types: Vec<TypeId>,
-    ) -> Option<TypeId> {
+        member_types: Vec<RecoveredInterfaceMemberType>,
+    ) -> Option<RecoveredInterfaceMemberType> {
         let mut seen_member_types = FxHashSet::default();
         let member_types: Vec<_> = member_types
             .into_iter()
@@ -62,7 +153,12 @@ impl<'a> CheckerState<'a> {
         let mut call_signatures = Vec::new();
         let mut seen_call_signatures = FxHashSet::default();
         for member_type in member_types {
-            if let Some(shape) = common::function_shape_for_type(self.ctx.types, member_type) {
+            if member_type.write_type.is_some() {
+                return None;
+            }
+            if let Some(shape) =
+                common::function_shape_for_type(self.ctx.types, member_type.type_id)
+            {
                 let signature = tsz_solver::CallSignature {
                     type_params: shape.type_params.clone(),
                     params: shape.params.clone(),
@@ -77,7 +173,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let shape = common::callable_shape_for_type(self.ctx.types, member_type)?;
+            let shape = common::callable_shape_for_type(self.ctx.types, member_type.type_id)?;
             if !shape.construct_signatures.is_empty()
                 || !shape.properties.is_empty()
                 || shape.string_index.is_some()
@@ -92,8 +188,9 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        (!call_signatures.is_empty()).then(|| {
-            self.ctx
+        (!call_signatures.is_empty()).then(|| RecoveredInterfaceMemberType {
+            type_id: self
+                .ctx
                 .types
                 .factory()
                 .callable(tsz_solver::CallableShape {
@@ -104,7 +201,8 @@ impl<'a> CheckerState<'a> {
                     number_index: None,
                     symbol: None,
                     is_abstract: false,
-                })
+                }),
+            write_type: None,
         })
     }
 
@@ -113,7 +211,7 @@ impl<'a> CheckerState<'a> {
         interface_idx: NodeIndex,
         arena: &NodeArena,
         prop_name: &str,
-    ) -> Option<TypeId> {
+    ) -> Option<RecoveredInterfaceMemberType> {
         let interface = arena
             .get(interface_idx)
             .and_then(|node| arena.get_interface(node))?;
@@ -137,10 +235,15 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let member_types = if std::ptr::eq(arena, self.ctx.arena) {
+        let member_types: Vec<_> = if std::ptr::eq(arena, self.ctx.arena) {
             member_indices
                 .iter()
-                .map(|&member_idx| self.get_type_of_interface_member_simple(member_idx))
+                .map(|&member_idx| {
+                    let type_id = self.get_type_of_interface_member_simple(member_idx);
+                    self.recovered_interface_member_type_from_simple_type(
+                        arena, member_idx, type_id,
+                    )
+                })
                 .collect()
         } else {
             let lowered = self.delegate_cross_arena_interface_member_simple_types(
@@ -151,7 +254,15 @@ impl<'a> CheckerState<'a> {
             )?;
             member_indices
                 .iter()
-                .filter_map(|member_idx| lowered.get(member_idx).copied())
+                .filter_map(|member_idx| {
+                    lowered.get(member_idx).copied().map(|type_id| {
+                        self.recovered_interface_member_type_from_simple_type(
+                            arena,
+                            *member_idx,
+                            type_id,
+                        )
+                    })
+                })
                 .collect()
         };
 
@@ -250,7 +361,7 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
         prop_name: &str,
         visited: &mut FxHashSet<SymbolId>,
-    ) -> Option<TypeId> {
+    ) -> Option<RecoveredInterfaceMemberType> {
         if !visited.insert(sym_id) {
             return None;
         }
@@ -358,7 +469,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         original_object_type: TypeId,
         prop_name: &str,
-    ) -> Option<TypeId> {
+    ) -> Option<RecoveredInterfaceMemberType> {
         let def_id =
             crate::query_boundaries::common::lazy_def_id(self.ctx.types, original_object_type)
                 .or_else(|| {
@@ -368,14 +479,21 @@ impl<'a> CheckerState<'a> {
                 })?;
         let sym_id = self.ctx.def_to_symbol_id(def_id)?;
         let mut visited = FxHashSet::default();
-        let member_type =
+        let mut member_type =
             self.recover_interface_member_type_from_symbol(sym_id, prop_name, &mut visited)?;
-        if common::contains_this_type(self.ctx.types, member_type) {
-            return Some(common::substitute_this_type(
+        if common::contains_this_type(self.ctx.types, member_type.type_id) {
+            member_type.type_id = common::substitute_this_type(
                 self.ctx.types,
-                member_type,
+                member_type.type_id,
                 original_object_type,
-            ));
+            );
+            if let Some(write_type) = member_type.write_type {
+                member_type.write_type = Some(common::substitute_this_type(
+                    self.ctx.types,
+                    write_type,
+                    original_object_type,
+                ));
+            }
         }
         Some(member_type)
     }
@@ -384,7 +502,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         original_object_type: TypeId,
         prop_name: &str,
-    ) -> Option<TypeId> {
+    ) -> Option<RecoveredInterfaceMemberType> {
         let def_id =
             crate::query_boundaries::common::lazy_def_id(self.ctx.types, original_object_type)?;
         if self.ctx.definition_store.get_kind(def_id)? != tsz_solver::def::DefKind::Interface {
@@ -496,7 +614,7 @@ impl<'a> CheckerState<'a> {
         derived_sym_id: SymbolId,
         decl_idx: NodeIndex,
         prop_name: &str,
-    ) -> Option<TypeId> {
+    ) -> Option<RecoveredInterfaceMemberType> {
         // Determine the file that owns this declaration so we use the right arena.
         // `decl_idx` is valid only in the arena where the derived symbol was declared.
         let derived_file_idx: u32 = {
@@ -549,7 +667,7 @@ impl<'a> CheckerState<'a> {
         entries: &[(NodeIndex, Vec<NodeIndex>)],
         entry_file_idx: u32,
         prop_name: &str,
-    ) -> Option<TypeId> {
+    ) -> Option<RecoveredInterfaceMemberType> {
         for (expr_idx, arg_idxs) in entries {
             // Resolve the base symbol using arena/binder for the entry file.
             // Scoped block releases the immutable borrows before mutable calls below.
@@ -606,11 +724,25 @@ impl<'a> CheckerState<'a> {
                         std::ptr::eq(self.ctx.get_arena_for_file(base_file_idx), self.ctx.arena);
                     if base_is_primary {
                         let raw = self.get_type_of_interface_member_simple(member_idx);
-                        return Some(crate::query_boundaries::common::instantiate_type(
+                        let type_id = crate::query_boundaries::common::instantiate_type(
                             self.ctx.types,
                             raw,
                             &substitution,
-                        ));
+                        );
+                        let mut recovered = self.recovered_interface_member_type_from_simple_type(
+                            self.ctx.arena,
+                            member_idx,
+                            type_id,
+                        );
+                        if let Some(write_type) = recovered.write_type {
+                            recovered.write_type =
+                                Some(crate::query_boundaries::common::instantiate_type(
+                                    self.ctx.types,
+                                    write_type,
+                                    &substitution,
+                                ));
+                        }
+                        return Some(recovered);
                     }
                     // Get the Arc so the borrow doesn't conflict with &mut self.
                     let base_arc = self
@@ -619,12 +751,20 @@ impl<'a> CheckerState<'a> {
                         .as_ref()
                         .and_then(|arenas| arenas.get(base_file_idx as usize).cloned());
                     if let Some(arc) = base_arc {
-                        return self.delegate_cross_arena_interface_member_simple_type(
-                            base_decl_idx,
-                            member_idx,
-                            arc.as_ref(),
-                            (!type_args.is_empty()).then_some(type_args.as_slice()),
-                        );
+                        return self
+                            .delegate_cross_arena_interface_member_simple_type(
+                                base_decl_idx,
+                                member_idx,
+                                arc.as_ref(),
+                                (!type_args.is_empty()).then_some(type_args.as_slice()),
+                            )
+                            .map(|type_id| {
+                                self.recovered_interface_member_type_from_simple_type(
+                                    arc.as_ref(),
+                                    member_idx,
+                                    type_id,
+                                )
+                            });
                     }
                 }
 
@@ -649,7 +789,11 @@ impl<'a> CheckerState<'a> {
                             (!type_args.is_empty()).then_some(type_args.as_slice()),
                         )
                     {
-                        return Some(member_type);
+                        return Some(self.recovered_interface_member_type_from_simple_type(
+                            arena.as_ref(),
+                            member_idx,
+                            member_type,
+                        ));
                     }
                 }
             }
@@ -922,8 +1066,8 @@ impl<'a> CheckerState<'a> {
             self.recover_non_generic_lazy_interface_member_type(original_object_type, prop_name)
         {
             result = tsz_solver::operations::property::PropertyAccessResult::Success {
-                type_id: member_type,
-                write_type: None,
+                type_id: member_type.type_id,
+                write_type: member_type.write_type,
                 from_index_signature: false,
             };
         }
@@ -938,8 +1082,29 @@ impl<'a> CheckerState<'a> {
             self.recover_lazy_interface_member_type(original_object_type, prop_name)
         {
             result = tsz_solver::operations::property::PropertyAccessResult::Success {
-                type_id: member_type,
-                write_type: None,
+                type_id: member_type.type_id,
+                write_type: member_type.write_type,
+                from_index_signature: false,
+            };
+        }
+        if matches!(
+            result,
+            tsz_solver::operations::property::PropertyAccessResult::Success {
+                type_id: TypeId::SYMBOL,
+                from_index_signature: false,
+                ..
+            }
+        ) && let Some(member_type) =
+            self.recover_lazy_interface_member_type(original_object_type, prop_name)
+            && crate::query_boundaries::common::unique_symbol_ref(
+                self.ctx.types,
+                member_type.type_id,
+            )
+            .is_some()
+        {
+            result = tsz_solver::operations::property::PropertyAccessResult::Success {
+                type_id: member_type.type_id,
+                write_type: member_type.write_type,
                 from_index_signature: false,
             };
         }
@@ -984,6 +1149,115 @@ impl<'a> CheckerState<'a> {
             resolved_object_type = pruned_object_type;
             mapped_candidate_type = pruned_object_type;
             result = self.resolve_property_access_via_boundary(pruned_object_type, prop_name);
+        }
+
+        let retry_env_evaluation = matches!(
+            result,
+            tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound { .. }
+                | tsz_solver::operations::property::PropertyAccessResult::IsUnknown
+                | tsz_solver::operations::property::PropertyAccessResult::Success {
+                    type_id: TypeId::ANY | TypeId::SYMBOL,
+                    from_index_signature: false,
+                    ..
+                }
+        );
+        if retry_env_evaluation {
+            let evaluated = self.evaluate_type_with_env(resolved_object_type);
+            if evaluated != resolved_object_type
+                && evaluated != TypeId::ANY
+                && evaluated != TypeId::ERROR
+            {
+                let retry_result = self.resolve_property_access_via_boundary(evaluated, prop_name);
+                let retry_improved = match retry_result {
+                    tsz_solver::operations::property::PropertyAccessResult::Success {
+                        type_id,
+                        write_type,
+                        from_index_signature,
+                    } if matches!(
+                        result,
+                        tsz_solver::operations::property::PropertyAccessResult::Success {
+                            type_id: TypeId::SYMBOL,
+                            from_index_signature: false,
+                            ..
+                        }
+                    ) => from_index_signature || type_id != TypeId::SYMBOL || write_type.is_some(),
+                    tsz_solver::operations::property::PropertyAccessResult::Success {
+                        type_id,
+                        from_index_signature,
+                        ..
+                    } => from_index_signature || type_id != TypeId::ANY,
+                    tsz_solver::operations::property::PropertyAccessResult::PossiblyNullOrUndefined {
+                        property_type: Some(type_id),
+                        ..
+                    } => type_id != TypeId::ANY && type_id != TypeId::ERROR,
+                    tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound { .. }
+                    | tsz_solver::operations::property::PropertyAccessResult::IsUnknown
+                    | tsz_solver::operations::property::PropertyAccessResult::PossiblyNullOrUndefined {
+                        property_type: None,
+                        ..
+                    } => false,
+                };
+                if retry_improved {
+                    result = retry_result;
+                    resolved_object_type = evaluated;
+                    mapped_candidate_type = evaluated;
+                }
+            }
+        }
+
+        if matches!(
+            result,
+            tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound { .. }
+                | tsz_solver::operations::property::PropertyAccessResult::Success {
+                    type_id: TypeId::ANY,
+                    from_index_signature: false,
+                    ..
+                }
+        ) && let Some(member_type) =
+            self.recover_non_generic_lazy_interface_member_type(resolved_object_type, prop_name)
+        {
+            result = tsz_solver::operations::property::PropertyAccessResult::Success {
+                type_id: member_type.type_id,
+                write_type: member_type.write_type,
+                from_index_signature: false,
+            };
+        }
+        if matches!(
+            result,
+            tsz_solver::operations::property::PropertyAccessResult::Success {
+                type_id: TypeId::ANY,
+                from_index_signature: false,
+                ..
+            }
+        ) && let Some(member_type) =
+            self.recover_lazy_interface_member_type(resolved_object_type, prop_name)
+        {
+            result = tsz_solver::operations::property::PropertyAccessResult::Success {
+                type_id: member_type.type_id,
+                write_type: member_type.write_type,
+                from_index_signature: false,
+            };
+        }
+        if matches!(
+            result,
+            tsz_solver::operations::property::PropertyAccessResult::Success {
+                type_id: TypeId::SYMBOL,
+                from_index_signature: false,
+                ..
+            }
+        ) && let Some(member_type) =
+            self.recover_lazy_interface_member_type(resolved_object_type, prop_name)
+            && crate::query_boundaries::common::unique_symbol_ref(
+                self.ctx.types,
+                member_type.type_id,
+            )
+            .is_some()
+        {
+            result = tsz_solver::operations::property::PropertyAccessResult::Success {
+                type_id: member_type.type_id,
+                write_type: member_type.write_type,
+                from_index_signature: false,
+            };
         }
 
         // If the solver returned PropertyNotFound or a bare Success{ANY} for a

@@ -2193,6 +2193,14 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Preserve alias-application argument identity before structural
+        // evaluation can repaint one side's display alias. This keeps
+        // assignments like `T<A>` to `T<B>` from collapsing to two identical
+        // `Pick` shapes before the checker-only alias-argument rejection runs.
+        if self.same_type_alias_application_args_reject(source, target) {
+            return false;
+        }
+
         if self.same_base_application_to_constrained_type_param_target(source, target) {
             return false;
         }
@@ -2218,6 +2226,15 @@ impl<'a> CheckerState<'a> {
             && self.type_parameter_identities_match(s_obj, t_obj)
             && self.is_generic_index_key_assignable(s_idx, t_idx)
         {
+            return true;
+        }
+
+        // Pre-evaluation IndexAccess structural identity check: contextual writes can
+        // materialize equivalent generic indexed-access surfaces with fresh TypeIds
+        // on each side (`T[K1][K2]` vs `T[K1][K2]`). Compare the object/key
+        // components recursively before evaluation turns the identical surface into
+        // unrelated deferred types.
+        if self.generic_index_access_components_equivalent(source, target, 0) {
             return true;
         }
 
@@ -2714,6 +2731,93 @@ impl<'a> CheckerState<'a> {
         }
 
         self.is_assignable_to(source_key, target_key)
+    }
+
+    fn generic_index_access_components_equivalent(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        depth: u8,
+    ) -> bool {
+        if source == target || self.type_parameter_identities_match(source, target) {
+            return true;
+        }
+        if depth >= 4 {
+            return false;
+        }
+
+        if let (Some(source_param), Some(target_param)) = (
+            crate::query_boundaries::common::type_param_info(self.ctx.types, source),
+            crate::query_boundaries::common::type_param_info(self.ctx.types, target),
+        ) {
+            return source_param.name == target_param.name
+                && source_param.is_const == target_param.is_const
+                && self.generic_index_optional_components_equivalent(
+                    source_param.constraint,
+                    target_param.constraint,
+                    depth + 1,
+                )
+                && self.generic_index_optional_components_equivalent(
+                    source_param.default,
+                    target_param.default,
+                    depth + 1,
+                );
+        }
+
+        if let (Some(source_inner), Some(target_inner)) = (
+            get_keyof_type(self.ctx.types, source),
+            get_keyof_type(self.ctx.types, target),
+        ) {
+            return self.generic_index_access_components_equivalent(
+                source_inner,
+                target_inner,
+                depth + 1,
+            );
+        }
+
+        let Some((source_obj, source_idx)) =
+            crate::query_boundaries::checkers::generic::index_access_components(
+                self.ctx.types,
+                source,
+            )
+        else {
+            return false;
+        };
+        let Some((target_obj, target_idx)) =
+            crate::query_boundaries::checkers::generic::index_access_components(
+                self.ctx.types,
+                target,
+            )
+        else {
+            return false;
+        };
+
+        self.generic_index_access_components_equivalent(source_obj, target_obj, depth + 1)
+            && self.generic_index_keys_equivalent(source_idx, target_idx)
+    }
+
+    fn generic_index_keys_equivalent(&mut self, source_key: TypeId, target_key: TypeId) -> bool {
+        if source_key == target_key || self.type_parameter_identities_match(source_key, target_key)
+        {
+            return true;
+        }
+
+        self.generic_index_access_components_equivalent(source_key, target_key, 0)
+    }
+
+    fn generic_index_optional_components_equivalent(
+        &mut self,
+        source: Option<TypeId>,
+        target: Option<TypeId>,
+        depth: u8,
+    ) -> bool {
+        match (source, target) {
+            (Some(source), Some(target)) => {
+                self.generic_index_access_components_equivalent(source, target, depth)
+            }
+            (None, None) => true,
+            _ => false,
+        }
     }
 
     fn type_parameter_identities_match(&self, source: TypeId, target: TypeId) -> bool {

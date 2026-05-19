@@ -25,6 +25,48 @@ impl<'a> CheckerState<'a> {
     // Core Type Computation
     // =========================================================================
 
+    pub(crate) fn wrap_readonly_property_signature_unique_symbol_type(
+        &mut self,
+        member_idx: NodeIndex,
+        type_annotation: NodeIndex,
+        modifiers: &Option<tsz_parser::parser::NodeList>,
+        raw_type: TypeId,
+    ) -> TypeId {
+        if !self.has_readonly_modifier(modifiers)
+            || !crate::types_domain::unique_symbol_arena::is_unique_symbol_type_annotation_unwrapped(
+                self.ctx.arena,
+                type_annotation,
+            )
+            || (raw_type != TypeId::SYMBOL
+                && !crate::query_boundaries::common::is_unique_symbol_type(
+                    self.ctx.types,
+                    raw_type,
+                ))
+        {
+            return raw_type;
+        }
+
+        let sym_id = self.ctx.binder.get_node_symbol(member_idx).or_else(|| {
+            let member = self.ctx.arena.get(member_idx)?;
+            let sig = self.ctx.arena.get_signature(member)?;
+            self.ctx.binder.get_node_symbol(sig.name)
+        });
+        let sym_ref = if let Some(sym_id) = sym_id {
+            tsz_solver::SymbolRef(sym_id.0)
+        } else if self
+            .ctx
+            .arena
+            .get_extended(member_idx)
+            .and_then(|ext| self.ctx.arena.get(ext.parent))
+            .is_some_and(|parent| parent.kind == syntax_kind_ext::INTERFACE_DECLARATION)
+        {
+            tsz_solver::SymbolRef(type_annotation.0)
+        } else {
+            return raw_type;
+        };
+        self.ctx.types.unique_symbol(sym_ref)
+    }
+
     fn declared_annotation_type_for_identifier_expression(
         &mut self,
         expr: NodeIndex,
@@ -1671,6 +1713,12 @@ impl<'a> CheckerState<'a> {
 
             if sig.type_annotation.is_some() {
                 let base = self.get_type_from_type_node_in_type_literal(sig.type_annotation);
+                let base = self.wrap_readonly_property_signature_unique_symbol_type(
+                    member_idx,
+                    sig.type_annotation,
+                    &sig.modifiers,
+                    base,
+                );
                 let evaluated = self.evaluate_type_with_env(base);
                 let base = if evaluated != TypeId::ERROR && evaluated != TypeId::UNKNOWN {
                     let has_members = crate::query_boundaries::common::object_shape_for_type(
@@ -1780,7 +1828,13 @@ impl<'a> CheckerState<'a> {
             }
 
             let type_id = if sig.type_annotation.is_some() {
-                self.get_type_from_type_node(sig.type_annotation)
+                let raw = self.get_type_from_type_node(sig.type_annotation);
+                self.wrap_readonly_property_signature_unique_symbol_type(
+                    member_idx,
+                    sig.type_annotation,
+                    &sig.modifiers,
+                    raw,
+                )
             } else {
                 TypeId::ANY
             };
