@@ -111,7 +111,9 @@ await fs.writeFile(failedOnlyArtifact, `${JSON.stringify({
           tsgo: [0],
         },
         files_reached: 12,
+        files_reached_reason: null,
         peak_memory_bytes: 104857600,
+        peak_memory_bytes_reason: null,
         fixture_sources: [
           {
             name: "rxjs",

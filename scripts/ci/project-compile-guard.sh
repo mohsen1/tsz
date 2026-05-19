@@ -154,6 +154,26 @@ measure_peak_rss_enabled() {
   [ "${CI:-}" = "true" ] && [ "$(uname -s 2>/dev/null || echo unknown)" = "Linux" ]
 }
 
+# Echoes the structured reason peak-RSS sampling did not produce a value, or
+# empty when sampling is active (in which case a missing value means the
+# process exited before the first sample). Reasons must be in the closed
+# vocabulary documented in scripts/ci/project-compatibility.mjs.
+peak_rss_unavailable_reason() {
+  case "${TSZ_PROJECT_COMPILE_PEAK_RSS:-}" in
+    0|false|FALSE|no|NO)
+      printf 'measurement disabled\n'
+      return
+      ;;
+    1|true|TRUE|yes|YES)
+      return
+      ;;
+  esac
+
+  if [ "${CI:-}" != "true" ] || [ "$(uname -s 2>/dev/null || echo unknown)" != "Linux" ]; then
+    printf 'not measured on platform\n'
+  fi
+}
+
 process_tree_rss_kb() {
   local root_pid="$1"
 
@@ -264,6 +284,14 @@ record_project_compatibility() {
   local fixture_sources
   fixture_sources="$(tsz_project_fixture_sources "$name")"
 
+  local peak_memory_bytes_reason=""
+  if [ -z "$peak_memory_bytes" ]; then
+    peak_memory_bytes_reason="$(peak_rss_unavailable_reason)"
+    if [ -z "$peak_memory_bytes_reason" ]; then
+      peak_memory_bytes_reason="process exited before sampling"
+    fi
+  fi
+
   COMPAT_JSONL_FILE="$PROJECT_COMPATIBILITY_JSONL" \
   COMPAT_OUTPUT_ROOT="$FIXTURE_ROOT" \
   COMPAT_NAME="$name" \
@@ -273,6 +301,7 @@ record_project_compatibility() {
   COMPAT_DIAGNOSTIC_DELTA="$diagnostic_delta" \
   COMPAT_FILES_REACHED="$files_reached" \
   COMPAT_PEAK_MEMORY_BYTES="$peak_memory_bytes" \
+  COMPAT_PEAK_MEMORY_BYTES_REASON="$peak_memory_bytes_reason" \
   COMPAT_TSZ_EXIT_CODES="$tsz_exit_codes" \
   COMPAT_TSC_EXIT_CODES="$tsc_exit_codes" \
   COMPAT_TSCONFIG_PATH="$tsconfig_path" \

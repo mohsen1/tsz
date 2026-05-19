@@ -269,6 +269,26 @@ measure_peak_rss_enabled() {
     [ "${CI:-}" = "true" ] && [ "$(uname -s 2>/dev/null || echo unknown)" = "Linux" ]
 }
 
+# Echoes the structured reason peak-RSS sampling is not active, or empty when
+# sampling is active (a subsequent empty measurement then means the process
+# exited before any sample). Reasons come from the closed vocabulary owned by
+# scripts/ci/project-compatibility.mjs.
+peak_rss_unavailable_reason() {
+    case "${TSZ_BENCH_PROJECT_PEAK_RSS:-}" in
+        0|false|FALSE|no|NO)
+            printf 'measurement disabled\n'
+            return
+            ;;
+        1|true|TRUE|yes|YES)
+            return
+            ;;
+    esac
+
+    if [ "${CI:-}" != "true" ] || [ "$(uname -s 2>/dev/null || echo unknown)" != "Linux" ]; then
+        printf 'not measured on platform\n'
+    fi
+}
+
 process_tree_rss_kb() {
     local root_pid="$1"
 
@@ -1116,6 +1136,14 @@ record_project_compatibility() {
     [ -z "$PROJECT_COMPATIBILITY_JSONL" ] && return
     fixture_sources="$(tsz_project_fixture_sources "$name")"
 
+    local peak_memory_bytes_reason=""
+    if [ -z "$peak_memory_bytes" ]; then
+        peak_memory_bytes_reason="$(peak_rss_unavailable_reason)"
+        if [ -z "$peak_memory_bytes_reason" ]; then
+            peak_memory_bytes_reason="process exited before sampling"
+        fi
+    fi
+
     COMPAT_JSONL_FILE="$PROJECT_COMPATIBILITY_JSONL" \
     COMPAT_OUTPUT_ROOT="$TEMP_DIR" \
     COMPAT_FIXTURE_ROOT="$EXTERNAL_BENCH_DIR" \
@@ -1126,6 +1154,7 @@ record_project_compatibility() {
     COMPAT_DIAGNOSTIC_DELTA="$diagnostic_delta" \
     COMPAT_FILES_REACHED="$files_reached" \
     COMPAT_PEAK_MEMORY_BYTES="$peak_memory_bytes" \
+    COMPAT_PEAK_MEMORY_BYTES_REASON="$peak_memory_bytes_reason" \
     COMPAT_TSC_EXIT_CODES="$tsc_exit_codes" \
     COMPAT_TSZ_EXIT_CODES="$tsz_exit_codes" \
     COMPAT_TSGO_EXIT_CODES="$tsgo_exit_codes" \
@@ -1892,8 +1921,10 @@ function fallbackCompatibility(row) {
       diagnostic_status: "none",
       diagnostic_deltas: [],
       exit_codes: { tsc: [], tsz: [], tsgo: [] },
-      files_reached: row.lines ? null : null,
+      files_reached: null,
+      files_reached_reason: "runner did not count",
       peak_memory_bytes: null,
+      peak_memory_bytes_reason: "not measured on platform",
     };
   }
   if (status.includes("fixture")) {
@@ -1905,7 +1936,9 @@ function fallbackCompatibility(row) {
       diagnostic_deltas: [],
       exit_codes: { tsc: [], tsz: [], tsgo: [] },
       files_reached: null,
+      files_reached_reason: "runner did not count",
       peak_memory_bytes: null,
+      peak_memory_bytes_reason: "not measured on platform",
     };
   }
   return {
@@ -1916,7 +1949,9 @@ function fallbackCompatibility(row) {
     diagnostic_deltas: [],
     exit_codes: { tsc: [], tsz: [], tsgo: [] },
     files_reached: null,
+    files_reached_reason: "runner did not count",
     peak_memory_bytes: null,
+    peak_memory_bytes_reason: "not measured on platform",
   };
 }
 
@@ -2069,6 +2104,19 @@ function reproFromRecorded(recorded) {
   };
 }
 
+// When the recorded compatibility row carries a numeric residency value, the
+// reason field is null (the measurement exists). Otherwise propagate the
+// recorded reason if present, falling back to a runner-default. This keeps
+// `peak_memory_bytes_reason` / `files_reached_reason` consistent with their
+// sibling values for downstream merge validation.
+function residencyReasonFor(value, recordedReason, fallback) {
+  if (value !== null && value !== undefined && Number.isFinite(Number(value))) {
+    return null;
+  }
+  const reason = String(recordedReason || "").trim();
+  return reason || fallback;
+}
+
 function compatibilityFor(row, compatibilityRows) {
   const recorded = compatibilityRows.get(row.name) || fallbackCompatibility(row);
   if (!recorded) return {};
@@ -2105,7 +2153,17 @@ function compatibilityFor(row, compatibilityRows) {
         : { tsc: [], tsz: [], tsgo: [] },
       semantic_owner_family: projectOwnerFamilies[row.name] || "not classified",
       files_reached: recorded.files_reached ?? null,
+      files_reached_reason: residencyReasonFor(
+        recorded.files_reached,
+        recorded.files_reached_reason,
+        "runner did not count",
+      ),
       peak_memory_bytes: recorded.peak_memory_bytes ?? null,
+      peak_memory_bytes_reason: residencyReasonFor(
+        recorded.peak_memory_bytes,
+        recorded.peak_memory_bytes_reason,
+        "not measured on platform",
+      ),
       fixture_sources: Array.isArray(recorded.fixture_sources) ? recorded.fixture_sources : [],
     },
   };

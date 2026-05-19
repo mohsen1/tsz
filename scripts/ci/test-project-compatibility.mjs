@@ -85,7 +85,9 @@ withTempDir((dir) => {
   assert.deepEqual(row.diagnostic_codes, ["TS2344"]);
   assert.deepEqual(row.exit_codes, { tsc: [0], tsz: [2], tsgo: [1] });
   assert.equal(row.files_reached, 42);
+  assert.equal(row.files_reached_reason, null);
   assert.equal(row.peak_memory_bytes, 1048576);
+  assert.equal(row.peak_memory_bytes_reason, null);
   assert.equal(row.repro.tsconfig_path, "tsconfig.json");
   assert.equal(row.repro.source_root, "src");
   assert.equal(row.repro.first_failure_path, "src/index.ts");
@@ -236,6 +238,170 @@ withTempDir((dir) => {
     assert.deepEqual(row.diagnostic_counts, testCase.expected.counts, `${testCase.name}: diagnostic_counts`);
     assert.deepEqual(row.tsc_diagnostic_codes, testCase.expected.tscCodes, `${testCase.name}: tsc_diagnostic_codes`);
     assert.deepEqual(row.tsz_diagnostic_codes, testCase.expected.tszCodes, `${testCase.name}: tsz_diagnostic_codes`);
+  }
+});
+
+// Residency: oom/timeout/crash rows must carry both measurements AND
+// structured reasons (when absent). A bare null without a reason is a schema
+// violation downstream; the runner is expected to pass a reason via env, but
+// the record path also defaults to a vocabulary-safe value when the runner
+// did not.
+withTempDir((dir) => {
+  const jsonl = path.join(dir, "compat.jsonl");
+  const cases = [
+    {
+      name: "oom-with-measurements",
+      env: {
+        COMPAT_EXIT_CLASS: "oom",
+        COMPAT_PHASE: "check",
+        COMPAT_DIAGNOSTIC_STATUS: "compiler OOM or killed",
+        COMPAT_FILES_REACHED: "320",
+        COMPAT_PEAK_MEMORY_BYTES: "4294967296",
+      },
+      expected: {
+        state: "red",
+        filesReached: 320,
+        filesReachedReason: null,
+        peakMemoryBytes: 4294967296,
+        peakMemoryBytesReason: null,
+      },
+    },
+    {
+      name: "oom-without-measurements",
+      env: {
+        COMPAT_EXIT_CLASS: "oom",
+        COMPAT_PHASE: "check",
+        COMPAT_DIAGNOSTIC_STATUS: "compiler OOM or killed",
+        COMPAT_PEAK_MEMORY_BYTES_REASON: "process exited before sampling",
+      },
+      expected: {
+        state: "red",
+        filesReached: null,
+        filesReachedReason: "runner did not count",
+        peakMemoryBytes: null,
+        peakMemoryBytesReason: "process exited before sampling",
+      },
+    },
+    {
+      name: "timeout-with-measurements",
+      env: {
+        COMPAT_EXIT_CLASS: "timeout",
+        COMPAT_PHASE: "check",
+        COMPAT_DIAGNOSTIC_STATUS: "compiler timed out",
+        COMPAT_FILES_REACHED: "1024",
+        COMPAT_PEAK_MEMORY_BYTES: "8589934592",
+      },
+      expected: {
+        state: "red",
+        filesReached: 1024,
+        filesReachedReason: null,
+        peakMemoryBytes: 8589934592,
+        peakMemoryBytesReason: null,
+      },
+    },
+    {
+      name: "timeout-without-measurements",
+      env: {
+        COMPAT_EXIT_CLASS: "timeout",
+        COMPAT_PHASE: "check",
+        COMPAT_DIAGNOSTIC_STATUS: "compiler timed out",
+        COMPAT_PEAK_MEMORY_BYTES_REASON: "measurement disabled",
+      },
+      expected: {
+        state: "red",
+        filesReached: null,
+        filesReachedReason: "runner did not count",
+        peakMemoryBytes: null,
+        peakMemoryBytesReason: "measurement disabled",
+      },
+    },
+    {
+      name: "crash-with-measurements",
+      env: {
+        COMPAT_EXIT_CLASS: "crash",
+        COMPAT_PHASE: "check",
+        COMPAT_DIAGNOSTIC_STATUS: "compiler crashed",
+        COMPAT_FILES_REACHED: "42",
+        COMPAT_PEAK_MEMORY_BYTES: "536870912",
+      },
+      expected: {
+        state: "red",
+        filesReached: 42,
+        filesReachedReason: null,
+        peakMemoryBytes: 536870912,
+        peakMemoryBytesReason: null,
+      },
+    },
+    {
+      name: "crash-without-measurements",
+      env: {
+        COMPAT_EXIT_CLASS: "crash",
+        COMPAT_PHASE: "check",
+        COMPAT_DIAGNOSTIC_STATUS: "compiler crashed",
+        COMPAT_PEAK_MEMORY_BYTES_REASON: "not measured on platform",
+      },
+      expected: {
+        state: "red",
+        filesReached: null,
+        filesReachedReason: "runner did not count",
+        peakMemoryBytes: null,
+        peakMemoryBytesReason: "not measured on platform",
+      },
+    },
+    {
+      name: "unknown-reason-falls-back-to-vocabulary",
+      env: {
+        COMPAT_EXIT_CLASS: "oom",
+        COMPAT_PHASE: "check",
+        COMPAT_DIAGNOSTIC_STATUS: "compiler OOM or killed",
+        COMPAT_PEAK_MEMORY_BYTES_REASON: "made-up-reason-not-in-vocab",
+        COMPAT_FILES_REACHED_REASON: "also-not-in-vocab",
+      },
+      expected: {
+        state: "red",
+        filesReached: null,
+        filesReachedReason: "runner did not count",
+        peakMemoryBytes: null,
+        peakMemoryBytesReason: "not measured on platform",
+      },
+    },
+    {
+      name: "zero-files-reached-is-a-measurement",
+      env: {
+        COMPAT_EXIT_CLASS: "exit success",
+        COMPAT_PHASE: "check",
+        COMPAT_DIAGNOSTIC_STATUS: "none",
+        COMPAT_FILES_REACHED: "0",
+        COMPAT_PEAK_MEMORY_BYTES: "0",
+      },
+      expected: {
+        state: "green",
+        filesReached: 0,
+        filesReachedReason: null,
+        peakMemoryBytes: 0,
+        peakMemoryBytesReason: null,
+      },
+    },
+  ];
+
+  for (const testCase of cases) {
+    const result = runProjectCompatibility(["record"], {
+      COMPAT_JSONL_FILE: jsonl,
+      COMPAT_NAME: testCase.name,
+      ...testCase.env,
+    });
+    assert.equal(result.status, 0, `${testCase.name}: ${result.stderr}`);
+  }
+
+  const rows = fs.readFileSync(jsonl, "utf8").trim().split(/\r?\n/).map(JSON.parse);
+  assert.equal(rows.length, cases.length);
+  for (const [index, testCase] of cases.entries()) {
+    const row = rows[index];
+    assert.equal(row.state, testCase.expected.state, `${testCase.name}: state`);
+    assert.equal(row.files_reached, testCase.expected.filesReached, `${testCase.name}: files_reached`);
+    assert.equal(row.files_reached_reason, testCase.expected.filesReachedReason, `${testCase.name}: files_reached_reason`);
+    assert.equal(row.peak_memory_bytes, testCase.expected.peakMemoryBytes, `${testCase.name}: peak_memory_bytes`);
+    assert.equal(row.peak_memory_bytes_reason, testCase.expected.peakMemoryBytesReason, `${testCase.name}: peak_memory_bytes_reason`);
   }
 });
 
@@ -743,6 +909,113 @@ withTempDir((dir) => {
   assert.equal(payload.first_diagnostic_deltas[1].subsystem, "relations-assignability");
   assert.equal(payload.first_diagnostic_deltas[1].code, "TS2322");
   assert.equal(payload.first_diagnostic_deltas[2].project, "beta");
+});
+
+// Summary includes residency facts for every red/yellow row, with the
+// structured reason a measurement was unavailable. Green rows are excluded
+// from the residency table because the dashboard's residency view exists to
+// triage scale/runtime failure on rows that already failed.
+withTempDir((dir) => {
+  const jsonl = path.join(dir, "compat.jsonl");
+  const summary = path.join(dir, "summary.json");
+  const rows = [
+    {
+      name: "alpha",
+      state: "green",
+      files_reached: 100,
+      files_reached_reason: null,
+      peak_memory_bytes: 1048576,
+      peak_memory_bytes_reason: null,
+    },
+    {
+      name: "beta",
+      state: "yellow",
+      files_reached: 200,
+      files_reached_reason: null,
+      peak_memory_bytes: null,
+      peak_memory_bytes_reason: "not measured on platform",
+    },
+    {
+      name: "gamma",
+      state: "red",
+      files_reached: null,
+      files_reached_reason: "runner did not count",
+      peak_memory_bytes: null,
+      peak_memory_bytes_reason: "process exited before sampling",
+    },
+  ];
+  fs.writeFileSync(jsonl, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`, "utf8");
+  const result = runProjectCompatibility(["summary"], {
+    SUMMARY_JSONL_FILE: jsonl,
+    SUMMARY_OUTPUT_FILE: summary,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(fs.readFileSync(summary, "utf8"));
+  assert.equal(payload.residency_by_row.length, 2);
+  assert.equal(payload.residency_by_row[0].project, "gamma");
+  assert.equal(payload.residency_by_row[0].state, "red");
+  assert.equal(payload.residency_by_row[0].files_reached, null);
+  assert.equal(payload.residency_by_row[0].files_reached_reason, "runner did not count");
+  assert.equal(payload.residency_by_row[0].peak_memory_bytes, null);
+  assert.equal(payload.residency_by_row[0].peak_memory_bytes_reason, "process exited before sampling");
+  assert.equal(payload.residency_by_row[1].project, "beta");
+  assert.equal(payload.residency_by_row[1].state, "yellow");
+  assert.equal(payload.residency_by_row[1].files_reached, 200);
+  assert.equal(payload.residency_by_row[1].peak_memory_bytes_reason, "not measured on platform");
+});
+
+// format-step-summary residency table: both numeric measurements and
+// "n/a (reason)" cells render for red/yellow rows.
+withTempDir((dir) => {
+  const summary = path.join(dir, "summary.json");
+  fs.writeFileSync(
+    summary,
+    `${JSON.stringify({
+      by_state: { red: 1, yellow: 1 },
+      by_oracle_classification: { "tsz-fails-only": 1, "both-fail-same": 1 },
+      first_diagnostic_deltas: [],
+      residency_by_row: [
+        {
+          project: "large-ts-repo",
+          state: "red",
+          files_reached: null,
+          files_reached_reason: "runner did not count",
+          peak_memory_bytes: null,
+          peak_memory_bytes_reason: "process exited before sampling",
+        },
+        {
+          project: "rxjs-project",
+          state: "yellow",
+          files_reached: 2048,
+          files_reached_reason: null,
+          peak_memory_bytes: 1610612736,
+          peak_memory_bytes_reason: null,
+        },
+      ],
+    }, null, 2)}\n`,
+    "utf8",
+  );
+
+  const result = runProjectCompatibility(["format-step-summary"], {
+    SUMMARY_INPUT_FILE: summary,
+    SUMMARY_TITLE: "Project compatibility artifact",
+    SUMMARY_ARTIFACT_NAME: "project-compile-compatibility",
+    SUMMARY_JSONL_PATH: ".target/project-compile-guard/project-compatibility.jsonl",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /#### Residency \(red\/yellow rows\)/);
+  assert.match(result.stdout, /\| Project \| State \| Files reached \| Peak RSS \|/);
+  assert.match(result.stdout, /\| large-ts-repo \| red \| n\/a \(runner did not count\) \| n\/a \(process exited before sampling\) \|/);
+  assert.match(result.stdout, /\| rxjs-project \| yellow \| 2,048 \| 1\.50 GiB \|/);
+
+  // Residency must precede the diagnostic-deltas section by contract (when both
+  // are present); the renderer here has no deltas so this just asserts ordering
+  // versus any subsequent timing/speedup section the caller may concatenate.
+  const residencyIndex = result.stdout.indexOf("#### Residency");
+  const deltasIndex = result.stdout.indexOf("#### First diagnostic deltas");
+  if (deltasIndex !== -1) {
+    assert.ok(residencyIndex < deltasIndex, "residency table must render before diagnostic deltas");
+  }
 });
 
 // format-step-summary renders a self-contained Markdown block (artifact
