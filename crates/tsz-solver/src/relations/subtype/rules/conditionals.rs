@@ -676,14 +676,38 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::evaluation::evaluate::evaluate_conditional;
     use crate::intern::TypeInterner;
-    use crate::types::PropertyInfo;
+    use crate::types::{MappedType, PropertyInfo, TypeParamInfo};
 
     fn optional_object(interner: &TypeInterner, name: &str, type_id: TypeId) -> TypeId {
         interner.object(vec![PropertyInfo::opt(
             interner.intern_string(name),
             type_id,
         )])
+    }
+
+    fn readonly_object(interner: &TypeInterner, name: &str, type_id: TypeId) -> TypeId {
+        interner.object(vec![PropertyInfo::readonly(
+            interner.intern_string(name),
+            type_id,
+        )])
+    }
+
+    fn conditional_type(
+        interner: &TypeInterner,
+        check_type: TypeId,
+        extends_type: TypeId,
+        true_type: TypeId,
+        false_type: TypeId,
+    ) -> TypeId {
+        interner.conditional(ConditionalType {
+            check_type,
+            extends_type,
+            true_type,
+            false_type,
+            is_distributive: false,
+        })
     }
 
     #[test]
@@ -724,6 +748,72 @@ mod tests {
                 optional_string,
                 optional_string_or_undefined
             )
+        );
+    }
+
+    #[test]
+    fn conditional_subtype_path_distinguishes_readonly_extends_identity() {
+        let interner = TypeInterner::new();
+        let readonly = readonly_object(&interner, "value", TypeId::STRING);
+        let mutable = interner.object(vec![PropertyInfo::new(
+            interner.intern_string("value"),
+            TypeId::STRING,
+        )]);
+        let true_branch = interner.literal_boolean(true);
+        let false_branch = interner.literal_boolean(false);
+        let t_param = interner.type_param(TypeParamInfo::simple(interner.intern_string("T")));
+
+        let readonly_cond =
+            conditional_type(&interner, t_param, readonly, true_branch, false_branch);
+        let mutable_cond = conditional_type(&interner, t_param, mutable, true_branch, false_branch);
+
+        let mut checker = SubtypeChecker::new(&interner);
+        assert!(
+            !checker.check_subtype(readonly_cond, mutable_cond).is_true(),
+            "conditional extends identity must keep readonly property modifiers distinct"
+        );
+        assert!(
+            !checker.check_subtype(mutable_cond, readonly_cond).is_true(),
+            "conditional extends identity must be stricter than ordinary readonly assignability"
+        );
+    }
+
+    #[test]
+    fn conditional_evaluator_preserves_mapped_object_wrapper_identity() {
+        let interner = TypeInterner::new();
+        let t_param = interner.type_param(TypeParamInfo::simple(interner.intern_string("T")));
+        let wrapped_t = interner.no_infer(t_param);
+        let source = optional_object(&interner, "value", wrapped_t);
+        let key_name = interner.intern_string("K");
+        let key_param = interner.type_param(TypeParamInfo::simple(key_name));
+        let mapped = interner.mapped(MappedType {
+            type_param: TypeParamInfo::simple(key_name),
+            constraint: interner.keyof(source),
+            name_type: None,
+            template: interner.index_access(source, key_param),
+            readonly_modifier: None,
+            optional_modifier: None,
+        });
+        let target = optional_object(&interner, "value", t_param);
+        let true_branch = interner.literal_boolean(true);
+        let false_branch = interner.literal_boolean(false);
+        let cond = ConditionalType {
+            check_type: mapped,
+            extends_type: target,
+            true_type: true_branch,
+            false_type: false_branch,
+            is_distributive: false,
+        };
+
+        let evaluated = evaluate_conditional(&interner, &cond);
+
+        assert_ne!(
+            evaluated, true_branch,
+            "conditional evaluation must not take the true branch by eagerly normalizing mapped object members"
+        );
+        assert!(
+            matches!(interner.lookup(evaluated), Some(TypeData::Conditional(_))),
+            "generic mapped-object conditionals should stay deferred"
         );
     }
 }
