@@ -423,14 +423,13 @@ impl<'a> FlowAnalyzer<'a> {
                 return true;
             }
             // Sub-expression match: reference is a proper prefix of base.prop_names.
-            if prop_names.len() > 1 {
-                if let Some((prefix, _)) = self.relative_discriminant_path(reference, base)
-                    && !prefix.is_empty()
-                    && prefix.len() < prop_names.len()
-                    && prop_names[..prefix.len()] == prefix[..]
-                {
-                    return true;
-                }
+            if prop_names.len() > 1
+                && let Some((prefix, _)) = self.relative_discriminant_path(reference, base)
+                && !prefix.is_empty()
+                && prefix.len() < prop_names.len()
+                && prop_names[..prefix.len()] == prefix[..]
+            {
+                return true;
             }
         }
         false

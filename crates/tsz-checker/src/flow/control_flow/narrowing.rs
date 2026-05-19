@@ -1886,15 +1886,14 @@ impl<'a> FlowAnalyzer<'a> {
             }
             // Sub-expression match: target is a proper prefix of base.prop_names.
             // E.g. base=outer, prop_names=["s","kind"], target=outer.s → remaining=["kind"].
-            if prop_names.len() > 1 {
-                if let Some((prefix, is_optional)) = self.relative_discriminant_path(target, base)
-                    && !prefix.is_empty()
-                    && prefix.len() < prop_names.len()
-                    && prop_names[..prefix.len()] == prefix[..]
-                {
-                    let remaining = prop_names[prefix.len()..].to_vec();
-                    return Some((remaining, literal, is_optional, target));
-                }
+            if prop_names.len() > 1
+                && let Some((prefix, is_optional)) = self.relative_discriminant_path(target, base)
+                && !prefix.is_empty()
+                && prefix.len() < prop_names.len()
+                && prop_names[..prefix.len()] == prefix[..]
+            {
+                let remaining = prop_names[prefix.len()..].to_vec();
+                return Some((remaining, literal, is_optional, target));
             }
         }
 
