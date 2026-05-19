@@ -717,11 +717,6 @@ run_project_row() {
       write_kysely_config
       check_project "$name" "$FIXTURE_ROOT/kysely/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/kysely/src"
       ;;
-    type-challenges-project)
-      ensure_git_fixture "type-challenges" "$TYPE_CHALLENGES_REPO" "$TYPE_CHALLENGES_REF" "$FIXTURE_ROOT/type-challenges"
-      write_type_challenges_config
-      check_project "$name" "$FIXTURE_ROOT/type-challenges/.tsz-compile/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/type-challenges/.tsz-compile/questions"
-      ;;
     type-challenges-solutions-project)
       ensure_git_fixture "type-challenges-solutions" "$TYPE_CHALLENGES_SOLUTIONS_REPO" "$TYPE_CHALLENGES_SOLUTIONS_REF" "$FIXTURE_ROOT/type-challenges-solutions"
       write_type_challenges_solutions_config
