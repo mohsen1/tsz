@@ -300,7 +300,9 @@ const COMPATIBILITY_METADATA_FIELDS = [
   ["repro", "repro metadata"],
   ["exit_codes", "exit codes"],
   ["files_reached", "files reached"],
+  ["files_reached_reason", "files reached reason"],
   ["peak_memory_bytes", "peak memory"],
+  ["peak_memory_bytes_reason", "peak memory reason"],
   ["fixture_sources", "fixture sources"],
   ["emit_status", "emit status"],
   ["dts_status", "dts status"],
@@ -576,11 +578,13 @@ function compatibilityRowFor(definition, allResults, artifact) {
     row,
     lines: row?.lines || 0,
     filesReached: compatibility.files_reached ?? null,
+    filesReachedReason: compatibility.files_reached_reason ?? null,
     firstFailureClass: compatibility.first_failure_class || null,
     ownerTrack: firstPresent(compatibility.owner_track, definition.owner),
     reducedReproPath: compatibility.reduced_repro_path || null,
     lastSuccessfulPhase: normalizedLastSuccessfulPhase(compatibility),
     peakMemoryBytes: compatibility.peak_memory_bytes ?? null,
+    peakMemoryBytesReason: compatibility.peak_memory_bytes_reason ?? null,
     emitStatus: compatibility.emit_status || "not in scope (noEmit project check)",
     dtsStatus: compatibility.dts_status || "not in scope (noEmit project check)",
     knownBlockers: normalizedKnownBlockers(compatibility, diagnosticSubsystems, fallbackBlockers),
@@ -2066,9 +2070,13 @@ export function getProjectCompatibilityDashboard() {
     const parts = [];
     if (row.filesReached !== null && row.filesReached !== undefined && Number.isFinite(Number(row.filesReached))) {
       parts.push(`${fmt(row.filesReached)} files`);
+    } else if (row.filesReachedReason) {
+      parts.push(`files reached: n/a (${row.filesReachedReason})`);
     }
     if (Number.isFinite(Number(row.peakMemoryBytes)) && Number(row.peakMemoryBytes) > 0) {
       parts.push(`${(Number(row.peakMemoryBytes) / (1024 * 1024)).toLocaleString("en-US", { maximumFractionDigits: 0 })} MiB peak`);
+    } else if (row.peakMemoryBytesReason) {
+      parts.push(`peak RSS: n/a (${row.peakMemoryBytesReason})`);
     }
     return parts;
   };
