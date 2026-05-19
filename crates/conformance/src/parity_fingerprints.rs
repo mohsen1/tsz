@@ -151,23 +151,6 @@ pub(crate) const KNOWN_PARITY_FINGERPRINTS: &[ParityFingerprintRule] = &[
         parity_issue: ParityIssue(8424),
         action: ParityAction::Drop,
     },
-    // #8425 — circular recursive mapped tuple instantiation: tsz reports
-    // the cycle as a structural TS2322 instead of a TS2589 instantiation
-    // depth error. This is a Remap, not a Drop, because tsc *expects* a
-    // diagnostic at this site — just not the same code or message.
-    ParityFingerprintRule {
-        code: 2322,
-        message: "Type 'Circular<tup>' is not assignable to type '[number, number, number, number]'.",
-        message_match: MessageMatch::Contains,
-        reason: "When a recursive mapped/conditional alias forms a cycle through a tuple, tsc detects the cycle at instantiation and emits TS2589; tsz currently falls through to structural assignment and emits TS2322 with a self-referential source display.",
-        parity_issue: ParityIssue(8425),
-        action: ParityAction::Remap(ParityRemap {
-            code: 2589,
-            line: 21,
-            column: 19,
-            message: "Type instantiation is excessively deep and possibly infinite.",
-        }),
-    },
 ];
 
 /// Scope a classification query against the parity catalog uses.

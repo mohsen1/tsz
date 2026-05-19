@@ -634,6 +634,107 @@ const x: Circular<{ a: string }> = { a: { a: { a: {} as any } } };
     );
 }
 
+/// When a homomorphic self-referential mapped-type alias is applied to a tuple
+/// argument and checked against that tuple type, tsc detects the infinite
+/// instantiation chain and emits TS2589 instead of TS2322.
+///
+/// Structural rule: `type A<T> = { [P in keyof T]: A<T> }` applied to a tuple
+/// `tup` produces a tuple of `A<tup>` applications; element-by-element comparison
+/// against `tup` would recurse infinitely, so tsc emits TS2589.
+#[test]
+fn homomorphic_self_mapped_tuple_arg_vs_tuple_target_emits_ts2589() {
+    let source = r#"
+type Circular<T> = { [P in keyof T]: Circular<T> };
+type tup = [number, number, number, number];
+function foo(arg: Circular<tup>): tup {
+    return arg;
+}
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().any(|d| d.0 == 2589),
+        "Should emit TS2589 for Circular<tup> vs tup; got: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|d| d.0 == 2322),
+        "Should NOT emit TS2322 when TS2589 fires; got: {diags:?}"
+    );
+}
+
+/// The cycle detection must not depend on the alias spelling.
+/// Renaming `Circular` to `Loop` and `tup` to `Pair` must produce the same result.
+#[test]
+fn homomorphic_self_mapped_tuple_arg_renamed_alias_emits_ts2589() {
+    let source = r#"
+type Loop<X> = { [K in keyof X]: Loop<X> };
+type Pair = [string, boolean];
+function bar(arg: Loop<Pair>): Pair {
+    return arg;
+}
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().any(|d| d.0 == 2589),
+        "Should emit TS2589 for Loop<Pair> vs Pair regardless of alias name; got: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|d| d.0 == 2322),
+        "Should NOT emit TS2322 when TS2589 fires; got: {diags:?}"
+    );
+}
+
+/// Single-element tuple: the rule applies regardless of tuple length.
+#[test]
+fn homomorphic_self_mapped_single_element_tuple_emits_ts2589() {
+    let source = r#"
+type Mirror<T> = { [P in keyof T]: Mirror<T> };
+type Solo = [number];
+function baz(arg: Mirror<Solo>): Solo {
+    return arg;
+}
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().any(|d| d.0 == 2589),
+        "Should emit TS2589 for Mirror<Solo> vs Solo (single-element tuple); got: {diags:?}"
+    );
+}
+
+/// Non-tuple object argument: coinductive handling applies, no TS2589.
+#[test]
+fn homomorphic_self_mapped_object_arg_no_ts2589() {
+    let source = r#"
+type Circular<T> = { [P in keyof T]: Circular<T> };
+type Obj = { x: number; y: string };
+function foo(arg: Circular<Obj>): Obj {
+    return arg;
+}
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        !diags.iter().any(|d| d.0 == 2589),
+        "Should NOT emit TS2589 for Circular<Obj> with object arg; got: {diags:?}"
+    );
+}
+
+/// An alias with union-or-ground template is NOT a self-referential mapped type;
+/// it must not emit TS2589 even with a tuple argument.
+#[test]
+fn recursive_mapped_with_union_ground_and_tuple_no_ts2589() {
+    let source = r#"
+type DeepMap<T> = { [K in keyof T]: number | DeepMap<T> };
+type nums = [number, number];
+function foo(arg: DeepMap<nums>): nums {
+    return arg;
+}
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        !diags.iter().any(|d| d.0 == 2589),
+        "Union-ground template should NOT emit TS2589; got: {diags:?}"
+    );
+}
+
 /// Regression test for react16.d.ts infinite loop.
 ///
 /// Deeply-nested generic types with cross-referencing interfaces and type
