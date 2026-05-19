@@ -24,7 +24,6 @@ struct DirectActualLibAliasBodyProof {
     def_id: DefId,
     outcome: DirectActualLibAliasBodyOutcome,
 }
-
 // Track 7 transitional allowlist; prefer stable lib identity over additions.
 const DIRECT_ACTUAL_LIB_ALIAS_BODY_ADMISSIONS: &[&str] = &[
     "Capitalize",
