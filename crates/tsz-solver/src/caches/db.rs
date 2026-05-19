@@ -84,11 +84,90 @@ pub trait TypePredicateCache {
     fn set_contains_type_query_cache(&self, _type_id: TypeId, _result: bool) {}
 }
 
+/// Diagnostic display and provenance hooks for interned types.
+///
+/// These methods preserve source-facing type identities and display-only object
+/// facts after solver normalization. Keeping them separate from [`TypeDatabase`]
+/// makes display provenance a visible, narrower capability.
+pub trait TypeDisplayProvenance {
+    /// Store display-only properties for a fresh object literal.
+    ///
+    /// These are the pre-widened property types shown in error messages.
+    /// The `shape_id` is the widened (interned) shape; `props` contains
+    /// the original literal types from the source code.
+    fn store_display_properties(&self, _type_id: TypeId, _props: Vec<PropertyInfo>) {}
+
+    /// Retrieve display-only properties for a fresh object literal.
+    ///
+    /// Returns `None` if no display properties were stored.
+    fn get_display_properties(&self, _type_id: TypeId) -> Option<Arc<Vec<PropertyInfo>>> {
+        None
+    }
+
+    /// Store a reverse mapping from an evaluated Application result back to
+    /// its original Application TypeId for diagnostic display.
+    fn store_display_alias(&self, _evaluated: TypeId, _application: TypeId) {}
+
+    /// Store an Application display alias even when structural provenance was
+    /// recorded earlier for the same evaluated type.
+    fn store_display_alias_preferring_application(&self, evaluated: TypeId, application: TypeId) {
+        self.store_display_alias(evaluated, application);
+    }
+
+    /// Look up the original Application TypeId for a type produced by
+    /// evaluating an Application. Returns `None` if no mapping exists.
+    fn get_display_alias(&self, _type_id: TypeId) -> Option<TypeId> {
+        None
+    }
+
+    /// Mark an application base whose type-alias body is a conditional type.
+    fn mark_conditional_alias_base(&self, _base: TypeId) {}
+
+    /// Return whether an application base was marked as a conditional alias.
+    fn is_conditional_alias_base(&self, _base: TypeId) -> bool {
+        false
+    }
+
+    /// Record the as-written origin members for a flattened Union TypeId.
+    ///
+    /// The checker calls this from `get_type_from_union_type` so that the
+    /// printer can recover top-level alias names lost during flattening.
+    /// See `TypeInterner::store_union_origin` for the full contract.
+    fn store_union_origin(&self, _union_type_id: TypeId, _origin_members: Vec<TypeId>) {}
+
+    /// Replace display-origin members for a union in a diagnostic-specific context.
+    fn replace_union_origin_for_display(
+        &self,
+        _union_type_id: TypeId,
+        _origin_members: Vec<TypeId>,
+    ) {
+    }
+
+    /// Look up the as-written origin members for a flattened Union TypeId.
+    fn get_union_origin(&self, _type_id: TypeId) -> Option<Arc<Vec<TypeId>>> {
+        None
+    }
+
+    /// Atomically read and clear the "union too complex" flag.
+    ///
+    /// Returns `true` if a union construction was aborted due to complexity
+    /// since the last call. The checker uses this to emit TS2590.
+    fn take_union_too_complex(&self) -> bool {
+        false
+    }
+
+    /// Mark the current operation as having produced a too-complex union.
+    ///
+    /// This mirrors `take_union_too_complex` for solver paths that discover the
+    /// complexity limit during evaluation rather than initial construction.
+    fn mark_union_too_complex(&self) {}
+}
+
 /// Query interface for the solver.
 ///
 /// This keeps solver components generic and prevents them from reaching
 /// into concrete storage structures directly.
-pub trait TypeDatabase: TypePredicateCache {
+pub trait TypeDatabase: TypePredicateCache + TypeDisplayProvenance {
     fn intern(&self, key: TypeData) -> TypeId;
     fn lookup(&self, id: TypeId) -> Option<TypeData>;
     fn lookup_alloc_order(&self, _id: TypeId) -> Option<u32> {
@@ -191,78 +270,6 @@ pub trait TypeDatabase: TypePredicateCache {
     fn unique_symbol(&self, symbol: SymbolRef) -> TypeId;
     fn infer(&self, info: TypeParamInfo) -> TypeId;
     fn string_intrinsic(&self, kind: StringIntrinsicKind, type_arg: TypeId) -> TypeId;
-
-    /// Store display-only properties for a fresh object literal.
-    ///
-    /// These are the pre-widened property types shown in error messages.
-    /// The `shape_id` is the widened (interned) shape; `props` contains
-    /// the original literal types from the source code.
-    fn store_display_properties(&self, _type_id: TypeId, _props: Vec<PropertyInfo>) {}
-
-    /// Retrieve display-only properties for a fresh object literal.
-    ///
-    /// Returns `None` if no display properties were stored.
-    fn get_display_properties(&self, _type_id: TypeId) -> Option<Arc<Vec<PropertyInfo>>> {
-        None
-    }
-
-    /// Store a reverse mapping from an evaluated Application result back to
-    /// its original Application TypeId for diagnostic display.
-    fn store_display_alias(&self, _evaluated: TypeId, _application: TypeId) {}
-
-    /// Store an Application display alias even when structural provenance was
-    /// recorded earlier for the same evaluated type.
-    fn store_display_alias_preferring_application(&self, evaluated: TypeId, application: TypeId) {
-        self.store_display_alias(evaluated, application);
-    }
-
-    /// Look up the original Application TypeId for a type produced by
-    /// evaluating an Application. Returns `None` if no mapping exists.
-    fn get_display_alias(&self, _type_id: TypeId) -> Option<TypeId> {
-        None
-    }
-
-    /// Mark an application base whose type-alias body is a conditional type.
-    fn mark_conditional_alias_base(&self, _base: TypeId) {}
-
-    /// Return whether an application base was marked as a conditional alias.
-    fn is_conditional_alias_base(&self, _base: TypeId) -> bool {
-        false
-    }
-
-    /// Record the as-written origin members for a flattened Union TypeId.
-    ///
-    /// The checker calls this from `get_type_from_union_type` so that the
-    /// printer can recover top-level alias names lost during flattening.
-    /// See `TypeInterner::store_union_origin` for the full contract.
-    fn store_union_origin(&self, _union_type_id: TypeId, _origin_members: Vec<TypeId>) {}
-
-    /// Replace display-origin members for a union in a diagnostic-specific context.
-    fn replace_union_origin_for_display(
-        &self,
-        _union_type_id: TypeId,
-        _origin_members: Vec<TypeId>,
-    ) {
-    }
-
-    /// Look up the as-written origin members for a flattened Union TypeId.
-    fn get_union_origin(&self, _type_id: TypeId) -> Option<Arc<Vec<TypeId>>> {
-        None
-    }
-
-    /// Atomically read and clear the "union too complex" flag.
-    ///
-    /// Returns `true` if a union construction was aborted due to complexity
-    /// since the last call. The checker uses this to emit TS2590.
-    fn take_union_too_complex(&self) -> bool {
-        false
-    }
-
-    /// Mark the current operation as having produced a too-complex union.
-    ///
-    /// This mirrors `take_union_too_complex` for solver paths that discover the
-    /// complexity limit during evaluation rather than initial construction.
-    fn mark_union_too_complex(&self) {}
 
     /// Get the base class type for a symbol (class/interface).
     /// Returns the `TypeId` of the extends clause, or None if the symbol doesn't extend anything.
@@ -379,6 +386,56 @@ impl TypePredicateCache for TypeInterner {
 
     fn set_contains_type_query_cache(&self, type_id: TypeId, result: bool) {
         self.contains_type_query_cache.insert(type_id, result);
+    }
+}
+
+impl TypeDisplayProvenance for TypeInterner {
+    fn store_display_properties(&self, type_id: TypeId, props: Vec<PropertyInfo>) {
+        Self::store_display_properties(self, type_id, props);
+    }
+
+    fn get_display_properties(&self, type_id: TypeId) -> Option<Arc<Vec<PropertyInfo>>> {
+        Self::get_display_properties(self, type_id)
+    }
+
+    fn store_display_alias(&self, evaluated: TypeId, application: TypeId) {
+        Self::store_display_alias(self, evaluated, application);
+    }
+
+    fn store_display_alias_preferring_application(&self, evaluated: TypeId, application: TypeId) {
+        Self::store_display_alias_preferring_application(self, evaluated, application);
+    }
+
+    fn get_display_alias(&self, type_id: TypeId) -> Option<TypeId> {
+        Self::get_display_alias(self, type_id)
+    }
+
+    fn mark_conditional_alias_base(&self, base: TypeId) {
+        Self::mark_conditional_alias_base(self, base);
+    }
+
+    fn is_conditional_alias_base(&self, base: TypeId) -> bool {
+        Self::is_conditional_alias_base(self, base)
+    }
+
+    fn store_union_origin(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {
+        Self::store_union_origin(self, union_type_id, origin_members);
+    }
+
+    fn replace_union_origin_for_display(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {
+        Self::replace_union_origin_for_display(self, union_type_id, origin_members);
+    }
+
+    fn get_union_origin(&self, type_id: TypeId) -> Option<Arc<Vec<TypeId>>> {
+        Self::get_union_origin(self, type_id)
+    }
+
+    fn take_union_too_complex(&self) -> bool {
+        Self::take_union_too_complex(self)
+    }
+
+    fn mark_union_too_complex(&self) {
+        self.set_union_too_complex();
     }
 }
 
@@ -650,54 +707,6 @@ impl TypeDatabase for TypeInterner {
 
     fn string_intrinsic(&self, kind: StringIntrinsicKind, type_arg: TypeId) -> TypeId {
         Self::string_intrinsic(self, kind, type_arg)
-    }
-
-    fn store_display_properties(&self, type_id: TypeId, props: Vec<PropertyInfo>) {
-        Self::store_display_properties(self, type_id, props);
-    }
-
-    fn get_display_properties(&self, type_id: TypeId) -> Option<Arc<Vec<PropertyInfo>>> {
-        Self::get_display_properties(self, type_id)
-    }
-
-    fn store_display_alias(&self, evaluated: TypeId, application: TypeId) {
-        Self::store_display_alias(self, evaluated, application);
-    }
-
-    fn store_display_alias_preferring_application(&self, evaluated: TypeId, application: TypeId) {
-        Self::store_display_alias_preferring_application(self, evaluated, application);
-    }
-
-    fn get_display_alias(&self, type_id: TypeId) -> Option<TypeId> {
-        Self::get_display_alias(self, type_id)
-    }
-
-    fn mark_conditional_alias_base(&self, base: TypeId) {
-        Self::mark_conditional_alias_base(self, base);
-    }
-
-    fn is_conditional_alias_base(&self, base: TypeId) -> bool {
-        Self::is_conditional_alias_base(self, base)
-    }
-
-    fn store_union_origin(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {
-        Self::store_union_origin(self, union_type_id, origin_members);
-    }
-
-    fn replace_union_origin_for_display(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {
-        Self::replace_union_origin_for_display(self, union_type_id, origin_members);
-    }
-
-    fn get_union_origin(&self, type_id: TypeId) -> Option<Arc<Vec<TypeId>>> {
-        Self::get_union_origin(self, type_id)
-    }
-
-    fn take_union_too_complex(&self) -> bool {
-        Self::take_union_too_complex(self)
-    }
-
-    fn mark_union_too_complex(&self) {
-        self.set_union_too_complex();
     }
 
     fn get_class_base_type(&self, _symbol_id: SymbolId) -> Option<TypeId> {
