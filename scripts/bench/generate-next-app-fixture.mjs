@@ -12,6 +12,7 @@ if (!outputArg) {
 }
 const outputDir = path.resolve(outputArg);
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
+const npmCommand = process.env.TSZ_FIXTURE_GENERATOR_NPM_BIN || "npm";
 
 const dependencies = [
   "zod",
@@ -406,18 +407,18 @@ export function serializeSnapshot(input: { draft: IssueDraft; releases: ReleaseM
 }
 `);
 
-writeFixtureProvenance({
-  outputDir,
-  generatorScript: SCRIPT_PATH,
-  templateName: "next-app-router",
-  dryRun,
-});
-
 if (dryRun) {
+  writeFixtureProvenance({
+    outputDir,
+    generatorScript: SCRIPT_PATH,
+    templateName: "next-app-router",
+    dryRun,
+    npmCommand,
+  });
   process.exit(0);
 }
 
-const install = spawnSync("npm", ["install", "--silent", "--no-audit", "--no-fund"], {
+const install = spawnSync(npmCommand, ["install", "--silent", "--no-audit", "--no-fund"], {
   cwd: outputDir,
   stdio: "inherit",
 });
@@ -563,3 +564,11 @@ zustandPackageJson.exports = {
 zustandPackageJson.types = "./vanilla.d.ts";
 zustandPackageJson.typings = "./vanilla.d.ts";
 fs.writeFileSync(zustandPackageJsonPath, `${JSON.stringify(zustandPackageJson, null, 2)}\n`, "utf8");
+
+writeFixtureProvenance({
+  outputDir,
+  generatorScript: SCRIPT_PATH,
+  templateName: "next-app-router",
+  dryRun,
+  npmCommand,
+});

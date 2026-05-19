@@ -33,6 +33,41 @@ function runGenerator(generatorPath, outputDir) {
   return result;
 }
 
+function runGeneratorWithFakeNpm(generatorPath, outputDir) {
+  const fakeNpmPath = path.join(tmpBase, "fake-npm.mjs");
+  fs.writeFileSync(fakeNpmPath, `#!/usr/bin/env node
+import fs from "node:fs";
+import path from "node:path";
+
+if (process.argv.includes("--version")) {
+  console.log("10.0.0-test");
+  process.exit(0);
+}
+
+fs.writeFileSync(path.join(process.cwd(), "package-lock.json"), JSON.stringify({
+  lockfileVersion: 3,
+  packages: {},
+}, null, 2) + "\\n", "utf8");
+fs.mkdirSync(path.join(process.cwd(), "node_modules"), { recursive: true });
+`, "utf8");
+  fs.chmodSync(fakeNpmPath, 0o755);
+
+  const result = spawnSync(process.execPath, [generatorPath, outputDir], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      TSZ_FIXTURE_GENERATOR_NPM_BIN: fakeNpmPath,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.status !== 0) {
+    throw new Error(
+      `Generator ${path.basename(generatorPath)} exited with status ${result.status}:\n${result.stderr}`,
+    );
+  }
+  return result;
+}
+
 function assertProvenanceShape(provenancePath, expectedTemplateName, generatorBasename) {
   assert.ok(fs.existsSync(provenancePath), `provenance file should exist at ${provenancePath}`);
 
@@ -144,6 +179,21 @@ try {
     assert.ok(
       !fs.existsSync(path.join(viteDir, "node_modules")),
       "node_modules should NOT exist in dry-run output",
+    );
+  });
+
+  test("Vite live-run provenance hashes package-lock.json after install", () => {
+    const liveDir = path.join(tmpBase, "vite-live");
+    runGeneratorWithFakeNpm(VITE_GENERATOR, liveDir);
+    const provenance = JSON.parse(
+      fs.readFileSync(path.join(liveDir, PROVENANCE_FILENAME), "utf8"),
+    );
+    assert.equal(provenance.dry_run, false, "dry_run should be false in live mode");
+    assert.equal(provenance.npm_version, "10.0.0-test", "npm_version should come from the install command");
+    assert.match(
+      provenance.file_hashes["package-lock.json"] ?? "",
+      /^[0-9a-f]{64}$/,
+      "package-lock.json hash should be captured after live install writes it",
     );
   });
 

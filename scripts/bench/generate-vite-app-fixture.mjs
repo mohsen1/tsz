@@ -12,6 +12,7 @@ if (!outputArg) {
 }
 const outputDir = path.resolve(outputArg);
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
+const npmCommand = process.env.TSZ_FIXTURE_GENERATOR_NPM_BIN || "npm";
 
 function write(file, contents) {
   const target = path.join(outputDir, file);
@@ -217,20 +218,30 @@ writeBinary(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGOSHzRgAAAAABJRU5ErkJggg==",
 );
 
+if (dryRun) {
+  writeFixtureProvenance({
+    outputDir,
+    generatorScript: SCRIPT_PATH,
+    templateName: "vite-vanilla-ts",
+    dryRun,
+    npmCommand,
+  });
+  process.exit(0);
+}
+
+const install = spawnSync(npmCommand, ["install", "--silent", "--no-audit", "--no-fund"], {
+  cwd: outputDir,
+  stdio: "inherit",
+});
+
+if (install.status !== 0) {
+  process.exit(install.status || 1);
+}
+
 writeFixtureProvenance({
   outputDir,
   generatorScript: SCRIPT_PATH,
   templateName: "vite-vanilla-ts",
   dryRun,
+  npmCommand,
 });
-
-if (!dryRun) {
-  const install = spawnSync("npm", ["install", "--silent", "--no-audit", "--no-fund"], {
-    cwd: outputDir,
-    stdio: "inherit",
-  });
-
-  if (install.status !== 0) {
-    process.exit(install.status || 1);
-  }
-}

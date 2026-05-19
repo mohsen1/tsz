@@ -48,8 +48,8 @@ function sha256File(filePath) {
   }
 }
 
-function npmVersion() {
-  const result = spawnSync("npm", ["--version"], { encoding: "utf8" });
+function npmVersion(npmCommand) {
+  const result = spawnSync(npmCommand, ["--version"], { encoding: "utf8" });
   if (result.status !== 0 || !result.stdout) {
     return null;
   }
@@ -66,9 +66,10 @@ function npmVersion() {
  * @param {boolean}  options.dryRun          Whether `npm install` was skipped.
  * @param {string[]} [options.extraFiles]    Additional file paths (absolute) to hash, beyond the
  *                                           standard set (package.json, tsconfig.json, package-lock.json).
+ * @param {string}   [options.npmCommand]    npm-compatible command used for version capture.
  * @returns {{ provenancePath: string, provenance: object }} The written provenance record.
  */
-export function writeFixtureProvenance({ outputDir, generatorScript, templateName, dryRun, extraFiles = [] }) {
+export function writeFixtureProvenance({ outputDir, generatorScript, templateName, dryRun, extraFiles = [], npmCommand = "npm" }) {
   const generatorScriptRelative = path.relative(REPO_ROOT, generatorScript).replace(/\\/g, "/");
 
   const standardFiles = ["package.json", "tsconfig.json", "package-lock.json"];
@@ -83,7 +84,7 @@ export function writeFixtureProvenance({ outputDir, generatorScript, templateNam
     generator_script: generatorScriptRelative,
     template_name: templateName,
     node_version: process.version,
-    npm_version: dryRun ? null : npmVersion(),
+    npm_version: dryRun ? null : npmVersion(npmCommand),
     dry_run: dryRun,
     generated_at: new Date().toISOString(),
     file_hashes: fileHashes,
