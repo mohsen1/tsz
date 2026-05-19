@@ -13,7 +13,8 @@ use super::NarrowingContext;
 use crate::def::DefId;
 use crate::relations::subtype::SubtypeChecker;
 use crate::type_queries::{
-    InstanceTypeKind, classify_for_instance_type, instance_type_from_symbol_has_instance,
+    InstanceTypeKind, classify_for_instance_type,
+    instance_type_from_symbol_has_instance_with_any_fallback,
 };
 use crate::types::TypeId;
 use crate::utils::{TypeIdExt, intersection_or_single, union_or_single};
@@ -47,11 +48,13 @@ impl<'a> NarrowingContext<'a> {
 
         // A non-asserting `[Symbol.hasInstance]` predicate overrides
         // structural extraction (tsc's `getNarrowedTypeForInstanceofPredicate`).
-        // The helper covers union/intersection constructors internally;
-        // structural fallback below still handles unions/intersections of
+        // Routed through the shared helper so the `value is any` → erased
+        // generic construct fallback is applied identically here and in
+        // `instance_type_from_constructor` (used by the checker's flow path).
+        // Structural fallback below still handles unions/intersections of
         // plain constructors with no predicate.
         if let Some(instance_type) =
-            instance_type_from_symbol_has_instance(self.db, resolved_constructor)
+            instance_type_from_symbol_has_instance_with_any_fallback(self.db, resolved_constructor)
         {
             trace!(
                 source_type = source_type.0,

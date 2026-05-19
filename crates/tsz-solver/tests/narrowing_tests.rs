@@ -1945,6 +1945,79 @@ fn test_narrow_by_instanceof_union_constructor_both_have_has_instance() {
     );
 }
 
+/// When the `[Symbol.hasInstance]` predicate target erases to `any` (e.g., the
+/// predicate is generic and its type parameter collapses), tsc's
+/// `getInstanceType` falls back to the erased generic construct return rather
+/// than letting `any` widen the source. This test pins that precedence at the
+/// narrowing layer so the solver entry point can't diverge from
+/// `instance_type_from_constructor` (see #8670 review feedback).
+#[test]
+fn test_narrow_by_instanceof_collapsed_any_predicate_falls_back_to_generic_construct() {
+    use crate::def::DefId;
+    use crate::types::{
+        CallSignature, CallableShape, FunctionShape, ParamInfo, PropertyInfo, TypeParamInfo,
+        TypePredicate, TypePredicateTarget,
+    };
+
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let value_atom = interner.intern_string("value");
+    let t_name = interner.intern_string("T");
+    let t_info = TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.type_param(t_info);
+    let box_base = interner.lazy(DefId(4242));
+    let box_t = interner.application(box_base, vec![t_type]);
+    let box_any = interner.application(box_base, vec![TypeId::ANY]);
+    let has_instance_atom = interner.intern_string("[Symbol.hasInstance]");
+
+    // hasInstance predicate collapses to `any`.
+    let has_instance_fn = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo::required(value_atom, TypeId::UNKNOWN)],
+        this_type: None,
+        return_type: TypeId::BOOLEAN,
+        type_predicate: Some(TypePredicate {
+            asserts: false,
+            target: TypePredicateTarget::Identifier(value_atom),
+            type_id: Some(TypeId::ANY),
+            parameter_index: Some(0),
+        }),
+        is_constructor: false,
+        is_method: true,
+    });
+
+    // Constructor with both `any`-collapsing predicate AND a generic construct
+    // signature returning Box<T>. The any-fallback rule should select Box<any>
+    // (the erased generic construct return) rather than letting `any` widen.
+    let constructor = interner.callable(CallableShape {
+        construct_signatures: vec![CallSignature {
+            type_params: vec![t_info],
+            params: vec![],
+            this_type: None,
+            return_type: box_t,
+            type_predicate: None,
+            is_method: false,
+        }],
+        properties: vec![PropertyInfo::method(has_instance_atom, has_instance_fn)],
+        ..CallableShape::default()
+    });
+
+    let source = interner.union2(TypeId::STRING, box_any);
+    let narrowed = ctx.narrow_by_instanceof(source, constructor, true);
+
+    assert_eq!(
+        narrowed, box_any,
+        "Collapsed-any predicate must defer to the erased generic construct \
+         return (Box<any>) rather than narrowing source by `any`"
+    );
+}
+
 // =============================================================================
 // Enum narrowing tests (narrow_to_type for enum sources)
 // =============================================================================

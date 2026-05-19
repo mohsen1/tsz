@@ -260,14 +260,10 @@ pub fn instance_type_from_constructor(db: &dyn TypeDatabase, type_id: TypeId) ->
     // Step 1: A `[Symbol.hasInstance](value: ...): value is T` predicate, when
     // present, defines the instance type. This wins over `prototype` and over
     // construct signature return types per tsc.
-    if let Some(predicate_type) = instance_type_from_symbol_has_instance(db, type_id) {
-        if predicate_type == TypeId::ANY
-            && let Some(generic_construct_type) =
-                generic_construct_instance_type_from_constructor(db, type_id)
-        {
-            return Some(generic_construct_type);
-        }
-        return Some(predicate_type);
+    if let Some(instance_type) =
+        instance_type_from_symbol_has_instance_with_any_fallback(db, type_id)
+    {
+        return Some(instance_type);
     }
 
     // Step 2: Check for `prototype` property (next priority per tsc spec).
@@ -395,6 +391,29 @@ pub fn instance_type_from_symbol_has_instance(
         // `asserts value is T` does not narrow the instanceof source type
         // (tsc treats only non-asserting predicates as narrowing).
         return None;
+    }
+    Some(predicate_type)
+}
+
+/// Resolve a constructor type to the instance type its `[Symbol.hasInstance]`
+/// predicate asserts, falling back to the erased generic construct return when
+/// the predicate target collapses to `any`. Returns `None` when the constructor
+/// has no usable `[Symbol.hasInstance]` predicate.
+///
+/// Shared by `instance_type_from_constructor` and `narrow_by_instanceof` so
+/// both solver entry points apply identical precedence: the `any`-fallback
+/// rule (`value is any` must not hide a more specific generic construct
+/// candidate like `Box<any>`) is enforced exactly once.
+pub fn instance_type_from_symbol_has_instance_with_any_fallback(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    let predicate_type = instance_type_from_symbol_has_instance(db, type_id)?;
+    if predicate_type == TypeId::ANY
+        && let Some(generic_construct_type) =
+            generic_construct_instance_type_from_constructor(db, type_id)
+    {
+        return Some(generic_construct_type);
     }
     Some(predicate_type)
 }
