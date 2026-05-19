@@ -1355,6 +1355,7 @@ fn compile_inner(
     let SourceReadResult {
         sources: all_sources,
         dependencies,
+        outfile_bundle_paths,
         type_reference_errors,
         resolution_mode_errors,
     } = {
@@ -1933,6 +1934,7 @@ fn compile_inner(
             out_dir: out_dir.as_deref(),
             declaration_dir: declaration_dir.as_deref(),
             dirty_paths: dirty_paths.as_ref(),
+            outfile_bundle_paths: Some(&outfile_bundle_paths),
             type_caches: type_caches_ref,
         })?;
         diagnostics.extend(emit_diags);

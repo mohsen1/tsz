@@ -3645,6 +3645,96 @@ fn compile_single_source_amd_outfile_emits_bundle() {
 }
 
 #[test]
+fn compile_module_none_outfile_skips_dynamic_import_only_dependency() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2020",
+            "module": "none",
+            "outFile": "dist/bundle.js",
+            "allowJs": true,
+            "ignoreDeprecations": "6.0"
+          },
+          "files": ["main.ts"]
+        }"#,
+    );
+    write_file(&base.join("main.ts"), "const loaded = import(\"./dep\");\n");
+    write_file(&base.join("dep.js"), "export default 1;\n");
+
+    let args = default_args();
+    let result = with_types_versions_env(None, || {
+        compile(&args, base).expect("compile should succeed")
+    });
+
+    assert!(
+        result.diagnostics.iter().all(|diag| diag.code == 1323),
+        "{:?}",
+        result.diagnostics
+    );
+    let bundle = std::fs::read_to_string(base.join("dist/bundle.js")).expect("read bundle");
+    assert_eq!(bundle, "\"use strict\";\nconst loaded = import(\"./dep\");");
+    assert!(
+        !bundle.contains("exports.default"),
+        "dynamic-import-only dependency should not be concatenated into module:none outFile bundle:\n{bundle}"
+    );
+}
+
+#[test]
+fn compile_module_none_outfile_keeps_static_and_reference_dependencies() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2020",
+            "module": "none",
+            "outFile": "dist/bundle.js",
+            "allowJs": true,
+            "ignoreDeprecations": "6.0"
+          },
+          "files": ["main.ts", "root-script.js"]
+        }"#,
+    );
+    write_file(
+        &base.join("main.ts"),
+        "/// <reference path=\"./referenced.js\" />\nconst loaded = import(\"./dynamic\");\n",
+    );
+    write_file(&base.join("root-script.js"), "const rootScriptValue = 1;\n");
+    write_file(&base.join("referenced.js"), "const referencedValue = 2;\n");
+    write_file(&base.join("dynamic.js"), "export const dynamicValue = 3;\n");
+
+    let args = default_args();
+    let result = with_types_versions_env(None, || {
+        compile(&args, base).expect("compile should succeed")
+    });
+
+    assert!(
+        result.diagnostics.iter().all(|diag| diag.code == 1323),
+        "{:?}",
+        result.diagnostics
+    );
+    let bundle = std::fs::read_to_string(base.join("dist/bundle.js")).expect("read bundle");
+    assert!(
+        bundle.contains("const referencedValue = 2;"),
+        "triple-slash referenced dependency should remain in bundle:\n{bundle}"
+    );
+    assert!(
+        bundle.contains("const rootScriptValue = 1;"),
+        "explicit script root should remain in bundle:\n{bundle}"
+    );
+    assert!(
+        !bundle.contains("dynamicValue"),
+        "external module reached only through dynamic import should not be concatenated into bundle:\n{bundle}"
+    );
+}
+
+#[test]
 fn compile_single_source_amd_declaration_outfile_wraps_module_name() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
