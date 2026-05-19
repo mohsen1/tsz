@@ -1012,18 +1012,31 @@ impl<'a> CheckerState<'a> {
 
         // Pre-compute computed property names that the lowering can't resolve from AST alone.
         // This handles cases like `[k]` where k is a `const` unique symbol variable.
-        let computed_names = if cross_arena_declarations.is_empty() {
-            self.precompute_computed_property_names(&declarations)
+        let (computed_names, arena_computed_names) = if cross_arena_declarations.is_empty() {
+            (
+                self.precompute_computed_property_names(&declarations),
+                rustc_hash::FxHashMap::default(),
+            )
         } else {
-            self.precompute_computed_property_names_in_arenas(&cross_arena_declarations)
-        };
-        let computed_symbol_names = if cross_arena_declarations.is_empty() {
-            self.precompute_symbol_named_computed_property_names(&declarations)
-        } else {
-            self.precompute_symbol_named_computed_property_names_in_arenas(
-                &cross_arena_declarations,
+            (
+                rustc_hash::FxHashMap::default(),
+                self.precompute_computed_property_names_by_arena(&cross_arena_declarations),
             )
         };
+        let (computed_symbol_names, arena_computed_symbol_names) =
+            if cross_arena_declarations.is_empty() {
+                (
+                    self.precompute_symbol_named_computed_property_names(&declarations),
+                    rustc_hash::FxHashSet::default(),
+                )
+            } else {
+                (
+                    rustc_hash::FxHashSet::default(),
+                    self.precompute_symbol_named_computed_property_names_by_arena(
+                        &cross_arena_declarations,
+                    ),
+                )
+            };
         let prewarmed_type_params = if cross_arena_declarations.is_empty() {
             self.prewarm_member_type_reference_params(&declarations)
         } else {
@@ -1065,8 +1078,17 @@ impl<'a> CheckerState<'a> {
         let computed_name_resolver = |expr_idx: NodeIndex| -> Option<tsz_common::Atom> {
             computed_names.get(&expr_idx).copied()
         };
+        let arena_computed_name_resolver =
+            |arena, expr_idx: NodeIndex| -> Option<tsz_common::Atom> {
+                arena_computed_names
+                    .get(&Self::arena_node_index_key(arena, expr_idx))
+                    .copied()
+            };
         let computed_symbol_name_resolver =
             |expr_idx: NodeIndex| computed_symbol_names.contains(&expr_idx);
+        let arena_computed_symbol_name_resolver = |arena, expr_idx: NodeIndex| {
+            arena_computed_symbol_names.contains(&Self::arena_node_index_key(arena, expr_idx))
+        };
         let lazy_type_params_resolver = |def_id: tsz_solver::def::DefId| {
             prewarmed_type_params
                 .get(&def_id)
@@ -1085,6 +1107,13 @@ impl<'a> CheckerState<'a> {
         .with_computed_symbol_name_resolver(&computed_symbol_name_resolver)
         .with_lazy_type_params_resolver(&lazy_type_params_resolver)
         .with_name_def_id_resolver(&name_resolver);
+        let lowering = if cross_arena_declarations.is_empty() {
+            lowering
+        } else {
+            lowering
+                .with_arena_computed_name_resolver(&arena_computed_name_resolver)
+                .with_arena_computed_symbol_name_resolver(&arena_computed_symbol_name_resolver)
+        };
         let lowering = if (self.ctx.is_declaration_file() && !self.ctx.lib_contexts.is_empty())
             || Self::in_cross_arena_interface_delegation()
         {
@@ -1378,10 +1407,33 @@ impl<'a> CheckerState<'a> {
                 // current arena. This handles cases like `[FOO_SYMBOL]?: number`
                 // inside `declare global { interface Promise<T> { ... } }`, where
                 // TypeLowering alone can't resolve the computed expression.
-                let computed_names =
-                    self.precompute_computed_property_names_in_arenas(&decls_with_arenas);
-                let computed_symbol_names = self
-                    .precompute_symbol_named_computed_property_names_in_arenas(&decls_with_arenas);
+                let (computed_names, arena_computed_names) = if has_declaration_arenas {
+                    (
+                        rustc_hash::FxHashMap::default(),
+                        self.precompute_computed_property_names_by_arena(&decls_with_arenas),
+                    )
+                } else {
+                    (
+                        self.precompute_computed_property_names_in_arenas(&decls_with_arenas),
+                        rustc_hash::FxHashMap::default(),
+                    )
+                };
+                let (computed_symbol_names, arena_computed_symbol_names) = if has_declaration_arenas
+                {
+                    (
+                        rustc_hash::FxHashSet::default(),
+                        self.precompute_symbol_named_computed_property_names_by_arena(
+                            &decls_with_arenas,
+                        ),
+                    )
+                } else {
+                    (
+                        self.precompute_symbol_named_computed_property_names_in_arenas(
+                            &decls_with_arenas,
+                        ),
+                        rustc_hash::FxHashSet::default(),
+                    )
+                };
 
                 // Push type params, lower interface, pop type params.
                 // push_type_parameters uses self.ctx.arena (user arena) to read
@@ -1558,8 +1610,18 @@ impl<'a> CheckerState<'a> {
                 let computed_name_resolver = |expr_idx: NodeIndex| -> Option<tsz_common::Atom> {
                     computed_names.get(&expr_idx).copied()
                 };
+                let arena_computed_name_resolver =
+                    |arena, expr_idx: NodeIndex| -> Option<tsz_common::Atom> {
+                        arena_computed_names
+                            .get(&Self::arena_node_index_key(arena, expr_idx))
+                            .copied()
+                    };
                 let computed_symbol_name_resolver =
                     |expr_idx: NodeIndex| computed_symbol_names.contains(&expr_idx);
+                let arena_computed_symbol_name_resolver = |arena, expr_idx: NodeIndex| {
+                    arena_computed_symbol_names
+                        .contains(&Self::arena_node_index_key(arena, expr_idx))
+                };
                 let lazy_type_params_resolver = |def_id: tsz_solver::def::DefId| {
                     prewarmed_lazy_type_params
                         .get(&def_id)
@@ -1582,6 +1644,15 @@ impl<'a> CheckerState<'a> {
                     symbol.escaped_name.clone(),
                     self.ctx.get_or_create_def_id(sym_id),
                 );
+                let lowering = if has_declaration_arenas {
+                    lowering
+                        .with_arena_computed_name_resolver(&arena_computed_name_resolver)
+                        .with_arena_computed_symbol_name_resolver(
+                            &arena_computed_symbol_name_resolver,
+                        )
+                } else {
+                    lowering
+                };
                 let lowering = if needs_text_based_resolution {
                     lowering.prefer_name_def_id_resolution()
                 } else {

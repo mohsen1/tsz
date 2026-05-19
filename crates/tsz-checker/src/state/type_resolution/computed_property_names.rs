@@ -5,7 +5,16 @@ use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
+pub(crate) type ArenaNodeIndexKey = (usize, NodeIndex);
+
 impl<'a> CheckerState<'a> {
+    pub(crate) fn arena_node_index_key(
+        arena: &NodeArena,
+        node_idx: NodeIndex,
+    ) -> ArenaNodeIndexKey {
+        (arena as *const NodeArena as usize, node_idx)
+    }
+
     pub(crate) fn prewarm_member_type_reference_params(
         &mut self,
         declarations: &[NodeIndex],
@@ -124,6 +133,51 @@ impl<'a> CheckerState<'a> {
         map
     }
 
+    pub(crate) fn precompute_computed_property_names_by_arena(
+        &mut self,
+        declarations: &[(NodeIndex, &NodeArena)],
+    ) -> rustc_hash::FxHashMap<ArenaNodeIndexKey, tsz_common::Atom> {
+        let mut map = rustc_hash::FxHashMap::default();
+        for &(decl_idx, decl_arena) in declarations {
+            let Some(node) = decl_arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(interface) = decl_arena.get_interface(node) else {
+                continue;
+            };
+            for &member_idx in &interface.members.nodes {
+                let Some(member) = decl_arena.get(member_idx) else {
+                    continue;
+                };
+                let name_idx = if let Some(sig) = decl_arena.get_signature(member) {
+                    sig.name
+                } else if let Some(acc) = decl_arena.get_accessor(member) {
+                    acc.name
+                } else {
+                    continue;
+                };
+                let Some(name_node) = decl_arena.get(name_idx) else {
+                    continue;
+                };
+                if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                    continue;
+                }
+                let Some(computed) = decl_arena.get_computed_property(name_node) else {
+                    continue;
+                };
+                if let Some(name) =
+                    self.resolve_computed_property_name_in_arena(decl_arena, name_idx)
+                {
+                    map.insert(
+                        Self::arena_node_index_key(decl_arena, computed.expression),
+                        self.ctx.types.intern_string(&name),
+                    );
+                }
+            }
+        }
+        map
+    }
+
     pub(crate) fn precompute_symbol_named_computed_property_names(
         &mut self,
         declarations: &[NodeIndex],
@@ -172,6 +226,49 @@ impl<'a> CheckerState<'a> {
                     .is_some_and(|name| name.starts_with("__unique_"))
                 {
                     set.insert(computed.expression);
+                }
+            }
+        }
+        set
+    }
+
+    pub(crate) fn precompute_symbol_named_computed_property_names_by_arena(
+        &mut self,
+        declarations: &[(NodeIndex, &NodeArena)],
+    ) -> rustc_hash::FxHashSet<ArenaNodeIndexKey> {
+        let mut set = rustc_hash::FxHashSet::default();
+        for &(decl_idx, decl_arena) in declarations {
+            let Some(node) = decl_arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(interface) = decl_arena.get_interface(node) else {
+                continue;
+            };
+            for &member_idx in &interface.members.nodes {
+                let Some(member) = decl_arena.get(member_idx) else {
+                    continue;
+                };
+                let name_idx = if let Some(sig) = decl_arena.get_signature(member) {
+                    sig.name
+                } else if let Some(acc) = decl_arena.get_accessor(member) {
+                    acc.name
+                } else {
+                    continue;
+                };
+                let Some(name_node) = decl_arena.get(name_idx) else {
+                    continue;
+                };
+                if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                    continue;
+                }
+                let Some(computed) = decl_arena.get_computed_property(name_node) else {
+                    continue;
+                };
+                if self
+                    .resolve_computed_property_name_in_arena(decl_arena, name_idx)
+                    .is_some_and(|name| name.starts_with("__unique_"))
+                {
+                    set.insert(Self::arena_node_index_key(decl_arena, computed.expression));
                 }
             }
         }
@@ -307,5 +404,25 @@ impl<'a> CheckerState<'a> {
                 .map(|binders| binders.as_ref().as_slice()),
             &self.ctx.lib_contexts,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn arena_node_index_key_distinguishes_equal_indexes_from_distinct_arenas() {
+        let first_arena = NodeArena::new();
+        let second_arena = NodeArena::new();
+        let colliding_expression = NodeIndex(7);
+
+        let first_key = CheckerState::arena_node_index_key(&first_arena, colliding_expression);
+        let second_key = CheckerState::arena_node_index_key(&second_arena, colliding_expression);
+
+        assert_ne!(
+            first_key, second_key,
+            "cross-arena computed-name prepasses must not collapse equal raw NodeIndex values"
+        );
     }
 }
