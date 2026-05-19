@@ -12,7 +12,7 @@
 pub(super) fn compare_case_sensitive_ui(a: &str, b: &str) -> std::cmp::Ordering {
     // Split strings into segments of digits/non-digits for numeric comparison
     fn split_numeric_segments(s: &str) -> Vec<&str> {
-        let mut segments = Vec::new();
+        let mut segments = Vec::with_capacity(1);
         let mut start = 0;
         let mut in_digit = false;
 
