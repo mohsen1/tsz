@@ -1,7 +1,6 @@
 # Temporary accepted conformance regressions for the 2026-05-16 aggregate runway.
 # The aggregate gate treats this as a set, not a budget: any failing test that
 # is not listed here fails CI, even if the total deficit does not grow.
-TypeScript/tests/cases/compiler/builtinIterator.ts
 TypeScript/tests/cases/compiler/coAndContraVariantInferences2.ts
 TypeScript/tests/cases/compiler/coAndContraVariantInferences3.ts
 TypeScript/tests/cases/compiler/coAndContraVariantInferences4.ts
@@ -55,7 +54,6 @@ TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccessErrors.ts
 TypeScript/tests/cases/conformance/types/literal/templateLiteralTypes6.ts
 TypeScript/tests/cases/conformance/types/mapped/mappedTypeConstraints2.ts
 TypeScript/tests/cases/conformance/types/mapped/mappedTypes6.ts
-TypeScript/tests/cases/conformance/types/mapped/recursiveMappedTypes.ts
 TypeScript/tests/cases/conformance/types/members/indexSignatures1.ts
 TypeScript/tests/cases/conformance/types/tuple/variadicTuples1.ts
 TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/unionAndIntersectionInference1.ts
