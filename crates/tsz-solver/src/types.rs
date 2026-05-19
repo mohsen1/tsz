@@ -282,7 +282,7 @@ bitflags::bitflags! {
     /// Bits `0..=8` are preserved from the original packed `u16` layout so
     /// legacy callers (e.g. checker boundary helpers that import the
     /// `FLAG_*` constants) continue to interoperate byte-for-byte. Bits
-    /// `9..=13` are new and encode previously-missing Lawyer-layer options
+    /// `9..=15` are new and encode previously-missing Lawyer-layer options
     /// that were silently missing from the cache key.
     #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
     pub struct RelationFlags: u32 {
