@@ -744,29 +744,15 @@ impl<'a> CheckerState<'a> {
 
             if let Some((props_type, raw_has_type_params)) = recovered_props {
                 if has_multi_construct {
-                    // Class component with overloaded constructors: use overload
-                    // resolution to match tsc's TS2769 behavior.
+                    // Overload resolution is the sole check — a separate generic-spread
+                    // assignability pass would produce spurious TS2322 for valid JSX whose
+                    // props type contains complex mapped/conditional generics.
                     self.check_jsx_overloaded_sfc(
                         resolved_component_type,
                         jsx_opening.attributes,
                         jsx_opening.tag_name,
                         children_ctx,
                         skip_jsx_return_check,
-                    );
-                    let props_type = self
-                        .narrow_jsx_props_union_from_attributes(jsx_opening.attributes, props_type);
-                    let preferred_props_display =
-                        self.get_jsx_component_props_display_text(tag_name_idx);
-                    let display_target = self.build_jsx_display_target_with_preferred_props(
-                        props_type,
-                        Some(resolved_component_type),
-                        preferred_props_display.as_deref(),
-                    );
-                    self.check_jsx_generic_spread_attrs_assignability(
-                        jsx_opening.attributes,
-                        props_type,
-                        &display_target,
-                        jsx_opening.tag_name,
                     );
                 } else if let Some(overload_component_type) = overloaded_sfc_component_type {
                     // Function components with multiple call signatures must use

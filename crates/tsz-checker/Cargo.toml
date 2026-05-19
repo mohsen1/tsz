@@ -1026,6 +1026,10 @@ name = "generic_inference_ordering_tests"
 path = "tests/generic_inference_ordering_tests.rs"
 
 [[test]]
+name = "jsx_multi_construct_overload_tests"
+path = "tests/jsx_multi_construct_overload_tests.rs"
+
+[[test]]
 name = "jsx_overload_anchor_literal_attr_tests"
 path = "tests/jsx_overload_anchor_literal_attr_tests.rs"
 
