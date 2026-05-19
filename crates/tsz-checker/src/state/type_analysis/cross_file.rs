@@ -551,17 +551,18 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // FUNCTION + cross-arena merge: when a user `declare function f(...)` in the
-        // current arena merges with an existing lib `declare function f(...)` from
-        // the lib arena, both decls live on the same symbol but delegation would
-        // run compute_type_of_symbol in lib-arena context — losing the user's
-        // overload signature. Handle locally so compute_type_of_symbol sees every
-        // in-arena declaration and (if needed) still pulls the lib-arena decls
-        // via `declaration_arenas`.
+        // Raw `SymbolId`s are file-local: `SymbolId(0)` may name `f` (FUNCTION) in
+        // the current file and `x: string` (ALIAS) in another. Inspect the *local*
+        // binder directly — `get_cross_file_symbol` would return the wrong symbol
+        // when a cross-file overlay maps the same raw id to a foreign declaration —
+        // so a current-file function declaration always pins resolution locally.
+        // This covers both the lib-merge case (`declare function f` in current arena
+        // overlapping a lib `declare function f`) and the multi-file collision case.
         let mut function_has_local_decl = false;
-        if delegate_arena.is_some_and(|arena| !std::ptr::eq(arena, self.ctx.arena))
-            && let Some(symbol) = self.get_cross_file_symbol(sym_id)
+        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
             && symbol.has_any_flags(symbol_flags::FUNCTION)
+            && !symbol
+                .has_any_flags(symbol_flags::CLASS | symbol_flags::INTERFACE | symbol_flags::ALIAS)
         {
             let has_local_function_decl = symbol.declarations.iter().any(|&d| {
                 self.ctx

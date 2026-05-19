@@ -161,9 +161,6 @@ const n: Node = bp;
     assert!(codes.is_empty(), "Diagnostics: {codes:?}");
 }
 
-// Known-failing cases tracked by issue #7690 — drop the `#[ignore]` when fixed.
-
-#[ignore = "tsz issue #7690: local `declare function` + cross-file import emits TS2345/TS2349 instead of resolving to lib Node"]
 #[test]
 fn local_declare_function_after_import_is_callable_with_cross_file_element() {
     let exporter = "export const blogPost: Element;";
@@ -179,6 +176,72 @@ takeNode(blogPost);
     );
     assert!(codes.is_empty(), "Diagnostics: {codes:?}");
 }
+
+// Regression coverage for the broader cross-arena `SymbolId` collision rule
+// that surfaced through issue #8476: a local `function` declaration whose raw
+// `SymbolId` happens to collide with a value symbol from another project file
+// must still resolve to its own function type — not the colliding symbol's
+// type — when called. The fix lives in checker cross-arena delegation.
+//
+// All three tests below use plain identifiers and primitive types so the
+// rule is provable without DOM lib heritage, and the matrix varies the
+// declaration shape, the call shape, and the source-symbol name to prove the
+// fix is structural rather than keyed on `f` / `x` / `Element`.
+
+#[test]
+fn local_declare_function_after_value_import_is_callable() {
+    // The reduced repro: no lib types, no `declare function` heritage —
+    // a value import followed by a local declared function. Before the
+    // fix, calling `f()` reported TS2349 because cross-arena delegation
+    // computed the imported symbol's type under the local function's
+    // raw `SymbolId`.
+    let exporter = "export const x: string;";
+    let consumer = r#"
+import { x } from "./other";
+declare function f(): void;
+f();
+"#;
+
+    let codes = compile_codes(&[("other.ts", exporter), ("main.ts", consumer)], "main.ts");
+    assert!(codes.is_empty(), "Diagnostics: {codes:?}");
+}
+
+#[test]
+fn local_function_implementation_after_value_import_is_callable_with_renamed_names() {
+    // Renamed identifiers prove the rule is structural rather than keyed
+    // on `f` / `x`; a real function body (not `declare`) covers the
+    // non-ambient path.
+    let exporter = "export const greeting: number;";
+    let consumer = r#"
+import { greeting } from "./other";
+function makeGreeting(): string { return "ok"; }
+const result: string = makeGreeting();
+"#;
+
+    let codes = compile_codes(&[("other.ts", exporter), ("main.ts", consumer)], "main.ts");
+    assert!(codes.is_empty(), "Diagnostics: {codes:?}");
+}
+
+#[test]
+fn multiple_local_functions_after_value_import_each_keep_callable_type() {
+    // Multiple local functions after a named value import: every function
+    // declaration must keep its own callable type — not collapse to a
+    // single colliding symbol's type — when raw `SymbolId`s collide with
+    // names exported from another project file.
+    let exporter = "export const greeting: number; export const farewell: number;";
+    let consumer = r#"
+import { greeting, farewell } from "./other";
+declare function first(): number;
+declare function second(): number;
+const a: number = first();
+const b: number = second();
+"#;
+
+    let codes = compile_codes(&[("other.ts", exporter), ("main.ts", consumer)], "main.ts");
+    assert!(codes.is_empty(), "Diagnostics: {codes:?}");
+}
+
+// Known-failing cases tracked by issue #8476 — drop the `#[ignore]` when fixed.
 
 #[ignore = "tsz issue #7690: subclass of lib HTMLElement declared in another module loses heritage chain to Element/Node"]
 #[test]
