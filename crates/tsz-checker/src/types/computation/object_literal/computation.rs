@@ -195,44 +195,14 @@ impl<'a> CheckerState<'a> {
                 slot.insert(prop.clone());
             }
             Entry::Occupied(mut slot) => {
-                if prop.optional {
-                    let earlier = slot.get().clone();
-                    let (spread_type, spread_write_type) =
-                        if !self.ctx.exact_optional_property_types() && !earlier.optional {
-                            (
-                                crate::query_boundaries::common::remove_undefined(
-                                    self.ctx.types,
-                                    prop.type_id,
-                                ),
-                                crate::query_boundaries::common::remove_undefined(
-                                    self.ctx.types,
-                                    prop.write_type,
-                                ),
-                            )
-                        } else {
-                            (prop.type_id, prop.write_type)
-                        };
-                    let merged_type = self.ctx.types.union2(earlier.type_id, spread_type);
-                    let merged_write = self.ctx.types.union2(earlier.write_type, spread_write_type);
-                    slot.insert(PropertyInfo {
-                        name: prop.name,
-                        type_id: merged_type,
-                        write_type: merged_write,
-                        // Required wins on optionality.
-                        optional: earlier.optional && prop.optional,
-                        readonly: earlier.readonly && prop.readonly,
-                        is_method: prop.is_method,
-                        is_class_prototype: false,
-                        visibility: prop.visibility,
-                        parent_id: prop.parent_id,
-                        declaration_order: prop.declaration_order,
-                        is_string_named: prop.is_string_named,
-                        is_symbol_named: prop.is_symbol_named,
-                        single_quoted_name: prop.single_quoted_name,
-                    });
-                } else {
-                    slot.insert(prop.clone());
-                }
+                let merged =
+                    crate::query_boundaries::type_computation::core::merge_object_spread_property(
+                        self.ctx.types,
+                        self.ctx.exact_optional_property_types(),
+                        Some(slot.get()),
+                        prop,
+                    );
+                slot.insert(merged);
             }
         }
     }

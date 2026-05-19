@@ -1,4 +1,4 @@
-use tsz_solver::{NullishFilter, TypeDatabase, TypeId, TypeResolver};
+use tsz_solver::{NullishFilter, PropertyInfo, TypeDatabase, TypeId, TypeResolver};
 
 /// Re-export of the solver's binary operation result type.
 ///
@@ -90,6 +90,22 @@ pub(crate) fn compute_conditional_expression_type(
 ) -> TypeId {
     tsz_solver::operations::expression_ops::compute_conditional_expression_type(
         db, condition, true_type, false_type,
+    )
+}
+
+/// Merge a single object-spread property contribution through the solver-owned
+/// AST-independent spread merge rule.
+pub(crate) fn merge_object_spread_property(
+    db: &dyn TypeDatabase,
+    exact_optional_property_types: bool,
+    earlier: Option<&PropertyInfo>,
+    spread: &PropertyInfo,
+) -> PropertyInfo {
+    tsz_solver::operations::expression_ops::merge_object_spread_property(
+        db,
+        exact_optional_property_types,
+        earlier,
+        spread,
     )
 }
 
