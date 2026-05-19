@@ -11,14 +11,6 @@ use crate::module_resolver_helpers::PackageJson;
 impl ModuleResolver {
     /// Get the package type for a directory by walking up to find package.json
     pub(super) fn get_package_type_for_dir(&self, dir: &Path) -> Option<PackageType> {
-        // Check cache first
-        let cached_dir_type = self.package_type_cache.borrow().get(dir).copied();
-        if let Some(cached) = cached_dir_type {
-            Self::increment_counter(&self.package_type_cache_hits);
-            return cached;
-        }
-        Self::increment_counter(&self.package_type_cache_misses);
-
         let mut current = dir.to_path_buf();
         let mut visited = Vec::new();
 
