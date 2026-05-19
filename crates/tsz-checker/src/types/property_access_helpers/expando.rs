@@ -528,8 +528,8 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let obj_lit = self.ctx.arena.get_literal_expr(node)?;
-        let mut parts = Vec::new();
         let element_count = obj_lit.elements.nodes.len();
+        let mut parts = Vec::with_capacity(element_count);
 
         for element_pos in 0..element_count {
             let elem_idx = self
