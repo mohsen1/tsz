@@ -19,6 +19,42 @@ use tsz_solver::{GuardSense, ParamInfo, TupleElement, TypeId, TypePredicate};
 type FlowCache = FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>;
 type ReferenceMatchCache = RefCell<FxHashMap<(u32, u32), bool>>;
 type ReferenceSymbolCache = RefCell<FxHashMap<u32, Option<SymbolId>>>;
+
+#[must_use]
+pub(crate) fn flow_cache_entries(cache: &FlowCache) -> usize {
+    cache.len()
+}
+
+#[must_use]
+pub(crate) fn flow_cache_estimated_size_bytes(cache: &FlowCache) -> usize {
+    cache.capacity()
+        * (std::mem::size_of::<(FlowNodeId, SymbolId, TypeId)>()
+            + std::mem::size_of::<TypeId>()
+            + 8)
+}
+
+#[must_use]
+pub(crate) fn reference_match_cache_entries(cache: &ReferenceMatchCache) -> usize {
+    cache.borrow().len()
+}
+
+#[must_use]
+pub(crate) fn reference_match_cache_estimated_size_bytes(cache: &ReferenceMatchCache) -> usize {
+    let cache = cache.borrow();
+    cache.capacity() * (std::mem::size_of::<(u32, u32)>() + std::mem::size_of::<bool>() + 8)
+}
+
+#[must_use]
+pub(crate) fn reference_symbol_cache_entries(cache: &ReferenceSymbolCache) -> usize {
+    cache.borrow().len()
+}
+
+#[must_use]
+pub(crate) fn reference_symbol_cache_estimated_size_bytes(cache: &ReferenceSymbolCache) -> usize {
+    let cache = cache.borrow();
+    cache.capacity() * (std::mem::size_of::<u32>() + std::mem::size_of::<Option<SymbolId>>() + 8)
+}
+
 /// Instantiated type predicates from generic call resolutions, keyed by call node index.
 #[derive(Debug, Default)]
 pub struct CallPredicateMap {
@@ -123,6 +159,14 @@ mod tests {
     use super::{
         FLOW_STEP_BUDGET_MAX, FLOW_STEP_BUDGET_MIN, FLOW_STEP_BUDGET_SCALE, flow_step_budget,
     };
+    use super::{
+        FlowCache, ReferenceMatchCache, ReferenceSymbolCache, flow_cache_entries,
+        flow_cache_estimated_size_bytes, reference_match_cache_entries,
+        reference_match_cache_estimated_size_bytes, reference_symbol_cache_entries,
+        reference_symbol_cache_estimated_size_bytes,
+    };
+    use tsz_binder::{FlowNodeId, SymbolId};
+    use tsz_solver::TypeId;
 
     #[test]
     fn flow_step_budget_has_minimum_floor() {
@@ -151,6 +195,55 @@ mod tests {
     fn flow_step_budget_caps_large_contention_graphs_earlier() {
         // Keep pathological full-suite flow walks bounded under worker contention.
         assert_eq!(flow_step_budget(8_000), FLOW_STEP_BUDGET_MAX);
+    }
+
+    #[test]
+    fn flow_cache_statistics_report_entries_and_size() {
+        let mut cache = FlowCache::default();
+        assert_eq!(flow_cache_entries(&cache), 0);
+        assert_eq!(flow_cache_estimated_size_bytes(&cache), 0);
+
+        cache.insert((FlowNodeId(1), SymbolId(2), TypeId(3)), TypeId(4));
+        cache.insert((FlowNodeId(5), SymbolId(6), TypeId(7)), TypeId(8));
+
+        assert_eq!(flow_cache_entries(&cache), 2);
+        assert!(
+            flow_cache_estimated_size_bytes(&cache)
+                >= 2 * (std::mem::size_of::<(FlowNodeId, SymbolId, TypeId)>()
+                    + std::mem::size_of::<TypeId>())
+        );
+    }
+
+    #[test]
+    fn reference_match_cache_statistics_report_entries_and_size() {
+        let cache = ReferenceMatchCache::default();
+        assert_eq!(reference_match_cache_entries(&cache), 0);
+        assert_eq!(reference_match_cache_estimated_size_bytes(&cache), 0);
+
+        cache.borrow_mut().insert((1, 2), true);
+        cache.borrow_mut().insert((3, 4), false);
+
+        assert_eq!(reference_match_cache_entries(&cache), 2);
+        assert!(
+            reference_match_cache_estimated_size_bytes(&cache)
+                >= 2 * (std::mem::size_of::<(u32, u32)>() + std::mem::size_of::<bool>())
+        );
+    }
+
+    #[test]
+    fn reference_symbol_cache_statistics_report_entries_and_size() {
+        let cache = ReferenceSymbolCache::default();
+        assert_eq!(reference_symbol_cache_entries(&cache), 0);
+        assert_eq!(reference_symbol_cache_estimated_size_bytes(&cache), 0);
+
+        cache.borrow_mut().insert(1, Some(SymbolId(2)));
+        cache.borrow_mut().insert(3, None);
+
+        assert_eq!(reference_symbol_cache_entries(&cache), 2);
+        assert!(
+            reference_symbol_cache_estimated_size_bytes(&cache)
+                >= 2 * (std::mem::size_of::<u32>() + std::mem::size_of::<Option<SymbolId>>())
+        );
     }
 }
 
