@@ -385,7 +385,7 @@ REGEX_LINE_COUNT_CHECKS = [
             r"\bformat_type(?:_diagnostic)?\s*\([^\n]*"
             r"(?:\.contains\s*\(|\.starts_with\s*\(|\.ends_with\s*\(|\.as_str\s*\(\))"
         ),
-        3,
+        0,
     ),
     (
         "Checker diagnostic boundary: rendered message predicates (Track 10)",
