@@ -647,7 +647,16 @@ impl<'a> Printer<'a> {
                     JsxEmit::ReactJsx
                 }
             }
-            _ => self.ctx.options.jsx,
+            None => {
+                if self
+                    .jsx_pragmas
+                    .uses_classic_jsx_factory(self.ctx.options.jsx)
+                {
+                    JsxEmit::React
+                } else {
+                    self.ctx.options.jsx
+                }
+            }
         }
     }
 

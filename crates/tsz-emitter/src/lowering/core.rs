@@ -1,8 +1,7 @@
 use crate::context::emit::EmitContext;
 use crate::context::plan::{EmitPlan, EmitPlanBuilder};
 use crate::context::transform::{IdentifierId, TransformContext, TransformDirective};
-use crate::emitter::JsxEmit;
-use crate::jsx_pragmas::{JsxPragmaFacts, JsxRuntimePragma};
+use crate::jsx_pragmas::JsxPragmaFacts;
 use std::sync::Arc;
 use tsz_common::ScriptTarget;
 use tsz_parser::parser::NodeIndex;
@@ -527,18 +526,12 @@ impl<'a> LoweringPass<'a> {
     }
 
     fn classic_jsx_factory_roots(&self) -> Vec<String> {
-        let uses_classic_factory = match self.current_jsx_pragmas.runtime {
-            Some(JsxRuntimePragma::Classic) => true,
-            Some(JsxRuntimePragma::Automatic) => false,
-            _ => matches!(
-                self.ctx.options.jsx,
-                JsxEmit::Preserve | JsxEmit::React | JsxEmit::ReactNative
-            ),
-        };
-        if !uses_classic_factory {
+        if !self
+            .current_jsx_pragmas
+            .uses_classic_jsx_factory(self.ctx.options.jsx)
+        {
             return Vec::new();
         }
-
         self.current_jsx_pragmas.classic_factory_roots(
             self.ctx.options.jsx_factory.as_deref(),
             self.ctx.options.jsx_fragment_factory.as_deref(),

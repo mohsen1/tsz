@@ -1,4 +1,4 @@
-use super::super::{JsxEmit, ModuleKind, Printer};
+use super::super::{ModuleKind, Printer};
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
@@ -296,18 +296,12 @@ impl<'a> Printer<'a> {
     }
 
     fn classic_jsx_factory_roots(&self) -> Vec<String> {
-        let uses_classic_factory = match self.jsx_pragmas.runtime {
-            Some(crate::jsx_pragmas::JsxRuntimePragma::Classic) => true,
-            Some(crate::jsx_pragmas::JsxRuntimePragma::Automatic) => false,
-            _ => matches!(
-                self.ctx.options.jsx,
-                JsxEmit::Preserve | JsxEmit::React | JsxEmit::ReactNative
-            ),
-        };
-        if !uses_classic_factory {
+        if !self
+            .jsx_pragmas
+            .uses_classic_jsx_factory(self.ctx.options.jsx)
+        {
             return Vec::new();
         }
-
         self.jsx_pragmas.classic_factory_roots(
             self.ctx.options.jsx_factory.as_deref(),
             self.ctx.options.jsx_fragment_factory.as_deref(),

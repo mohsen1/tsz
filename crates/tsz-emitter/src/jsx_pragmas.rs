@@ -124,6 +124,25 @@ impl JsxPragmaFacts {
         }
     }
 
+    /// Whether classic JSX factory emission is active for this file.
+    ///
+    /// `@jsxRuntime` overrides first; absent that, `@jsx` factory pragma forces
+    /// classic mode regardless of the compiler's `--jsx` option (tsc parity).
+    pub(crate) const fn uses_classic_jsx_factory(&self, jsx: crate::emitter::JsxEmit) -> bool {
+        use crate::emitter::JsxEmit;
+        match self.runtime {
+            Some(JsxRuntimePragma::Classic) => true,
+            Some(JsxRuntimePragma::Automatic) => false,
+            None => {
+                self.factory.is_some()
+                    || matches!(
+                        jsx,
+                        JsxEmit::Preserve | JsxEmit::React | JsxEmit::ReactNative
+                    )
+            }
+        }
+    }
+
     pub(crate) fn classic_factory_roots(
         &self,
         jsx_factory: Option<&str>,

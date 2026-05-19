@@ -1,13 +1,11 @@
 use tsz_common::common::{ModuleKind, ScriptTarget};
-use tsz_emitter::context::emit::EmitContext;
-use tsz_emitter::emitter::{JsxEmit, Printer as EmitterPrinter, PrinterOptions};
-use tsz_emitter::lowering::LoweringPass;
+use tsz_emitter::emitter::{JsxEmit, PrinterOptions};
 use tsz_emitter::output::printer::PrintOptions;
 
 #[path = "test_support.rs"]
 mod test_support;
 
-use test_support::{parse_and_print_named_with_opts, parse_source_named};
+use test_support::{emit_named_with_printer_options, parse_and_print_named_with_opts};
 
 fn emit_jsx(source: &str, jsx: JsxEmit, target: ScriptTarget) -> String {
     let opts = PrintOptions {
@@ -19,13 +17,7 @@ fn emit_jsx(source: &str, jsx: JsxEmit, target: ScriptTarget) -> String {
 }
 
 fn emit_jsx_with_printer_options(source: &str, opts: PrinterOptions) -> String {
-    let (parser, root) = parse_source_named("test.tsx", source);
-    let ctx = EmitContext::with_options(opts.clone());
-    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
-    let mut printer = EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, opts);
-    printer.set_source_text(source);
-    printer.emit(root);
-    printer.get_output().to_string()
+    emit_named_with_printer_options("test.tsx", source, opts)
 }
 
 fn emit_classic_cjs_jsx(source: &str) -> String {

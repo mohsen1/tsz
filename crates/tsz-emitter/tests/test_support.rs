@@ -18,6 +18,9 @@
 
 #![allow(dead_code)]
 
+use tsz_emitter::context::emit::EmitContext;
+use tsz_emitter::emitter::{Printer as EmitterPrinter, PrinterOptions};
+use tsz_emitter::lowering::LoweringPass;
 use tsz_emitter::output::printer::{PrintOptions, Printer, lower_and_print};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::ParserState;
@@ -89,4 +92,21 @@ pub fn parse_and_print_named_with_opts(
     printer.set_source_text(source);
     printer.print(root);
     printer.finish().code
+}
+
+/// Run the full emitter pipeline (lowering + emission) for a named source file.
+/// Use this for tests that need the complete `LoweringPass` + `EmitterPrinter`
+/// pipeline rather than the simple syntax printer.
+pub fn emit_named_with_printer_options(
+    file_name: &str,
+    source: &str,
+    opts: PrinterOptions,
+) -> String {
+    let (parser, root) = parse_source_named(file_name, source);
+    let ctx = EmitContext::with_options(opts.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, opts);
+    printer.set_source_text(source);
+    printer.emit(root);
+    printer.get_output().to_string()
 }

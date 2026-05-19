@@ -182,6 +182,10 @@ path = "tests/arrow_parameter_prologue_tests.rs"
 name = "while_loop_body_capture_tests"
 path = "tests/while_loop_body_capture_tests.rs"
 
+[[test]]
+name = "jsx_factory_pragma_override_tests"
+path = "tests/jsx_factory_pragma_override_tests.rs"
+
 [lints]
 workspace = true
 
