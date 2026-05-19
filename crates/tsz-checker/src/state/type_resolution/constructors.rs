@@ -1038,14 +1038,13 @@ impl<'a> CheckerState<'a> {
         // constructor returns `any`.  The derived class instance type absorbs
         // an implicit string-index signature with value type `any`.
         if base_instance_type == TypeId::ANY {
-            let x_atom = self.ctx.types.intern_string("x");
             Self::merge_index_signature(
                 string_index,
                 tsz_solver::IndexSignature {
                     key_type: TypeId::STRING,
                     value_type: TypeId::ANY,
                     readonly: false,
-                    param_name: Some(x_atom),
+                    param_name: None,
                 },
             );
             return;
