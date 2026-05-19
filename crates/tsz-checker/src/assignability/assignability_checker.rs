@@ -8,7 +8,8 @@ use crate::query_boundaries::assignability::{
     function_shape_for_type, get_allowed_keys, get_keyof_type, get_string_literal_value,
     get_union_members, intersection_members, is_assignable_bivariant_with_resolver,
     is_assignable_with_overrides, is_relation_cacheable, is_type_parameter_like,
-    keyof_object_properties, lazy_def_id, map_compound_members, type_application, type_param_info,
+    keyof_object_properties, lazy_def_id, map_compound_members, object_shape_for_type,
+    type_application, type_param_info,
 };
 use crate::state::{CheckerOverrideProvider, CheckerState};
 use rustc_hash::FxHashSet;
@@ -145,10 +146,10 @@ impl<'a> CheckerState<'a> {
             return true;
         };
         let db = self.ctx.types;
-        if let Some(shape) = crate::query_boundaries::common::function_shape_for_type(db, target) {
+        if let Some(shape) = function_shape_for_type(db, target) {
             return signature_has_param_capacity(&shape.params, source_param_count);
         }
-        if let Some(shape) = crate::query_boundaries::common::callable_shape_for_type(db, target) {
+        if let Some(shape) = callable_shape_for_type(db, target) {
             let any_call_ok = shape
                 .call_signatures
                 .iter()
@@ -166,10 +167,7 @@ impl<'a> CheckerState<'a> {
     /// `any`/`unknown` parameter types, meaning contextual typing did not
     /// concretely bind its parameters yet.
     pub(crate) fn callback_type_params_are_unresolved(&self, arg_type: TypeId) -> bool {
-        if let Some(shape) = crate::query_boundaries::common::function_shape_for_type(
-            self.ctx.types.as_type_database(),
-            arg_type,
-        ) {
+        if let Some(shape) = function_shape_for_type(self.ctx.types.as_type_database(), arg_type) {
             shape.params.is_empty()
                 || shape
                     .params
@@ -209,12 +207,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let resolved = self.resolve_type_query_type(type_id);
-        let evaluated = if crate::query_boundaries::common::type_application(
-            self.ctx.types,
-            resolved,
-        )
-        .is_some()
-        {
+        let evaluated = if type_application(self.ctx.types, resolved).is_some() {
             self.evaluate_type_for_assignability(resolved)
         } else {
             self.evaluate_type_with_env(resolved)
@@ -307,9 +300,7 @@ impl<'a> CheckerState<'a> {
             } else {
                 type_id
             }
-        } else if let Some(members) =
-            crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
-        {
+        } else if let Some(members) = intersection_members(self.ctx.types, type_id) {
             let mut changed = false;
             let normalized_members: Vec<_> = members
                 .iter()
@@ -430,18 +421,14 @@ impl<'a> CheckerState<'a> {
     }
 
     fn normalize_callable_type_for_assignability(&mut self, type_id: TypeId) -> TypeId {
-        if let Some(shape) =
-            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
-        {
+        if let Some(shape) = function_shape_for_type(self.ctx.types, type_id) {
             let result = self
                 .normalize_function_shape_for_assignability(&shape)
                 .map(|shape| self.ctx.types.factory().function(shape))
                 .unwrap_or(type_id);
             return result;
         }
-        if let Some(shape) =
-            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, type_id)
-        {
+        if let Some(shape) = callable_shape_for_type(self.ctx.types, type_id) {
             let mut changed = false;
             let call_signatures: Vec<_> = shape
                 .call_signatures
@@ -770,9 +757,7 @@ impl<'a> CheckerState<'a> {
         // These types may not be properly evaluated when assignability is checked, leading
         // to false positives when the intersection should actually be assignable.
         let source_is_intersection_with_indexed_access = || -> bool {
-            if let Some(members) =
-                crate::query_boundaries::common::intersection_members(self.ctx.types, source)
-            {
+            if let Some(members) = intersection_members(self.ctx.types, source) {
                 members.iter().any(|&member| {
                     crate::query_boundaries::common::is_index_access_type(self.ctx.types, member)
                         && crate::query_boundaries::common::contains_type_parameters(
@@ -789,48 +774,32 @@ impl<'a> CheckerState<'a> {
         // context. Skip the suppression when both sides have their own signature-level
         // type params — the solver handles generic-to-generic comparison correctly.
         let is_callable_or_function = |type_id: TypeId| {
-            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, type_id)
-                .is_some()
-                || crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
-                    .is_some()
-                || crate::query_boundaries::common::type_application(self.ctx.types, type_id)
-                    .is_some_and(|app| {
-                        crate::query_boundaries::common::callable_shape_for_type(
-                            self.ctx.types,
-                            app.base,
-                        )
-                        .is_some()
-                            || crate::query_boundaries::common::function_shape_for_type(
-                                self.ctx.types,
-                                app.base,
-                            )
-                            .is_some()
-                    })
+            callable_shape_for_type(self.ctx.types, type_id).is_some()
+                || function_shape_for_type(self.ctx.types, type_id).is_some()
+                || type_application(self.ctx.types, type_id).is_some_and(|app| {
+                    callable_shape_for_type(self.ctx.types, app.base).is_some()
+                        || function_shape_for_type(self.ctx.types, app.base).is_some()
+                })
         };
 
         let is_constructor_like = |type_id: TypeId| -> bool {
             if crate::query_boundaries::common::has_construct_signatures(self.ctx.types, type_id) {
                 return true;
             }
-            if let Some(shape) =
-                crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
+            if let Some(shape) = function_shape_for_type(self.ctx.types, type_id)
                 && shape.is_constructor
             {
                 return true;
             }
-            if let Some(app) =
-                crate::query_boundaries::common::type_application(self.ctx.types, type_id)
-            {
+            if let Some(app) = type_application(self.ctx.types, type_id) {
                 if crate::query_boundaries::common::has_construct_signatures(
                     self.ctx.types,
                     app.base,
                 ) {
                     return true;
                 }
-                if let Some(shape) = crate::query_boundaries::common::function_shape_for_type(
-                    self.ctx.types,
-                    app.base,
-                ) && shape.is_constructor
+                if let Some(shape) = function_shape_for_type(self.ctx.types, app.base)
+                    && shape.is_constructor
                 {
                     return true;
                 }
@@ -839,18 +808,14 @@ impl<'a> CheckerState<'a> {
         };
 
         let has_own_signature_type_params = |type_id: TypeId| -> bool {
-            if let Some(shape) =
-                crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, type_id)
-            {
+            if let Some(shape) = callable_shape_for_type(self.ctx.types, type_id) {
                 return shape
                     .call_signatures
                     .iter()
                     .chain(shape.construct_signatures.iter())
                     .any(|sig| !sig.type_params.is_empty());
             }
-            if let Some(shape) =
-                crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
-            {
+            if let Some(shape) = function_shape_for_type(self.ctx.types, type_id) {
                 return !shape.type_params.is_empty();
             }
             false
@@ -874,11 +839,7 @@ impl<'a> CheckerState<'a> {
                         candidate,
                     )
                     || crate::query_boundaries::common::is_mapped_type(self.ctx.types, candidate)
-                    || crate::query_boundaries::common::intersection_members(
-                        self.ctx.types,
-                        candidate,
-                    )
-                    .is_some()
+                    || intersection_members(self.ctx.types, candidate).is_some()
             };
 
             let evaluated = self.ctx.types.evaluate_type(type_id);
@@ -981,8 +942,8 @@ impl<'a> CheckerState<'a> {
         // unconstrained type parameters that should produce TS2322.
         let are_simple_generic_applications = |s: TypeId, t: TypeId| -> bool {
             if let (Some(s_app), Some(t_app)) = (
-                crate::query_boundaries::common::type_application(self.ctx.types, s),
-                crate::query_boundaries::common::type_application(self.ctx.types, t),
+                type_application(self.ctx.types, s),
+                type_application(self.ctx.types, t),
             ) {
                 // Same base type, both contain type parameters
                 return s_app.base == t_app.base
@@ -1006,7 +967,7 @@ impl<'a> CheckerState<'a> {
         // This fixes false TS2769 errors when passing generic return types
         // (e.g., IterableIterator<T> from values()) to overloads.
         let is_generic_application_with_type_params = |ty: TypeId| -> bool {
-            if let Some(app) = crate::query_boundaries::common::type_application(self.ctx.types, ty)
+            if let Some(app) = type_application(self.ctx.types, ty)
                 && app.args.iter().any(|&arg| {
                     crate::query_boundaries::common::contains_type_parameters(self.ctx.types, arg)
                 })
@@ -1037,9 +998,7 @@ impl<'a> CheckerState<'a> {
         // Check if target is an index signature type (e.g., { [s: string]: A })
         // These should prefer TS2741 for missing properties over TS2322 suppression
         let target_is_index_signature = || -> bool {
-            if let Some(shape) =
-                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, target)
-            {
+            if let Some(shape) = object_shape_for_type(self.ctx.types, target) {
                 return shape.string_index.is_some() || shape.number_index.is_some();
             }
             false
@@ -1056,11 +1015,7 @@ impl<'a> CheckerState<'a> {
                 |elements| {
                     elements.len() == 1
                         && elements[0].rest
-                        && crate::query_boundaries::common::type_param_info(
-                            self.ctx.types,
-                            elements[0].type_id,
-                        )
-                        .is_some()
+                        && type_param_info(self.ctx.types, elements[0].type_id).is_some()
                 },
             )
         };
@@ -1190,10 +1145,7 @@ impl<'a> CheckerState<'a> {
             // Walk through nested function return types to find type parameters
             // at any depth (e.g., () => (item: any) => T has T in the nested return)
             for _ in 0..4 {
-                if let Some(shape) = crate::query_boundaries::common::function_shape_for_type(
-                    self.ctx.types,
-                    current,
-                ) {
+                if let Some(shape) = function_shape_for_type(self.ctx.types, current) {
                     for p in &shape.params {
                         if crate::query_boundaries::common::is_type_parameter(
                             self.ctx.types,
@@ -1233,7 +1185,7 @@ impl<'a> CheckerState<'a> {
     /// Check if a type contains an error application (recursively).
     fn type_contains_error_application(db: &dyn tsz_solver::TypeDatabase, type_id: TypeId) -> bool {
         // Check if it's a direct error application
-        if let Some(app) = crate::query_boundaries::common::type_application(db, type_id)
+        if let Some(app) = type_application(db, type_id)
             && app.base == TypeId::ERROR
         {
             return true;
@@ -1249,7 +1201,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check if it's an intersection type containing an error application
-        if let Some(members) = crate::query_boundaries::common::intersection_members(db, type_id) {
+        if let Some(members) = intersection_members(db, type_id) {
             for member in members {
                 if Self::type_contains_error_application(db, member) {
                     return true;
@@ -1258,17 +1210,14 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check if it's a function type with error return
-        if let Some(fn_shape) =
-            crate::query_boundaries::common::function_shape_for_type(db, type_id)
+        if let Some(fn_shape) = function_shape_for_type(db, type_id)
             && Self::type_contains_error_application(db, fn_shape.return_type)
         {
             return true;
         }
 
         // Check if it's a callable type with error return
-        if let Some(callable) =
-            crate::query_boundaries::common::callable_shape_for_type(db, type_id)
-        {
+        if let Some(callable) = callable_shape_for_type(db, type_id) {
             for sig in &callable.call_signatures {
                 if Self::type_contains_error_application(db, sig.return_type) {
                     return true;
@@ -1588,8 +1537,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         type_id: TypeId,
     ) -> Option<TypeId> {
-        let members =
-            crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)?;
+        let members = intersection_members(self.ctx.types, type_id)?;
         let mut evaluated_members = Vec::with_capacity(members.len());
         let mut union_member_index = None;
 
@@ -1942,9 +1890,7 @@ impl<'a> CheckerState<'a> {
                 self.namespace_source_has_matching_property_mismatch(source, member)
             });
         }
-        let Some(shape) =
-            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, source)
-        else {
+        let Some(shape) = object_shape_for_type(self.ctx.types, source) else {
             return false;
         };
         let source_props = shape.properties.clone();
@@ -1961,23 +1907,11 @@ impl<'a> CheckerState<'a> {
                     )
                 })
                 .unwrap_or(target_resolved);
-        let target_shape = crate::query_boundaries::common::object_shape_for_type(
-            self.ctx.types,
-            target_resolver_resolved,
-        )
-        .or_else(|| {
-            crate::query_boundaries::common::object_shape_for_type(
-                self.ctx.types,
-                target_with_resolution,
-            )
-        })
-        .or_else(|| {
-            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, target_resolved)
-        })
-        .or_else(|| {
-            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, target_eval)
-        })
-        .or_else(|| crate::query_boundaries::common::object_shape_for_type(self.ctx.types, target));
+        let target_shape = object_shape_for_type(self.ctx.types, target_resolver_resolved)
+            .or_else(|| object_shape_for_type(self.ctx.types, target_with_resolution))
+            .or_else(|| object_shape_for_type(self.ctx.types, target_resolved))
+            .or_else(|| object_shape_for_type(self.ctx.types, target_eval))
+            .or_else(|| object_shape_for_type(self.ctx.types, target));
         let Some(target_shape) = target_shape else {
             return true;
         };
@@ -2452,7 +2386,7 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         source: TypeId,
     ) -> Option<TypeId> {
-        let app = crate::query_boundaries::common::type_application(self.ctx.types, target)?;
+        let app = type_application(self.ctx.types, target)?;
         let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base)?;
         let (body_type, type_params) = {
             let env = self.ctx.type_env.borrow();
@@ -2677,9 +2611,7 @@ impl<'a> CheckerState<'a> {
         index_type: TypeId,
         object_type: TypeId,
     ) -> bool {
-        if let Some(members) =
-            crate::query_boundaries::common::intersection_members(self.ctx.types, index_type)
-        {
+        if let Some(members) = intersection_members(self.ctx.types, index_type) {
             return members
                 .iter()
                 .copied()
@@ -2854,13 +2786,10 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if let Some(members) = crate::query_boundaries::common::union_members(
-            self.ctx.types,
-            object_type,
-        )
-        .or_else(|| {
-            crate::query_boundaries::common::intersection_members(self.ctx.types, object_type)
-        }) {
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, object_type)
+                .or_else(|| intersection_members(self.ctx.types, object_type))
+        {
             for member in members.iter().copied() {
                 self.collect_deferred_index_access_candidate_types(member, candidate_types);
             }
