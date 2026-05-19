@@ -248,6 +248,29 @@ fn register_symbol_file_target_keeps_dynamic_override() {
 }
 
 #[test]
+fn register_symbol_file_target_removes_override_returning_to_global() {
+    let interner = TypeInterner::new();
+    let query_cache = QueryCache::new(&interner);
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
+    let mut checker = make_checker(&arena, &binder, &query_cache);
+
+    let mut env = empty_program_context();
+    env.symbol_file_targets = Arc::new(vec![(SymbolId(1), 0)]);
+    env.build_global_symbol_file_index();
+    env.apply_to(&mut checker.ctx);
+
+    checker.ctx.register_symbol_file_target(SymbolId(1), 2);
+    checker.ctx.register_symbol_file_target(SymbolId(1), 0);
+
+    assert_eq!(checker.ctx.resolve_symbol_file_index(SymbolId(1)), Some(0));
+    assert_eq!(
+        checker.ctx.resolve_dynamic_symbol_file_index(SymbolId(1)),
+        None
+    );
+}
+
+#[test]
 fn copy_and_merge_symbol_file_targets() {
     // Test the copy_symbol_file_targets_to / merge_symbol_file_targets_from helpers.
     let interner = TypeInterner::new();
