@@ -3,8 +3,10 @@
 use crate::inference::infer::InferenceContext;
 use crate::inference::infer::InferenceVar;
 use crate::instantiation::instantiate::TypeSubstitution;
-use crate::operations::{AssignabilityChecker, CallEvaluator, CallResult};
+use crate::operations::{AssignabilityChecker, CallEvaluator};
 use crate::types::{FunctionShape, TupleElement, TypeData, TypeId, TypeParamInfo};
+
+use super::{GenericCallRequest, GenericCallResult};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 
@@ -1012,15 +1014,24 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         substitution
     }
 
+    pub(crate) fn resolve_with_request(
+        &mut self,
+        request: GenericCallRequest<'_>,
+    ) -> GenericCallResult {
+        let previous_defaulted = std::mem::take(&mut self.defaulted_placeholders);
+        let call_result = self.resolve_generic_call_inner(request.func(), request.arg_types());
+        self.defaulted_placeholders = previous_defaulted;
+        GenericCallResult::new(call_result)
+            .with_instantiated_predicate(self.last_instantiated_predicate.take())
+            .with_instantiated_params(self.last_instantiated_params.take())
+    }
+
     pub(crate) fn resolve_generic_call(
         &mut self,
         func: &FunctionShape,
         arg_types: &[TypeId],
-    ) -> CallResult {
-        let previous_defaulted = std::mem::take(&mut self.defaulted_placeholders);
-        let result = self.resolve_generic_call_inner(func, arg_types);
-        self.defaulted_placeholders = previous_defaulted;
-        result
+    ) -> GenericCallResult {
+        self.resolve_with_request(GenericCallRequest::new(func, arg_types))
     }
 }
 
