@@ -203,8 +203,9 @@ impl<'a> CheckerState<'a> {
         let is_weak_union = outcome
             .map(|o| o.weak_union_violation)
             .unwrap_or_else(|| self.is_weak_union_violation(source, target));
+        // TS2559 takes priority over TS2353 — do not skip when a weak-type violation applies.
         if is_weak_union {
-            return true;
+            return false;
         }
 
         // Use the canonical property classification from the RelationOutcome
@@ -241,6 +242,38 @@ impl<'a> CheckerState<'a> {
         }
         // No property classification available (e.g., non-object types) → don't skip
         false
+    }
+
+    /// Run excess property checking when `source` is a fresh object literal or fresh object type,
+    /// unless a weak-type violation is pending (TS2559 takes priority over TS2353).
+    /// Returns `true` if an excess-property diagnostic was emitted.
+    fn check_excess_properties_unless_weak_violation(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        source_idx: NodeIndex,
+    ) -> bool {
+        let is_direct_literal = self
+            .ctx
+            .arena
+            .get(source_idx)
+            .is_some_and(|n| n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION);
+        let is_fresh =
+            crate::query_boundaries::common::is_fresh_object_type(self.ctx.types, source);
+        if !(is_direct_literal || is_fresh) || self.is_weak_union_violation(source, target) {
+            return false;
+        }
+        let node_idx = if is_direct_literal {
+            source_idx
+        } else {
+            // Fresh type from a non-literal expression (e.g. `return obj = { x: 1, y: 2 }`):
+            // walk through binary assignment expressions to find the object literal.
+            self.find_rhs_object_literal(source_idx)
+                .unwrap_or(source_idx)
+        };
+        let diags_before = self.ctx.diagnostics.len();
+        self.check_object_literal_excess_properties(source, target, node_idx);
+        self.ctx.diagnostics.len() > diags_before
     }
 
     /// Check assignability and emit the standard TS2322/TS2345-style diagnostic when needed.
@@ -287,33 +320,10 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Track whether excess property checking emits diagnostics.
-        // When TS2353 is emitted for excess properties, tsc does NOT also emit TS1360.
-        let mut had_excess_property_error = false;
-        {
-            let is_direct_literal = self
-                .ctx
-                .arena
-                .get(source_idx)
-                .is_some_and(|n| n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION);
-            if is_direct_literal {
-                let diags_before = self.ctx.diagnostics.len();
-                self.check_object_literal_excess_properties(source, target, source_idx);
-                had_excess_property_error = self.ctx.diagnostics.len() > diags_before;
-            } else if crate::query_boundaries::common::is_fresh_object_type(self.ctx.types, source)
-            {
-                // Fresh type from non-literal expression (e.g., `return obj = { x: 1, y: 2 }`).
-                // Walk through binary assignment expressions to find the object literal.
-                let literal_idx = self.find_rhs_object_literal(source_idx);
-                let diags_before = self.ctx.diagnostics.len();
-                self.check_object_literal_excess_properties(
-                    source,
-                    target,
-                    literal_idx.unwrap_or(source_idx),
-                );
-                had_excess_property_error = self.ctx.diagnostics.len() > diags_before;
-            }
-        }
+        // TS2353 and TS1360 are mutually exclusive; skip TS1360 when EPC fires.
+        // EPC is skipped when a weak-type violation is pending (TS2559 > TS2353).
+        let had_excess_property_error =
+            self.check_excess_properties_unless_weak_violation(source, target, source_idx);
 
         if self.diagnostic_relation_boolean_guard(source, target) {
             return true;
@@ -733,32 +743,11 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Check excess properties on fresh object types BEFORE the assignability
-        // check. Fresh types from chained assignments (e.g., `return obj = { x: 1, y: 2 }`)
-        // are structurally assignable but should still trigger TS2353.
-        let mut had_excess_property_error = false;
-        {
-            let is_direct_literal = self
-                .ctx
-                .arena
-                .get(source_idx)
-                .is_some_and(|n| n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION);
-            if is_direct_literal {
-                let diags_before = self.ctx.diagnostics.len();
-                self.check_object_literal_excess_properties(source, target, source_idx);
-                had_excess_property_error = self.ctx.diagnostics.len() > diags_before;
-            } else if crate::query_boundaries::common::is_fresh_object_type(self.ctx.types, source)
-            {
-                let literal_idx = self.find_rhs_object_literal(source_idx);
-                let diags_before = self.ctx.diagnostics.len();
-                self.check_object_literal_excess_properties(
-                    source,
-                    target,
-                    literal_idx.unwrap_or(source_idx),
-                );
-                had_excess_property_error = self.ctx.diagnostics.len() > diags_before;
-            }
-        }
+        // Check excess properties on fresh object types BEFORE the assignability check.
+        // Fresh types from chained assignments are structurally assignable but should still
+        // trigger TS2353. EPC is skipped when a weak-type violation is pending (TS2559 > TS2353).
+        let had_excess_property_error =
+            self.check_excess_properties_unless_weak_violation(source, target, source_idx);
         if had_excess_property_error {
             return false;
         }

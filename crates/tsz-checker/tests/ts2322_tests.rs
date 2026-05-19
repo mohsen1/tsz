@@ -4983,6 +4983,70 @@ fn flat_weak_type_in_intersection_target_emits_ts2559() {
 }
 
 #[test]
+fn direct_object_literal_no_common_props_weak_intersection_emits_ts2559_not_ts2353() {
+    // When an object literal with no properties in common with a weak intersection
+    // target is assigned directly, tsc emits TS2559 (no properties in common),
+    // NOT TS2353 (excess property check). EPC should be skipped in favor of TS2559.
+    let source = r#"
+        interface A { x?: number }
+        interface B { y?: string }
+        const v: A & B = { z: 1 };
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2559 = has_diagnostic_code(&diagnostics, 2559);
+    let has_ts2353 = has_diagnostic_code(&diagnostics, 2353);
+    assert!(
+        has_ts2559,
+        "Expected TS2559 for object literal with no common properties assigned to weak intersection. Got: {diagnostics:?}"
+    );
+    assert!(
+        !has_ts2353,
+        "Expected no TS2353 when TS2559 applies (EPC should be skipped). Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn direct_object_literal_prop_matching_second_weak_intersection_member_no_ts2559() {
+    // `y` is a property of `Second` and therefore of the intersection `First & Second`.
+    // Having any property in common with ANY member is sufficient — no TS2559.
+    // This verifies that `violates_weak_type` collects ALL members' properties.
+    let source = r#"
+        interface First { x?: number }
+        interface Second { y?: string }
+        const v: First & Second = { y: "hello" };
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2559 = has_diagnostic_code(&diagnostics, 2559);
+    assert!(
+        !has_ts2559,
+        "Source with property matching second intersection member should NOT emit TS2559. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn direct_object_literal_no_common_props_single_weak_type_emits_ts2559_not_ts2353() {
+    // A direct object literal with no properties in common with a plain (non-intersection)
+    // weak type should emit TS2559, not TS2353. EPC must not short-circuit before TS2559.
+    let source = r#"
+        interface Opts { timeout?: number; retries?: number }
+        const v: Opts = { url: "x" };
+    "#;
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2559 = has_diagnostic_code(&diagnostics, 2559);
+    let has_ts2353 = has_diagnostic_code(&diagnostics, 2353);
+    assert!(
+        has_ts2559,
+        "Expected TS2559 for direct object literal with no common props against single weak type. Got: {diagnostics:?}"
+    );
+    assert!(
+        !has_ts2353,
+        "Expected no TS2353 when TS2559 applies for single weak type. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn intersection_member_weak_type_suppression_still_works() {
     // When the source has properties that overlap with one intersection member
     // but not with a weak-type member, the assignment should still pass.
