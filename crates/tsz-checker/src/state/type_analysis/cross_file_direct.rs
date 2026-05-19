@@ -6,7 +6,9 @@ use tsz_binder::{BinderState, SymbolId, symbol_flags};
 use tsz_common::perf_counters::{
     CrossArenaSymbolMissSource, DirectActualLibAliasBodyOutcome,
     DirectActualLibIntlInterfaceOutcome, DirectCrossFileInterfaceLoweringOutcome,
-    record_direct_actual_lib_alias_body_outcome, record_direct_actual_lib_intl_interface_outcome,
+    DirectSourceFileTypeAliasLoweringOutcome, record_direct_actual_lib_alias_body_outcome,
+    record_direct_actual_lib_intl_interface_outcome,
+    record_direct_source_file_type_alias_lowering_outcome,
 };
 use tsz_lowering::TypeLowering;
 use tsz_parser::NodeIndex;
@@ -1578,20 +1580,50 @@ impl<'a> CheckerState<'a> {
         target_file_idx: Option<usize>,
         allow_source_file_arena: bool,
     ) -> Option<(TypeId, Vec<TypeParamInfo>)> {
-        let target_file_idx = target_file_idx?;
+        let record = |outcome: DirectSourceFileTypeAliasLoweringOutcome| {
+            record_direct_source_file_type_alias_lowering_outcome(outcome);
+        };
+
+        let Some(target_file_idx) = target_file_idx else {
+            record(DirectSourceFileTypeAliasLoweringOutcome::MissingTargetFile);
+            return None;
+        };
         let (symbol_arena_arc, delegate_binder_arc) = {
-            let symbol_arena_arc = self.ctx.all_arenas.as_ref()?.get(target_file_idx)?.clone();
-            let delegate_binder_arc = self.ctx.all_binders.as_ref()?.get(target_file_idx)?.clone();
+            let Some(symbol_arena_arc) = self
+                .ctx
+                .all_arenas
+                .as_ref()
+                .and_then(|arenas| arenas.get(target_file_idx))
+                .cloned()
+            else {
+                record(DirectSourceFileTypeAliasLoweringOutcome::MissingArenaOrBinder);
+                return None;
+            };
+            let Some(delegate_binder_arc) = self
+                .ctx
+                .all_binders
+                .as_ref()
+                .and_then(|binders| binders.get(target_file_idx))
+                .cloned()
+            else {
+                record(DirectSourceFileTypeAliasLoweringOutcome::MissingArenaOrBinder);
+                return None;
+            };
             (symbol_arena_arc, delegate_binder_arc)
         };
         let symbol_arena = symbol_arena_arc.as_ref();
         let delegate_binder = delegate_binder_arc.as_ref();
         if !allow_source_file_arena || !is_direct_lowering_source_file_arena(symbol_arena) {
+            record(DirectSourceFileTypeAliasLoweringOutcome::SourceFileArenaNotAllowed);
             return None;
         }
 
-        let symbol = delegate_binder.get_symbol(sym_id)?;
+        let Some(symbol) = delegate_binder.get_symbol(sym_id) else {
+            record(DirectSourceFileTypeAliasLoweringOutcome::MissingSymbol);
+            return None;
+        };
         if symbol.flags & symbol_flags::TYPE_ALIAS == 0 {
+            record(DirectSourceFileTypeAliasLoweringOutcome::NotTypeAlias);
             return None;
         }
         if symbol.flags
@@ -1602,19 +1634,28 @@ impl<'a> CheckerState<'a> {
                 | symbol_flags::NAMESPACE_MODULE)
             != 0
         {
+            record(DirectSourceFileTypeAliasLoweringOutcome::DisallowedMergeFlags);
             return None;
         }
         if symbol.declarations.len() != 1 {
+            record(DirectSourceFileTypeAliasLoweringOutcome::MultipleDeclarations);
             return None;
         }
 
         let name = symbol.escaped_name.clone();
         let decl_idx = symbol.declarations[0];
         if !Self::lib_type_alias_declaration_name_matches(symbol_arena, decl_idx, &name) {
+            record(DirectSourceFileTypeAliasLoweringOutcome::NameMismatch);
             return None;
         }
-        let decl_node = symbol_arena.get(decl_idx)?;
-        let type_alias = symbol_arena.get_type_alias(decl_node)?;
+        let Some(decl_node) = symbol_arena.get(decl_idx) else {
+            record(DirectSourceFileTypeAliasLoweringOutcome::MissingTypeAliasNode);
+            return None;
+        };
+        let Some(type_alias) = symbol_arena.get_type_alias(decl_node) else {
+            record(DirectSourceFileTypeAliasLoweringOutcome::MissingTypeAliasNode);
+            return None;
+        };
         let type_param_names = Self::type_alias_type_param_names(symbol_arena, type_alias);
         let body_is_direct_lowerable = if type_param_names.is_empty() {
             Self::source_file_type_node_is_scope_independent(symbol_arena, type_alias.type_node)
@@ -1626,6 +1667,7 @@ impl<'a> CheckerState<'a> {
             )
         };
         if !body_is_direct_lowerable {
+            record(DirectSourceFileTypeAliasLoweringOutcome::BodyNotDirectLowerable);
             return None;
         }
 
@@ -1641,6 +1683,7 @@ impl<'a> CheckerState<'a> {
             type_alias.type_node,
             &name,
         ) {
+            record(DirectSourceFileTypeAliasLoweringOutcome::TypeQueryOrSelfReference);
             return None;
         }
 
@@ -1651,6 +1694,7 @@ impl<'a> CheckerState<'a> {
             type_alias,
         );
         if matches!(alias_type, TypeId::UNKNOWN | TypeId::ERROR) {
+            record(DirectSourceFileTypeAliasLoweringOutcome::UnknownOrError);
             return None;
         }
 
@@ -1667,6 +1711,7 @@ impl<'a> CheckerState<'a> {
             .definition_store
             .register_type_to_def(alias_type, def_id);
 
+        record(DirectSourceFileTypeAliasLoweringOutcome::Success);
         Some((alias_type, params))
     }
 

@@ -31,7 +31,67 @@ if (
   process.exit(1);
 }
 
-const manifestDir = path.dirname(manifestPath);
+function isInsideOrSame(root, candidate) {
+  return candidate === root || candidate.startsWith(`${root}${path.sep}`);
+}
+
+function validateManifestOutputPath(tsvPath, manifestPath) {
+  const manifestRoot = path.dirname(path.resolve(tsvPath));
+  const resolvedTsvPath = path.resolve(tsvPath);
+  const resolvedManifestPath = path.resolve(manifestPath);
+
+  if (
+    resolvedManifestPath === manifestRoot ||
+    !isInsideOrSame(manifestRoot, resolvedManifestPath)
+  ) {
+    console.error(
+      `error: Type Challenges solution manifest path must stay inside the compile directory: ${manifestPath}`,
+    );
+    process.exit(1);
+  }
+
+  if (resolvedManifestPath === resolvedTsvPath) {
+    console.error(
+      `error: Type Challenges solution manifest path must not overwrite the TSV input: ${manifestPath}`,
+    );
+    process.exit(1);
+  }
+
+  if (isInsideOrSame(path.join(manifestRoot, "solutions"), resolvedManifestPath)) {
+    console.error(
+      `error: Type Challenges solution manifest path must not clobber generated solution outputs: ${manifestPath}`,
+    );
+    process.exit(1);
+  }
+
+  const parent = path.dirname(resolvedManifestPath);
+  if (!fs.existsSync(parent) || !fs.statSync(parent).isDirectory()) {
+    console.error(
+      `error: Type Challenges solution manifest parent directory does not exist: ${parent}`,
+    );
+    process.exit(1);
+  }
+
+  if (
+    fs.existsSync(resolvedManifestPath) &&
+    !fs.statSync(resolvedManifestPath).isFile()
+  ) {
+    console.error(
+      `error: Type Challenges solution manifest path is not a file: ${manifestPath}`,
+    );
+    process.exit(1);
+  }
+
+  return {
+    manifestRoot,
+    resolvedManifestPath,
+  };
+}
+
+const {
+  manifestRoot,
+  resolvedManifestPath,
+} = validateManifestOutputPath(tsvPath, manifestPath);
 const lines = fs.readFileSync(tsvPath, "utf8").trimEnd().split(/\r?\n/);
 const header = lines.shift();
 
@@ -135,7 +195,7 @@ const entries = lines
     validateManifestPath(source, "source", "en/");
     validateChallengeLevel(level, source);
 
-    const outputPath = path.join(manifestDir, output);
+    const outputPath = path.join(manifestRoot, output);
     if (!fs.existsSync(outputPath)) {
       console.error(`error: manifest output does not exist: ${output}`);
       process.exit(1);
@@ -186,4 +246,4 @@ const manifest = {
   entries,
 };
 
-fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+fs.writeFileSync(resolvedManifestPath, `${JSON.stringify(manifest, null, 2)}\n`);

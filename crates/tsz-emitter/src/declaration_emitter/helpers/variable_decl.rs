@@ -428,6 +428,11 @@ impl<'a> DeclarationEmitter<'a> {
                     .unwrap_or(type_text);
                 self.write(&type_text);
             } else if has_initializer
+                && let Some(type_text) = self.json_import_reference_type_text(initializer)
+            {
+                self.write(": ");
+                self.write(&type_text);
+            } else if has_initializer
                 && self
                     .arena
                     .get(initializer)

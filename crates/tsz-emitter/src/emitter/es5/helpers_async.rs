@@ -1229,7 +1229,7 @@ impl<'a> Printer<'a> {
                 if name.is_empty() {
                     continue;
                 }
-                self.make_unique_name_from_base(&name)
+                self.make_unique_name_from_base_in_temp_scope(&name)
             };
 
             if !first {
@@ -1360,9 +1360,15 @@ impl<'a> Printer<'a> {
         } else {
             None
         };
-        let use_static_comma =
-            !static_elements.is_empty() && !self.ctx.options.use_define_for_class_fields;
-        if use_static_comma {
+        let defer_static_block_only_tail = self.defer_class_static_blocks
+            && !static_elements.is_empty()
+            && static_elements.iter().all(|element| {
+                matches!(element, Es5StaticClassExpressionElement::StaticBlock { .. })
+            });
+        let use_static_comma = !static_elements.is_empty()
+            && !self.ctx.options.use_define_for_class_fields
+            && !defer_static_block_only_tail;
+        if use_static_comma || defer_static_block_only_tail {
             es5_emitter.set_skip_static_members(true);
         }
 
@@ -1411,6 +1417,17 @@ impl<'a> Printer<'a> {
                 Self::es5_class_iife_expression_from_var(&es5_output, &class_name)
         {
             self.write_multiline_fragment_preserving_indent(&class_iife_expr);
+            if defer_static_block_only_tail {
+                self.deferred_class_static_blocks
+                    .extend(static_elements.iter().filter_map(|element| match element {
+                        Es5StaticClassExpressionElement::StaticBlock {
+                            block,
+                            saved_comment_idx,
+                            ..
+                        } => Some((*block, *saved_comment_idx)),
+                        Es5StaticClassExpressionElement::Field(_) => None,
+                    }));
+            }
             return;
         }
 
@@ -1445,6 +1462,17 @@ impl<'a> Printer<'a> {
 
         self.decrease_indent();
         self.write("})()");
+        if defer_static_block_only_tail {
+            self.deferred_class_static_blocks
+                .extend(static_elements.iter().filter_map(|element| match element {
+                    Es5StaticClassExpressionElement::StaticBlock {
+                        block,
+                        saved_comment_idx,
+                        ..
+                    } => Some((*block, *saved_comment_idx)),
+                    Es5StaticClassExpressionElement::Field(_) => None,
+                }));
+        }
     }
 
     pub(in crate::emitter) fn has_es5_transforms(&self) -> bool {

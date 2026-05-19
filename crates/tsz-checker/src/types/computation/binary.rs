@@ -3,6 +3,9 @@
 //! arithmetic, comparison, logical, assignment, nullish coalescing, and comma.
 
 use crate::context::TypingRequest;
+use crate::query_boundaries::type_computation::core::{
+    WriteTargetLogicalOperator, WriteTargetLogicalResult,
+};
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
@@ -186,38 +189,25 @@ impl<'a> CheckerState<'a> {
         {
             let left_type = self.get_type_of_node_with_request(binary.left, &TypingRequest::NONE);
             let right_type = self.get_type_of_node_with_request(binary.right, &TypingRequest::NONE);
-            let ctx = tsz_solver::NarrowingContext::new(self.ctx.types);
-            let members = if binary.operator_token == SyntaxKind::BarBarToken as u16 {
-                let truthy_left = ctx.narrow_by_truthiness(left_type);
-                let falsy_left = ctx.narrow_to_falsy(left_type);
-                if truthy_left == TypeId::NEVER || falsy_left == TypeId::NEVER {
-                    return self.get_type_of_node_with_request(
-                        logical_idx,
-                        &TypingRequest::for_write_context(),
-                    );
-                }
-                vec![truthy_left, right_type]
+            let operator = if binary.operator_token == SyntaxKind::BarBarToken as u16 {
+                WriteTargetLogicalOperator::LogicalOr
             } else {
-                let non_nullish_left =
-                    ctx.narrow_by_nullishness(left_type, tsz_solver::NullishFilter::ExcludeNullish);
-                let nullish_left =
-                    ctx.narrow_by_nullishness(left_type, tsz_solver::NullishFilter::KeepNullish);
-                if non_nullish_left == TypeId::NEVER || nullish_left == TypeId::NEVER {
+                WriteTargetLogicalOperator::NullishCoalescing
+            };
+            match crate::query_boundaries::type_computation::core::write_target_logical_result_type(
+                self.ctx.types,
+                operator,
+                left_type,
+                right_type,
+            ) {
+                Some(WriteTargetLogicalResult::Type(result)) => return result,
+                Some(WriteTargetLogicalResult::FallbackToLogicalExpression) => {
                     return self.get_type_of_node_with_request(
                         logical_idx,
                         &TypingRequest::for_write_context(),
                     );
                 }
-                vec![non_nullish_left, right_type]
-            };
-
-            if let Some(normalized) =
-                crate::query_boundaries::common::normalize_object_union_members_for_write_target(
-                    self.ctx.types,
-                    &members,
-                )
-            {
-                return tsz_solver::utils::union_or_single(self.ctx.types, normalized);
+                None => {}
             }
         }
 
@@ -2344,8 +2334,7 @@ impl<'a> CheckerState<'a> {
                         // Number op enum => number
                         TypeId::NUMBER
                     } else if is_arithmetic_op
-                        && self
-                            .resolve_indexed_access_binary_op(eval_left, eval_right, op, &evaluator)
+                        && self.resolve_indexed_access_binary_op(eval_left, eval_right, op)
                     {
                         // IndexAccess types (T[K]) resolved through assignability
                         // e.g., T[K] where T extends Record<K, number> is number-like
@@ -2980,13 +2969,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check a binary operation with `IndexAccess` operands is valid through assignability.
-    fn resolve_indexed_access_binary_op(
-        &mut self,
-        left: TypeId,
-        right: TypeId,
-        op: &str,
-        evaluator: &tsz_solver::BinaryOpEvaluator,
-    ) -> bool {
+    fn resolve_indexed_access_binary_op(&mut self, left: TypeId, right: TypeId, op: &str) -> bool {
         let left_is_index_access =
             crate::query_boundaries::common::is_index_access_type(self.ctx.types, left);
         let right_is_index_access =
@@ -2998,10 +2981,16 @@ impl<'a> CheckerState<'a> {
 
         match op {
             "+" | "-" | "*" | "/" | "%" | "**" => {
-                let left_ok = evaluator.is_arithmetic_operand(left)
+                let left_ok = crate::query_boundaries::type_computation::core::is_arithmetic_operand(
+                    self.ctx.types,
+                    left,
+                )
                     || left_is_index_access && self.is_assignable_to(left, TypeId::NUMBER);
-                let right_ok = evaluator.is_arithmetic_operand(right)
-                    || right_is_index_access && self.is_assignable_to(right, TypeId::NUMBER);
+                let right_ok =
+                    crate::query_boundaries::type_computation::core::is_arithmetic_operand(
+                        self.ctx.types,
+                        right,
+                    ) || right_is_index_access && self.is_assignable_to(right, TypeId::NUMBER);
                 left_ok && right_ok
             }
             _ => false,

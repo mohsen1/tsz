@@ -345,7 +345,7 @@ pub struct RelationQueryInputs<'a, R: TypeResolver, P: AssignabilityOverrideProv
     pub overrides: &'a P,
 }
 
-fn configured_compat_checker<'a, R: TypeResolver>(
+pub(crate) fn configured_compat_checker<'a, R: TypeResolver>(
     interner: &'a dyn TypeDatabase,
     resolver: &'a R,
     policy: RelationPolicy,
@@ -365,7 +365,7 @@ fn configured_compat_checker<'a, R: TypeResolver>(
     checker
 }
 
-fn configured_subtype_checker<'a, R: TypeResolver>(
+pub(crate) fn configured_subtype_checker<'a, R: TypeResolver>(
     interner: &'a dyn TypeDatabase,
     resolver: &'a R,
     policy: RelationPolicy,
@@ -541,7 +541,27 @@ pub fn check_application_variance<R: TypeResolver>(
             return None;
         }
     }
+    if alias_body_application_uses_type_parameters(db, resolver, def_id) {
+        return None;
+    }
     Some(false)
+}
+
+fn alias_body_application_uses_type_parameters<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    def_id: crate::def::DefId,
+) -> bool {
+    let Some(body) = resolver.resolve_lazy(def_id, db) else {
+        return false;
+    };
+    let Some(app_id) = crate::visitor::application_id(db, body) else {
+        return false;
+    };
+    let app = db.type_application(app_id);
+    app.args
+        .iter()
+        .any(|&arg| crate::visitors::visitor_predicates::contains_type_parameters(db, arg))
 }
 
 /// Check if two type parameters are assignable to each other.

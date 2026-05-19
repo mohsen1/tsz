@@ -12,6 +12,15 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// Legacy boolean-only relation guard for diagnostic code paths.
+    ///
+    /// Keep these calls grep-distinct from diagnostic decisions that need
+    /// `RelationOutcome` failure classification, weak-union handling, or depth
+    /// reporting.
+    fn diagnostic_relation_boolean_guard(&mut self, source: TypeId, target: TypeId) -> bool {
+        self.is_assignable_to(source, target)
+    }
+
     fn has_explicit_any_generic_variable_annotation(&self, diag_idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(diag_idx) else {
             return false;
@@ -229,9 +238,7 @@ impl<'a> CheckerState<'a> {
 
         // No pre-computed outcome available. Build one through the canonical
         // boundary so we never fall back to checker-local property enumeration.
-        use crate::query_boundaries::assignability::RelationRequest;
-        let (ps, pt) = self.prepare_assignability_inputs(source, target);
-        let built_outcome = self.execute_relation_request(&RelationRequest::assign(ps, pt));
+        let built_outcome = self.assign_relation_outcome(source, target);
         if let Some(ref cls) = built_outcome.property_classification {
             if cls.excess_properties.is_empty() {
                 return false;
@@ -317,21 +324,18 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if self.is_assignable_to(source, target) {
+        if self.diagnostic_relation_boolean_guard(source, target) {
             return true;
         }
         if self.is_nested_same_wrapper_application_assignment(source, target) {
             return true;
         }
 
-        // Build a RelationRequest so the weak-union hint is collected alongside
+        // Use the canonical assign relation outcome so the weak-union hint is collected alongside
         // the failure reason, avoiding a redundant solver round-trip in
         // should_skip_weak_union_error's fallback path.
         {
-            use crate::query_boundaries::assignability::RelationRequest;
-            let (ps, pt) = self.prepare_assignability_inputs(source, target);
-            let request = RelationRequest::assign(ps, pt);
-            let outcome = self.execute_relation_request(&request);
+            let outcome = self.assign_relation_outcome(source, target);
             if self.should_skip_weak_union_error_with_outcome(
                 source,
                 target,
@@ -352,7 +356,7 @@ impl<'a> CheckerState<'a> {
         // try checking T against the target.
         if let Some(inner) =
             crate::query_boundaries::common::readonly_inner_type(self.ctx.types, source)
-            && self.is_assignable_to(inner, target)
+            && self.diagnostic_relation_boolean_guard(inner, target)
         {
             return true;
         }
@@ -582,7 +586,7 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
             return true;
         }
-        if self.is_assignable_to(source, target) {
+        if self.diagnostic_relation_boolean_guard(source, target) {
             return true;
         }
         let display_target = self.ctx.types.intersect_types_raw2(source, target);
@@ -617,7 +621,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check assignability using the actual types (return types)
-        if self.is_assignable_to(source, target) {
+        if self.diagnostic_relation_boolean_guard(source, target) {
             return true;
         }
 
@@ -776,12 +780,13 @@ impl<'a> CheckerState<'a> {
         // Reset the relation depth flag before the assignability check so we
         // can detect fresh depth exceedance from this particular relation.
         self.ctx.relation_depth_exceeded.set(false);
-        let assignable = self.is_assignable_to(source, target);
-        // TS2859: if the solver hit its recursion/complexity limit during the check
-        // (including the constituent-count overflow guard in check_subtype_inner),
-        // emit "Excessive complexity comparing types" regardless of whether the
-        // relation technically succeeded or failed.
-        if self.ctx.relation_depth_exceeded.get() {
+        let assignable = self.diagnostic_relation_boolean_guard(source, target);
+        // TS2859: if the solver hit its recursion/complexity limit and could
+        // not establish assignability, emit "Excessive complexity comparing
+        // types". A successful relation may still set the sticky depth flag
+        // while exploring expansive recursive siblings; tsc does not report
+        // TS2859 when an assignable path was found.
+        if !assignable && self.ctx.relation_depth_exceeded.get() {
             let source_name = self.format_type_diagnostic(source);
             let target_name = self.format_type_diagnostic(target);
             self.error_at_node(
@@ -810,15 +815,9 @@ impl<'a> CheckerState<'a> {
             }
             return true;
         }
-        // Build a RelationRequest for the Assign kind so the weak-union hint
+        // Use the canonical assign relation outcome so the weak-union hint
         // can be collected alongside the failure reason.
-        let request = {
-            use crate::query_boundaries::assignability::RelationRequest;
-            let (prepared_source, prepared_target) =
-                self.prepare_assignability_inputs(source, target);
-            RelationRequest::assign(prepared_source, prepared_target)
-        };
-        let outcome = self.execute_relation_request(&request);
+        let outcome = self.assign_relation_outcome(source, target);
 
         // Use the pre-computed RelationOutcome to avoid re-enumerating
         // properties and re-checking assignability inside the skip logic.
@@ -859,6 +858,35 @@ impl<'a> CheckerState<'a> {
         }
         self.error_type_not_assignable_with_reason_at(source, target, diag_idx);
         false
+    }
+
+    fn parameter_type_annotation_anchor_for_identifier_source(
+        &self,
+        source_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let source_idx = self.ctx.arena.skip_parenthesized_and_assertions(source_idx);
+        let source_node = self.ctx.arena.get(source_idx)?;
+        if source_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let sym_id = self.resolve_identifier_symbol(source_idx)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let mut decl_idx = symbol.value_declaration;
+        if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+            && decl_node.kind == SyntaxKind::Identifier as u16
+            && let Some(ext) = self.ctx.arena.get_extended(decl_idx)
+            && ext.parent.is_some()
+        {
+            decl_idx = ext.parent;
+        }
+
+        let decl_node = self.ctx.arena.get(decl_idx)?;
+        if decl_node.kind != syntax_kind_ext::PARAMETER {
+            return None;
+        }
+        let annotation = self.ctx.arena.get_parameter(decl_node)?.type_annotation;
+        annotation.is_some().then_some(annotation)
     }
 
     fn error_type_not_assignable_at_with_raw_display_types(
@@ -1016,22 +1044,34 @@ impl<'a> CheckerState<'a> {
             self.error_type_not_assignable_with_reason_at_anchor(source, target, diag_idx);
             return false;
         }
-        if self.is_assignable_to(source, target) {
+        if self.diagnostic_relation_boolean_guard(source, target) {
             return true;
         }
         if self.is_nested_same_wrapper_application_assignment(source, target) {
             return true;
         }
 
-        // Build a RelationRequest so the weak-union hint is collected alongside
+        // TS2589: A homomorphic self-referential mapped-type alias applied to a tuple
+        // argument and checked against a tuple target causes infinite instantiation.
+        // tsc detects the depth limit during instantiation and emits TS2589 here
+        // instead of letting the structural check fall through to TS2322.
+        if self.source_is_homomorphic_self_mapped_tuple_arg_vs_tuple_target(source, target) {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            let anchor_idx = self
+                .parameter_type_annotation_anchor_for_identifier_source(source_idx)
+                .unwrap_or(source_idx);
+            self.error_at_node(
+                anchor_idx,
+                diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+            );
+            return false;
+        }
+
+        // Use the canonical assign relation outcome so the weak-union hint is collected alongside
         // the failure reason, avoiding a redundant solver round-trip in
         // should_skip_weak_union_error's fallback path.
-        let request = {
-            use crate::query_boundaries::assignability::RelationRequest;
-            let (ps, pt) = self.prepare_assignability_inputs(source, target);
-            RelationRequest::assign(ps, pt)
-        };
-        let outcome = self.execute_relation_request(&request);
+        let outcome = self.assign_relation_outcome(source, target);
         if self.should_skip_weak_union_error_with_outcome(
             source,
             target,
@@ -1069,19 +1109,14 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
             return true;
         }
-        if self.is_assignable_to(source, target) {
+        if self.diagnostic_relation_boolean_guard(source, target) {
             return true;
         }
 
-        // Build a RelationRequest so the weak-union hint is collected alongside
+        // Use the canonical assign relation outcome so the weak-union hint is collected alongside
         // the failure reason, avoiding a redundant solver round-trip in
         // should_skip_weak_union_error's fallback path.
-        let request = {
-            use crate::query_boundaries::assignability::RelationRequest;
-            let (ps, pt) = self.prepare_assignability_inputs(source, target);
-            RelationRequest::assign(ps, pt)
-        };
-        let outcome = self.execute_relation_request(&request);
+        let outcome = self.assign_relation_outcome(source, target);
         if self.should_skip_weak_union_error_with_outcome(
             source,
             target,
@@ -1117,19 +1152,14 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
             return true;
         }
-        if self.is_assignable_to(source, target) {
+        if self.diagnostic_relation_boolean_guard(source, target) {
             return true;
         }
 
-        // Build a RelationRequest so the weak-union hint is collected alongside
+        // Use the canonical assign relation outcome so the weak-union hint is collected alongside
         // the failure reason, avoiding a redundant solver round-trip in
         // should_skip_weak_union_error's fallback path.
-        let request = {
-            use crate::query_boundaries::assignability::RelationRequest;
-            let (ps, pt) = self.prepare_assignability_inputs(source, target);
-            RelationRequest::assign(ps, pt)
-        };
-        let outcome = self.execute_relation_request(&request);
+        let outcome = self.assign_relation_outcome(source, target);
         if self.should_skip_weak_union_error_with_outcome(
             source,
             target,
@@ -1173,7 +1203,7 @@ impl<'a> CheckerState<'a> {
         let checker_only_mismatch = self
             .checker_only_assignability_failure_reason(source, target)
             .is_some();
-        if self.is_assignable_to(source, target) && !checker_only_mismatch {
+        if self.diagnostic_relation_boolean_guard(source, target) && !checker_only_mismatch {
             return true;
         }
         if self.should_suppress_partial_self_argument_mismatch(source, target) {
@@ -1188,15 +1218,9 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // Build a CallArg relation request to collect the weak-union hint
+        // Use the canonical call-argument relation outcome to collect the weak-union hint
         // without a separate solver call.
-        let request = {
-            use crate::query_boundaries::assignability::RelationRequest;
-            let (prepared_source, prepared_target) =
-                self.prepare_assignability_inputs(source, target);
-            RelationRequest::call_arg(prepared_source, prepared_target)
-        };
-        let outcome = self.execute_relation_request(&request);
+        let outcome = self.call_arg_relation_outcome(source, target);
 
         if self.should_skip_weak_union_error_with_outcome(source, target, arg_idx, Some(&outcome)) {
             return true;
@@ -1646,12 +1670,7 @@ impl<'a> CheckerState<'a> {
         // cases. Do not add an outer `!outcome.weak_union_violation` gate here;
         // that guard suppresses TS2416 for non-object-literal sources (e.g.
         // class property declarations) where the skip should NOT fire.
-        let request = {
-            use crate::query_boundaries::assignability::RelationRequest;
-            let (ps, pt) = self.prepare_assignability_inputs(source, target);
-            RelationRequest::bivariant_callbacks(ps, pt)
-        };
-        let outcome = self.execute_relation_request(&request);
+        let outcome = self.bivariant_callbacks_relation_outcome(source, target);
         !self.should_skip_weak_union_error_with_outcome(source, target, source_idx, Some(&outcome))
     }
 
@@ -2135,6 +2154,24 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> crate::query_boundaries::assignability::AssignabilityFailureAnalysis {
+        // `S[T1]` vs `S[T2]` where T1/T2 are distinct type parameters
+        // collapses to the same evaluated shape (the constraint), so the
+        // structural pipeline loses the IndexAccess form before it can
+        // produce the TS2322 + TS5075 elaboration chain. Detect the
+        // mismatch on the unevaluated inputs and surface it directly.
+        if let Some(reason) =
+            crate::query_boundaries::assignability::index_access_pair_distinct_type_param_keys_failure_reason(
+                self.ctx.types,
+                &self.ctx.definition_store,
+                source,
+                target,
+            )
+        {
+            return crate::query_boundaries::assignability::AssignabilityFailureAnalysis {
+                weak_union_violation: false,
+                failure_reason: Some(reason),
+            };
+        }
         let (prepared_source, prepared_target) = self.prepare_assignability_inputs(source, target);
 
         // Keep failure analysis on the same relation boundary as `is_assignable_to`

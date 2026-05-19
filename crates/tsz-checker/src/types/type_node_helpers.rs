@@ -1013,3 +1013,58 @@ fn check_binding_pattern_initializers(
         check_binding_pattern_initializers(ctx, elem_name);
     }
 }
+
+/// Returns true when a type annotation syntactically mentions `undefined`.
+///
+/// Exact-optional property declarations need this surface distinction:
+/// `a?: string` has a different declared write surface from
+/// `a?: string | undefined`, even though optional reads may include
+/// `undefined`.
+pub(crate) fn type_node_includes_explicit_undefined(
+    arena: &tsz_parser::parser::NodeArena,
+    idx: NodeIndex,
+) -> bool {
+    let Some(node) = arena.get(idx) else {
+        return false;
+    };
+
+    if node.kind == SyntaxKind::UndefinedKeyword as u16 {
+        return true;
+    }
+
+    if node.kind == syntax_kind_ext::TYPE_REFERENCE
+        && let Some(type_ref) = arena.get_type_ref(node)
+    {
+        let has_type_args = type_ref
+            .type_arguments
+            .as_ref()
+            .is_some_and(|args| !args.nodes.is_empty());
+        if !has_type_args
+            && let Some(name_node) = arena.get(type_ref.type_name)
+            && let Some(ident) = arena.get_identifier(name_node)
+        {
+            return ident.escaped_text.as_str() == "undefined";
+        }
+    }
+
+    if matches!(
+        node.kind,
+        k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE
+    ) && let Some(composite) = arena.get_composite_type(node)
+    {
+        return composite
+            .types
+            .nodes
+            .iter()
+            .copied()
+            .any(|member| type_node_includes_explicit_undefined(arena, member));
+    }
+
+    if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+        && let Some(wrapped) = arena.get_wrapped_type(node)
+    {
+        return type_node_includes_explicit_undefined(arena, wrapped.type_node);
+    }
+
+    false
+}

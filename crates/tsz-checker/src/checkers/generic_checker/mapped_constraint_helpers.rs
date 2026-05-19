@@ -6,6 +6,7 @@ use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_solver::TypeId;
+use tsz_solver::computation::TypeSubstitution;
 
 impl<'a> CheckerState<'a> {
     pub(super) fn type_node_is_generic_ref_with_scoped_type_param_arg(
@@ -57,7 +58,7 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
         let db = self.ctx.types.as_type_database();
-        let mut subst = tsz_solver::TypeSubstitution::new();
+        let mut subst = TypeSubstitution::new();
         for (name, &scope_type_id) in &self.ctx.type_parameter_scope {
             let bound =
                 crate::query_boundaries::common::type_parameter_constraint(db, scope_type_id)
