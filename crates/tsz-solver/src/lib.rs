@@ -137,7 +137,7 @@ pub mod computation {
     };
 
     // Evaluation
-    pub use crate::evaluation::evaluate::evaluate_type;
+    pub use crate::evaluation::evaluate::{TypeEvaluator, evaluate_type};
 
     // Instantiation
     pub use crate::instantiation::application::ApplicationEvaluator;
@@ -228,8 +228,10 @@ pub use diagnostics::reduce::deep_reduce_for_display;
 pub use diagnostics::{
     DiagnosticArg, DiagnosticSeverity, PendingDiagnostic, PendingDiagnosticBuilder, SourceSpan,
 };
+#[cfg(test)]
+pub(crate) use evaluation::evaluate::TypeEvaluator;
 pub use evaluation::evaluate::{
-    TypeEvaluator, evaluate_conditional, evaluate_index_access, evaluate_index_access_with_options,
+    evaluate_conditional, evaluate_index_access, evaluate_index_access_with_options,
     evaluate_keyof, evaluate_mapped, evaluate_type, evaluate_type_with_request,
 };
 pub use instantiation::instantiate::{

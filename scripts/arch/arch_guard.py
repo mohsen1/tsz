@@ -494,7 +494,7 @@ ROOT_SOLVER_EXPLICIT_REEXPORT_COUNT_CHECKS = [
             "relations",
             "widening",
         ),
-        109,
+        108,
     ),
 ]
 
@@ -1046,6 +1046,7 @@ ROOT_SOLVER_COMPUTATION_API_SYMBOLS = (
     "substitute_this_type_at_return_position",
     "substitute_this_type_cached",
     "TypeEnvironment",
+    "TypeEvaluator",
     "TypeInstantiator",
     "TypeResolver",
     "TypeSubstitution",

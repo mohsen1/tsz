@@ -289,12 +289,12 @@ impl<'a> DeclarationEmitter<'a> {
                 let evaluated = if let Some(cache) = &self.type_cache {
                     let resolver = DtsCacheResolver { cache };
                     let mut evaluator =
-                        tsz_solver::TypeEvaluator::with_resolver(interner, &resolver)
+                        tsz_solver::computation::TypeEvaluator::with_resolver(interner, &resolver)
                             .with_expanded_application_display_alias_args();
                     evaluator.set_max_mapped_keys(1_024);
                     evaluator.evaluate(arg)
                 } else {
-                    let mut evaluator = tsz_solver::TypeEvaluator::new(interner)
+                    let mut evaluator = tsz_solver::computation::TypeEvaluator::new(interner)
                         .with_expanded_application_display_alias_args();
                     evaluator.set_max_mapped_keys(1_024);
                     evaluator.evaluate(arg)
@@ -329,7 +329,8 @@ impl<'a> DeclarationEmitter<'a> {
         let instantiated =
             tsz_solver::computation::instantiate_generic(interner, body, type_params, &app.args);
         let resolver = DtsCacheResolver { cache };
-        let mut evaluator = tsz_solver::TypeEvaluator::with_resolver(interner, &resolver);
+        let mut evaluator =
+            tsz_solver::computation::TypeEvaluator::with_resolver(interner, &resolver);
         evaluator.set_max_mapped_keys(1_024);
         Some(evaluator.evaluate(instantiated))
     }
@@ -441,11 +442,11 @@ impl<'a> DeclarationEmitter<'a> {
                 let evaluated = if let Some(cache) = &self.type_cache {
                     let resolver = DtsCacheResolver { cache };
                     let mut evaluator =
-                        tsz_solver::TypeEvaluator::with_resolver(interner, &resolver);
+                        tsz_solver::computation::TypeEvaluator::with_resolver(interner, &resolver);
                     evaluator.set_max_mapped_keys(1_024);
                     evaluator.evaluate(reduced_cond)
                 } else {
-                    let mut evaluator = tsz_solver::TypeEvaluator::new(interner);
+                    let mut evaluator = tsz_solver::computation::TypeEvaluator::new(interner);
                     evaluator.set_max_mapped_keys(1_024);
                     evaluator.evaluate(reduced_cond)
                 };
@@ -699,12 +700,12 @@ impl<'a> DeclarationEmitter<'a> {
                 let evaluated = if let Some(cache) = &self.type_cache {
                     let resolver = DtsCacheResolver { cache };
                     let mut evaluator =
-                        tsz_solver::TypeEvaluator::with_resolver(interner, &resolver)
+                        tsz_solver::computation::TypeEvaluator::with_resolver(interner, &resolver)
                             .with_expanded_application_display_alias_args();
                     evaluator.set_max_mapped_keys(1_024);
                     evaluator.evaluate(type_id)
                 } else {
-                    let mut evaluator = tsz_solver::TypeEvaluator::new(interner)
+                    let mut evaluator = tsz_solver::computation::TypeEvaluator::new(interner)
                         .with_expanded_application_display_alias_args();
                     evaluator.set_max_mapped_keys(1_024);
                     evaluator.evaluate(type_id)
@@ -723,12 +724,13 @@ impl<'a> DeclarationEmitter<'a> {
                 )
             } else if let Some(cache) = &self.type_cache {
                 let resolver = DtsCacheResolver { cache };
-                let mut evaluator = tsz_solver::TypeEvaluator::with_resolver(interner, &resolver);
+                let mut evaluator =
+                    tsz_solver::computation::TypeEvaluator::with_resolver(interner, &resolver);
                 evaluator.set_max_mapped_keys(1_024);
                 let evaluated = evaluator.evaluate(type_id);
                 self.display_alias_for_policy(evaluated, interner, preserve_named_application)
             } else {
-                let mut evaluator = tsz_solver::TypeEvaluator::new(interner);
+                let mut evaluator = tsz_solver::computation::TypeEvaluator::new(interner);
                 evaluator.set_max_mapped_keys(1_024);
                 let evaluated = evaluator.evaluate(type_id);
                 self.display_alias_for_policy(evaluated, interner, preserve_named_application)
@@ -1194,12 +1196,13 @@ impl<'a> DeclarationEmitter<'a> {
             type_id
         } else if let Some(cache) = &self.type_cache {
             let resolver = DtsCacheResolver { cache };
-            let mut evaluator = tsz_solver::TypeEvaluator::with_resolver(interner, &resolver);
+            let mut evaluator =
+                tsz_solver::computation::TypeEvaluator::with_resolver(interner, &resolver);
             evaluator.set_max_mapped_keys(1_024);
             let evaluated = evaluator.evaluate(type_id);
             self.display_alias_for_declaration_emit(evaluated, interner)
         } else {
-            let mut evaluator = tsz_solver::TypeEvaluator::new(interner);
+            let mut evaluator = tsz_solver::computation::TypeEvaluator::new(interner);
             evaluator.set_max_mapped_keys(1_024);
             let evaluated = evaluator.evaluate(type_id);
             self.display_alias_for_declaration_emit(evaluated, interner)
