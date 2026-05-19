@@ -1431,11 +1431,11 @@ fn test_document_symbols_caps_total_entries_with_more_sentinel() {
 #[test]
 fn test_document_symbols_caps_namespace_depth_with_more_sentinel() {
     let mut source = String::new();
-    for i in 0..70 {
+    for i in 0..128 {
         source.push_str(&format!("namespace N{i} {{\n"));
     }
     source.push_str("function leaf() {}\n");
-    for _ in 0..70 {
+    for _ in 0..128 {
         source.push_str("}\n");
     }
     let (parser, root) = parse_test_source(&source);
@@ -1454,7 +1454,7 @@ fn test_document_symbols_caps_namespace_depth_with_more_sentinel() {
     assert_eq!(current.name, "more...");
     assert!(
         depth <= 65,
-        "depth cap should avoid walking all 70 namespaces"
+        "depth cap should avoid walking all 128 namespaces"
     );
 }
 
