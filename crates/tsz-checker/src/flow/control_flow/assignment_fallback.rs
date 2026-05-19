@@ -300,7 +300,7 @@ impl<'a> FlowAnalyzer<'a> {
     fn fallback_array_literal_type_from_syntax(&self, expr: NodeIndex) -> Option<TypeId> {
         let node = self.arena.get(expr)?;
         let literal = self.arena.get_literal_expr(node)?;
-        let mut element_types = Vec::new();
+        let mut element_types = Vec::with_capacity(literal.elements.nodes.len());
 
         for &element in &literal.elements.nodes {
             if element.is_none() {
@@ -328,7 +328,7 @@ impl<'a> FlowAnalyzer<'a> {
     fn fallback_object_literal_type_from_syntax(&self, expr: NodeIndex) -> Option<TypeId> {
         let node = self.arena.get(expr)?;
         let literal = self.arena.get_literal_expr(node)?;
-        let mut properties = Vec::new();
+        let mut properties = Vec::with_capacity(literal.elements.nodes.len());
 
         for &element in &literal.elements.nodes {
             if element.is_none() {
@@ -409,7 +409,7 @@ impl<'a> FlowAnalyzer<'a> {
 
         let sym_id = self.reference_symbol(callee)?;
         let symbol = self.binder.get_symbol(sym_id)?;
-        let mut return_types = Vec::new();
+        let mut return_types = Vec::with_capacity(symbol.declarations.len());
         for &decl in &symbol.declarations {
             if let Some(return_type) = self.declared_return_type_from_declaration(decl) {
                 return_types.push(return_type);
