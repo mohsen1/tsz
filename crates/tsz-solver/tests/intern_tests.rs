@@ -1794,6 +1794,77 @@ fn test_estimated_size_bytes_grows_with_functions() {
     );
 }
 
+#[test]
+fn test_cache_statistics_tracks_retained_predicate_caches() {
+    let interner = TypeInterner::new();
+    let empty = interner.cache_statistics();
+
+    assert_eq!(empty.identity_comparable_entries, 0);
+    assert_eq!(empty.contains_this_entries, 0);
+    assert_eq!(empty.contains_infer_entries, 0);
+    assert_eq!(empty.contains_type_query_entries, 0);
+    assert_eq!(empty.estimated_size_bytes(), 0);
+
+    let this_type = interner.this_type();
+    let contains_this = interner.union(vec![TypeId::STRING, this_type]);
+    assert!(crate::contains_this_type(&interner, contains_this));
+
+    let infer_type = interner.infer(TypeParamInfo {
+        name: interner.intern_string("R"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    assert!(crate::type_queries::contains_infer_types_db(
+        &interner, infer_type
+    ));
+
+    let type_query = interner.type_query(SymbolRef(42));
+    assert!(crate::type_queries::contains_type_query_db(
+        &interner, type_query
+    ));
+
+    let _ = interner.is_identity_comparable_type(TypeId::STRING);
+
+    let populated = interner.cache_statistics();
+    assert!(populated.identity_comparable_entries >= 1);
+    assert!(populated.contains_this_entries >= 1);
+    assert!(populated.contains_infer_entries >= 1);
+    assert!(populated.contains_type_query_entries >= 1);
+    assert!(populated.estimated_size_bytes() > empty.estimated_size_bytes());
+}
+
+#[test]
+fn test_estimated_size_bytes_grows_with_retained_predicate_caches() {
+    let interner = TypeInterner::new();
+    let infer_type = interner.infer(TypeParamInfo {
+        name: interner.intern_string("R"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let this_type = interner.this_type();
+    let type_query = interner.type_query(SymbolRef(7));
+    let nested = interner.union(vec![infer_type, this_type, type_query]);
+
+    let baseline = interner.estimated_size_bytes();
+
+    assert!(crate::contains_this_type(&interner, nested));
+    assert!(crate::type_queries::contains_infer_types_db(
+        &interner, nested
+    ));
+    assert!(crate::type_queries::contains_type_query_db(
+        &interner, nested
+    ));
+    let _ = interner.is_identity_comparable_type(TypeId::BOOLEAN);
+
+    let after_caches = interner.estimated_size_bytes();
+    assert!(
+        after_caches > baseline,
+        "retained predicate caches should add to estimated_size_bytes: baseline={baseline}, after={after_caches}"
+    );
+}
+
 /// TS2590: Intersection of many unions should trigger the `union_too_complex` flag.
 ///
 /// When `normalize_intersection` receives an all-union intersection like

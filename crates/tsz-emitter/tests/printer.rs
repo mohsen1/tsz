@@ -1,8 +1,8 @@
 use super::*;
+#[cfg(debug_assertions)]
 use crate::output::source_writer::DelimiterKind;
 use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::ParserState;
-use tsz_parser::parser::node::NodeArena;
 
 /// Parse, lower, and print a source string with the given options.
 ///

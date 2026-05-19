@@ -67,6 +67,18 @@ pub struct LoweringPass<'a> {
     /// the local name. Namespace IIFE folding needs the exported name in the
     /// `exports.<name>` slot while keeping the local namespace binding unchanged.
     pub(super) re_exported_export_names: rustc_hash::FxHashMap<String, Vec<IdentifierId>>,
+    /// Every export alias attached to a local binding (direct `export` modifier
+    /// declarations AND local `export { x as y }` clauses), captured in source
+    /// order. This is what enum/namespace lowering needs to fold every exported
+    /// alias into the IIFE tail, e.g.
+    /// ```text
+    /// export enum E {}
+    /// export { E as EE };
+    /// ```
+    /// produces `[E_id, EE_id]` for local `E`, which the emitter writes as
+    /// `(E || (exports.EE = exports.E = E = {}))`. `re_exported_export_names`
+    /// alone is not enough because it drops the direct export.
+    pub(super) all_export_aliases_in_order: rustc_hash::FxHashMap<String, Vec<IdentifierId>>,
     /// Stack of enclosing non-arrow function body node indices.
     /// When an arrow function captures `this`, the top of this stack is the
     /// scope that needs `var _this = this;`.
@@ -103,6 +115,7 @@ impl<'a> LoweringPass<'a> {
             in_es5_class: false,
             re_exported_names: rustc_hash::FxHashSet::default(),
             re_exported_export_names: rustc_hash::FxHashMap::default(),
+            all_export_aliases_in_order: rustc_hash::FxHashMap::default(),
             enclosing_function_bodies: Vec::new(),
             enclosing_capture_names: Vec::new(),
             current_source_text: None,
@@ -126,6 +139,34 @@ impl<'a> LoweringPass<'a> {
         }
         self.maybe_wrap_module(source_file);
         self.transforms.mark_helpers_populated();
+
+        // Forward the foldable alias map so re-export clauses emitted before
+        // their enum declaration suppress the would-be `exports.<alias> = X;`
+        // line that otherwise reads `X` in its TDZ window.
+        if self.commonjs_mode && !self.all_export_aliases_in_order.is_empty() {
+            let folded: rustc_hash::FxHashMap<String, Vec<String>> = self
+                .all_export_aliases_in_order
+                .iter()
+                .filter_map(|(local, alias_ids)| {
+                    let aliases: Vec<String> = alias_ids
+                        .iter()
+                        .filter_map(|id| {
+                            self.arena
+                                .identifiers
+                                .get(*id as usize)
+                                .map(|ident| ident.escaped_text.clone())
+                        })
+                        .filter(|name| !name.is_empty())
+                        .collect();
+                    if aliases.is_empty() {
+                        None
+                    } else {
+                        Some((local.clone(), aliases))
+                    }
+                })
+                .collect();
+            self.transforms.set_cjs_iife_folded_bindings(folded);
+        }
 
         if tracing::enabled!(tracing::Level::DEBUG) {
             let arrow_captures = self
@@ -1394,8 +1435,14 @@ impl<'a> LoweringPass<'a> {
 
         let final_directive = if is_exported {
             if let Some(export_name) = enum_name {
+                // Carry every export alias attached to this enum's local name
+                // (direct `export enum X` + later `export { X as Y }` clauses)
+                // so the IIFE-tail fold can build the full
+                // `(X || (exports.Y = exports.X = X = {}))` chain.
+                let local_name = self.get_identifier_text_ref(enum_decl.name);
+                let export_names = self.commonjs_export_names_for_local(local_name, export_name);
                 let export_directive = TransformDirective::CommonJSExport {
-                    names: Arc::from(vec![export_name]),
+                    names: export_names,
                     is_default: false,
                     inner: Box::new(TransformDirective::Identity),
                 };

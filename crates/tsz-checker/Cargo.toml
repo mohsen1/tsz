@@ -646,6 +646,10 @@ name = "issue_3768_generic_callback_outer_inference_tests"
 path = "tests/issue_3768_generic_callback_outer_inference_tests.rs"
 
 [[test]]
+name = "issue_7653_parameterless_lambda_inference_tests"
+path = "tests/issue_7653_parameterless_lambda_inference_tests.rs"
+
+[[test]]
 name = "tuple_type_assertion_inference_tests"
 path = "tests/tuple_type_assertion_inference_tests.rs"
 
@@ -860,6 +864,10 @@ path = "tests/cross_module_nested_interface_tests.rs"
 [[test]]
 name = "cross_file_intrinsic_identifier_tests"
 path = "tests/cross_file_intrinsic_identifier_tests.rs"
+
+[[test]]
+name = "cross_file_type_params_cache_tests"
+path = "tests/cross_file_type_params_cache_tests.rs"
 
 [[test]]
 name = "cross_file_lib_interface_identity_tests"
@@ -1400,6 +1408,14 @@ path = "tests/ts2536_keyof_string_index_signature_tests.rs"
 [[test]]
 name = "return_statement_diagnostic_anchor_tests"
 path = "tests/return_statement_diagnostic_anchor_tests.rs"
+
+[[test]]
+name = "recovery_any_sites_tests"
+path = "tests/recovery_any_sites_tests.rs"
+
+[[test]]
+name = "arbitrary_ext_decl_module_resolution_tests"
+path = "tests/arbitrary_ext_decl_module_resolution_tests.rs"
 
 [lints]
 workspace = true

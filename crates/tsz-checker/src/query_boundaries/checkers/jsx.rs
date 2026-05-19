@@ -1,6 +1,11 @@
 //! JSX checker query boundaries.
 
-use tsz_solver::{DefinitionStore, TypeDatabase, TypeId};
+use tsz_solver::{DefinitionStore, QueryDatabase, TypeDatabase, TypeId, TypeParamInfo};
+
+pub(crate) struct SingleArgTypeApplication {
+    pub(crate) base: TypeId,
+    pub(crate) arg: TypeId,
+}
 
 pub(crate) fn contains_index_access_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::contains_index_access_type(db, type_id)
@@ -14,10 +19,82 @@ pub(crate) fn contains_mapped_type_with_readonly_modifier(
     tsz_solver::operations::property::contains_mapped_type_with_readonly_modifier(db, type_id)
 }
 
+pub(crate) fn is_exact_readonly_mapped_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    crate::query_boundaries::common::is_mapped_type(db, type_id)
+        && contains_mapped_type_with_readonly_modifier(db, type_id)
+}
+
+pub(crate) fn instantiate_single_arg_type_alias_body(
+    db: &dyn QueryDatabase,
+    base_body: TypeId,
+    base_params: &[TypeParamInfo],
+    arg: TypeId,
+) -> Option<TypeId> {
+    if base_body == TypeId::ANY || base_body == TypeId::ERROR || base_params.len() != 1 {
+        return None;
+    }
+    let substitution =
+        crate::query_boundaries::common::TypeSubstitution::from_args(db, base_params, &[arg]);
+    Some(crate::query_boundaries::common::instantiate_type(
+        db,
+        base_body,
+        &substitution,
+    ))
+}
+
 pub(crate) fn index_access_type_arg_alias_hint(
     db: &dyn TypeDatabase,
     def_store: &DefinitionStore,
     type_id: TypeId,
 ) -> Option<TypeId> {
     tsz_solver::type_queries::index_access_type_arg_alias_hint(db, def_store, type_id)
+}
+
+pub(crate) fn single_arg_type_application(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<SingleArgTypeApplication> {
+    let app = crate::query_boundaries::common::type_application(db, type_id)?;
+    (app.args.len() == 1).then_some(SingleArgTypeApplication {
+        base: app.base,
+        arg: app.args[0],
+    })
+}
+
+pub(crate) fn contains_anonymous_object_surface(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+) -> bool {
+    contains_anonymous_object_surface_inner(db, def_store, type_id, &mut Vec::new())
+}
+
+fn contains_anonymous_object_surface_inner(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+    visited: &mut Vec<TypeId>,
+) -> bool {
+    if visited.contains(&type_id) {
+        return false;
+    }
+    visited.push(type_id);
+
+    if tsz_solver::type_queries::get_object_shape_id(db, type_id).is_some()
+        && def_store.find_def_for_type(type_id).is_none()
+    {
+        return true;
+    }
+    if let Some(members) = tsz_solver::type_queries::get_intersection_members(db, type_id)
+        && members
+            .iter()
+            .any(|&member| contains_anonymous_object_surface_inner(db, def_store, member, visited))
+    {
+        return true;
+    }
+    tsz_solver::type_queries::get_union_members(db, type_id).is_some_and(|members| {
+        members
+            .iter()
+            .any(|&member| contains_anonymous_object_surface_inner(db, def_store, member, visited))
+    })
 }

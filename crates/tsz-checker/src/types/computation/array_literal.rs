@@ -269,27 +269,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn union_context_for_array_literal_prefers_tuple(&self, contextual: TypeId) -> bool {
-        let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, contextual)
-        else {
-            return false;
-        };
-
-        let mut saw_tuple = false;
-        for member in members {
-            let Some(applicable) =
-                crate::query_boundaries::common::array_applicable_type(self.ctx.types, member)
-            else {
-                return false;
-            };
-
-            if !crate::query_boundaries::common::is_tuple_type(self.ctx.types, applicable) {
-                return false;
-            }
-            saw_tuple = true;
-        }
-
-        saw_tuple
+        expr_ops::union_context_prefers_tuple_array_literal(self.ctx.types, contextual)
     }
 
     fn sole_array_applicable_union_context(&mut self, contextual: TypeId) -> Option<TypeId> {

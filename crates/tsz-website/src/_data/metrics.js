@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { execSync } from "node:child_process";
+import { computeLocSplit, fmt, unavailableLocSplit } from "./loc.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..", "..", "..");
 
@@ -20,10 +20,6 @@ function readJsonIfExists(p) {
   } catch {
     return null;
   }
-}
-
-function fmt(n) {
-  return Number(n).toLocaleString("en-US");
 }
 
 function toNumber(value) {
@@ -255,23 +251,18 @@ function extractMetrics() {
     }
   }
 
+  let loc;
   try {
-    const output = execSync(
-      "git ls-files 'crates/*/src/*.rs' 'crates/*/src/**/*.rs' 'crates/*/build.rs' 'crates/tsz-website/rust/**/*.rs' | sort -u | xargs wc -l",
-      { cwd: ROOT, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
-    );
-    const lines = output.trim().split("\n");
-    const totalLine = lines[lines.length - 1];
-    const totalMatch = totalLine.match(/^\s*(\d+)\s+total/);
-    metrics.total_loc = totalMatch ? fmt(Number(totalMatch[1])) : "N/A";
-
-    const cratesDir = path.join(ROOT, "crates");
-    const crateCount = fs.readdirSync(cratesDir, { withFileTypes: true }).filter((d) => d.isDirectory()).length;
-    metrics.num_crates = String(crateCount);
+    loc = computeLocSplit(ROOT);
   } catch {
-    metrics.total_loc = "N/A";
-    metrics.num_crates = "N/A";
+    loc = unavailableLocSplit();
   }
+  Object.assign(metrics, {
+    total_loc: loc.total_loc,
+    source_loc: loc.source_loc,
+    test_loc: loc.test_loc,
+    num_crates: loc.num_crates,
+  });
 
   return metrics;
 }

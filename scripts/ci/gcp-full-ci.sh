@@ -368,25 +368,24 @@ run_lint() {
   scripts/arch/check-workspace-metadata.sh || return $?
   scripts/check-crate-root-files.sh || return $?
   node scripts/bench/test-project-rows.mjs || return $?
+  node scripts/bench/validate-project-metadata.mjs || return $?
+  node scripts/bench/test-validate-project-metadata.mjs || return $?
   node scripts/bench/test-merge-results.mjs || return $?
   node scripts/bench/test-perf-hotspots.mjs || return $?
   node scripts/bench/test-tsgo-winner-report.mjs || return $?
+  node scripts/bench/test-timeout-runner.mjs || return $?
   for script in scripts/ci/*type-challenges*.mjs; do
     node --check "$script" || return $?
   done
   node scripts/ci/test-project-compile-guard-readiness-artifacts.mjs || return $?
-  node scripts/ci/test-type-challenges-assertion-classifier.mjs || return $?
-  node scripts/ci/test-type-challenges-assertion-clean-row.mjs || return $?
-  node scripts/ci/test-type-challenges-assertion-clean-subset.mjs || return $?
-  node scripts/ci/test-type-challenges-assertion-compatibility.mjs || return $?
-  node scripts/ci/test-type-challenges-assertion-candidates.mjs || return $?
+  node scripts/ci/test-pr-ownership-report.mjs || return $?
   node scripts/ci/test-type-challenges-semantic-families.mjs || return $?
+  node scripts/ci/test-pr-ready-state.mjs || return $?
+  node scripts/ci/test-wip-state-comments.mjs || return $?
   node scripts/ci/test-project-compatibility.mjs || return $?
-  node scripts/ci/test-type-challenges-pairing-report.mjs || return $?
-  node scripts/ci/test-type-challenges-template-manifest.mjs || return $?
-  node scripts/ci/test-type-challenges-test-cases-manifest.mjs || return $?
   node scripts/ci/test-type-challenges-solutions-manifest.mjs || return $?
   python3 scripts/ci/test_ci_resources.py || return $?
+  python3 scripts/conformance/test_query_conformance.py || return $?
   # Use the dedicated ci-lint profile (debug=false, incremental=false,
   # codegen-units=256). Workspace clippy artifacts go to .target/ci-lint/
   # — separate cache key from .target/debug so dev incrementals on a
@@ -683,6 +682,17 @@ build_test_binaries() {
     return 0
   fi
 
+  local heartbeat_pid heartbeat_interval cargo_rc
+  heartbeat_interval="${TSZ_CI_DIST_BUILD_HEARTBEAT_SECONDS:-60}"
+  (
+    while true; do
+      sleep "$heartbeat_interval"
+      echo "dist-fast cargo build still running at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    done
+  ) &
+  heartbeat_pid="$!"
+
+  set +e
   cargo build --profile dist-fast \
     --jobs "$CARGO_BUILD_JOBS" \
     -p tsz-cli \
@@ -691,6 +701,13 @@ build_test_binaries() {
     --bin tsz-server \
     --bin tsz-conformance \
     --bin generate-tsc-cache
+  cargo_rc="$?"
+  set -e
+  kill "$heartbeat_pid" >/dev/null 2>&1 || true
+  wait "$heartbeat_pid" 2>/dev/null || true
+  if [[ "$cargo_rc" -ne 0 ]]; then
+    return "$cargo_rc"
+  fi
   mkdir -p .target/release
   ln -sf "$ROOT_DIR/.target/dist-fast/tsz-server" .target/release/tsz-server
   ls -lh "${binaries[@]}"

@@ -12,7 +12,6 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
-use tsz_solver::computation::BinaryOpEvaluator;
 
 /// Result of syntactic nullishness analysis, mirroring tsc's `PredicateSemantics`.
 /// This is a purely syntactic check -- it does NOT look at types.
@@ -2335,8 +2334,7 @@ impl<'a> CheckerState<'a> {
                         // Number op enum => number
                         TypeId::NUMBER
                     } else if is_arithmetic_op
-                        && self
-                            .resolve_indexed_access_binary_op(eval_left, eval_right, op, &evaluator)
+                        && self.resolve_indexed_access_binary_op(eval_left, eval_right, op)
                     {
                         // IndexAccess types (T[K]) resolved through assignability
                         // e.g., T[K] where T extends Record<K, number> is number-like
@@ -2971,13 +2969,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check a binary operation with `IndexAccess` operands is valid through assignability.
-    fn resolve_indexed_access_binary_op(
-        &mut self,
-        left: TypeId,
-        right: TypeId,
-        op: &str,
-        evaluator: &BinaryOpEvaluator,
-    ) -> bool {
+    fn resolve_indexed_access_binary_op(&mut self, left: TypeId, right: TypeId, op: &str) -> bool {
         let left_is_index_access =
             crate::query_boundaries::common::is_index_access_type(self.ctx.types, left);
         let right_is_index_access =
@@ -2989,10 +2981,16 @@ impl<'a> CheckerState<'a> {
 
         match op {
             "+" | "-" | "*" | "/" | "%" | "**" => {
-                let left_ok = evaluator.is_arithmetic_operand(left)
+                let left_ok = crate::query_boundaries::type_computation::core::is_arithmetic_operand(
+                    self.ctx.types,
+                    left,
+                )
                     || left_is_index_access && self.is_assignable_to(left, TypeId::NUMBER);
-                let right_ok = evaluator.is_arithmetic_operand(right)
-                    || right_is_index_access && self.is_assignable_to(right, TypeId::NUMBER);
+                let right_ok =
+                    crate::query_boundaries::type_computation::core::is_arithmetic_operand(
+                        self.ctx.types,
+                        right,
+                    ) || right_is_index_access && self.is_assignable_to(right, TypeId::NUMBER);
                 left_ok && right_ok
             }
             _ => false,

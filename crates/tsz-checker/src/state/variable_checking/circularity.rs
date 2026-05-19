@@ -93,7 +93,7 @@ impl<'a> CheckerState<'a> {
 
     pub(crate) fn suppress_circular_initializer_relation_diagnostics(
         &mut self,
-        snap: &crate::context::speculation::DiagnosticSnapshot,
+        snap: crate::context::speculation::DiagnosticSpeculationSnapshot,
         init_idx: NodeIndex,
     ) {
         let Some(init_node) = self.ctx.arena.get(init_idx) else {
@@ -101,7 +101,7 @@ impl<'a> CheckerState<'a> {
         };
         let init_start = init_node.pos;
         let init_end = init_node.end;
-        self.ctx.rollback_diagnostics_filtered(snap, |diag| {
+        snap.rollback_filtered(&mut self.ctx.diagnostic_state(), |diag| {
             let in_initializer = diag.start >= init_start && diag.start <= init_end;
             let is_downstream_relation_noise =
                 matches!(diag.code, 2322 | 2345 | 2769) && in_initializer;
