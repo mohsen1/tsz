@@ -113,26 +113,6 @@ pub(crate) const KNOWN_PARITY_FINGERPRINTS: &[ParityFingerprintRule] = &[
         parity_issue: ParityIssue(8423),
         action: ParityAction::Drop,
     },
-    // #8424 — discriminated-union narrowing under a generic key parameter:
-    // tsz fails to prove the residual is never.
-    ParityFingerprintRule {
-        code: 2345,
-        message: "Argument of type '({ kind: K; } & OptionOne) | ({ kind: K; } & OptionTwo)' is not assignable to parameter of type 'never'.",
-        message_match: MessageMatch::Contains,
-        reason: "When a generic function narrows a discriminated-union argument by an exhaustive switch on a key parameter, tsc collapses the residual intersection to never; tsz still surfaces the residual intersection in the TS2345 message.",
-        parity_issue: ParityIssue(8424),
-        action: ParityAction::Drop,
-    },
-    // #8424 — same divergence, alternative tsz display form when the
-    // intersection is left un-distributed.
-    ParityFingerprintRule {
-        code: 2345,
-        message: "Argument of type 'Options & { kind: K; }' is not assignable",
-        message_match: MessageMatch::Contains,
-        reason: "Alternative tsz display form for the same narrowing failure: the intersection is reported un-distributed instead of the per-member union shape.",
-        parity_issue: ParityIssue(8424),
-        action: ParityAction::Drop,
-    },
 ];
 
 /// Scope a classification query against the parity catalog uses.

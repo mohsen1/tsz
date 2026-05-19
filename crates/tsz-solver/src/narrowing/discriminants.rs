@@ -18,7 +18,8 @@ use super::{CachedPropertyType, DiscriminantInfo, NarrowingContext, union_or_sin
 use crate::operations::property::{PropertyAccessEvaluator, PropertyAccessResult};
 use crate::relations::subtype::is_subtype_of;
 use crate::type_queries::{
-    LiteralValueKind, UnionMembersKind, classify_for_literal_value, classify_for_union_members,
+    LiteralValueKind, TypeParameterConstraintKind, UnionMembersKind, classify_for_literal_value,
+    classify_for_type_parameter_constraint, classify_for_union_members,
     construct_return_type_for_type, get_tuple_elements,
 };
 use crate::types::{PropertyLookup, TypeId};
@@ -747,7 +748,22 @@ impl<'a> NarrowingContext<'a> {
         // and conformance-level tests rely on that behavior — e.g. a
         // duplicate `case shape.kind === "circle":` after the first
         // such case must narrow `shape` to `never`.
+        //
+        // EXCEPTION: when the intersection contains a union member (e.g.
+        // `(A | B) & C` that was not distributed at construction time because
+        // the union member was still Lazy), distribute it now so the union
+        // component can be narrowed. After distribution the type has Union
+        // shape, so tsc's gate condition is satisfied.
         let resolved = self.resolve_type(type_id);
+        if let Some(distributed) =
+            self.try_distribute_intersection_for_narrowing(resolved, prop_path)
+        {
+            return if is_true_branch {
+                self.narrow_by_discriminant(distributed, prop_path, literal_type)
+            } else {
+                self.narrow_by_excluding_discriminant(distributed, prop_path, literal_type)
+            };
+        }
         if intersection_list_id(self.db, resolved).is_some() {
             return type_id;
         }
@@ -1274,6 +1290,123 @@ impl<'a> NarrowingContext<'a> {
         union_or_single_preserve(self.db, remaining)
     }
 
+    /// Distribute an undistributed intersection-with-union into a union-of-intersections
+    /// so discriminant narrowing can propagate through a generic discriminant constraint.
+    ///
+    /// Unlike `TypeInterner::distribute_intersection_over_unions`, this uses `resolve_type`
+    /// on each member so that `Lazy(DefId)` aliases are seen as unions before distribution.
+    ///
+    /// This is deliberately narrower than generic intersection distribution: it only handles
+    /// the `Union & { kind: K }` shape where the checked discriminant property is a constrained
+    /// type parameter. Declared intersections like `Union & { kind: "a" }` must keep the
+    /// top-level-intersection no-op behavior used to suppress unreachable-branch TS2339 noise.
+    ///
+    /// Returns `Some(distributed)` when at least one member resolves to a union, a non-union
+    /// member carries the checked constrained type-parameter discriminant, and the cross-product
+    /// is ≤ 25. Returns `None` otherwise (caller falls through to existing logic).
+    fn try_distribute_intersection_for_narrowing(
+        &self,
+        resolved_intersection: TypeId,
+        property_path: &[Atom],
+    ) -> Option<TypeId> {
+        let [property] = property_path else {
+            return None;
+        };
+
+        let list_id = intersection_list_id(self.db, resolved_intersection)?;
+        let members = self.db.type_list(list_id);
+
+        // `db.type_list` returns `Arc<[TypeId]>`; store the Arc so the interned slice stays
+        // alive for the cross-product loop without copying each element.
+        let mut union_slices: SmallVec<[Arc<[TypeId]>; 2]> = SmallVec::new();
+        let mut non_union: SmallVec<[TypeId; 4]> = SmallVec::new();
+        let mut has_constrained_type_param_discriminant = false;
+
+        for &m in members.iter() {
+            let resolved_m = self.resolve_type(m);
+            if let Some(union_list) = union_list_id(self.db, resolved_m) {
+                union_slices.push(self.db.type_list(union_list));
+            } else {
+                if !has_constrained_type_param_discriminant {
+                    has_constrained_type_param_discriminant = self
+                        .get_top_level_property_type_fast(resolved_m, *property)
+                        .and_then(|prop_type| {
+                            match classify_for_type_parameter_constraint(
+                                self.db,
+                                self.resolve_type(prop_type),
+                            ) {
+                                TypeParameterConstraintKind::TypeParameter {
+                                    constraint: Some(constraint),
+                                } => Some(self.resolve_type(constraint)),
+                                TypeParameterConstraintKind::TypeParameter { constraint: None }
+                                | TypeParameterConstraintKind::None => None,
+                            }
+                        })
+                        .is_some_and(|constraint| union_list_id(self.db, constraint).is_some());
+                }
+                non_union.push(m);
+            }
+        }
+
+        if union_slices.is_empty() {
+            return None;
+        }
+        if !has_constrained_type_param_discriminant {
+            return None;
+        }
+
+        let total: usize = union_slices
+            .iter()
+            .map(|s| s.len())
+            .fold(1usize, |acc, n| acc.saturating_mul(n));
+        if total > 25 {
+            return None;
+        }
+
+        // Intern a single combination: bare TypeId when trivial, intersection otherwise.
+        let intern_combo = |combo: SmallVec<[TypeId; 4]>| {
+            if combo.len() == 1 {
+                combo[0]
+            } else {
+                self.db.intersection(combo.into_vec())
+            }
+        };
+
+        // Shared base for all combinations: non-union members prepended to each product term.
+        // Keep as SmallVec so the common inline case (≤4 non-union members) stays stack-only
+        // when cloned inside the product loop, avoiding per-combination heap allocations.
+        let seed = non_union;
+
+        // Fast path: single union slice — avoids Vec-of-Vec overhead.
+        if union_slices.len() == 1 {
+            let slice = &union_slices[0];
+            let mut distributed = Vec::with_capacity(slice.len());
+            for &um in slice.iter() {
+                let mut combo = seed.clone();
+                combo.push(um);
+                distributed.push(intern_combo(combo));
+            }
+            return Some(self.db.union(distributed));
+        }
+
+        // General path: cross-product over all union slices.
+        let mut combinations: Vec<SmallVec<[TypeId; 4]>> = vec![seed];
+        for slice in &union_slices {
+            let mut next = Vec::with_capacity(combinations.len() * slice.len());
+            for combo in &combinations {
+                for &um in slice.iter() {
+                    let mut c = combo.clone();
+                    c.push(um);
+                    next.push(c);
+                }
+            }
+            combinations = next;
+        }
+
+        let distributed: Vec<TypeId> = combinations.into_iter().map(intern_combo).collect();
+        Some(self.db.union(distributed))
+    }
+
     /// Narrow a union type by excluding variants with any of the specified discriminant values.
     ///
     /// This is an optimized batch version of `narrow_by_excluding_discriminant` for switch statements.
@@ -1284,6 +1417,20 @@ impl<'a> NarrowingContext<'a> {
         excluded_values: &[TypeId],
     ) -> TypeId {
         if excluded_values.is_empty() {
+            return union_type;
+        }
+
+        let resolved_input = self.resolve_type(union_type);
+        if let Some(distributed) =
+            self.try_distribute_intersection_for_narrowing(resolved_input, property_path)
+        {
+            return self.narrow_by_excluding_discriminant_values(
+                distributed,
+                property_path,
+                excluded_values,
+            );
+        }
+        if intersection_list_id(self.db, resolved_input).is_some() {
             return union_type;
         }
 
