@@ -101,6 +101,101 @@ fn async_es5_for_loop_captured_let_with_await_uses_loop_generator() {
 }
 
 #[test]
+fn generator_es5_for_of_captured_let_with_yield_uses_loop_generator() {
+    let output = emit_es5_downlevel_iteration(
+        "function* f() {\n\
+             for (const i of [1, 2, 3]) {\n\
+                 (() => i)();\n\
+                 yield i;\n\
+             }\n\
+         }\n",
+    );
+
+    assert!(
+        output.contains("_loop_1 = function (i)"),
+        "Captured for-of body should move into a loop helper.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return __generator(this, function (_e)"),
+        "Nested loop helper generator should use a state variable distinct from the outer generator.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [5 /*yield**/, _loop_1(i)];"),
+        "Outer generator should delegate to the loop helper generator.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("yield i;"),
+        "Captured generator loop body must not fall back to raw yield syntax.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn generator_es5_for_of_direct_suspended_iterable_schedules_before_values() {
+    let output = emit_es5_downlevel_iteration(
+        "function* f(xs) {\n\
+             for (const i of (yield xs)) {\n\
+                 (() => i)();\n\
+                 yield i;\n\
+             }\n\
+         }\n",
+    );
+
+    assert!(
+        output.contains("_loop_1 = function (i)"),
+        "Captured for-of body should still use the loop helper.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("__values((yield xs))"),
+        "Iterator acquisition must not embed a raw suspended iterable expression.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("[4 /*yield*/, xs]"),
+        "The iterable suspension should be scheduled as its own generator step.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__values(") && output.contains(".sent()),"),
+        "Iterator acquisition should consume the resumed iterable value.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("yield i;"),
+        "Captured generator loop body must not fall back to raw yield syntax.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn generator_es5_for_of_wrapped_suspended_iterable_schedules_before_values() {
+    let output = emit_es5_downlevel_iteration(
+        "function* f(xs) {\n\
+             for (const i of ((yield xs) as number[])) {\n\
+                 (() => i)();\n\
+                 yield i;\n\
+             }\n\
+         }\n",
+    );
+
+    assert!(
+        output.contains("_loop_1 = function (i)"),
+        "Wrapped suspended iterable should still use the loop helper.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("__values((yield xs))"),
+        "Iterator acquisition must not embed a raw wrapped suspension.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("[4 /*yield*/, xs]"),
+        "The wrapped iterable suspension should be scheduled as its own generator step.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__values(") && output.contains(".sent()),"),
+        "Iterator acquisition should consume the resumed wrapped iterable value.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("yield i;"),
+        "Captured generator loop body must not fall back to raw yield syntax.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn async_es5_uses_ambient_value_for_custom_promise_constructor() {
     let output = emit_es5(
         "type MyPromise<T> = Promise<T>;\n\

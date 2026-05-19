@@ -1032,6 +1032,7 @@ impl<'a> Printer<'a> {
         let ir = transformer.transform_generator_function(function_node);
         let mut printer = IRPrinter::with_arena(self.arena);
         printer.set_transforms(self.transforms.clone());
+        printer.set_target_es5(true);
         if let Some(text) = self.source_text {
             printer.set_source_text(text);
         }

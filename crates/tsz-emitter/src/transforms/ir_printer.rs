@@ -83,6 +83,7 @@ pub struct IRPrinter<'a> {
     system_import_meta: bool,
     pub(crate) base_printer_options: Option<PrinterOptions>,
     generator_state_name: &'static str,
+    generator_body_depth: u32,
     namespace_ast_name: Option<String>,
     namespace_ast_exported_names: rustc_hash::FxHashSet<String>,
 }
@@ -338,6 +339,7 @@ impl<'a> IRPrinter<'a> {
             system_import_meta: false,
             base_printer_options: None,
             generator_state_name: "_a",
+            generator_body_depth: 0,
             namespace_ast_name: None,
             namespace_ast_exported_names: rustc_hash::FxHashSet::default(),
         }
@@ -365,6 +367,7 @@ impl<'a> IRPrinter<'a> {
             system_import_meta: false,
             base_printer_options: None,
             generator_state_name: "_a",
+            generator_body_depth: 0,
             namespace_ast_name: None,
             namespace_ast_exported_names: rustc_hash::FxHashSet::default(),
         }
@@ -392,6 +395,7 @@ impl<'a> IRPrinter<'a> {
             system_import_meta: false,
             base_printer_options: None,
             generator_state_name: "_a",
+            generator_body_depth: 0,
             namespace_ast_name: None,
             namespace_ast_exported_names: rustc_hash::FxHashSet::default(),
         }
@@ -910,6 +914,13 @@ impl<'a> IRPrinter<'a> {
                     Self::generator_state_name_for_function_body(body)
                 {
                     self.generator_state_name = generator_state_name;
+                } else if self.generator_body_depth > 0
+                    && body
+                        .iter()
+                        .any(|node| matches!(node, IRNode::GeneratorBody { .. }))
+                {
+                    self.generator_state_name =
+                        Self::next_generator_state_name(previous_generator_state_name);
                 }
                 self.emit_function_body_with_defaults(
                     parameters,
@@ -1667,6 +1678,7 @@ impl<'a> IRPrinter<'a> {
                 self.generator_state_name = previous_generator_state_name;
             }
             IRNode::GeneratorBody { has_await, cases } => {
+                self.generator_body_depth += 1;
                 self.write("return ");
                 self.write_helper("__generator");
                 self.write("(this, function (");
@@ -1742,6 +1754,7 @@ impl<'a> IRPrinter<'a> {
                     self.write_indent();
                     self.write("});");
                 }
+                self.generator_body_depth -= 1;
             }
             IRNode::GeneratorOp {
                 opcode,

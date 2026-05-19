@@ -96,15 +96,16 @@ impl IRPrinter<'_> {
         rewritten
     }
 
-    fn next_generator_state_name(current: &str) -> &'static str {
+    pub(crate) fn next_generator_state_name(current: &str) -> &'static str {
         const TEMP_NAMES: [&str; 26] = [
             "_a", "_b", "_c", "_d", "_e", "_f", "_g", "_h", "_i", "_j", "_k", "_l", "_m", "_n",
             "_o", "_p", "_q", "_r", "_s", "_t", "_u", "_v", "_w", "_x", "_y", "_z",
         ];
         TEMP_NAMES
             .iter()
+            .position(|name| *name == current)
+            .and_then(|idx| TEMP_NAMES.get(idx + 1))
             .copied()
-            .find(|name| *name != current)
             .unwrap_or("_a")
     }
 
