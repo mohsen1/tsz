@@ -12,15 +12,6 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    /// Legacy boolean-only relation guard for diagnostic code paths.
-    ///
-    /// Keep these calls grep-distinct from diagnostic decisions that need
-    /// `RelationOutcome` failure classification, weak-union handling, or depth
-    /// reporting.
-    fn diagnostic_relation_boolean_guard(&mut self, source: TypeId, target: TypeId) -> bool {
-        self.is_assignable_to(source, target)
-    }
-
     fn has_explicit_any_generic_variable_annotation(&self, diag_idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(diag_idx) else {
             return false;
@@ -334,20 +325,18 @@ impl<'a> CheckerState<'a> {
         // Use the canonical assign relation outcome so the weak-union hint is collected alongside
         // the failure reason, avoiding a redundant solver round-trip in
         // should_skip_weak_union_error's fallback path.
-        {
-            let outcome = self.assign_relation_outcome(source, target);
-            if self.should_skip_weak_union_error_with_outcome(
-                source,
-                target,
-                source_idx,
-                Some(&outcome),
-            ) {
-                return true;
-            }
-            if outcome.weak_union_violation {
-                self.error_no_common_properties(source, target, diag_idx);
-                return false;
-            }
+        let outcome = self.assign_relation_outcome(source, target);
+        if self.should_skip_weak_union_error_with_outcome(
+            source,
+            target,
+            source_idx,
+            Some(&outcome),
+        ) {
+            return true;
+        }
+        if outcome.weak_union_violation {
+            self.error_no_common_properties(source, target, diag_idx);
+            return false;
         }
 
         // tsc 6.0: `satisfies` ignores readonly-to-mutable mismatches.
@@ -773,9 +762,6 @@ impl<'a> CheckerState<'a> {
         if had_excess_property_error {
             return false;
         }
-
-        // Canonical relation path: execute a RelationRequest to get both the
-        // assignability result and structured failure info in one boundary call.
 
         // Reset the relation depth flag before the assignability check so we
         // can detect fresh depth exceedance from this particular relation.

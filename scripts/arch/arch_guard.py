@@ -6,13 +6,161 @@ import json
 import shlex
 import subprocess
 import sys
-import tomllib
 from collections import Counter
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import BinaryIO, Iterable, Optional
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - exercised on Python < 3.11.
+    tomllib = None
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 POLICY_PATH = pathlib.Path(__file__).resolve().parent / "arch_guard_policy.toml"
+
+
+def _strip_toml_comment(line: str) -> str:
+    in_basic = False
+    in_literal = False
+    escaped = False
+
+    for index, char in enumerate(line):
+        if in_basic:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_basic = False
+            continue
+        if in_literal:
+            if char == "'":
+                in_literal = False
+            continue
+        if char == '"':
+            in_basic = True
+        elif char == "'":
+            in_literal = True
+        elif char == "#":
+            return line[:index]
+    return line
+
+
+def _parse_toml_string(value: str) -> str:
+    value = value.strip()
+    if value.startswith("'") and value.endswith("'"):
+        return value[1:-1]
+    if value.startswith('"') and value.endswith('"'):
+        return json.loads(value)
+    raise ValueError(f"unsupported TOML string value: {value!r}")
+
+
+def _parse_toml_string_array(lines: list[str]) -> list[str]:
+    text = "\n".join(_strip_toml_comment(line) for line in lines)
+    start = text.find("[")
+    end = text.rfind("]")
+    if start == -1 or end == -1 or end < start:
+        raise ValueError(f"unsupported TOML array value: {text!r}")
+
+    items: list[str] = []
+    index = start + 1
+    while index < end:
+        while index < end and text[index] in " \t\r\n,":
+            index += 1
+        if index >= end:
+            break
+
+        quote = text[index]
+        if quote not in {"'", '"'}:
+            raise ValueError(f"unsupported TOML array item near: {text[index:end]!r}")
+        index += 1
+        item_start = index
+        if quote == "'":
+            while index < end and text[index] != "'":
+                index += 1
+            if index >= end:
+                raise ValueError("unterminated TOML literal string in array")
+            items.append(text[item_start:index])
+            index += 1
+            continue
+
+        escaped = False
+        buffer: list[str] = []
+        while index < end:
+            char = text[index]
+            if escaped:
+                buffer.append("\\" + char)
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                break
+            else:
+                buffer.append(char)
+            index += 1
+        if index >= end:
+            raise ValueError("unterminated TOML basic string in array")
+        items.append(json.loads(f'"{"".join(buffer)}"'))
+        index += 1
+
+    return items
+
+
+def _parse_toml_value(value: str, array_lines: list[str]) -> object:
+    value = _strip_toml_comment(value).strip()
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    if value.startswith("["):
+        return _parse_toml_string_array(array_lines)
+    return _parse_toml_string(value)
+
+
+def _parse_arch_guard_policy_toml(text: str) -> dict:
+    """Parse the arch guard policy subset when stdlib `tomllib` is unavailable."""
+    data: dict[str, list[dict]] = {"pattern_checks": [], "manifest_checks": []}
+    current: Optional[dict] = None
+    lines = text.splitlines()
+    index = 0
+
+    while index < len(lines):
+        raw_line = lines[index]
+        line = _strip_toml_comment(raw_line).strip()
+        index += 1
+
+        if not line:
+            continue
+        if line.startswith("[[") and line.endswith("]]"):
+            table_name = line[2:-2].strip()
+            if table_name not in data:
+                raise ValueError(f"unsupported TOML table: {table_name!r}")
+            current = {}
+            data[table_name].append(current)
+            continue
+        if current is None or "=" not in line:
+            raise ValueError(f"unsupported TOML line: {raw_line!r}")
+
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        array_lines = [raw_line]
+        if value.startswith("[") and "]" not in _strip_toml_comment(value):
+            while index < len(lines):
+                array_lines.append(lines[index])
+                if "]" in _strip_toml_comment(lines[index]):
+                    index += 1
+                    break
+                index += 1
+        current[key] = _parse_toml_value(value, array_lines)
+
+    return data
+
+
+def _load_policy_toml(file: BinaryIO) -> dict:
+    if tomllib is not None:
+        return tomllib.load(file)
+    return _parse_arch_guard_policy_toml(file.read().decode("utf-8"))
 
 
 def _build_excludes(entry: dict) -> dict:
@@ -47,7 +195,7 @@ def _load_pattern_checks(
 ) -> list[tuple[str, pathlib.Path, re.Pattern, dict]]:
     """Load [[pattern_checks]] entries from the declarative policy TOML."""
     with policy_path.open("rb") as f:
-        return _parse_pattern_checks(tomllib.load(f))
+        return _parse_pattern_checks(_load_policy_toml(f))
 
 
 def _load_manifest_checks(
@@ -59,7 +207,7 @@ def _load_manifest_checks(
     at line boundaries within Cargo.toml files.
     """
     with policy_path.open("rb") as f:
-        return _parse_manifest_checks(tomllib.load(f))
+        return _parse_manifest_checks(_load_policy_toml(f))
 
 
 def _load_all_checks(
@@ -67,7 +215,7 @@ def _load_all_checks(
 ) -> tuple[list[tuple[str, pathlib.Path, re.Pattern, dict]], list[tuple[str, pathlib.Path, re.Pattern]]]:
     """Parse the policy TOML once and return both check lists."""
     with policy_path.open("rb") as f:
-        data = tomllib.load(f)
+        data = _load_policy_toml(f)
     return _parse_pattern_checks(data), _parse_manifest_checks(data)
 
 
@@ -472,7 +620,7 @@ REGEX_LINE_COUNT_CHECKS = [
             r"\b(?:self|self\.ctx\.types|self\.interner)"
             r"\.is_assignable_to(?:_[A-Za-z0-9_]+)?\s*\("
         ),
-        135,
+        134,
     ),
     (
         "Checker residency boundary: with_parent_cache_attributed migration callsites (Track 10)",

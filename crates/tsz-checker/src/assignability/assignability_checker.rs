@@ -2123,6 +2123,19 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
+    /// Boolean relation guard for diagnostic code paths.
+    ///
+    /// Keep these calls grep-distinct from diagnostic decisions that need
+    /// `RelationOutcome` failure classification, weak-union handling, or depth
+    /// reporting.
+    pub(crate) fn diagnostic_relation_boolean_guard(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        self.is_assignable_to(source, target)
+    }
+
     /// Check if source type is assignable to target type.
     ///
     /// This is the main entry point for assignability checking, used throughout
