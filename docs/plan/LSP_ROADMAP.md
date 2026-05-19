@@ -667,8 +667,11 @@ measurable:
 4. Cancellation strategy: (a) cooperative polling, (b) revision-counter
    panic-and-catch (rust-analyzer), (c) abortable worker handles. Pick
    one before starting L1.
-5. Should fourslash gain a "shape variant generator" that auto-derives
-   §25 anti-hardcoding test variants? Possibly out of scope.
+5. ~~Should fourslash gain a "shape variant generator" that auto-derives
+   §25 anti-hardcoding test variants?~~ **Answered: yes, opt-in only.**
+   Implemented in `crates/tsz-lsp/src/fourslash_variants.rs`. Tests opt in
+   per fixture via `shape_variants(source, &[ShapeVariant{...}])`; the
+   harness does not auto-variant existing fixtures. See issue #8529.
 6. Should the two-process split (L7) be a separate process or a separate
    task pool in the same process? Probably pool first, process later if
    warranted.
