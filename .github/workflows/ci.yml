@@ -938,6 +938,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
+      - name: Wait for shard artifact uploads to be indexed
+        run: |
+          echo "Waiting 30s for conformance shard artifact uploads to be indexed by GHA before downloading..."
+          sleep 30
       - name: Download conformance shard results
         uses: actions/download-artifact@v4
         with:
