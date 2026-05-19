@@ -1079,15 +1079,13 @@ impl<'a> CheckerState<'a> {
             computed_names.get(&expr_idx).copied()
         };
         let arena_computed_name_resolver =
-            |arena, expr_idx: NodeIndex| -> Option<tsz_common::Atom> {
-                arena_computed_names
-                    .get(&Self::arena_node_index_key(arena, expr_idx))
-                    .copied()
+            |arena_key: usize, expr_idx: NodeIndex| -> Option<tsz_common::Atom> {
+                arena_computed_names.get(&(arena_key, expr_idx)).copied()
             };
         let computed_symbol_name_resolver =
             |expr_idx: NodeIndex| computed_symbol_names.contains(&expr_idx);
-        let arena_computed_symbol_name_resolver = |arena, expr_idx: NodeIndex| {
-            arena_computed_symbol_names.contains(&Self::arena_node_index_key(arena, expr_idx))
+        let arena_computed_symbol_name_resolver = |arena_key: usize, expr_idx: NodeIndex| {
+            arena_computed_symbol_names.contains(&(arena_key, expr_idx))
         };
         let lazy_type_params_resolver = |def_id: tsz_solver::def::DefId| {
             prewarmed_type_params
@@ -1611,17 +1609,15 @@ impl<'a> CheckerState<'a> {
                     computed_names.get(&expr_idx).copied()
                 };
                 let arena_computed_name_resolver =
-                    |arena, expr_idx: NodeIndex| -> Option<tsz_common::Atom> {
-                        arena_computed_names
-                            .get(&Self::arena_node_index_key(arena, expr_idx))
-                            .copied()
+                    |arena_key: usize, expr_idx: NodeIndex| -> Option<tsz_common::Atom> {
+                        arena_computed_names.get(&(arena_key, expr_idx)).copied()
                     };
                 let computed_symbol_name_resolver =
                     |expr_idx: NodeIndex| computed_symbol_names.contains(&expr_idx);
-                let arena_computed_symbol_name_resolver = |arena, expr_idx: NodeIndex| {
-                    arena_computed_symbol_names
-                        .contains(&Self::arena_node_index_key(arena, expr_idx))
-                };
+                let arena_computed_symbol_name_resolver =
+                    |arena_key: usize, expr_idx: NodeIndex| {
+                        arena_computed_symbol_names.contains(&(arena_key, expr_idx))
+                    };
                 let lazy_type_params_resolver = |def_id: tsz_solver::def::DefId| {
                     prewarmed_lazy_type_params
                         .get(&def_id)

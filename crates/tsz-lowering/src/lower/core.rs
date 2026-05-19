@@ -26,9 +26,8 @@ use tsz_solver::{QueryDatabase, TypeDatabase};
 pub const MAX_LOWERING_OPERATIONS: u32 = 100_000;
 
 pub(super) type NodeIndexResolver<'a, T> = dyn Fn(NodeIndex) -> Option<T> + 'a;
-pub(super) type ArenaNodeIndexResolver<'a, T> =
-    dyn for<'b> Fn(&'b NodeArena, NodeIndex) -> Option<T> + 'a;
-pub(super) type ArenaNodeIndexPredicate<'a> = dyn for<'b> Fn(&'b NodeArena, NodeIndex) -> bool + 'a;
+pub(super) type ArenaNodeIndexResolver<'a, T> = dyn Fn(usize, NodeIndex) -> Option<T> + 'a;
+pub(super) type ArenaNodeIndexPredicate<'a> = dyn Fn(usize, NodeIndex) -> bool + 'a;
 pub(super) type TypeIdResolver<'a> = dyn Fn(&str) -> Option<DefId> + 'a;
 pub(super) type LazyTypeParamsResolver<'a> = dyn Fn(DefId) -> Option<Vec<TypeParamInfo>> + 'a;
 pub(super) type TypeParamScopeStack = RefCell<Vec<Vec<(Atom, TypeId)>>>;
@@ -362,6 +361,10 @@ pub(super) struct LoweringResolvers<'a> {
 }
 
 impl<'a> TypeLowering<'a> {
+    fn arena_identity(arena: &NodeArena) -> usize {
+        arena as *const NodeArena as usize
+    }
+
     /// Single private builder used by all public constructors. The five
     /// `pub fn` entry points only differ in which resolver fields they
     /// populate; everything else (interning, scope stack, operation
@@ -2456,7 +2459,7 @@ impl<'a> TypeLowering<'a> {
                 return Some(self.interner.intern_string(&symbol_name));
             }
             if let Some(resolver) = self.arena_computed_name_resolver
-                && let Some(name) = resolver(self.arena, computed.expression)
+                && let Some(name) = resolver(Self::arena_identity(self.arena), computed.expression)
             {
                 return Some(name);
             }
@@ -2499,7 +2502,7 @@ impl<'a> TypeLowering<'a> {
             return true;
         }
         if let Some(resolver) = self.arena_computed_symbol_name_resolver
-            && resolver(self.arena, computed.expression)
+            && resolver(Self::arena_identity(self.arena), computed.expression)
         {
             return true;
         }
