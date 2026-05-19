@@ -1034,10 +1034,9 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // tsc adds `[x: string]: any` when a class extends a value whose
-        // constructor returns `any`.  The derived class instance type absorbs
-        // an implicit string-index signature with value type `any`.
-        if base_instance_type == TypeId::ANY {
+        // tsc absorbs an implicit `[x: string]: any` index signature when a
+        // class extends a value whose constructor returns `any`.
+        if base_instance_type.is_any() {
             Self::merge_index_signature(
                 string_index,
                 tsz_solver::IndexSignature {
