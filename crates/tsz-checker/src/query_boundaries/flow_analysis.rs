@@ -279,6 +279,18 @@ pub(crate) fn instance_type_from_constructor(
     tsz_solver::type_queries::instance_type_from_constructor(db, type_id)
 }
 
+/// Return the predicate type from `[Symbol.hasInstance](v: ...): v is T` if present.
+///
+/// Mirrors the solver's `instance_type_from_symbol_has_instance` so the checker
+/// can decide whether to use type-predicate narrowing semantics (which do not
+/// exclude primitives) instead of standard instanceof semantics (which do).
+pub(crate) fn instance_type_from_symbol_has_instance(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    tsz_solver::type_queries::instance_type_from_symbol_has_instance(db, type_id)
+}
+
 pub(crate) fn is_promise_like_type(db: &dyn QueryDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_promise_like(db, type_id)
 }

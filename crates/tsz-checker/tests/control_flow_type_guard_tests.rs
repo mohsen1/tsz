@@ -2633,3 +2633,200 @@ if (annotated(foobar)) {
         "Explicit `: boolean` annotation must suppress predicate inference; diags={diags:#?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Symbol.hasInstance-aware instanceof narrowing — checker wiring (issue #8779)
+// ---------------------------------------------------------------------------
+//
+// When a constructor carries `[Symbol.hasInstance](v: ...): v is T`, the
+// instanceof check is a user-defined type predicate, not a runtime `instanceof`
+// check. The narrowing must use type-predicate semantics rather than instanceof
+// semantics so that:
+//   * primitive union members that are subtypes of T are KEPT in the true branch
+//   * primitive union members that are subtypes of T are EXCLUDED in the false branch
+// These tests prove the structural rule using multiple variable-name variants
+// (per CLAUDE.md §25: the fix must not be keyed to a specific parameter name).
+
+const fn sym_preamble() -> &'static str {
+    "interface SymbolConstructor { readonly hasInstance: unique symbol; }\ndeclare var Symbol: SymbolConstructor;\n"
+}
+
+/// True branch: `unknown` narrows to the predicate type.
+/// Adjacent case 1: parameter named `v`.
+#[test]
+fn instanceof_has_instance_unknown_source_narrows_to_predicate_type_v() {
+    let source = format!(
+        r#"{}
+class MyArrayLike {{
+    static [Symbol.hasInstance](v: unknown): v is MyArrayLike {{ return true; }}
+}}
+declare var x: unknown;
+if (x instanceof MyArrayLike) {{
+    x;
+}} else {{
+    x;
+}}
+"#,
+        sym_preamble()
+    );
+
+    let diags = strict_diagnostics(&source);
+    // No diagnostics expected — narrowing unknown to MyArrayLike in true branch is clean.
+    let ts2339: Vec<_> = diags.iter().filter(|d| d.0 == 2339).collect();
+    assert!(
+        ts2339.is_empty(),
+        "instanceof + hasInstance on unknown should not produce TS2339: {diags:#?}"
+    );
+}
+
+/// True branch: `unknown` narrows to predicate type.
+/// Adjacent case 2: parameter named `value` (proves the rule is not name-keyed).
+#[test]
+fn instanceof_has_instance_unknown_source_narrows_to_predicate_type_value() {
+    let source = format!(
+        r#"{}
+class Wrapper {{
+    static [Symbol.hasInstance](value: unknown): value is Wrapper {{ return true; }}
+    inner: number;
+}}
+declare var x: unknown;
+if (x instanceof Wrapper) {{
+    x.inner;
+}}
+"#,
+        sym_preamble()
+    );
+
+    let diags = strict_diagnostics(&source);
+    let ts2339: Vec<_> = diags.iter().filter(|d| d.0 == 2339).collect();
+    assert!(
+        ts2339.is_empty(),
+        "instanceof + hasInstance (param=value) on unknown should not produce TS2339: {diags:#?}"
+    );
+}
+
+/// The core bug from issue #8779: when the hasInstance predicate type is a
+/// primitive (`v is string`), the true branch must KEEP the primitive union
+/// member instead of incorrectly excluding it via instanceof's primitive-
+/// exclusion rule.
+#[test]
+fn instanceof_has_instance_primitive_predicate_keeps_primitive_in_true_branch() {
+    let source = format!(
+        r#"{}
+interface StringChecker {{
+    [Symbol.hasInstance](v: unknown): v is string;
+}}
+declare var IsString: StringChecker;
+declare var x: string | number;
+if (x instanceof IsString) {{
+    x;  // x should be `string`
+}} else {{
+    x;  // x should be `number`
+}}
+"#,
+        sym_preamble()
+    );
+
+    // No diagnostics expected. The test validates narrowing by checking that
+    // property access on the narrowed type is type-correct.
+    let diags = strict_diagnostics(&source);
+    let ts_errors: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.0, 2339 | 2322))
+        .collect();
+    assert!(
+        ts_errors.is_empty(),
+        "instanceof + hasInstance (primitive predicate) should not produce type errors: {diags:#?}"
+    );
+}
+
+/// Adjacent case: parameter named `x` (third name variant, per §25 matrix).
+#[test]
+fn instanceof_has_instance_primitive_predicate_param_x() {
+    let source = format!(
+        r#"{}
+interface NumChecker {{
+    [Symbol.hasInstance](x: unknown): x is number;
+}}
+declare var IsNum: NumChecker;
+declare var val: string | number | boolean;
+if (val instanceof IsNum) {{
+    val;  // val should be `number`
+}} else {{
+    val;  // val should be `string | boolean`
+}}
+"#,
+        sym_preamble()
+    );
+
+    let diags = strict_diagnostics(&source);
+    let ts_errors: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.0, 2339 | 2322))
+        .collect();
+    assert!(
+        ts_errors.is_empty(),
+        "instanceof + hasInstance (param=x, number predicate) should not produce type errors: {diags:#?}"
+    );
+}
+
+/// False branch: when hasInstance predicate is `v is MyClass`, a primitive union
+/// member that is NOT a subtype of `MyClass` must be preserved in the false branch.
+/// (Regression: instanceof's primitive-keep rule was wrong for hasInstance
+/// predicates whose type is a class, since `string` is not a `MyClass` so it
+/// correctly stays in the false branch anyway — this test ensures the class
+/// case is not broken by the fix.)
+#[test]
+fn instanceof_has_instance_class_predicate_false_branch_preserves_non_matching() {
+    let source = format!(
+        r#"{}
+class Tag {{
+    static [Symbol.hasInstance](val: unknown): val is Tag {{ return true; }}
+    kind: "tag";
+}}
+declare var x: string | Tag;
+if (x instanceof Tag) {{
+    x.kind;
+}} else {{
+    x;  // should be `string`
+}}
+"#,
+        sym_preamble()
+    );
+
+    let diags = strict_diagnostics(&source);
+    let ts2339: Vec<_> = diags
+        .iter()
+        .filter(|d| d.0 == 2339)
+        .filter(|d| d.1.contains("'kind'"))
+        .collect();
+    assert!(
+        ts2339.is_empty(),
+        "instanceof + hasInstance class predicate: true branch should see Tag.kind: {diags:#?}"
+    );
+}
+
+/// `instanceof` without `[Symbol.hasInstance]` must still use instanceof
+/// semantics (primitive-exclusion) — the fix must not change this.
+#[test]
+fn instanceof_without_has_instance_still_excludes_primitives() {
+    let source = r#"
+class Foo { x: number; }
+declare var y: string | Foo;
+if (y instanceof Foo) {
+    y.x;
+} else {
+    y;
+}
+"#;
+
+    let diags = strict_diagnostics(source);
+    let ts2339: Vec<_> = diags
+        .iter()
+        .filter(|d| d.0 == 2339 && d.1.contains("'x'"))
+        .collect();
+    assert!(
+        ts2339.is_empty(),
+        "regular instanceof (no hasInstance) true branch should see Foo.x: {diags:#?}"
+    );
+}
