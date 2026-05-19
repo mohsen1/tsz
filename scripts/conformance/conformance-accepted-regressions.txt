@@ -30,7 +30,6 @@ TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
 TypeScript/tests/cases/compiler/reactHOCSpreadprops.tsx
 TypeScript/tests/cases/compiler/recursiveReverseMappedType.ts
 TypeScript/tests/cases/compiler/relationComplexityError.ts
-TypeScript/tests/cases/compiler/reorderProperties.ts
 TypeScript/tests/cases/compiler/reverseMappedTypeIntersectionConstraint.ts
 TypeScript/tests/cases/compiler/reverseMappedTypeContextualTypesPerElementOfTupleConstraint.ts
 TypeScript/tests/cases/compiler/spyComparisonChecking.ts
@@ -42,7 +41,6 @@ TypeScript/tests/cases/conformance/es2019/globalThisAmbientModules.ts
 TypeScript/tests/cases/conformance/es2024/sharedMemory.ts
 TypeScript/tests/cases/conformance/es6/destructuring/destructuringArrayBindingPatternAndAssignment2.ts
 TypeScript/tests/cases/conformance/esDecorators/esDecorators-preservesThis.ts
-TypeScript/tests/cases/conformance/externalModules/typeOnly/importEquals2.ts
 TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsTypedefAndLatebound.ts
 TypeScript/tests/cases/conformance/node/esmModuleExports2.ts
 TypeScript/tests/cases/conformance/nonjsExtensions/declarationFileForHtmlImport.ts
