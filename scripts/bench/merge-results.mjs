@@ -6,45 +6,7 @@ import {
   REQUIRED_COMPATIBILITY_FIELDS,
   REQUIRED_PROJECT_ROWS,
 } from "./project-rows.mjs";
-
-const [, , outFile, ...inputFiles] = process.argv;
-
-if (!outFile || inputFiles.length === 0) {
-  console.error("Usage: scripts/bench/merge-results.mjs <out-file> <input-json...>");
-  process.exit(2);
-}
-
-const missingInputFiles = inputFiles.filter((file) => !fs.existsSync(file));
-if (missingInputFiles.length > 0) {
-  console.error("Missing benchmark JSON inputs:");
-  for (const file of missingInputFiles) {
-    console.error(`  ${file}`);
-  }
-  process.exit(1);
-}
-
-const payloads = inputFiles.map((file) => {
-  const payload = JSON.parse(fs.readFileSync(file, "utf8"));
-  return { file, payload };
-});
-
-if (payloads.length === 0) {
-  console.error("No benchmark JSON inputs found.");
-  process.exit(1);
-}
-
-const results = payloads.flatMap(({ payload }) => payload.results || []);
-const tszWins = results.filter((row) => row.winner === "tsz").length;
-const tsgoWins = results.filter((row) => row.winner === "tsgo").length;
-const errorCases = results.filter((row) => row.status).length;
-const hyperfineExitCodesRequired = payloads.every(
-  ({ payload }) => payload.validation?.hyperfine_exit_codes_required === true,
-);
-const runnerEnvironments = payloads
-  .map(({ file, payload }) => ({ file, environment: payload.runner_environment }))
-  .filter(({ environment }) => environment && typeof environment === "object");
-const runnerEnvironment = runnerEnvironments[0]?.environment || null;
-const runnerEnvironmentWarnings = validateRunnerEnvironmentConsistency(runnerEnvironments);
+import { isGreen } from "./row-utils.mjs";
 
 const REQUIRED_PROJECT_ROW_SET = new Set(REQUIRED_PROJECT_ROWS);
 const PROJECT_COMPATIBILITY_ROW_SET = new Set([
@@ -77,8 +39,7 @@ function validateRunnerEnvironmentConsistency(environments) {
   const warnings = [];
   for (const { file, environment } of environments.slice(1)) {
     const current = runnerHardwareSignature(environment);
-    const mismatchedFields = Object.keys(baseline)
-      .filter((key) => baseline[key] !== current[key]);
+    const mismatchedFields = Object.keys(baseline).filter((key) => baseline[key] !== current[key]);
     if (mismatchedFields.length > 0) {
       warnings.push({
         file: path.basename(file),
@@ -91,11 +52,10 @@ function validateRunnerEnvironmentConsistency(environments) {
   return warnings;
 }
 
-function validateProjectCompatibilityRows(rows) {
+function collectProjectCompatibilityFailures(rows) {
   const projectRows = rows.filter((row) => PROJECT_COMPATIBILITY_ROW_SET.has(row?.name));
-  if (projectRows.length === 0) return;
+  if (projectRows.length === 0) return [];
 
-  const byName = new Map(projectRows.map((row) => [row.name, row]));
   const failures = [];
   const seenNames = new Set();
   const duplicateNames = new Set();
@@ -113,7 +73,7 @@ function validateProjectCompatibilityRows(rows) {
 
   if (projectRows.some((row) => REQUIRED_PROJECT_ROW_SET.has(row.name))) {
     for (const name of REQUIRED_PROJECT_ROWS) {
-      if (!byName.has(name)) {
+      if (!seenNames.has(name)) {
         failures.push(`${name}: missing project row`);
       }
     }
@@ -129,19 +89,13 @@ function validateProjectCompatibilityRows(rows) {
       continue;
     }
     for (const field of REQUIRED_COMPATIBILITY_FIELDS) {
-      if (!Object.prototype.hasOwnProperty.call(row.compatibility, field)) {
+      if (!Object.hasOwn(row.compatibility, field)) {
         failures.push(`${row.name}: missing compatibility.${field}`);
       }
     }
   }
 
-  if (failures.length > 0) {
-    console.error("Project compatibility artifact validation failed:");
-    for (const failure of failures) {
-      console.error(`  - ${failure}`);
-    }
-    process.exit(1);
-  }
+  return failures;
 }
 
 function firstNonEmpty(...values) {
@@ -160,12 +114,17 @@ function githubRunUrl(runId) {
   return `${serverUrl}/${repository}/actions/runs/${runId}`;
 }
 
-function mergedArtifactMetadata(generatedAt) {
-  const payloadMetadata = payloads.map(({ payload }) => payload).find((payload) => payload?.source_commit);
+function mergedArtifactMetadata(payloads, generatedAt) {
+  const payloadMetadata = payloads.find(({ payload }) => payload?.source_commit)?.payload;
   const runId = firstNonEmpty(payloadMetadata?.workflow_run_id, process.env.GITHUB_RUN_ID, "local");
   return {
     generated_at: generatedAt,
-    source_commit: firstNonEmpty(payloadMetadata?.source_commit, process.env.BENCH_TARGET_SHA, process.env.GITHUB_SHA, "local"),
+    source_commit: firstNonEmpty(
+      payloadMetadata?.source_commit,
+      process.env.BENCH_TARGET_SHA,
+      process.env.GITHUB_SHA,
+      "local",
+    ),
     workflow_name: firstNonEmpty(payloadMetadata?.workflow_name, process.env.GITHUB_WORKFLOW, "local"),
     workflow_run_id: runId,
     workflow_run_url: firstNonEmpty(payloadMetadata?.workflow_run_url, githubRunUrl(runId)),
@@ -177,36 +136,105 @@ function mergedArtifactMetadata(generatedAt) {
   };
 }
 
-validateProjectCompatibilityRows(results);
-const projectCompatibilityRequiredFields = hasProjectCompatibilityRows(results);
-const generatedAt = new Date().toISOString();
+function tallyWins(results) {
+  let tszWins = 0;
+  let tsgoWins = 0;
+  let greenTszWins = 0;
+  let greenTsgoWins = 0;
+  let errorCases = 0;
+  for (const row of results) {
+    if (row.status) errorCases += 1;
+    if (row.winner === "tsz") {
+      tszWins += 1;
+      if (isGreen(row)) greenTszWins += 1;
+    } else if (row.winner === "tsgo") {
+      tsgoWins += 1;
+      if (isGreen(row)) greenTsgoWins += 1;
+    }
+  }
+  return { tszWins, tsgoWins, greenTszWins, greenTsgoWins, errorCases };
+}
 
-const merged = {
-  ...mergedArtifactMetadata(generatedAt),
-  benchmark_runner: "scripts/bench/bench-vs-tsgo.sh",
-  merged_from: payloads.map(({ file }) => path.basename(file)).sort(),
-  validation: {
-    hyperfine_exit_codes_required: hyperfineExitCodesRequired,
-    project_compatibility_required_fields: projectCompatibilityRequiredFields,
-    runner_environment_warnings: runnerEnvironmentWarnings,
-  },
-  ...(runnerEnvironment ? { runner_environment: runnerEnvironment } : {}),
-  quick_mode: payloads.every(({ payload }) => payload.quick_mode === true),
-  filter: null,
-  binaries: payloads.find(({ payload }) => payload.binaries)?.payload.binaries || {},
-  totals: {
-    benchmarks_run: payloads.reduce(
-      (sum, { payload }) => sum + Number(payload.totals?.benchmarks_run || 0),
-      0,
-    ),
-    rows: results.length,
-    tsz_wins: tszWins,
-    tsgo_wins: tsgoWins,
-    error_cases: errorCases,
-  },
-  results,
-};
+function main() {
+  const [, , outFile, ...inputFiles] = process.argv;
 
-fs.mkdirSync(path.dirname(outFile), { recursive: true });
-fs.writeFileSync(outFile, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
-console.log(`Merged ${payloads.length} benchmark files into ${outFile}`);
+  if (!outFile || inputFiles.length === 0) {
+    console.error("Usage: scripts/bench/merge-results.mjs <out-file> <input-json...>");
+    process.exit(2);
+  }
+
+  const missingInputFiles = inputFiles.filter((file) => !fs.existsSync(file));
+  if (missingInputFiles.length > 0) {
+    console.error("Missing benchmark JSON inputs:");
+    for (const file of missingInputFiles) {
+      console.error(`  ${file}`);
+    }
+    process.exit(1);
+  }
+
+  const payloads = inputFiles.map((file) => ({
+    file,
+    payload: JSON.parse(fs.readFileSync(file, "utf8")),
+  }));
+
+  if (payloads.length === 0) {
+    console.error("No benchmark JSON inputs found.");
+    process.exit(1);
+  }
+
+  const results = payloads.flatMap(({ payload }) => payload.results || []);
+
+  const failures = collectProjectCompatibilityFailures(results);
+  if (failures.length > 0) {
+    console.error("Project compatibility artifact validation failed:");
+    for (const failure of failures) {
+      console.error(`  - ${failure}`);
+    }
+    process.exit(1);
+  }
+
+  const wins = tallyWins(results);
+
+  const hyperfineExitCodesRequired = payloads.every(
+    ({ payload }) => payload.validation?.hyperfine_exit_codes_required === true,
+  );
+  const runnerEnvironments = payloads
+    .map(({ file, payload }) => ({ file, environment: payload.runner_environment }))
+    .filter(({ environment }) => environment && typeof environment === "object");
+  const runnerEnvironment = runnerEnvironments[0]?.environment ?? null;
+  const runnerEnvironmentWarnings = validateRunnerEnvironmentConsistency(runnerEnvironments);
+
+  const merged = {
+    ...mergedArtifactMetadata(payloads, new Date().toISOString()),
+    benchmark_runner: "scripts/bench/bench-vs-tsgo.sh",
+    merged_from: payloads.map(({ file }) => path.basename(file)).sort(),
+    validation: {
+      hyperfine_exit_codes_required: hyperfineExitCodesRequired,
+      project_compatibility_required_fields: hasProjectCompatibilityRows(results),
+      runner_environment_warnings: runnerEnvironmentWarnings,
+    },
+    ...(runnerEnvironment ? { runner_environment: runnerEnvironment } : {}),
+    quick_mode: payloads.every(({ payload }) => payload.quick_mode === true),
+    filter: null,
+    binaries: payloads.find(({ payload }) => payload.binaries)?.payload.binaries || {},
+    totals: {
+      benchmarks_run: payloads.reduce(
+        (sum, { payload }) => sum + Number(payload.totals?.benchmarks_run || 0),
+        0,
+      ),
+      rows: results.length,
+      tsz_wins: wins.tszWins,
+      tsgo_wins: wins.tsgoWins,
+      green_tsz_wins: wins.greenTszWins,
+      green_tsgo_wins: wins.greenTsgoWins,
+      error_cases: wins.errorCases,
+    },
+    results,
+  };
+
+  fs.mkdirSync(path.dirname(outFile), { recursive: true });
+  fs.writeFileSync(outFile, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
+  console.log(`Merged ${payloads.length} benchmark files into ${outFile}`);
+}
+
+main();
