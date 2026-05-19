@@ -12,6 +12,7 @@ use crate::types::{
     ConditionalType, ObjectShape, ObjectShapeId, PropertyInfo, TupleElement, TypeData, TypeId,
     TypeParamInfo,
 };
+use crate::visitor::{callable_shape_id, function_shape_id};
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use tracing::trace;
@@ -1002,6 +1003,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     // Function.
                     CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
                     false
+                } else if Self::function_intrinsic_extends_callable_target(
+                    self.interner(),
+                    check_type,
+                    extends_type,
+                ) {
+                    // In conditional types, tsc treats the global `Function`
+                    // intrinsic as satisfying callable targets. Ordinary
+                    // assignment intentionally remains stricter.
+                    CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+                    true
                 } else {
                     let mut strict_checker = self.conditional_subtype_checker();
                     let r = strict_checker.is_subtype_of(check_type, extends_type);
@@ -1327,6 +1338,30 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
         }
         false
+    }
+
+    fn function_intrinsic_extends_callable_target(
+        interner: &dyn crate::TypeDatabase,
+        check_type: TypeId,
+        extends_type: TypeId,
+    ) -> bool {
+        use crate::types::IntrinsicKind;
+
+        let check_is_function_intrinsic = check_type == TypeId::FUNCTION
+            || matches!(
+                interner.lookup(check_type),
+                Some(TypeData::Intrinsic(IntrinsicKind::Function))
+            );
+        if !check_is_function_intrinsic {
+            return false;
+        }
+
+        if function_shape_id(interner, extends_type).is_some() {
+            return true;
+        }
+
+        callable_shape_id(interner, extends_type)
+            .is_some_and(|shape_id| !interner.callable_shape(shape_id).call_signatures.is_empty())
     }
 
     /// Distribute a conditional type over a union.

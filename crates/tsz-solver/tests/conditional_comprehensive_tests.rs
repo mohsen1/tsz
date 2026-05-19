@@ -2878,3 +2878,40 @@ fn test_colocated_infer_constrained_all_satisfy_keeps_union() {
     let expected = interner.union2(foo, bar);
     assert_eq!(result, expected);
 }
+
+#[test]
+fn function_intrinsic_extends_callable_in_conditional_types() {
+    use crate::types::{FunctionShape, ParamInfo};
+
+    let interner = TypeInterner::new();
+    let callable_target = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: None,
+            type_id: TypeId::ANY,
+            optional: false,
+            rest: true,
+        }],
+        this_type: None,
+        return_type: TypeId::ANY,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let cond = ConditionalType {
+        check_type: TypeId::FUNCTION,
+        extends_type: callable_target,
+        true_type: TypeId::STRING,
+        false_type: TypeId::NUMBER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+
+    assert_eq!(
+        result,
+        TypeId::STRING,
+        "conditional types keep tsc's Function-extends-callable true branch"
+    );
+}
