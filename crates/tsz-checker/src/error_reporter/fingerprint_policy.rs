@@ -807,13 +807,9 @@ impl<'a> CheckerState<'a> {
         source_type: TypeId,
         target_type: TypeId,
     ) -> bool {
-        use crate::query_boundaries::assignability::RelationRequest;
         use crate::query_boundaries::relation_types::RelationFailure;
 
-        let (prepared_source, prepared_target) =
-            self.prepare_assignability_inputs(source_type, target_type);
-        let request = RelationRequest::assign(prepared_source, prepared_target);
-        let outcome = self.execute_relation_request(&request);
+        let outcome = self.assign_relation_outcome(source_type, target_type);
         let Some(reason) = outcome.failure.as_ref() else {
             return false;
         };

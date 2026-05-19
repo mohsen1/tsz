@@ -229,11 +229,8 @@ impl<'a> CheckerState<'a> {
 
         // No pre-computed outcome available. Build one through the canonical
         // boundary so we never fall back to checker-local property enumeration.
-        use crate::query_boundaries::assignability::RelationRequest;
-        let (ps, pt) = self.prepare_assignability_inputs(source, target);
-        let built_outcome = self.execute_relation_request(
-            &RelationRequest::assign(ps, pt).with_property_classification(),
-        );
+        let built_outcome =
+            self.assign_relation_outcome_with_property_classification(source, target);
         if let Some(ref cls) = built_outcome.property_classification {
             if cls.excess_properties.is_empty() {
                 return false;
@@ -323,10 +320,7 @@ impl<'a> CheckerState<'a> {
         // the failure reason, avoiding a redundant solver round-trip in
         // should_skip_weak_union_error's fallback path.
         let relation_outcome = {
-            use crate::query_boundaries::assignability::RelationRequest;
-            let (ps, pt) = self.prepare_assignability_inputs(source, target);
-            let request = RelationRequest::assign(ps, pt).with_property_classification();
-            let outcome = self.execute_relation_request(&request);
+            let outcome = self.assign_relation_outcome_with_property_classification(source, target);
             if outcome.related {
                 return true;
             }
@@ -354,7 +348,7 @@ impl<'a> CheckerState<'a> {
         // try checking T against the target.
         if let Some(inner) =
             crate::query_boundaries::common::readonly_inner_type(self.ctx.types, source)
-            && self.is_assignable_to(inner, target)
+            && self.diagnostic_relation_boolean_guard(inner, target)
         {
             return true;
         }
@@ -590,7 +584,7 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
             return true;
         }
-        if self.is_assignable_to(source, target) {
+        if self.diagnostic_relation_boolean_guard(source, target) {
             return true;
         }
         let display_target = self.ctx.types.intersect_types_raw2(source, target);
@@ -624,13 +618,7 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        let outcome = {
-            use crate::query_boundaries::assignability::RelationRequest;
-            let (prepared_source, prepared_target) =
-                self.prepare_assignability_inputs(source, target);
-            let request = RelationRequest::assign(prepared_source, prepared_target);
-            self.execute_relation_request(&request)
-        };
+        let outcome = self.assign_relation_outcome(source, target);
 
         if outcome.related {
             return true;
@@ -789,25 +777,20 @@ impl<'a> CheckerState<'a> {
         // checker-only indexed-access and application guards that are not
         // represented by the normalized relation boundary.
         self.ctx.relation_depth_exceeded.set(false);
-        let request = {
-            use crate::query_boundaries::assignability::RelationRequest;
-            let (prepared_source, prepared_target) =
-                self.prepare_assignability_inputs(source, target);
-            RelationRequest::assign(prepared_source, prepared_target).with_property_classification()
-        };
-        let outcome = self.execute_relation_request(&request);
+        let outcome = self.assign_relation_outcome_with_property_classification(source, target);
+        let prepared_pair = self.prepare_assignability_inputs(source, target);
         let same_application_base = self
-            .application_info_or_display_alias(request.source)
-            .zip(self.application_info_or_display_alias(request.target))
+            .application_info_or_display_alias(prepared_pair.0)
+            .zip(self.application_info_or_display_alias(prepared_pair.1))
             .is_some_and(|((source_base, _), (target_base, _))| {
                 self.application_bases_are_same_nominal_type(source_base, target_base)
             })
-            || self.is_promise_like_application_pair(request.source, request.target);
+            || self.is_promise_like_application_pair(prepared_pair.0, prepared_pair.1);
         let complex_same_application_without_failure =
             outcome.depth_exceeded && outcome.failure.is_none() && same_application_base;
         let same_application_arg_mismatch = if outcome.related && same_application_base {
-            self.application_info_or_display_alias(request.source)
-                .zip(self.application_info_or_display_alias(request.target))
+            self.application_info_or_display_alias(prepared_pair.0)
+                .zip(self.application_info_or_display_alias(prepared_pair.1))
                 .is_some_and(|((_, source_args), (_, target_args))| {
                     source_args.len() == target_args.len()
                         && source_args
@@ -815,13 +798,13 @@ impl<'a> CheckerState<'a> {
                             .copied()
                             .zip(target_args.iter().copied())
                             .any(|(source_arg, target_arg)| {
-                                !self.is_assignable_to(source_arg, target_arg)
+                                !self.diagnostic_relation_boolean_guard(source_arg, target_arg)
                             })
                 })
         } else {
             false
         };
-        let raw_assignable = self.is_assignable_to(source, target);
+        let raw_assignable = self.diagnostic_relation_boolean_guard(source, target);
         let structurally_related_unreliable_application = !raw_assignable
             && outcome.related
             && self.same_base_application_pair(source, target)
@@ -1094,7 +1077,7 @@ impl<'a> CheckerState<'a> {
             self.error_type_not_assignable_with_reason_at_anchor(source, target, diag_idx);
             return false;
         }
-        if self.is_assignable_to(source, target) {
+        if self.diagnostic_relation_boolean_guard(source, target) {
             return true;
         }
         if self.is_nested_same_wrapper_application_assignment(source, target) {
@@ -1121,12 +1104,7 @@ impl<'a> CheckerState<'a> {
         // Build a RelationRequest so the weak-union hint is collected alongside
         // the failure reason, avoiding a redundant solver round-trip in
         // should_skip_weak_union_error's fallback path.
-        let request = {
-            use crate::query_boundaries::assignability::RelationRequest;
-            let (ps, pt) = self.prepare_assignability_inputs(source, target);
-            RelationRequest::assign(ps, pt).with_property_classification()
-        };
-        let outcome = self.execute_relation_request(&request);
+        let outcome = self.assign_relation_outcome_with_property_classification(source, target);
         if self.should_skip_weak_union_error_with_outcome(
             source,
             target,
@@ -1164,19 +1142,14 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
             return true;
         }
-        if self.is_assignable_to(source, target) {
+        if self.diagnostic_relation_boolean_guard(source, target) {
             return true;
         }
 
         // Build a RelationRequest so the weak-union hint is collected alongside
         // the failure reason, avoiding a redundant solver round-trip in
         // should_skip_weak_union_error's fallback path.
-        let request = {
-            use crate::query_boundaries::assignability::RelationRequest;
-            let (ps, pt) = self.prepare_assignability_inputs(source, target);
-            RelationRequest::assign(ps, pt).with_property_classification()
-        };
-        let outcome = self.execute_relation_request(&request);
+        let outcome = self.assign_relation_outcome_with_property_classification(source, target);
         if self.should_skip_weak_union_error_with_outcome(
             source,
             target,
@@ -1212,19 +1185,14 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
             return true;
         }
-        if self.is_assignable_to(source, target) {
+        if self.diagnostic_relation_boolean_guard(source, target) {
             return true;
         }
 
         // Build a RelationRequest so the weak-union hint is collected alongside
         // the failure reason, avoiding a redundant solver round-trip in
         // should_skip_weak_union_error's fallback path.
-        let request = {
-            use crate::query_boundaries::assignability::RelationRequest;
-            let (ps, pt) = self.prepare_assignability_inputs(source, target);
-            RelationRequest::assign(ps, pt).with_property_classification()
-        };
-        let outcome = self.execute_relation_request(&request);
+        let outcome = self.assign_relation_outcome_with_property_classification(source, target);
         if self.should_skip_weak_union_error_with_outcome(
             source,
             target,
@@ -1265,14 +1233,7 @@ impl<'a> CheckerState<'a> {
         if target == TypeId::NEVER && self.generic_indexed_access_argument_surface(source) {
             return true;
         }
-        let request = {
-            use crate::query_boundaries::assignability::RelationRequest;
-            let (prepared_source, prepared_target) =
-                self.prepare_assignability_inputs(source, target);
-            RelationRequest::call_arg(prepared_source, prepared_target)
-                .with_property_classification()
-        };
-        let outcome = self.execute_relation_request(&request);
+        let outcome = self.call_arg_relation_outcome_with_property_classification(source, target);
         self.report_argument_assignability_with_outcome(source, target, arg_idx, outcome)
     }
 
@@ -1754,12 +1715,7 @@ impl<'a> CheckerState<'a> {
         // cases. Do not add an outer `!outcome.weak_union_violation` gate here;
         // that guard suppresses TS2416 for non-object-literal sources (e.g.
         // class property declarations) where the skip should NOT fire.
-        let request = {
-            use crate::query_boundaries::assignability::RelationRequest;
-            let (ps, pt) = self.prepare_assignability_inputs(source, target);
-            RelationRequest::bivariant_callbacks(ps, pt)
-        };
-        let outcome = self.execute_relation_request(&request);
+        let outcome = self.bivariant_callbacks_relation_outcome(source, target);
         !self.should_skip_weak_union_error_with_outcome(source, target, source_idx, Some(&outcome))
     }
 
@@ -1767,7 +1723,8 @@ impl<'a> CheckerState<'a> {
     ///
     /// Useful in checker locations that need type comparability/equivalence-like checks.
     pub(crate) fn are_mutually_assignable(&mut self, left: TypeId, right: TypeId) -> bool {
-        self.is_assignable_to(left, right) && self.is_assignable_to(right, left)
+        self.diagnostic_relation_boolean_guard(left, right)
+            && self.diagnostic_relation_boolean_guard(right, left)
     }
 
     /// Check if two object types with call/construct signatures are comparable
@@ -2332,11 +2289,8 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn is_weak_union_violation(&mut self, source: TypeId, target: TypeId) -> bool {
-        use crate::query_boundaries::assignability::RelationRequest;
-
-        let (prepared_source, prepared_target) = self.prepare_assignability_inputs(source, target);
-        let request = RelationRequest::assign(prepared_source, prepared_target);
-        self.execute_relation_request(&request).weak_union_violation
+        self.assign_relation_outcome(source, target)
+            .weak_union_violation
     }
 
     /// Emit TS2559 ("Type 'X' has no properties in common with type 'Y'")

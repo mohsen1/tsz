@@ -13,6 +13,100 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub fn error_type_does_not_satisfy_the_expected_type(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        idx: NodeIndex,
+        keyword_pos: Option<u32>,
+    ) {
+        self.error_type_does_not_satisfy_the_expected_type_with_outcome(
+            source,
+            target,
+            idx,
+            keyword_pos,
+            None,
+        );
+    }
+
+    pub(crate) fn error_type_does_not_satisfy_the_expected_type_with_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        idx: NodeIndex,
+        keyword_pos: Option<u32>,
+        outcome: Option<&crate::query_boundaries::assignability::RelationOutcome>,
+    ) {
+        if !self.has_exact_optional_property_mismatch(source, target)
+            && self.should_suppress_assignability_diagnostic(source, target)
+        {
+            return;
+        }
+
+        let fallback_analysis;
+        let reason = if let Some(outcome) = outcome {
+            outcome.failure.as_ref().map(
+                crate::query_boundaries::relation_types::RelationFailure::to_solver_failure_reason,
+            )
+        } else {
+            fallback_analysis = self.analyze_assignability_failure(source, target);
+            fallback_analysis.failure_reason
+        };
+
+        let anchor_idx = if keyword_pos.is_some() {
+            self.resolve_diagnostic_anchor_node(idx, DiagnosticAnchorKind::Exact)
+        } else {
+            self.resolve_diagnostic_anchor_node(idx, DiagnosticAnchorKind::RewriteAssignment)
+        };
+
+        let mut base_diag = match reason {
+            Some(reason) => self.render_failure_reason(&reason, source, target, anchor_idx, 0),
+            None => {
+                let Some(anchor) =
+                    self.resolve_diagnostic_anchor(anchor_idx, DiagnosticAnchorKind::Exact)
+                else {
+                    return;
+                };
+                let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
+                    self.ctx.types,
+                    &self.ctx.binder.symbols,
+                    self.ctx.file_name.as_str(),
+                )
+                .with_def_store(&self.ctx.definition_store)
+                .with_namespace_module_names(&self.ctx.namespace_module_names);
+                let diag = builder.type_not_assignable(source, target, anchor.start, anchor.length);
+                diag.to_checker_diagnostic(&self.ctx.file_name)
+            }
+        };
+
+        let display_source = if self.is_literal_sensitive_assignment_target(target) {
+            source
+        } else {
+            crate::query_boundaries::common::widen_literal_to_primitive(self.ctx.types, source)
+        };
+        let src_str = self.format_type_for_assignability_message(display_source);
+        let tgt_str = self.format_type_for_assignability_message(target);
+        let msg = format_message(
+            diagnostic_messages::TYPE_DOES_NOT_SATISFY_THE_EXPECTED_TYPE,
+            &[&src_str, &tgt_str],
+        );
+
+        if base_diag.code != diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_EXPECTED_TYPE {
+            let new_related = self
+                .related_from_diagnostic(&base_diag, RelatedInformationPolicy::WRAPPED_DIAGNOSTIC);
+            base_diag.code = diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_EXPECTED_TYPE;
+            base_diag.message_text = msg;
+            base_diag.related_information = new_related;
+        }
+
+        if let Some(kw_pos) = keyword_pos {
+            base_diag.start = kw_pos;
+            base_diag.length = 9;
+        }
+
+        self.ctx.push_diagnostic(base_diag);
+    }
+
     /// Diagnose an assignment failure using failure evidence already collected
     /// by `execute_relation_request`.
     pub(crate) fn diagnose_assignment_failure_with_relation_outcome(

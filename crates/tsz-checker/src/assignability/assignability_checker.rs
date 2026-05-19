@@ -2106,6 +2106,18 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
+    pub(crate) fn assign_relation_outcome_with_property_classification(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::assign(source, target)
+                .with_property_classification();
+        self.execute_relation_request(&request)
+    }
+
     /// Execute a diagnostic-bearing call-argument relation for raw checker
     /// types, preserving the canonical TS2345 relation path.
     pub(crate) fn call_arg_relation_outcome(
@@ -2116,6 +2128,18 @@ impl<'a> CheckerState<'a> {
         let (source, target) = self.prepare_assignability_inputs(source, target);
         let request =
             crate::query_boundaries::assignability::RelationRequest::call_arg(source, target);
+        self.execute_relation_request(&request)
+    }
+
+    pub(crate) fn call_arg_relation_outcome_with_property_classification(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::call_arg(source, target)
+                .with_property_classification();
         self.execute_relation_request(&request)
     }
 
@@ -2131,6 +2155,16 @@ impl<'a> CheckerState<'a> {
             source, target,
         );
         self.execute_relation_request(&request)
+    }
+
+    /// Legacy boolean-only relation guard for diagnostic code paths that need
+    /// the checker assignability predicate rather than structured evidence.
+    pub(crate) fn diagnostic_relation_boolean_guard(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        self.is_assignable_to(source, target)
     }
 
     /// Check if source type is assignable to target type.

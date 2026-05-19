@@ -321,7 +321,6 @@ impl<'a> CheckerState<'a> {
         arg_idx: NodeIndex,
         param_type: TypeId,
     ) -> Option<NodeIndex> {
-        use crate::query_boundaries::assignability::RelationRequest;
         use crate::query_boundaries::relation_types::RelationFailure;
         use tsz_parser::parser::syntax_kind_ext;
 
@@ -381,10 +380,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let (prepared_source, prepared_target) =
-            self.prepare_assignability_inputs(source_type, effective_param_type);
-        let request = RelationRequest::assign(prepared_source, prepared_target);
-        let outcome = self.execute_relation_request(&request);
+        let outcome = self.assign_relation_outcome(source_type, effective_param_type);
         match outcome.failure.as_ref() {
             Some(
                 RelationFailure::MissingProperty { .. }

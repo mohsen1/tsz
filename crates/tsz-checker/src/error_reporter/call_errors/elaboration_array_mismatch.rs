@@ -95,12 +95,7 @@ impl<'a> CheckerState<'a> {
         let failure = if let Some(failure) = relation_failure {
             Some(failure)
         } else {
-            use crate::query_boundaries::assignability::RelationRequest;
-
-            let (prepared_source, prepared_target) =
-                self.prepare_assignability_inputs(source_type, target_type);
-            let request = RelationRequest::assign(prepared_source, prepared_target);
-            fallback_outcome = self.execute_relation_request(&request);
+            fallback_outcome = self.assign_relation_outcome(source_type, target_type);
             fallback_outcome.failure.as_ref()
         };
         #[allow(clippy::match_same_arms)] // explicit TupleElementMismatch arm carries rationale

@@ -183,11 +183,7 @@ impl<'a> CheckerState<'a> {
         let failure_reason = if let Some(reason) = relation_failure {
             Some(reason.to_solver_failure_reason())
         } else {
-            use crate::query_boundaries::assignability::RelationRequest;
-            let (prepared_arg, prepared_param) =
-                self.prepare_assignability_inputs(arg_type, param_type);
-            let request = RelationRequest::call_arg(prepared_arg, prepared_param);
-            fallback_outcome = self.execute_relation_request(&request);
+            fallback_outcome = self.call_arg_relation_outcome(arg_type, param_type);
             fallback_outcome.failure.as_ref().map(
                 crate::query_boundaries::relation_types::RelationFailure::to_solver_failure_reason,
             )
@@ -878,11 +874,7 @@ impl<'a> CheckerState<'a> {
                     all_same = false;
                     break;
                 };
-                use crate::query_boundaries::assignability::RelationRequest;
-                let (prepared_arg, prepared_param) =
-                    self.prepare_assignability_inputs(*arg_type, *param_type);
-                let request = RelationRequest::call_arg(prepared_arg, prepared_param);
-                let outcome = self.execute_relation_request(&request);
+                let outcome = self.call_arg_relation_outcome(*arg_type, *param_type);
                 let Some(tsz_solver::SubtypeFailureReason::ExcessProperty {
                     property_name, ..
                 }) = outcome

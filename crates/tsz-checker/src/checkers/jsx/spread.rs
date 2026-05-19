@@ -98,11 +98,7 @@ impl<'a> CheckerState<'a> {
         let concrete_spread_outcome = if let Some(outcome) = concrete_spread_outcome {
             Some(outcome)
         } else if !spread_has_type_params {
-            use crate::query_boundaries::assignability::RelationRequest;
-            let (prepared_spread, prepared_props) =
-                self.prepare_assignability_inputs(spread_type, props_type);
-            let request = RelationRequest::assign(prepared_spread, prepared_props);
-            built_concrete_spread_outcome = self.execute_relation_request(&request);
+            built_concrete_spread_outcome = self.assign_relation_outcome(spread_type, props_type);
             Some(&built_concrete_spread_outcome)
         } else {
             None
