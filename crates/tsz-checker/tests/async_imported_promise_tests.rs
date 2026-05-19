@@ -117,7 +117,7 @@ export class Task<T> extends Promise<T> { }
 /// clause and return the resolved type argument `T`.
 ///
 /// This covers the case where the string name "Promise" in the declaring file's
-/// file_locals is absent (no local shadow) so we fall back to `has_name_in_lib`.
+/// `file_locals` is absent (no local shadow) so we fall back to `has_name_in_lib`.
 #[test]
 fn lib_promise_subclass_cross_file_unwraps_type_arg() {
     let lib_files = load_lib_files(&["lib.es2015.promise.d.ts", "lib.es5.d.ts"]);
