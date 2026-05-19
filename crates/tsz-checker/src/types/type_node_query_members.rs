@@ -216,13 +216,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let binder = self.ctx.binder;
         let file_name = arena.source_files.first()?.file_name.clone();
         let mut child = CheckerState {
-            ctx: CheckerContext::with_parent_cache(
+            ctx: CheckerContext::with_parent_cache_attributed(
                 arena,
                 binder,
                 self.ctx.types,
                 file_name,
                 self.ctx.compiler_options.clone(),
                 self.ctx,
+                tsz_common::perf_counters::CheckerCreationReason::ImportType,
             ),
         };
         child.ctx.copy_cross_file_state_from(self.ctx);
@@ -340,13 +341,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
         let target_file_name = target_arena.source_files.first()?.file_name.clone();
         let mut checker = CheckerState {
-            ctx: CheckerContext::with_parent_cache(
+            ctx: CheckerContext::with_parent_cache_attributed(
                 target_arena,
                 target_binder,
                 self.ctx.types,
                 target_file_name,
                 self.ctx.compiler_options.clone(),
                 self.ctx,
+                tsz_common::perf_counters::CheckerCreationReason::ImportType,
             ),
         };
         checker.ctx.copy_cross_file_state_from(self.ctx);
