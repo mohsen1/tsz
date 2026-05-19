@@ -186,6 +186,17 @@ function validateManifestPath(value, label, requiredPrefix) {
   }
 }
 
+function parseSourceStem(source) {
+  if (!source.endsWith(".md")) {
+    console.error(
+      `error: Type Challenges solution source must be a Markdown file: ${source}`,
+    );
+    process.exit(1);
+  }
+
+  return path.posix.basename(source, ".md");
+}
+
 const entries = lines
   .filter((line) => line.length > 0)
   .map((line, index) => {
@@ -228,6 +239,7 @@ const entries = lines
         id: parseRequiredChallengeId(id, source),
         level,
         title,
+        sourceStem: parseSourceStem(source),
       },
       declarations,
       semanticFamilies,
