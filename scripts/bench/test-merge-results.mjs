@@ -12,6 +12,13 @@ const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
 const MERGE_SCRIPT = path.join(ROOT, "scripts", "bench", "merge-results.mjs");
 
 const REQUIRED_COMPATIBILITY_FIELDS = {
+  generated_at: "2026-05-19T01:02:03.000Z",
+  source_commit: "abcdef1234567890",
+  workflow_name: "Bench",
+  workflow_run_id: "12345",
+  workflow_run_url: "https://github.com/mohsen1/tsz/actions/runs/12345",
+  workflow_run_attempt: "1",
+  run_status: "completed",
   state: "green",
   exit_class: "exit success",
   first_failure_class: null,
@@ -79,6 +86,17 @@ function runMergeInputs(dir, inputs) {
   const output = path.join(dir, "merged.json");
   const result = spawnSync(process.execPath, [MERGE_SCRIPT, output, ...inputs], {
     cwd: ROOT,
+    env: {
+      ...process.env,
+      BENCH_TARGET_SHA: "",
+      GITHUB_ACTIONS: "",
+      GITHUB_REPOSITORY: "",
+      GITHUB_RUN_ATTEMPT: "",
+      GITHUB_RUN_ID: "",
+      GITHUB_SERVER_URL: "",
+      GITHUB_SHA: "",
+      GITHUB_WORKFLOW: "",
+    },
     encoding: "utf8",
   });
   return { ...result, output };
@@ -101,6 +119,9 @@ withTempDir((dir) => {
   const result = runMerge(dir, REQUIRED_PROJECT_ROWS.map((name) => projectRow(name)));
   assert.equal(result.status, 0, result.stderr);
   const merged = JSON.parse(fs.readFileSync(result.output, "utf8"));
+  assert.equal(merged.source_commit, "local");
+  assert.equal(merged.workflow_run_id, "local");
+  assert.equal(merged.run_status, "local");
   assert.equal(merged.validation.project_compatibility_required_fields, true);
 });
 
