@@ -24,7 +24,7 @@ use tsz::checker::diagnostics::{
 };
 use tsz::checker::state::CheckerState;
 use tsz::lib_loader::LibFile;
-use tsz::module_resolver::ModuleResolver;
+use tsz::module_resolver::{ImportKind, ImportingModuleKind, ModuleResolver};
 use tsz::span::Span;
 use tsz_binder::state::BinderStateScopeInputs;
 use tsz_common::common::{ModuleKind, NewLineKind, ScriptTarget};
@@ -37,9 +37,11 @@ use super::emit::{
     write_outputs,
 };
 pub(crate) use super::emit::{normalize_base_url, normalize_output_dir, normalize_root_dir};
+#[cfg(test)]
+use super::resolution::collect_module_specifiers;
 use super::resolution::{
     ModuleResolutionCache, build_duplicate_package_redirects, canonicalize_or_owned,
-    collect_export_binding_nodes, collect_import_bindings, collect_module_specifiers,
+    collect_export_binding_nodes, collect_import_bindings, collect_module_specifiers_for_check,
     collect_star_export_specifiers, collect_type_packages_from_root, default_type_roots, env_flag,
     implied_resolution_mode_for_file_with_cache, is_declaration_file,
     json_type_attribute_enables_json_module, module_specifier_has_type_json_import_attribute,
@@ -1356,6 +1358,7 @@ fn compile_inner(
     let SourceReadResult {
         sources: all_sources,
         dependencies,
+        module_resolutions,
         type_reference_errors,
         resolution_mode_errors,
     } = {
@@ -1770,7 +1773,7 @@ fn compile_inner(
     // return path.
     let collect_compile_stats =
         args.diagnostics || args.extended_diagnostics || args.generate_trace.is_some();
-    let collected = collect_diagnostics(
+    let collected = collect_diagnostics_with_source_resolutions(
         &program,
         &resolved,
         &base_dir,
@@ -1780,6 +1783,7 @@ fn compile_inner(
         &parallel_type_caches,
         has_deprecation_diagnostics,
         collect_compile_stats,
+        Some(&module_resolutions),
     );
     let mut diagnostics: Vec<Diagnostic> = collected.diagnostics;
     let check_duration = collect_diagnostics_start.elapsed();
@@ -2564,11 +2568,23 @@ fn resolve_effective_lib_paths(
 ) -> Result<Vec<PathBuf>> {
     let include_config_libs =
         !(resolved.checker.no_lib || (resolved.lib_is_default && disable_default_libs));
-    let mut lib_names = if include_config_libs {
-        lib_names_from_paths(&resolved.lib_files)
-    } else {
-        Vec::new()
-    };
+    let can_have_lib_replacements =
+        resolved.lib_replacement && typescript_lib_replacement_root_exists(base_dir);
+    let mut lib_paths = Vec::new();
+    let mut seen = FxHashSet::default();
+    let mut lib_names = Vec::new();
+
+    if include_config_libs {
+        if can_have_lib_replacements {
+            lib_names.extend(lib_names_from_paths(&resolved.lib_files));
+        } else {
+            append_unique_lib_paths(
+                &mut lib_paths,
+                &mut seen,
+                resolved.lib_files.iter().cloned(),
+            );
+        }
+    }
 
     // When --noLib is set, ignore /// <reference lib="..." /> directives.
     // tsc skips lib reference resolution entirely when noLib is enabled.
@@ -2576,44 +2592,77 @@ fn resolve_effective_lib_paths(
         let source_reference_libs = collect_source_reference_libs(sources);
         if !source_reference_libs.is_empty() {
             // Source-file `/// <reference lib="..." />` directives may name libs
-            // that no longer exist in this TS version (e.g. rxjs references
+            // that no longer exist in this TS version (e.g., rxjs references
             // `esnext.asynciterable`, since folded into `es2018.asynciterable`).
             // The transitive resolver silently skips unknown names at this
             // layer; user-facing TS2726 for invalid initial names is emitted
             // separately by `collect_source_reference_lib_diagnostics`.
             let expanded_source_paths =
                 resolve_lib_files_with_options_transitive(&source_reference_libs, true)?;
-            append_unique_lib_names(&mut lib_names, lib_names_from_paths(&expanded_source_paths));
+            if can_have_lib_replacements {
+                append_unique_lib_names(
+                    &mut lib_names,
+                    lib_names_from_paths(&expanded_source_paths),
+                );
+            } else {
+                append_unique_lib_paths(&mut lib_paths, &mut seen, expanded_source_paths);
+            }
         }
     }
 
-    let mut lib_paths = Vec::with_capacity(lib_names.len());
-    let mut seen = FxHashSet::default();
     for lib_name in lib_names {
         let Some(path) = resolve_compiler_lib_path(&lib_name, resolved, base_dir)? else {
             continue;
         };
+        append_unique_lib_paths(&mut lib_paths, &mut seen, std::iter::once(path));
+    }
+    Ok(lib_paths)
+}
+
+fn append_unique_lib_paths(
+    lib_paths: &mut Vec<PathBuf>,
+    seen: &mut FxHashSet<PathBuf>,
+    paths: impl IntoIterator<Item = PathBuf>,
+) {
+    for path in paths {
         let canonical = canonicalize_or_owned(&path);
         if seen.insert(canonical.clone()) {
             lib_paths.push(canonical);
         }
     }
-    Ok(lib_paths)
+}
+
+fn typescript_lib_replacement_root_exists(base_dir: &Path) -> bool {
+    base_dir.join("node_modules").join("@typescript").is_dir()
 }
 
 fn collect_source_reference_libs(sources: &[SourceEntry]) -> Vec<String> {
     let mut lib_names = Vec::new();
     for source in sources {
         let refs = if let Some(text) = source.text.as_deref() {
-            tsz::config::extract_lib_references(text)
+            if source_may_contain_reference_lib_directives(text) {
+                tsz::config::extract_lib_references(text)
+            } else {
+                Vec::new()
+            }
         } else {
             std::fs::read_to_string(&source.path)
-                .map(|text| tsz::config::extract_lib_references(&text))
+                .map(|text| {
+                    if source_may_contain_reference_lib_directives(&text) {
+                        tsz::config::extract_lib_references(&text)
+                    } else {
+                        Vec::new()
+                    }
+                })
                 .unwrap_or_default()
         };
         append_unique_lib_names(&mut lib_names, refs);
     }
     lib_names
+}
+
+fn source_may_contain_reference_lib_directives(text: &str) -> bool {
+    text.contains("///") && text.contains("reference") && text.contains("lib")
 }
 
 /// Emit `TS2726` for user-authored source-file `/// <reference lib="..." />`
@@ -2637,10 +2686,20 @@ fn collect_source_reference_lib_diagnostics(
     let mut diagnostics = Vec::new();
     for source in sources {
         let positioned = if let Some(text) = source.text.as_deref() {
-            tsz::config::extract_lib_references_with_positions(text)
+            if source_may_contain_reference_lib_directives(text) {
+                tsz::config::extract_lib_references_with_positions(text)
+            } else {
+                Vec::new()
+            }
         } else {
             std::fs::read_to_string(&source.path)
-                .map(|text| tsz::config::extract_lib_references_with_positions(&text))
+                .map(|text| {
+                    if source_may_contain_reference_lib_directives(&text) {
+                        tsz::config::extract_lib_references_with_positions(&text)
+                    } else {
+                        Vec::new()
+                    }
+                })
                 .unwrap_or_default()
         };
         for reference in positioned {
@@ -3048,8 +3107,9 @@ pub(crate) use sources::{
     resolve_tsconfig_path,
 };
 use sources::{
-    SourceEntry, SourceReadResult, build_discovery_options, collect_type_root_files,
-    read_source_files, sources_have_no_default_lib,
+    SourceEntry, SourceModuleResolution, SourceModuleResolutionKey, SourceReadResult,
+    build_discovery_options, collect_type_root_files, read_source_files,
+    sources_have_no_default_lib,
 };
 
 #[path = "check.rs"]
@@ -3058,7 +3118,7 @@ mod check;
 mod check_module_graph;
 #[path = "check_utils.rs"]
 mod check_utils;
-use check::{collect_diagnostics, load_checker_libs};
+use check::{collect_diagnostics_with_source_resolutions, load_checker_libs};
 
 pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs) -> Result<()> {
     apply_cli_overrides_with_config_options(options, args, None)
