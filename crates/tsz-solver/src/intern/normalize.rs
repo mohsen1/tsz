@@ -600,8 +600,8 @@ impl TypeInterner {
         // Collect property-bearing shapes from both Object AND Callable types.
         // Callable types (e.g., { (x: string): number, a: "" }) have named properties
         // that can conflict with Object type properties, reducing the intersection to never.
-        let mut object_shapes: Vec<Arc<ObjectShape>> = Vec::new();
-        let mut callable_shapes: Vec<Arc<CallableShape>> = Vec::new();
+        let mut object_shapes: Vec<Arc<ObjectShape>> = Vec::with_capacity(members.len());
+        let mut callable_shapes: Vec<Arc<CallableShape>> = Vec::with_capacity(members.len());
 
         for &member in members {
             if member.is_intrinsic() {

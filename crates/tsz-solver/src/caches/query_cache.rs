@@ -747,7 +747,7 @@ impl<'a> QueryCache<'a> {
                 }
 
                 // Collect properties per member
-                let mut all_props: Vec<Vec<PropertyInfo>> = Vec::new();
+                let mut all_props: Vec<Vec<PropertyInfo>> = Vec::with_capacity(non_nullish.len());
                 for &member in &non_nullish {
                     all_props.push(self.collect_object_spread_properties_inner(member, visited));
                 }
