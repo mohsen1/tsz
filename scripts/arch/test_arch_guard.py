@@ -2762,6 +2762,23 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
         self.assertEqual(hits, [], f"unexpected hits: {hits!r}")
 
+    def test_query_cache_relation_facade_guard(self):
+        pattern, _max_lines = self._check_by_name("query cache uses relation facade")
+        root = self._make_tree(
+            {
+                "crates/tsz-solver/src/caches/query_cache.rs": (
+                    "let mut checker = configured_compat_checker(db, resolver, policy, context);\n"
+                    "let mut checker = configured_subtype_checker(db, resolver, policy, context);\n"
+                    "let result = query_relation(db, source, target, kind, policy, context);\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 3, f"unexpected hits: {hits!r}")
+        self.assertIn("query_cache.rs:1", hits[0])
+        self.assertIn("query_cache.rs:2", hits[1])
+        self.assertIn("total matching lines: 2", hits[2])
+
     def test_flags_root_solver_wildcard_compat_reexports(self):
         pattern, _max_lines = self._check_by_name("#8204")
         root = self._make_tree(

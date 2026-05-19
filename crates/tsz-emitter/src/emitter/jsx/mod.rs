@@ -748,6 +748,37 @@ mod tests {
     }
 
     #[test]
+    fn jsx_classic_unicode_escape_component_and_member_names_are_preserved() {
+        let source = r#"const x = { video: () => null };
+const a = <Comp\u0061 x={12} />;
+const b = <x.\u0076ideo />;"#;
+        let output = emit_jsx_react(source);
+        assert!(
+            output.contains(r#"React.createElement(Comp\u0061, { x: 12 })"#),
+            "Component tag identifier escapes should be preserved in expression emit.\nOutput: {output}"
+        );
+        assert!(
+            output.contains(r#"React.createElement(x.\u0076ideo, null)"#),
+            "JSX member tag property-name escapes should be preserved in expression emit.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn jsx_classic_unicode_escape_attribute_identifier_names_are_preserved() {
+        let source = r#"const a = <video \u0073rc="" />;
+const b = <video data-\u0076ideo />;"#;
+        let output = emit_jsx_react(source);
+        assert!(
+            output.contains(r#"React.createElement("video", { \u0073rc: "" })"#),
+            "Unquoted JSX attribute identifier keys should preserve source escapes.\nOutput: {output}"
+        );
+        assert!(
+            output.contains(r#"React.createElement("video", { "data-video": true })"#),
+            "Quoted JSX attribute keys should use cooked text, not source escape spelling.\nOutput: {output}"
+        );
+    }
+
+    #[test]
     fn jsx_classic_self_closing_trailing_line_comment_is_preserved() {
         let source = "const x = (<Item value={1} /> // kept\n);";
         let output = emit_jsx_react(source);

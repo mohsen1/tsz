@@ -1,9 +1,9 @@
 use super::super::Printer;
 use super::super::core::JsxEmit;
 use tsz_common::common::{ModuleKind, ScriptTarget};
-use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::Node;
+use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
@@ -73,10 +73,7 @@ impl<'a> Printer<'a> {
         for ident in &self.arena.identifiers {
             self.file_identifiers.insert(ident.escaped_text.clone());
         }
-        if !matches!(
-            self.ctx.original_module_kind,
-            Some(ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System)
-        ) {
+        if !self.ctx.is_inside_module_wrapper_body() {
             self.commonjs_named_import_substitutions.clear();
         }
         if !matches!(self.ctx.original_module_kind, Some(ModuleKind::AMD)) {
@@ -88,7 +85,11 @@ impl<'a> Printer<'a> {
         self.async_generator_inner_name_counts.clear();
         self.reserved_disposable_env_names.clear();
         self.node_esm_create_require_names = None;
-        self.commonjs_tslib_import_binding = "tslib_1".to_string();
+        // The wrapper sets the correct binding (e.g. "tslib_2" for a second outFile
+        // module) before calling the body; resetting here would clobber that value.
+        if !self.ctx.is_inside_module_wrapper_body() {
+            self.commonjs_tslib_import_binding = "tslib_1".to_string();
+        }
         self.ctx.arguments_capture_counter = 0;
         self.next_dynamic_import_promise_id = 1;
         self.first_for_of_emitted = false;
@@ -1047,7 +1048,8 @@ impl<'a> Printer<'a> {
         let pre_tslib_import_byte_offset = self.writer.len();
         let pre_tslib_import_line = self.writer.current_line();
         if self.ctx.options.import_helpers && !self.ctx.is_commonjs() && helpers.any_needed() {
-            let names = helpers.needed_names();
+            let mut names = helpers.needed_names();
+            names.sort_unstable();
             if !names.is_empty() {
                 // When a helper name collides with a local identifier (e.g.
                 // `declare var __decorate`), tsc renames the import alias to
@@ -1413,18 +1415,26 @@ impl<'a> Printer<'a> {
                 self.write(jsx_import);
             }
 
-            // Emit CJS tslib require after exports preamble
-            if self.ctx.options.import_helpers && helpers.any_needed() {
-                self.commonjs_tslib_import_binding = self.next_commonjs_module_var("tslib");
-                if self.ctx.options.target.is_es5() {
-                    self.write("var ");
-                } else {
-                    self.write("const ");
+            // Emit CJS tslib require. AMD/System wrapper bodies bind tslib via a
+            // wrapper parameter/setter; UMD keeps tsc's CJS factory-body require().
+            let needs_tslib_binding = helpers.any_needed()
+                || self.import_helpers_need_tslib_binding_for_class_emit(&source.statements);
+            if self.ctx.options.import_helpers && needs_tslib_binding {
+                if !matches!(
+                    self.ctx.original_module_kind,
+                    Some(ModuleKind::AMD | ModuleKind::System)
+                ) {
+                    self.commonjs_tslib_import_binding = self.next_commonjs_module_var("tslib");
+                    if self.ctx.options.target.is_es5() {
+                        self.write("var ");
+                    } else {
+                        self.write("const ");
+                    }
+                    let binding = self.commonjs_tslib_import_binding.clone();
+                    self.write(&binding);
+                    self.write(" = require(\"tslib\");");
+                    self.write_line();
                 }
-                let binding = self.commonjs_tslib_import_binding.clone();
-                self.write(&binding);
-                self.write(" = require(\"tslib\");");
-                self.write_line();
             }
         }
 
@@ -2342,6 +2352,48 @@ impl<'a> Printer<'a> {
                 .arguments
                 .as_ref()
                 .is_some_and(|args| args.nodes.len() >= 2)
+    }
+
+    pub(in crate::emitter) fn import_helpers_need_tslib_binding_for_class_emit(
+        &self,
+        statements: &NodeList,
+    ) -> bool {
+        self.ctx.options.import_helpers
+            && statements
+                .nodes
+                .iter()
+                .copied()
+                .any(|idx| self.node_needs_tslib_binding_for_class_emit(idx))
+    }
+
+    fn node_needs_tslib_binding_for_class_emit(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+
+        if matches!(
+            node.kind,
+            k if k == syntax_kind_ext::CLASS_DECLARATION
+                || k == syntax_kind_ext::CLASS_EXPRESSION
+        ) && let Some(class_data) = self.arena.get_class(node)
+        {
+            let needs_extends_helper = self.ctx.target_es5
+                && crate::transforms::emit_utils::get_extends_expression_index(
+                    self.arena,
+                    &class_data.heritage_clauses,
+                )
+                .is_some();
+            let needs_decorator_helper =
+                self.ctx.options.legacy_decorators && self.class_has_decorators(class_data);
+            if needs_extends_helper || needs_decorator_helper {
+                return true;
+            }
+        }
+
+        self.arena
+            .get_children(idx)
+            .into_iter()
+            .any(|child_idx| self.node_needs_tslib_binding_for_class_emit(child_idx))
     }
 }
 
