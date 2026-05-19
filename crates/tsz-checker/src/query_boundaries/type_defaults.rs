@@ -8,5 +8,5 @@ pub(crate) fn fill_application_defaults(
     args: &[TypeId],
     params: &[tsz_solver::TypeParamInfo],
 ) -> Option<Vec<TypeId>> {
-    tsz_solver::fill_application_defaults(db, args, params)
+    tsz_solver::computation::fill_application_defaults(db, args, params)
 }
