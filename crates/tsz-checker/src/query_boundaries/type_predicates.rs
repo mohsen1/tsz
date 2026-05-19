@@ -1,5 +1,17 @@
 use tsz_solver::{TypeDatabase, TypeId};
 
+pub(crate) fn is_top_level_error_or_error_union_member(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::is_error_type(db, type_id)
+        || tsz_solver::type_queries::get_union_members(db, type_id).is_some_and(|members| {
+            members
+                .iter()
+                .any(|&member| tsz_solver::is_error_type(db, member))
+        })
+}
+
 pub(crate) fn contains_conditional_with_application_extends(
     db: &dyn TypeDatabase,
     type_id: TypeId,
@@ -65,4 +77,28 @@ where
     }
 
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tsz_solver::TypeInterner;
+
+    #[test]
+    fn top_level_error_or_error_union_member_detects_error_shapes() {
+        let db = TypeInterner::new();
+        let error_union = db.union(vec![TypeId::STRING, TypeId::ERROR]);
+        let non_error_union = db.union(vec![TypeId::STRING, TypeId::NUMBER]);
+
+        assert!(is_top_level_error_or_error_union_member(&db, TypeId::ERROR));
+        assert!(is_top_level_error_or_error_union_member(&db, error_union));
+        assert!(!is_top_level_error_or_error_union_member(
+            &db,
+            TypeId::STRING
+        ));
+        assert!(!is_top_level_error_or_error_union_member(
+            &db,
+            non_error_union
+        ));
+    }
 }
