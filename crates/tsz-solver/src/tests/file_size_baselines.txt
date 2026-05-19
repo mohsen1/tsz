@@ -17,8 +17,8 @@
 solver_max_loc      3381
 solver_oversized    20
 solver_file_generic_call_resolve 3381
-solver_file_eval_conditional 2956
-solver_file_evaluate 3031
+solver_file_eval_conditional 2901
+solver_file_evaluate 3070
 solver_file_instantiate 2853
 solver_file_subtype_core 2829
 solver_file_type_queries_flow 2815
