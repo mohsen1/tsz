@@ -121,136 +121,6 @@ fn remove_synthetic_missing_union_spread_props(member_props: &mut [Vec<PropertyI
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tsz_solver::{TypeInterner, Visibility};
-
-    fn make_prop(db: &TypeInterner, name: &str, ty: TypeId, optional: bool) -> PropertyInfo {
-        PropertyInfo {
-            name: db.intern_string(name),
-            type_id: ty,
-            write_type: ty,
-            optional,
-            readonly: false,
-            is_method: false,
-            is_class_prototype: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-            declaration_order: 0,
-            is_string_named: true,
-            is_symbol_named: false,
-            single_quoted_name: false,
-        }
-    }
-
-    #[test]
-    fn merge_spread_vacant_entry_inserts_directly() {
-        let db = TypeInterner::new();
-        let mut map: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
-        let prop = make_prop(&db, "x", TypeId::STRING, false);
-        merge_spread_property_into_map(&db, false, &mut map, &prop);
-        assert_eq!(map.len(), 1);
-        let stored = &map[&prop.name];
-        assert_eq!(stored.type_id, TypeId::STRING);
-        assert!(!stored.optional);
-    }
-
-    #[test]
-    fn merge_spread_required_later_overrides_earlier() {
-        let db = TypeInterner::new();
-        let mut map: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
-        let earlier = make_prop(&db, "x", TypeId::STRING, false);
-        let later = make_prop(&db, "x", TypeId::NUMBER, false);
-        merge_spread_property_into_map(&db, false, &mut map, &earlier);
-        merge_spread_property_into_map(&db, false, &mut map, &later);
-        let stored = &map[&earlier.name];
-        assert_eq!(stored.type_id, TypeId::NUMBER);
-        assert!(!stored.optional);
-    }
-
-    #[test]
-    fn merge_spread_optional_later_unions_with_required_earlier_strips_undefined() {
-        let db = TypeInterner::new();
-        let mut map: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
-        let earlier = make_prop(&db, "x", TypeId::STRING, false);
-        let num_or_undef = db.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
-        let mut later = make_prop(&db, "x", num_or_undef, true);
-        later.write_type = num_or_undef;
-        merge_spread_property_into_map(&db, false, &mut map, &earlier);
-        merge_spread_property_into_map(&db, false, &mut map, &later);
-        let stored = &map[&earlier.name];
-        assert!(!stored.optional);
-        assert_ne!(stored.type_id, TypeId::UNDEFINED);
-    }
-
-    #[test]
-    fn merge_spread_optional_later_unions_with_required_earlier_exact_optional_keeps_undefined() {
-        let db = TypeInterner::new();
-        let mut map: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
-        let earlier = make_prop(&db, "x", TypeId::STRING, false);
-        let num_or_undef = db.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
-        let mut later = make_prop(&db, "x", num_or_undef, true);
-        later.write_type = num_or_undef;
-        merge_spread_property_into_map(&db, false, &mut map, &earlier);
-        merge_spread_property_into_map(&db, true, &mut map, &later);
-        let stored = &map[&earlier.name];
-        assert!(!stored.optional);
-        let members = tsz_solver::type_queries::get_union_members(&db, stored.type_id);
-        assert!(members.is_some(), "result should be a union");
-    }
-
-    #[test]
-    fn merge_spread_both_optional_stays_optional() {
-        let db = TypeInterner::new();
-        let mut map: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
-        let earlier = make_prop(&db, "x", TypeId::STRING, true);
-        let later = make_prop(&db, "x", TypeId::NUMBER, true);
-        merge_spread_property_into_map(&db, false, &mut map, &earlier);
-        merge_spread_property_into_map(&db, false, &mut map, &later);
-        let stored = &map[&earlier.name];
-        assert!(stored.optional);
-    }
-
-    #[test]
-    fn rebase_spread_display_order_sorts_and_rebases() {
-        let db = TypeInterner::new();
-        let mut a = make_prop(&db, "a", TypeId::STRING, false);
-        a.declaration_order = 5;
-        let mut b = make_prop(&db, "b", TypeId::NUMBER, false);
-        b.declaration_order = 2;
-        let props = vec![a, b];
-        let rebased = rebase_spread_display_property_order(props, 100);
-        assert_eq!(rebased.len(), 2);
-        assert_eq!(rebased[0].name, db.intern_string("b"));
-        assert_eq!(rebased[0].declaration_order, 100);
-        assert_eq!(rebased[1].name, db.intern_string("a"));
-        assert_eq!(rebased[1].declaration_order, 101);
-    }
-
-    #[test]
-    fn remove_synthetic_missing_props_drops_undefined_placeholders() {
-        let db = TypeInterner::new();
-        let branch1 = vec![make_prop(&db, "x", TypeId::STRING, false)];
-        let branch2 = vec![make_prop(&db, "x", TypeId::UNDEFINED, true)];
-        let mut all = vec![branch1, branch2];
-        remove_synthetic_missing_union_spread_props(&mut all);
-        assert_eq!(all[0].len(), 1);
-        assert_eq!(all[1].len(), 0);
-    }
-
-    #[test]
-    fn remove_synthetic_missing_props_keeps_real_optional_props() {
-        let db = TypeInterner::new();
-        let branch1 = vec![make_prop(&db, "y", TypeId::UNDEFINED, true)];
-        let branch2 = vec![make_prop(&db, "y", TypeId::UNDEFINED, true)];
-        let mut all = vec![branch1, branch2];
-        remove_synthetic_missing_union_spread_props(&mut all);
-        assert_eq!(all[0].len(), 1);
-        assert_eq!(all[1].len(), 1);
-    }
-}
-
 impl<'a> CheckerState<'a> {
     fn object_literal_property_is_typed_variable_initializer(
         &self,
@@ -3240,5 +3110,135 @@ impl<'a> CheckerState<'a> {
         self.pop_object_literal_contexts(marker_this_type, partial_initializer_stack_index);
 
         object_type
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tsz_solver::{TypeInterner, Visibility};
+
+    fn make_prop(db: &TypeInterner, name: &str, ty: TypeId, optional: bool) -> PropertyInfo {
+        PropertyInfo {
+            name: db.intern_string(name),
+            type_id: ty,
+            write_type: ty,
+            optional,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+            is_string_named: true,
+            is_symbol_named: false,
+            single_quoted_name: false,
+        }
+    }
+
+    #[test]
+    fn merge_spread_vacant_entry_inserts_directly() {
+        let db = TypeInterner::new();
+        let mut map: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
+        let prop = make_prop(&db, "x", TypeId::STRING, false);
+        merge_spread_property_into_map(&db, false, &mut map, &prop);
+        assert_eq!(map.len(), 1);
+        let stored = &map[&prop.name];
+        assert_eq!(stored.type_id, TypeId::STRING);
+        assert!(!stored.optional);
+    }
+
+    #[test]
+    fn merge_spread_required_later_overrides_earlier() {
+        let db = TypeInterner::new();
+        let mut map: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
+        let earlier = make_prop(&db, "x", TypeId::STRING, false);
+        let later = make_prop(&db, "x", TypeId::NUMBER, false);
+        merge_spread_property_into_map(&db, false, &mut map, &earlier);
+        merge_spread_property_into_map(&db, false, &mut map, &later);
+        let stored = &map[&earlier.name];
+        assert_eq!(stored.type_id, TypeId::NUMBER);
+        assert!(!stored.optional);
+    }
+
+    #[test]
+    fn merge_spread_optional_later_unions_with_required_earlier_strips_undefined() {
+        let db = TypeInterner::new();
+        let mut map: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
+        let earlier = make_prop(&db, "x", TypeId::STRING, false);
+        let num_or_undef = db.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
+        let mut later = make_prop(&db, "x", num_or_undef, true);
+        later.write_type = num_or_undef;
+        merge_spread_property_into_map(&db, false, &mut map, &earlier);
+        merge_spread_property_into_map(&db, false, &mut map, &later);
+        let stored = &map[&earlier.name];
+        assert!(!stored.optional);
+        assert_ne!(stored.type_id, TypeId::UNDEFINED);
+    }
+
+    #[test]
+    fn merge_spread_optional_later_unions_with_required_earlier_exact_optional_keeps_undefined() {
+        let db = TypeInterner::new();
+        let mut map: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
+        let earlier = make_prop(&db, "x", TypeId::STRING, false);
+        let num_or_undef = db.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
+        let mut later = make_prop(&db, "x", num_or_undef, true);
+        later.write_type = num_or_undef;
+        merge_spread_property_into_map(&db, false, &mut map, &earlier);
+        merge_spread_property_into_map(&db, true, &mut map, &later);
+        let stored = &map[&earlier.name];
+        assert!(!stored.optional);
+        let members = tsz_solver::type_queries::get_union_members(&db, stored.type_id);
+        assert!(members.is_some(), "result should be a union");
+    }
+
+    #[test]
+    fn merge_spread_both_optional_stays_optional() {
+        let db = TypeInterner::new();
+        let mut map: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
+        let earlier = make_prop(&db, "x", TypeId::STRING, true);
+        let later = make_prop(&db, "x", TypeId::NUMBER, true);
+        merge_spread_property_into_map(&db, false, &mut map, &earlier);
+        merge_spread_property_into_map(&db, false, &mut map, &later);
+        let stored = &map[&earlier.name];
+        assert!(stored.optional);
+    }
+
+    #[test]
+    fn rebase_spread_display_order_sorts_and_rebases() {
+        let db = TypeInterner::new();
+        let mut a = make_prop(&db, "a", TypeId::STRING, false);
+        a.declaration_order = 5;
+        let mut b = make_prop(&db, "b", TypeId::NUMBER, false);
+        b.declaration_order = 2;
+        let props = vec![a, b];
+        let rebased = rebase_spread_display_property_order(props, 100);
+        assert_eq!(rebased.len(), 2);
+        assert_eq!(rebased[0].name, db.intern_string("b"));
+        assert_eq!(rebased[0].declaration_order, 100);
+        assert_eq!(rebased[1].name, db.intern_string("a"));
+        assert_eq!(rebased[1].declaration_order, 101);
+    }
+
+    #[test]
+    fn remove_synthetic_missing_props_drops_undefined_placeholders() {
+        let db = TypeInterner::new();
+        let branch1 = vec![make_prop(&db, "x", TypeId::STRING, false)];
+        let branch2 = vec![make_prop(&db, "x", TypeId::UNDEFINED, true)];
+        let mut all = vec![branch1, branch2];
+        remove_synthetic_missing_union_spread_props(&mut all);
+        assert_eq!(all[0].len(), 1);
+        assert_eq!(all[1].len(), 0);
+    }
+
+    #[test]
+    fn remove_synthetic_missing_props_keeps_real_optional_props() {
+        let db = TypeInterner::new();
+        let branch1 = vec![make_prop(&db, "y", TypeId::UNDEFINED, true)];
+        let branch2 = vec![make_prop(&db, "y", TypeId::UNDEFINED, true)];
+        let mut all = vec![branch1, branch2];
+        remove_synthetic_missing_union_spread_props(&mut all);
+        assert_eq!(all[0].len(), 1);
+        assert_eq!(all[1].len(), 1);
     }
 }
