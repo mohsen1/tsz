@@ -23,6 +23,39 @@ fn assert_no_ts2339(source: &str) {
 }
 
 #[test]
+fn direct_any_base_does_not_synthesize_jsx_props_index_signature() {
+    use tsz_checker::context::CheckerOptions;
+    use tsz_common::checker_options::JsxMode;
+
+    let diagnostics = tsz_checker::test_utils::check_source(
+        r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {}
+    interface ElementAttributesProperty { props: {} }
+}
+
+declare var Base: any;
+class Comp extends Base {}
+let el = <Comp x={1} />;
+"#,
+        "test.tsx",
+        CheckerOptions {
+            jsx_mode: JsxMode::Preserve,
+            ..CheckerOptions::default()
+        },
+    );
+    let codes: Vec<u32> = diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect();
+    assert!(
+        codes.contains(&2607),
+        "Expected TS2607 for JSX attributes on a class without props; got codes: {codes:?}"
+    );
+}
+
+#[test]
 fn non_abstract_ctor_returning_any_no_ts2339_on_dynamic_property() {
     assert_no_ts2339(
         r#"
@@ -36,6 +69,20 @@ class Base {}
 const M = Mixin(Base);
 const m = new M();
 const _ = m.unknownProp;
+"#,
+    );
+}
+
+#[test]
+fn direct_ctor_returning_any_no_ts2339_on_dynamic_property() {
+    assert_no_ts2339(
+        r#"
+declare const Base: new (...args: any[]) => any;
+class Derived extends Base {
+    known(): void {}
+}
+const d = new Derived();
+const _ = d.dynamic;
 "#,
     );
 }
