@@ -746,12 +746,22 @@ impl<'a> CheckerState<'a> {
                 // EXCEPTION: union-of-all-tuples is handled via per-position typing below.
                 crate::context::TypingRequest::NONE
             } else if let Some(ref helper) = ctx_helper {
-                if tuple_context.is_some() || force_tuple_for_union_context {
-                    // For a union of all tuple types (force_tuple_for_union_context), use
-                    // per-position contextual typing: the element type at position `index`
-                    // is the union of each member tuple's type at that position.
-                    // e.g. `["a"] | ["b"]` gives position 0 context `"a" | "b"`,
-                    // preserving string literal types instead of widening to `string`.
+                if tuple_context.is_some()
+                    || force_tuple_for_union_context
+                    || force_tuple_for_mapped
+                {
+                    // Per-position contextual typing:
+                    // - tuple_context: the contextual type is already a tuple shape, so
+                    //   element `index` takes its type from position `index`.
+                    // - force_tuple_for_union_context (union of tuples): the position-`index`
+                    //   type is the union of each member tuple's type at that position,
+                    //   preserving literal types vs. widening to a single union element type.
+                    // - force_tuple_for_mapped: the contextual type is a homomorphic mapped
+                    //   type `{ [K in keyof T]: F<T[K]> }`. Per-position substitution binds
+                    //   K to the index literal so each closure/element sees `F<T[index]>`
+                    //   rather than a single union of all positions. This is what enables
+                    //   per-element reverse-mapped inference (e.g., tsc's
+                    //   `getTypeOfPropertyOfContextualType(type, ""+index)` path).
                     match helper.get_tuple_element_type_with_count(index, total_elem_count) {
                         Some(ty) => request.read().contextual(ty),
                         None => crate::context::TypingRequest::NONE,

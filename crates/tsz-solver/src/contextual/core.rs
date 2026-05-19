@@ -1158,6 +1158,21 @@ impl<'a> ContextualTypeContext<'a> {
                 let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
                 return ctx.get_tuple_element_type_inner(index, element_count);
             }
+
+            // Deferred mapped type: evaluation couldn't reduce it to a concrete shape
+            // (e.g., `{ [K in keyof T]: F<T[K]> }` where T is still a generic type
+            // parameter). For per-element contextual typing of array literals, perform
+            // per-position substitution: bind the iteration variable K to the index's
+            // literal so the resulting body retains references to T[index] for downstream
+            // inference. This mirrors how `evaluate_mapped_tuple` materializes the same
+            // tuple shape when the source is a concrete tuple, and matches tsc's
+            // `getTypeOfPropertyOfContextualType(type, ""+index)` path.
+            if let TypeData::Mapped(mapped_id) = expected_key
+                && let Some(per_index) =
+                    try_mapped_per_index_template(self.interner, mapped_id, index)
+            {
+                return Some(per_index);
+            }
         }
 
         let mut extractor = TupleElementExtractor::new(self.interner, index, element_count);
@@ -1651,6 +1666,87 @@ impl<'a> ContextualTypeContext<'a> {
         } else {
             param_type
         }
+    }
+}
+
+/// For a homomorphic-like mapped type `{ [K in keyof X]: Body }`, materialize the
+/// per-element body at the given source position by substituting the iteration
+/// variable K with the numeric index literal.
+///
+/// Returns `None` when the substitution cannot be safely applied:
+/// - The mapped type has a key-remapping `as` clause that isn't an identity (the
+///   remapped keys would not align with positional indices).
+/// - The iteration constraint isn't shaped like `keyof X` or `number`, so the
+///   per-position substitution wouldn't correspond to a real key the mapped type
+///   iterates over.
+///
+/// This is the deferred counterpart to `evaluate_mapped_tuple`: when the mapped
+/// source is a concrete tuple, evaluation already materializes a tuple type and
+/// callers see per-element types via the normal Tuple visitor; when the source
+/// is still generic (e.g., a type parameter constrained to a tuple), evaluation
+/// can't reduce, and this helper recovers the per-element body so contextual
+/// typing of array literals still receives position-specific information.
+fn try_mapped_per_index_template(
+    db: &dyn TypeDatabase,
+    mapped_id: crate::types::MappedTypeId,
+    index: usize,
+) -> Option<TypeId> {
+    let mapped = db.mapped_type(mapped_id);
+
+    // Key remapping (`as` clause) breaks the positional substitution unless the
+    // name type is the identity (`as K`). With a non-identity name type the
+    // mapped result's keys are computed from K — substituting K with the
+    // positional index would produce a key shape that doesn't match the array
+    // literal's positional element layout.
+    if let Some(nt) = mapped.name_type {
+        let is_identity = matches!(
+            db.lookup(nt),
+            Some(TypeData::TypeParameter(p)) if p.name == mapped.type_param.name
+        );
+        if !is_identity {
+            return None;
+        }
+    }
+
+    // Restrict to constraints whose key domain reasonably includes positional
+    // indices. `keyof X` iterates the keys of X (including tuple positions when X
+    // is a tuple), and `number` iterates numeric keys. Other shapes (e.g.,
+    // literal-key unions like `"a" | "b"`) wouldn't have an i-th positional key.
+    if !mapped_constraint_admits_positional_indices(db, mapped.constraint) {
+        return None;
+    }
+
+    let key_literal = db.literal_number(index as f64);
+    let instantiated = crate::type_queries::instantiate_mapped_template_for_property(
+        db,
+        mapped.template,
+        mapped.type_param.name,
+        key_literal,
+    );
+
+    if instantiated == mapped.template {
+        return None;
+    }
+    Some(instantiated)
+}
+
+/// Check whether a mapped type's iteration constraint admits per-position
+/// substitution (numeric indices). Recognizes `keyof X` (regardless of X's
+/// shape), the `number` intrinsic, and intersections containing such forms.
+fn mapped_constraint_admits_positional_indices(db: &dyn TypeDatabase, constraint: TypeId) -> bool {
+    if constraint == TypeId::NUMBER {
+        return true;
+    }
+    if constraint.is_intrinsic() {
+        return false;
+    }
+    match db.lookup(constraint) {
+        Some(TypeData::KeyOf(_)) => true,
+        Some(TypeData::Intersection(members)) => db
+            .type_list(members)
+            .iter()
+            .any(|&m| mapped_constraint_admits_positional_indices(db, m)),
+        _ => false,
     }
 }
 
