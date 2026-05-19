@@ -912,6 +912,34 @@ jobs:
             "$GITHUB_WORKSPACE/bench-results.json" \
             "$GITHUB_WORKSPACE/bench-results-tsgo-winners.json"
 
+      - name: Compare project winner regressions
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          previous="$GITHUB_WORKSPACE/bench-results-previous-latest.json"
+          report_json="$GITHUB_WORKSPACE/bench-results-project-winner-regressions.json"
+          report_md="$GITHUB_WORKSPACE/bench-results-project-winner-regressions.md"
+
+          if ! gsutil -q cp "${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.json" "$previous"; then
+            echo "No previous latest benchmark artifact available; skipping project winner regression comparison." | tee "$report_md"
+            echo '{"schema_version":1,"skipped":true,"reason":"previous latest benchmark artifact unavailable"}' > "$report_json"
+            exit 0
+          fi
+
+          set +e
+          node scripts/bench/project-winner-regression-report.mjs \
+            "$previous" \
+            "$GITHUB_WORKSPACE/bench-results.json" \
+            "$report_json" | tee "$report_md"
+          status="${PIPESTATUS[0]}"
+          set -e
+
+          if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+            cat "$report_md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$status"
+
       - name: Upload merged benchmark artifact
         uses: actions/upload-artifact@v4
         with:
@@ -919,6 +947,8 @@ jobs:
           path: |
             bench-results.json
             bench-results-tsgo-winners.json
+            bench-results-project-winner-regressions.json
+            bench-results-project-winner-regressions.md
           retention-days: 30
           if-no-files-found: error
           compression-level: 1
