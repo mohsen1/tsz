@@ -79,6 +79,7 @@ fn count_read_package_json() {
 pub(crate) struct ModuleResolutionCache {
     package_type_by_dir: FxHashMap<PathBuf, Option<PackageType>>,
     package_json_by_path: FxHashMap<PathBuf, Option<PackageJson>>,
+    file_exists_by_path: FxHashMap<PathBuf, bool>,
     node_modules_dir_by_path: FxHashMap<PathBuf, bool>,
     package_root_dir_by_path: FxHashMap<PathBuf, bool>,
     // Per-compiler-options cache. A compile uses one resolved `paths` table, so
@@ -100,6 +101,16 @@ fn package_relative_target_path(package_root: &Path, target: &str) -> Option<Pat
 }
 
 impl ModuleResolutionCache {
+    fn file_exists(&mut self, path: &Path) -> bool {
+        if let Some(&exists) = self.file_exists_by_path.get(path) {
+            return exists;
+        }
+
+        let exists = count_is_file(path);
+        self.file_exists_by_path.insert(path.to_path_buf(), exists);
+        exists
+    }
+
     fn read_package_json(&mut self, path: &Path) -> Option<PackageJson> {
         if let Some(cached) = self.package_json_by_path.get(path) {
             return cached.clone();
@@ -550,7 +561,7 @@ pub(crate) fn resolve_type_package_entry_with_cache(
             let path = package_root.join(entry_name);
             for ext in restricted_extensions {
                 let candidate = path.with_extension(ext);
-                if count_is_file(&candidate) && is_declaration_file(&candidate) {
+                if resolution_cache.file_exists(&candidate) && is_declaration_file(&candidate) {
                     return Some(normalize_resolved_path(&candidate, options));
                 }
             }
@@ -618,12 +629,12 @@ pub(crate) fn resolve_type_package_entry_with_mode_and_cache(
         // Try to find a declaration file at the target
         let package_type = package_type_from_json(Some(package_json));
         for candidate in expand_module_path_candidates(&target_path, options, package_type) {
-            if count_is_file(&candidate) && is_declaration_file(&candidate) {
+            if resolution_cache.file_exists(&candidate) && is_declaration_file(&candidate) {
                 return Some(normalize_resolved_path(&candidate, options));
             }
         }
         // Try exact path
-        if count_is_file(&target_path) && is_declaration_file(&target_path) {
+        if resolution_cache.file_exists(&target_path) && is_declaration_file(&target_path) {
             return Some(normalize_resolved_path(&target_path, options));
         }
     }
@@ -1737,7 +1748,7 @@ pub(crate) fn resolve_module_specifier(
     for candidate in candidates {
         // Check if candidate exists in known files (for virtual test files) or on filesystem
         let exists = known_files.contains(&candidate)
-            || (count_is_file(&candidate) && is_valid_module_or_js_file(&candidate));
+            || (resolution_cache.file_exists(&candidate) && is_valid_module_or_js_file(&candidate));
         if debug {
             tracing::debug!("candidate={candidate:?} exists={exists}");
         }
@@ -1757,7 +1768,8 @@ pub(crate) fn resolve_module_specifier(
                 expand_module_path_candidates(&current.join(&specifier), options, package_type)
             {
                 let exists = known_files.contains(&candidate)
-                    || (count_is_file(&candidate) && is_valid_module_or_js_file(&candidate));
+                    || (resolution_cache.file_exists(&candidate)
+                        && is_valid_module_or_js_file(&candidate));
                 if debug {
                     tracing::debug!("classic-fallback candidate={candidate:?} exists={exists}");
                 }
@@ -2449,9 +2461,13 @@ fn resolve_node_module_specifier(
                             &subpath_key,
                             &conditions,
                             types_versions_compiler_version(options),
-                        ) && let Some(resolved) =
-                            try_remap_output_to_source(dir, &target, from_file, options)
-                        {
+                        ) && let Some(resolved) = try_remap_output_to_source(
+                            dir,
+                            &target,
+                            from_file,
+                            options,
+                            resolution_cache,
+                        ) {
                             return Some(resolved);
                         }
                     }
@@ -2508,7 +2524,9 @@ fn resolve_node_module_specifier(
             {
                 let candidates = expand_module_path_candidates(&package_root, options, None);
                 for candidate in candidates {
-                    if count_is_file(&candidate) && is_valid_module_or_js_file(&candidate) {
+                    if resolution_cache.file_exists(&candidate)
+                        && is_valid_module_or_js_file(&candidate)
+                    {
                         return Some(normalize_resolved_path(&candidate, options));
                     }
                 }
@@ -2615,9 +2633,13 @@ fn resolve_package_imports_specifier(
                 // When outDir/declarationDir is set, import targets like "./dist/index.js"
                 // point to the output directory which doesn't exist at compile time.
                 // Remap back to source files (e.g., "./index.ts").
-                if let Some(resolved) =
-                    try_remap_output_to_source(current, target, from_file, options)
-                {
+                if let Some(resolved) = try_remap_output_to_source(
+                    current,
+                    target,
+                    from_file,
+                    options,
+                    resolution_cache,
+                ) {
                     return Some(resolved);
                 }
             }
@@ -2673,9 +2695,13 @@ fn resolve_package_specifier(
                 &subpath_key,
                 conditions,
                 types_versions_compiler_version(options),
-            ) && let Some(resolved) =
-                resolve_export_entry(package_root, &target, options, package_type)
-            {
+            ) && let Some(resolved) = resolve_export_entry(
+                package_root,
+                &target,
+                options,
+                package_type,
+                resolution_cache,
+            ) {
                 return Some(resolved);
             }
             if let Some(types_versions) = package_json.types_versions.as_ref() {
@@ -2793,7 +2819,8 @@ fn resolve_package_root(
         .unwrap_or(false);
     let has_package_json = package_json.is_some();
     if (!is_symlinked_package_root || !has_package_json)
-        && let Some(resolved) = resolve_package_index_fallback(package_root, options)
+        && let Some(resolved) =
+            resolve_package_index_fallback(package_root, options, resolution_cache)
     {
         return Some(resolved);
     }
@@ -2804,6 +2831,7 @@ fn resolve_package_root(
 fn resolve_package_index_fallback(
     package_root: &Path,
     options: &ResolvedCompilerOptions,
+    resolution_cache: &mut ModuleResolutionCache,
 ) -> Option<PathBuf> {
     let extensions = if options.allow_js {
         PACKAGE_INDEX_FALLBACK_ALLOW_JS_EXTENSIONS.as_slice()
@@ -2821,7 +2849,7 @@ fn resolve_package_index_fallback(
 
     for ext in extensions {
         for candidate in candidates_with_suffixes_and_extension(&index, ext, suffixes) {
-            if count_is_file(&candidate) && is_valid_module_or_js_file(&candidate) {
+            if resolution_cache.file_exists(&candidate) && is_valid_module_or_js_file(&candidate) {
                 return Some(normalize_resolved_path(&candidate, options));
             }
         }
@@ -2849,12 +2877,12 @@ fn resolve_declaration_package_entry(
     };
 
     for candidate in expand_module_path_candidates(&path, options, package_type) {
-        if count_is_file(&candidate) && is_declaration_file(&candidate) {
+        if resolution_cache.file_exists(&candidate) && is_declaration_file(&candidate) {
             return Some(normalize_resolved_path(&candidate, options));
         }
     }
 
-    if count_is_file(&path) && is_declaration_file(&path) {
+    if resolution_cache.file_exists(&path) && is_declaration_file(&path) {
         return Some(normalize_resolved_path(&path, options));
     }
 
@@ -2916,7 +2944,7 @@ fn resolve_package_entry(
         {
             continue;
         }
-        if count_is_file(&candidate) && is_valid_module_or_js_file(&candidate) {
+        if resolution_cache.file_exists(&candidate) && is_valid_module_or_js_file(&candidate) {
             return Some(normalize_resolved_path(&candidate, options));
         }
     }
@@ -2942,7 +2970,9 @@ fn resolve_package_entry(
         if let Some(main) = &pj.main {
             let main_path = path.join(main);
             for candidate in expand_module_path_candidates(&main_path, options, sub_type) {
-                if count_is_file(&candidate) && is_valid_module_or_js_file(&candidate) {
+                if resolution_cache.file_exists(&candidate)
+                    && is_valid_module_or_js_file(&candidate)
+                {
                     return Some(normalize_resolved_path(&candidate, options));
                 }
             }
@@ -2957,6 +2987,7 @@ fn resolve_export_entry(
     entry: &str,
     options: &ResolvedCompilerOptions,
     package_type: Option<PackageType>,
+    resolution_cache: &mut ModuleResolutionCache,
 ) -> Option<PathBuf> {
     let entry = entry.trim();
     if !is_valid_relative_package_target(entry) {
@@ -2969,7 +3000,7 @@ fn resolve_export_entry(
     let path = package_relative_target_path(package_root, entry)?;
 
     for candidate in expand_export_path_candidates(&path, options, package_type) {
-        if count_is_file(&candidate) && is_valid_module_file(&candidate) {
+        if resolution_cache.file_exists(&candidate) && is_valid_module_file(&candidate) {
             return Some(normalize_resolved_path(&candidate, options));
         }
     }
@@ -2991,6 +3022,7 @@ fn try_remap_output_to_source(
     target: &str,
     _from_file: &Path,
     options: &ResolvedCompilerOptions,
+    resolution_cache: &mut ModuleResolutionCache,
 ) -> Option<PathBuf> {
     fn resolve_configured_path_against_package_root(
         configured: &Path,
@@ -3108,7 +3140,7 @@ fn try_remap_output_to_source(
                 if let Some(base) = source_str.strip_suffix(out_ext) {
                     for src_ext in *src_exts {
                         let candidate = PathBuf::from(format!("{base}{src_ext}"));
-                        if count_is_file(&candidate) {
+                        if resolution_cache.file_exists(&candidate) {
                             return Some(normalize_resolved_path(&candidate, options));
                         }
                     }
@@ -3116,7 +3148,7 @@ fn try_remap_output_to_source(
             }
 
             // Also try the path as-is (it might be a .ts file already)
-            if count_is_file(&source_base) {
+            if resolution_cache.file_exists(&source_base) {
                 return Some(normalize_resolved_path(&source_base, options));
             }
         }
