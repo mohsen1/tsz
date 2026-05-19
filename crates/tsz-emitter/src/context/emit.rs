@@ -400,6 +400,18 @@ impl EmitContext {
         self.options.module.is_commonjs()
     }
 
+    /// Returns true when the original module kind was AMD, UMD, or System.
+    ///
+    /// The wrapper temporarily overrides `options.module` to `CommonJS` while
+    /// emitting the body, so callers can check this to distinguish wrapper
+    /// body emission from genuine CJS output.
+    pub const fn is_inside_module_wrapper_body(&self) -> bool {
+        matches!(
+            self.original_module_kind,
+            Some(ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System)
+        )
+    }
+
     /// Check if we're effectively in `CommonJS` mode, even when the module kind
     /// is temporarily set to `None` inside export body emission.
     ///
