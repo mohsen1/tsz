@@ -25,6 +25,7 @@ pub mod error_reporter;
 pub mod expr;
 pub mod module_resolution;
 mod query_boundaries;
+pub mod recovery;
 pub mod statements;
 pub mod triple_slash_validator;
 
@@ -695,6 +696,7 @@ pub use flow_analyzer::{
     merge_assignment_states,
 };
 pub use flow_graph_builder::{FlowGraph, FlowGraphBuilder};
+pub use recovery::RecoveryReason;
 pub use state::{CheckerState, MAX_CALL_DEPTH, MAX_INSTANTIATION_DEPTH};
 pub use statements::{StatementCheckCallbacks, StatementChecker};
 pub use tsz_solver::Visibility;

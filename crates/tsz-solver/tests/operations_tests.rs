@@ -65,6 +65,51 @@ fn test_call_simple_function() {
 }
 
 #[test]
+fn call_evaluator_cache_statistics_account_for_contextual_sensitivity() {
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+    let evaluator = CallEvaluator::new(&interner, &mut subtype);
+
+    let empty = evaluator.cache_statistics();
+    assert_eq!(empty.contextual_sensitivity_entries, 0);
+    assert_eq!(empty.estimated_size_bytes(), 0);
+
+    let func = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::ANY,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::STRING,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    assert!(evaluator.is_contextually_sensitive(func));
+    let populated = evaluator.cache_statistics();
+    assert_eq!(populated.contextual_sensitivity_entries, 1);
+    assert!(
+        populated.estimated_size_bytes() > empty.estimated_size_bytes(),
+        "populated call evaluator cache should report nonzero estimated residency"
+    );
+
+    assert!(evaluator.is_contextually_sensitive(func));
+    let repeated = evaluator.cache_statistics();
+    assert_eq!(
+        repeated.contextual_sensitivity_entries,
+        populated.contextual_sensitivity_entries
+    );
+    assert_eq!(
+        repeated.estimated_size_bytes(),
+        populated.estimated_size_bytes()
+    );
+}
+
+#[test]
 fn test_call_argument_count_mismatch() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
