@@ -522,6 +522,7 @@ BRANCH_LOCAL_VISITED_CLONE_CHECKS = [
         [
             ROOT / "crates" / "tsz-checker" / "src",
             ROOT / "crates" / "tsz-lsp" / "src",
+            ROOT / "crates" / "tsz-solver" / "src",
         ],
         (
             (
@@ -543,6 +544,14 @@ BRANCH_LOCAL_VISITED_CLONE_CHECKS = [
             (
                 "crates/tsz-lsp/src/completions/member.rs",
                 "let mut member_visited = visited.clone();",
+            ),
+            (
+                "crates/tsz-solver/src/evaluation/evaluate_rules/infer_pattern.rs",
+                "let mut alias_visited = visited.clone();",
+            ),
+            (
+                "crates/tsz-solver/src/evaluation/evaluate_rules/infer_pattern_helpers.rs",
+                "let mut alias_visited = visited.clone();",
             ),
         ),
     ),
