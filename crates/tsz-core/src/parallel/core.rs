@@ -5952,7 +5952,7 @@ pub fn check_files_parallel(
     // DashMap for thread-safe concurrent access and eliminates redundant
     // computation across parallel file checkers.
     let shared_query_cache = if program.files.len() > 1 {
-        Some(tsz_solver::SharedQueryCache::new())
+        Some(tsz_solver::construction::SharedQueryCache::new())
     } else {
         None
     };
