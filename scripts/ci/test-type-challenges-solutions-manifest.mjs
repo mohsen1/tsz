@@ -107,6 +107,7 @@ tsz_write_type_challenges_solutions_config ${shellQuote(sourceDir)} ${shellQuote
       entry.output,
       entry.source,
       entry.challenge.id,
+      entry.challenge.sourceStem,
       entry.declarations,
       entry.semanticFamilies,
       entry.outputSha256,
@@ -116,6 +117,7 @@ tsz_write_type_challenges_solutions_config ${shellQuote(sourceDir)} ${shellQuote
         "solutions/alpha.ts",
         "en/alpha.md",
         "1",
+        "alpha",
         ["Alpha"],
         ["unclassified"],
         "387b4bcfd901b7e11dfd6b3021e15427fa59c7b9a15708c5f4f72078e35534f1",
@@ -124,6 +126,7 @@ tsz_write_type_challenges_solutions_config ${shellQuote(sourceDir)} ${shellQuote
         "solutions/beta.ts",
         "en/beta.md",
         "2",
+        "beta",
         ["Beta", "beta"],
         ["unclassified"],
         "1319ba2703438e218b6516c23040532ae7faf9398b78ad176e522fbb9f44ce15",
@@ -355,6 +358,23 @@ withTempDir((dir) => {
   const sourceResult = runManifest(sourceTraversal, manifestPath);
   assert.notEqual(sourceResult.status, 0);
   assert.match(sourceResult.stderr, /unsafe manifest source path: \.\.\/alpha\.md/);
+});
+
+withTempDir((dir) => {
+  const compileDir = path.join(dir, "compile");
+  const manifestPath = path.join(compileDir, "type-challenges-solutions-manifest.json");
+  fs.mkdirSync(path.join(compileDir, "solutions"), { recursive: true });
+  fs.writeFileSync(path.join(compileDir, "solutions", "alpha.ts"), "type Alpha = string;\n");
+
+  const nonMarkdownSource = path.join(compileDir, "non-markdown-source.tsv");
+  fs.writeFileSync(
+    nonMarkdownSource,
+    "output\tsource\tid\tlevel\ttitle\nsolutions/alpha.ts\ten/alpha.txt\t1\teasy\tAlpha\n",
+    "utf8",
+  );
+  const result = runManifest(nonMarkdownSource, manifestPath);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /solution source must be a Markdown file: en\/alpha\.txt/);
 });
 
 withTempDir((dir) => {
