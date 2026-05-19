@@ -90,15 +90,7 @@ fn is_arbitrary_extension_declaration_file(file_name: &str) -> bool {
 /// - files with a slash, dot, or empty segment in the inner extension
 ///   (defensive — keeps the helper a pure shape check).
 fn arbitrary_ext_decl_user_parts(file_name: &str) -> Option<(&str, &str)> {
-    let without_ts = file_name.strip_suffix(".ts")?;
-    arbitrary_ext_decl_stem_parts(without_ts)
-}
-
-/// Same shape check as `arbitrary_ext_decl_user_parts` but on the
-/// TS-extension-stripped form (`<base>.d.<ext>`, no trailing `.ts`). Useful
-/// when the caller already has a stem, e.g. the fast resolver computing
-/// candidates from a user-written specifier.
-fn arbitrary_ext_decl_stem_parts(stem: &str) -> Option<(&str, &str)> {
+    let stem = file_name.strip_suffix(".ts")?;
     let (base, ext) = stem.rsplit_once(".d.")?;
     if base.is_empty() || ext.is_empty() || ext.contains('/') || ext.contains('.') {
         return None;
@@ -113,6 +105,10 @@ fn arbitrary_ext_decl_stem_parts(stem: &str) -> Option<(&str, &str)> {
 /// its own canonical resolution path. Used by `arbitrary_ext_decl_user_parts`
 /// and the fast resolver's arbitrary-extension probe to gate them off normal
 /// TypeScript surfaces.
+//
+// NOTE: this list mirrors `tsz_core::module_resolver::is_arbitrary_extension_declaration`
+// and `tsz_core::resolution::helpers::KNOWN_EXTENSIONS`. Keep the three in
+// sync; promoting to a shared crate is out of scope for this fix (issue #7690).
 fn is_recognized_inner_module_ext(ext: &str) -> bool {
     matches!(
         ext,
@@ -875,13 +871,29 @@ pub fn resolve_specifier_via_file_index(
     let stem = strip_ts_extension(&base);
     let mut buf = String::with_capacity(stem.len() + 8);
 
-    // Gate: when the stem itself looks like `<X>.d.<arbitrary_ext>`, the only
-    // legitimate user spelling for the underlying `<X>.d.<arbitrary_ext>.ts`
-    // file is `<X>.<arbitrary_ext>` — registered separately via the
-    // arbitrary-ext probe below. Skipping the `.ts` fan-out here keeps
-    // `./component.d.html` from claiming `/proj/component.d.html.ts`.
-    let stem_is_arbitrary_ext_naive_form = arbitrary_ext_decl_stem_parts(stem).is_some();
-    if !stem_is_arbitrary_ext_naive_form {
+    // Inspect the trailing extension of `base` once. Three cases drive the
+    // probes below:
+    //   1. Recognized TS/JS/JSON ext or no ext: standard TS fan-out covers
+    //      `./foo` and `./foo.ts`.
+    //   2. Arbitrary user-form ext (`./component.html`): no TS fan-out needed
+    //      — only the arbitrary-ext probe (`./component.html` →
+    //      `/proj/component.d.html.ts`) can match.
+    //   3. Naive arbitrary-ext form (`./component.d.html`): nothing should
+    //      match; the user must instead type `./component.html`. Both
+    //      probes are skipped — leaving the naive form unresolved keeps it
+    //      from shadowing the legitimate user-form.
+    let trailing_arbitrary_ext = match base.rsplit_once('.') {
+        Some((b, e)) if !e.is_empty() && !e.contains('/') && !is_recognized_inner_module_ext(e) => {
+            Some((b, e))
+        }
+        _ => None,
+    };
+    let base_is_arbitrary_ext_naive_form = matches!(
+        trailing_arbitrary_ext,
+        Some((b, _)) if b.ends_with(".d") && b.len() > 2,
+    );
+
+    if trailing_arbitrary_ext.is_none() {
         for ext in TS_EXTENSIONS {
             buf.clear();
             buf.push_str(stem);
@@ -893,13 +905,10 @@ pub fn resolve_specifier_via_file_index(
     }
 
     // Arbitrary-extension declaration file probe (`./foo.html` →
-    // `/proj/foo.d.html.ts`). Only fires when `base` carries a non-TS/JS/JSON
-    // trailing extension; otherwise the canonical TS/JS surfaces above have
-    // already had their shot.
-    if let Some((stem_base, ext)) = base.rsplit_once('.')
-        && !ext.is_empty()
-        && !ext.contains('/')
-        && !is_recognized_inner_module_ext(ext)
+    // `/proj/foo.d.html.ts`). Skipped for the naive form so it cannot
+    // accidentally shadow legitimate user-form spellings.
+    if let Some((stem_base, ext)) = trailing_arbitrary_ext
+        && !base_is_arbitrary_ext_naive_form
     {
         buf.clear();
         buf.push_str(stem_base);
