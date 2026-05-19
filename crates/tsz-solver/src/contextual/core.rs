@@ -1293,7 +1293,7 @@ impl<'a> ContextualTypeContext<'a> {
                         crate::type_queries::instantiate_mapped_template_for_property(
                             self.interner,
                             mapped.template,
-                            mapped.type_param,
+                            mapped.type_param.name,
                             key_literal,
                         );
                     let evaluated =
@@ -1685,7 +1685,7 @@ fn try_mapped_per_index_template(
         crate::type_queries::instantiate_mapped_template_for_property(
             db,
             mapped.template,
-            mapped.type_param,
+            mapped.type_param.name,
             key_literal,
         ),
     )

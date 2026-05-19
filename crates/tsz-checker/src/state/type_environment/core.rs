@@ -1192,7 +1192,7 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::state::checking::instantiate_mapped_template_for_property(
                 self.ctx.types,
                 mapped.template,
-                mapped.type_param,
+                mapped.type_param.name,
                 key_literal,
             );
 

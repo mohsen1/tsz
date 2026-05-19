@@ -10,7 +10,7 @@ use super::content_predicates::{
 use crate::TypeDatabase;
 use crate::evaluation::evaluate::TypeEvaluator;
 use crate::relations::subtype::SubtypeChecker;
-use crate::types::{IntrinsicKind, LiteralValue, TypeData, TypeId, TypeParamInfo};
+use crate::types::{IntrinsicKind, LiteralValue, TypeData, TypeId};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 use tsz_common::Atom;
@@ -912,39 +912,51 @@ pub fn get_keyof_operand(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeI
 
 /// Instantiate a mapped type template for a specific property key.
 ///
-/// Identifies the mapped binder by its full `TypeParamInfo` so that
-/// substitution does not catch same-name outer-scope parameters. The classic
-/// hazard is `Readonly<P>` where the lib defines
-/// `Readonly<T> = { readonly [P in keyof T]: T[P] }`: after alias instantiation
-/// the template references an outer `P` and an inner `P` that share a name but
-/// have different `TypeParamInfo` (constraints/defaults), and name-only
-/// substitution would corrupt both. The hazard generalises to any *nested*
-/// template that contains an `Outer[InnerBinder]` indexed-access — including
-/// the function-shape case `(v: T[P]) => void` exercised by per-element
-/// contextual typing of array literals against homomorphic mapped types.
+/// Instantiate a mapped type template for a specific property key, handling
+/// name collisions between the mapped key parameter and outer type parameters.
+///
+/// When a mapped type template is `IndexAccess(T, K)` and the object type `T`
+/// is a `TypeParameter` with the **same name atom** as the mapped key parameter,
+/// name-based `TypeSubstitution` would incorrectly replace both `T` and `K`
+/// with the key literal.  This happens with e.g. `Readonly<P>` where the lib
+/// defines `type Readonly<T> = { readonly [P in keyof T]: T[P] }` and the user
+/// has a type parameter also named `P`.
+///
+/// Returns `IndexAccess(T, key_literal)` when a collision is detected (bypassing
+/// substitution), or the normally-substituted template otherwise.
 pub fn instantiate_mapped_template_for_property(
     db: &dyn TypeDatabase,
     template: TypeId,
-    key_param: TypeParamInfo,
+    key_param_name: Atom,
     key_literal: TypeId,
 ) -> TypeId {
-    // Top-level shortcut: `IndexAccess(Source, BinderKey)` → `IndexAccess(Source, key_literal)`.
-    // Verified by full TypeParamInfo equality so a same-name outer parameter
-    // at `idx_obj` doesn't trick us into discarding it.
+    use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+
+    // Check if template is IndexAccess(obj, key) where:
+    // Case 1: The key is a TypeParameter matching the mapped key param.
+    //   Construct Source[key_literal] directly to avoid name-based substitution
+    //   corrupting the source when it contains a same-named outer type parameter
+    //   (e.g., `Readonly<Props<P> & P>` where mapped key is also "P").
+    // Case 2 (original): The object is a TypeParameter with the same name as the
+    //   mapped key parameter (e.g., `Readonly<P>` where T=P from outer scope).
     if let Some((idx_obj, idx_key)) = get_index_access_types(db, template)
         && idx_obj != idx_key
-        && let Some(info) = get_type_parameter_info(db, idx_key)
-        && info == key_param
     {
-        return db.index_access(idx_obj, key_literal);
+        if let Some(info) = get_type_parameter_info(db, idx_key)
+            && info.name == key_param_name
+        {
+            return db.index_access(idx_obj, key_literal);
+        }
+        if let Some(info) = get_type_parameter_info(db, idx_obj)
+            && info.name == key_param_name
+        {
+            return db.index_access(idx_obj, key_literal);
+        }
     }
 
-    crate::instantiation::instantiate::instantiate_mapped_binder(
-        db,
-        template,
-        key_param,
-        key_literal,
-    )
+    // Normal path: substitute the key parameter name with the key literal
+    let subst = TypeSubstitution::single(key_param_name, key_literal);
+    instantiate_type(db, template, &subst)
 }
 
 fn collect_exact_literal_property_keys_with_symbol_info_inner(
