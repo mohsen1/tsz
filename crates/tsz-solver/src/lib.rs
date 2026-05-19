@@ -134,7 +134,8 @@ pub mod computation {
     pub use crate::relations::lawyer::AnyPropagationRules;
     pub use crate::relations::subtype::{
         AnyPropagationMode, SubtypeChecker, SubtypeResult, TypeEnvironment, TypeResolver,
-        are_types_structurally_identical, is_subtype_of,
+        are_types_structurally_identical, are_types_structurally_identical_in_param_scope,
+        is_subtype_of,
     };
 
     // Evaluation
