@@ -327,7 +327,7 @@ class ArchGuardCheckerComputationFileSizeBoundaryTests(unittest.TestCase):
             name, base, limit = entry[0], entry[1], entry[2]
             if name == (
                 "Checker computation boundary: type-computation monoliths "
-                "must stay below 3200 LOC (#8226)"
+                "must stay below 3169 LOC (#8226)"
             ):
                 return base, limit
         self.fail(
@@ -337,7 +337,7 @@ class ArchGuardCheckerComputationFileSizeBoundaryTests(unittest.TestCase):
 
     def test_rule_exists_with_expected_limit(self):
         base, limit = self._computation_file_size_check()
-        self.assertEqual(limit, 3200)
+        self.assertEqual(limit, 3169)
         self.assertTrue(
             str(base).endswith("crates/tsz-checker/src/types/computation")
         )
@@ -400,7 +400,7 @@ class ArchGuardQueryBoundaryCommonSizeTests(unittest.TestCase):
 
     def test_rule_exists_with_current_limit(self):
         path, limit = self._query_common_size_check()
-        self.assertEqual(limit, 1996)
+        self.assertEqual(limit, 1926)
         self.assertTrue(
             str(path).endswith("crates/tsz-checker/src/query_boundaries/common.rs")
         )
