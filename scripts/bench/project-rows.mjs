@@ -268,6 +268,7 @@ export const REQUIRED_COMPATIBILITY_FIELDS = [
   "fixture_sources",
   "emit_status",
   "dts_status",
+  "artifact_source",
 ];
 
 export const COMPATIBILITY_CORPUS_ROWS = PROJECT_ROW_DEFINITIONS.map((row) => ({

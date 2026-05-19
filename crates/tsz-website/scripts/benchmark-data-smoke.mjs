@@ -14,6 +14,18 @@ const fixtureSource = `type Variant =
 type PickValue<T> = T extends { value: infer V } ? V : never;
 type Result = PickValue<Variant>;`;
 
+const artifactSource = {
+  generated_at: "2026-05-16T00:00:00.000Z",
+  source_commit: "abcdef0123456789abcdef0123456789abcdef01",
+  run_status: "completed",
+  workflow: "bench",
+  run_id: "123456",
+  run_attempt: "1",
+  run_number: "77",
+  event_name: "workflow_dispatch",
+  artifact_url: "https://github.com/mohsen1/tsz/actions/runs/123456",
+};
+
 await fs.writeFile(artifact, `${JSON.stringify({
   generated_at: "2026-05-16T00:00:00.000Z",
   benchmark_runner: "scripts/bench/bench-vs-tsgo.sh",
@@ -91,6 +103,7 @@ await fs.writeFile(artifact, `${JSON.stringify({
         ],
         emit_status: "not in scope (noEmit assertion check)",
         dts_status: "not in scope (noEmit assertion check)",
+        artifact_source: artifactSource,
         assertion_candidates: {
           sources: {
             templates: { repository: "type", ref: "type-ref" },
@@ -178,6 +191,7 @@ await fs.writeFile(artifact, `${JSON.stringify({
         ],
         emit_status: "not in scope (noEmit assertion check)",
         dts_status: "not in scope (noEmit assertion check)",
+        artifact_source: artifactSource,
         assertion_clean_subset: {
           manifest_path:
             "type-challenges-assertions-tsc-clean/type-challenges-assertions-tsc-clean-manifest.json",
@@ -252,6 +266,7 @@ await fs.writeFile(failedOnlyArtifact, `${JSON.stringify({
         ],
         emit_status: "not in scope (noEmit project check)",
         dts_status: "not in scope (noEmit project check)",
+        artifact_source: artifactSource,
       },
     },
     {
@@ -281,6 +296,7 @@ await fs.writeFile(failedOnlyArtifact, `${JSON.stringify({
         fixture_sources: [],
         emit_status: "not in scope (noEmit project check)",
         dts_status: "not in scope (noEmit project check)",
+        artifact_source: artifactSource,
       },
     },
     {
@@ -310,6 +326,7 @@ await fs.writeFile(failedOnlyArtifact, `${JSON.stringify({
         fixture_sources: [{}],
         emit_status: "not in scope (noEmit project check)",
         dts_status: "not in scope (noEmit project check)",
+        artifact_source: artifactSource,
       },
     },
     {
@@ -345,6 +362,7 @@ await fs.writeFile(failedOnlyArtifact, `${JSON.stringify({
         ],
         emit_status: "not in scope (noEmit project check)",
         dts_status: "not in scope (noEmit project check)",
+        artifact_source: artifactSource,
       },
     },
   ],
@@ -417,6 +435,9 @@ try {
   assert.match(compatibilityDashboard, /owner track: Tracks 1, 2, 5/);
   assert.match(compatibilityDashboard, /owner: baseline utility mapped\/conditional surface/);
   assert.match(compatibilityDashboard, /type-challenges assertions/);
+  assert.match(compatibilityDashboard, /run: completed/);
+  assert.match(compatibilityDashboard, /commit: abcdef012345/);
+  assert.match(compatibilityDashboard, /run id: 123456/);
   assert.match(compatibilityDashboard, /paired solutions: 78/);
   assert.match(compatibilityDashboard, /assertions generated: 78/);
   assert.match(compatibilityDashboard, /assertions referencing solutions: 76/);
