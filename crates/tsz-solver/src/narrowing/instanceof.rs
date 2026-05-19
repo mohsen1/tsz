@@ -12,7 +12,10 @@
 use super::NarrowingContext;
 use crate::def::DefId;
 use crate::relations::subtype::SubtypeChecker;
-use crate::type_queries::{InstanceTypeKind, classify_for_instance_type};
+use crate::type_queries::{
+    InstanceTypeKind, classify_for_instance_type,
+    instance_type_from_symbol_has_instance_with_any_fallback,
+};
 use crate::types::TypeId;
 use crate::utils::{TypeIdExt, intersection_or_single, union_or_single};
 use crate::visitor::{application_id, intersection_list_id, lazy_def_id, union_list_id};
@@ -38,18 +41,36 @@ impl<'a> NarrowingContext<'a> {
         )
         .entered();
 
-        // TODO: Check for static [Symbol.hasInstance] method which overrides standard narrowing
-        // TypeScript allows classes to define custom instanceof behavior via:
-        //   static [Symbol.hasInstance](value: any): boolean
-        // This would require evaluating method calls and type predicates, which is
-        // significantly more complex than the standard construct signature approach.
-
         // CRITICAL: Resolve Lazy types for both source and constructor
         // This ensures type aliases are resolved to their actual types
         let resolved_source = self.resolve_type(source_type);
         let resolved_constructor = self.resolve_type(constructor_type);
 
-        // Extract the instance type from the constructor
+        // A non-asserting `[Symbol.hasInstance]` predicate overrides
+        // structural extraction (tsc's `getNarrowedTypeForInstanceofPredicate`).
+        // Routed through the shared helper so the `value is any` → erased
+        // generic construct fallback is applied identically here and in
+        // `instance_type_from_constructor` (used by the checker's flow path).
+        // Structural fallback below still handles unions/intersections of
+        // plain constructors with no predicate.
+        if let Some(instance_type) =
+            instance_type_from_symbol_has_instance_with_any_fallback(self.db, resolved_constructor)
+        {
+            trace!(
+                source_type = source_type.0,
+                instance_type = instance_type.0,
+                "instanceof: using Symbol.hasInstance predicate as instance type"
+            );
+            return self.narrow_with_instance_type_from_constructor(
+                source_type,
+                resolved_source,
+                instance_type,
+                sense,
+            );
+        }
+
+        // Structural fallback: construct signature return / function return /
+        // recurse through type-parameter constraints, readonly, etc.
         let instance_type = match classify_for_instance_type(self.db, resolved_constructor) {
             InstanceTypeKind::Callable(shape_id) => {
                 // For callable types with construct signatures, get the return type of the construct signature
@@ -132,7 +153,26 @@ impl<'a> NarrowingContext<'a> {
             }
         };
 
-        // Now narrow based on the sense (positive or negative)
+        self.narrow_with_instance_type_from_constructor(
+            source_type,
+            resolved_source,
+            instance_type,
+            sense,
+        )
+    }
+
+    /// Apply the instanceof narrowing rule with an already-extracted instance type.
+    ///
+    /// Shared between the `[Symbol.hasInstance]` predicate path and the
+    /// construct-signature classification path so both honor identical
+    /// `any` / `unknown` / union / interface-overlap semantics.
+    fn narrow_with_instance_type_from_constructor(
+        &self,
+        source_type: TypeId,
+        resolved_source: TypeId,
+        instance_type: TypeId,
+        sense: bool,
+    ) -> TypeId {
         if sense {
             // TypeScript narrows `any` via instanceof UNLESS the instance type is
             // the global Function or Object interface (which are too broad to narrow).

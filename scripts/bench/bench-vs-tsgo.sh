@@ -269,6 +269,26 @@ measure_peak_rss_enabled() {
     [ "${CI:-}" = "true" ] && [ "$(uname -s 2>/dev/null || echo unknown)" = "Linux" ]
 }
 
+# Echoes the structured reason peak-RSS sampling is not active, or empty when
+# sampling is active (a subsequent empty measurement then means the process
+# exited before any sample). Reasons come from the closed vocabulary owned by
+# scripts/ci/project-compatibility.mjs.
+peak_rss_unavailable_reason() {
+    case "${TSZ_BENCH_PROJECT_PEAK_RSS:-}" in
+        0|false|FALSE|no|NO)
+            printf 'measurement disabled\n'
+            return
+            ;;
+        1|true|TRUE|yes|YES)
+            return
+            ;;
+    esac
+
+    if [ "${CI:-}" != "true" ] || [ "$(uname -s 2>/dev/null || echo unknown)" != "Linux" ]; then
+        printf 'not measured on platform\n'
+    fi
+}
+
 process_tree_rss_kb() {
     local root_pid="$1"
 
@@ -308,7 +328,9 @@ process_tree_rss_kb() {
 run_with_timeout() {
     local timeout_secs="$1"
     shift
-    LAST_PEAK_RSS_BYTES=0
+    # Empty (not "0") is the "no positive sample yet" sentinel so the
+    # record-time reason logic can distinguish it from a deliberate zero.
+    LAST_PEAK_RSS_BYTES=""
 
     # Run the command in a background subshell
     "$@" &
@@ -321,7 +343,7 @@ run_with_timeout() {
     local watchdog_pid=$!
     if measure_peak_rss_enabled; then
         rss_file=$(mktemp)
-        printf '0\n' > "$rss_file"
+        : > "$rss_file"
         (
             local peak_kb=0
             local rss_kb
@@ -349,7 +371,7 @@ run_with_timeout() {
         wait "$rss_monitor_pid" 2>/dev/null || true
     fi
     if [ -n "$rss_file" ]; then
-        LAST_PEAK_RSS_BYTES="$(cat "$rss_file" 2>/dev/null || echo 0)"
+        LAST_PEAK_RSS_BYTES="$(cat "$rss_file" 2>/dev/null || true)"
         rm -f "$rss_file"
     fi
 
@@ -1116,6 +1138,14 @@ record_project_compatibility() {
     [ -z "$PROJECT_COMPATIBILITY_JSONL" ] && return
     fixture_sources="$(tsz_project_fixture_sources "$name")"
 
+    local peak_memory_bytes_reason=""
+    if [ -z "$peak_memory_bytes" ]; then
+        peak_memory_bytes_reason="$(peak_rss_unavailable_reason)"
+        if [ -z "$peak_memory_bytes_reason" ]; then
+            peak_memory_bytes_reason="process exited before sampling"
+        fi
+    fi
+
     COMPAT_JSONL_FILE="$PROJECT_COMPATIBILITY_JSONL" \
     COMPAT_OUTPUT_ROOT="$TEMP_DIR" \
     COMPAT_FIXTURE_ROOT="$EXTERNAL_BENCH_DIR" \
@@ -1126,6 +1156,7 @@ record_project_compatibility() {
     COMPAT_DIAGNOSTIC_DELTA="$diagnostic_delta" \
     COMPAT_FILES_REACHED="$files_reached" \
     COMPAT_PEAK_MEMORY_BYTES="$peak_memory_bytes" \
+    COMPAT_PEAK_MEMORY_BYTES_REASON="$peak_memory_bytes_reason" \
     COMPAT_TSC_EXIT_CODES="$tsc_exit_codes" \
     COMPAT_TSZ_EXIT_CODES="$tsz_exit_codes" \
     COMPAT_TSGO_EXIT_CODES="$tsgo_exit_codes" \
@@ -1881,42 +1912,46 @@ function compatibilityArtifactMetadata(recorded = {}, generatedAt = new Date().t
   };
 }
 
+// Factory (not constant) so each fallback row owns its own nested arrays/
+// objects — downstream consumers must be free to mutate without aliasing.
+function fallbackCompatibilityDefaults() {
+  return {
+    diagnostic_deltas: [],
+    exit_codes: { tsc: [], tsz: [], tsgo: [] },
+    files_reached: null,
+    files_reached_reason: "runner did not count",
+    peak_memory_bytes: null,
+    peak_memory_bytes_reason: "not measured on platform",
+  };
+}
+
 function fallbackCompatibility(row) {
   if (!projectOwnerFamilies[row.name]) return null;
   const status = String(row.status || "").toLowerCase();
   if (!status) {
     return {
+      ...fallbackCompatibilityDefaults(),
       exit_class: "exit success",
       phase: "check",
       last_successful_phase: "check",
       diagnostic_status: "none",
-      diagnostic_deltas: [],
-      exit_codes: { tsc: [], tsz: [], tsgo: [] },
-      files_reached: row.lines ? null : null,
-      peak_memory_bytes: null,
     };
   }
   if (status.includes("fixture")) {
     return {
+      ...fallbackCompatibilityDefaults(),
       exit_class: "fixture invalid",
       phase: "fixture setup",
       last_successful_phase: null,
       diagnostic_status: "tsc fixture failed",
-      diagnostic_deltas: [],
-      exit_codes: { tsc: [], tsz: [], tsgo: [] },
-      files_reached: null,
-      peak_memory_bytes: null,
     };
   }
   return {
+    ...fallbackCompatibilityDefaults(),
     exit_class: status.includes("timeout") ? "timeout" : "nonzero exit",
     phase: "check",
     last_successful_phase: null,
     diagnostic_status: status.includes("tsz") ? "diagnostic mismatch or compiler error" : "compiler error",
-    diagnostic_deltas: [],
-    exit_codes: { tsc: [], tsz: [], tsgo: [] },
-    files_reached: null,
-    peak_memory_bytes: null,
   };
 }
 
@@ -2069,6 +2104,17 @@ function reproFromRecorded(recorded) {
   };
 }
 
+// Mirror of residencyReason() in scripts/ci/project-compatibility.mjs but
+// post-processor-side: the recorded row already passed the closed-vocabulary
+// gate so unknown strings are propagated rather than rejected here.
+function residencyReasonFor(value, recordedReason, fallback) {
+  if (value !== null && value !== undefined && Number.isFinite(Number(value))) {
+    return null;
+  }
+  const reason = String(recordedReason || "").trim();
+  return reason || fallback;
+}
+
 function compatibilityFor(row, compatibilityRows) {
   const recorded = compatibilityRows.get(row.name) || fallbackCompatibility(row);
   if (!recorded) return {};
@@ -2105,7 +2151,17 @@ function compatibilityFor(row, compatibilityRows) {
         : { tsc: [], tsz: [], tsgo: [] },
       semantic_owner_family: projectOwnerFamilies[row.name] || "not classified",
       files_reached: recorded.files_reached ?? null,
+      files_reached_reason: residencyReasonFor(
+        recorded.files_reached,
+        recorded.files_reached_reason,
+        "runner did not count",
+      ),
       peak_memory_bytes: recorded.peak_memory_bytes ?? null,
+      peak_memory_bytes_reason: residencyReasonFor(
+        recorded.peak_memory_bytes,
+        recorded.peak_memory_bytes_reason,
+        "not measured on platform",
+      ),
       fixture_sources: Array.isArray(recorded.fixture_sources) ? recorded.fixture_sources : [],
     },
   };

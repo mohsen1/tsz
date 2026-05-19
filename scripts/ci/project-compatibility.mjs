@@ -63,10 +63,45 @@ const ORACLE_CLASSIFICATIONS = new Set(ORACLE_CLASSIFICATION_ORDER);
 const ROW_STATE_DISPLAY_ORDER = ["green", "yellow", "red", "gray"];
 const ROW_STATE_PRIORITY = { red: 0, yellow: 1, gray: 2, green: 3 };
 
+// Closed vocabulary for the structured reason a residency field is absent.
+// Null is reserved for "measurement present"; every other value must come
+// from these sets so dashboards can group residency gaps deterministically.
+const FILES_REACHED_REASONS = new Set([
+  "runner did not count",
+  "not in scope",
+  "process exited before counting",
+]);
+const PEAK_MEMORY_BYTES_REASONS = new Set([
+  "not measured on platform",
+  "measurement disabled",
+  "process exited before sampling",
+  "not in scope",
+]);
+const DEFAULT_FILES_REACHED_REASON = "runner did not count";
+const DEFAULT_PEAK_MEMORY_BYTES_REASON = "not measured on platform";
+if (!FILES_REACHED_REASONS.has(DEFAULT_FILES_REACHED_REASON)) {
+  throw new Error("DEFAULT_FILES_REACHED_REASON must be in FILES_REACHED_REASONS");
+}
+if (!PEAK_MEMORY_BYTES_REASONS.has(DEFAULT_PEAK_MEMORY_BYTES_REASON)) {
+  throw new Error("DEFAULT_PEAK_MEMORY_BYTES_REASON must be in PEAK_MEMORY_BYTES_REASONS");
+}
+
 function toNumber(value) {
   if (value === undefined || value === null || value === "") return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function residencyReason(value, rawReason, vocabulary, fallback, fieldName) {
+  if (value !== null) return null;
+  const reason = String(rawReason || "").trim();
+  if (!reason) return fallback;
+  if (vocabulary.has(reason)) return reason;
+  console.error(
+    `warning: ${fieldName} reason ${JSON.stringify(reason)} is not in the accepted vocabulary; ` +
+    `falling back to ${JSON.stringify(fallback)}. Accepted: ${[...vocabulary].sort().join(", ")}`,
+  );
+  return fallback;
 }
 
 function toExitCodes(value) {
@@ -621,6 +656,23 @@ function record() {
     process.exit(1);
   }
 
+  const filesReached = toNumber(process.env.COMPAT_FILES_REACHED);
+  const peakMemoryBytes = toNumber(process.env.COMPAT_PEAK_MEMORY_BYTES);
+  const filesReachedReason = residencyReason(
+    filesReached,
+    process.env.COMPAT_FILES_REACHED_REASON,
+    FILES_REACHED_REASONS,
+    DEFAULT_FILES_REACHED_REASON,
+    "files_reached",
+  );
+  const peakMemoryBytesReason = residencyReason(
+    peakMemoryBytes,
+    process.env.COMPAT_PEAK_MEMORY_BYTES_REASON,
+    PEAK_MEMORY_BYTES_REASONS,
+    DEFAULT_PEAK_MEMORY_BYTES_REASON,
+    "peak_memory_bytes",
+  );
+
   const row = {
     ...artifactMetadata(process.env, "COMPAT", generatedAt),
     name: projectName,
@@ -654,8 +706,10 @@ function record() {
       tsz: perSourceDeltas.tsz.length,
       tsgo: perSourceDeltas.tsgo.length,
     },
-    files_reached: toNumber(process.env.COMPAT_FILES_REACHED),
-    peak_memory_bytes: toNumber(process.env.COMPAT_PEAK_MEMORY_BYTES),
+    files_reached: filesReached,
+    files_reached_reason: filesReachedReason,
+    peak_memory_bytes: peakMemoryBytes,
+    peak_memory_bytes_reason: peakMemoryBytesReason,
     fixture_sources: fixtureSources,
   };
   fs.appendFileSync(outputFile, `${JSON.stringify(row)}\n`, "utf8");
@@ -701,6 +755,26 @@ function topDiagnosticDeltasFrom(rows, limit) {
   return items;
 }
 
+// Residency facts (files_reached, peak_memory_bytes) are surfaced for every
+// red/yellow row so a reader can distinguish semantic failure from runner /
+// timeout / OOM / scale failure without scrolling through full row JSON.
+// Rows with neither a measurement nor a reason are still listed; the table
+// would otherwise hide schema gaps.
+function residencyByRowFrom(rows) {
+  const priority = (state) => ROW_STATE_PRIORITY[state] ?? 4;
+  return rows
+    .filter((row) => row?.state === "red" || row?.state === "yellow")
+    .sort((a, b) => priority(a.state) - priority(b.state))
+    .map((row) => ({
+      project: row.name || null,
+      state: row.state || null,
+      files_reached: row.files_reached ?? null,
+      files_reached_reason: row.files_reached_reason ?? null,
+      peak_memory_bytes: row.peak_memory_bytes ?? null,
+      peak_memory_bytes_reason: row.peak_memory_bytes_reason ?? null,
+    }));
+}
+
 function summarize() {
   const generatedAt = new Date().toISOString();
   const { rows, malformedLineCount, malformedExamples } = readRows(process.env.SUMMARY_JSONL_FILE || "");
@@ -734,6 +808,7 @@ function summarize() {
   }, {});
 
   const firstDiagnosticDeltas = topDiagnosticDeltasFrom(rows, 3);
+  const residencyByRow = residencyByRowFrom(rows);
 
   const summary = {
     ...artifactMetadata(process.env, "SUMMARY", generatedAt),
@@ -747,6 +822,7 @@ function summarize() {
     by_state: byState,
     by_oracle_classification: byOracleClassification,
     first_diagnostic_deltas: firstDiagnosticDeltas,
+    residency_by_row: residencyByRow,
     rows,
   };
 
@@ -796,6 +872,35 @@ function renderStepSummaryMarkdown(summary, options) {
     lines.push(`- Oracle classification: ${oracleCounts.join(", ")}`);
   }
 
+  // Residency for red/yellow rows is surfaced before any speedup/timing
+  // section so reviewers can distinguish scale/runtime failure (OOM,
+  // timeout, crash, unmeasured) from semantic divergence without scrolling.
+  const residency = Array.isArray(summary.residency_by_row)
+    ? summary.residency_by_row
+    : [];
+  if (residency.length) {
+    lines.push("");
+    lines.push("#### Residency (red/yellow rows)");
+    lines.push("");
+    lines.push("| Project | State | Files reached | Peak RSS |");
+    lines.push("| --- | --- | --- | --- |");
+    for (const item of residency) {
+      const project = escapeMarkdownCell(item.project || "—");
+      const state = escapeMarkdownCell(item.state || "—");
+      const files = escapeMarkdownCell(renderResidencyCell(
+        item.files_reached,
+        item.files_reached_reason,
+        formatFilesReached,
+      ));
+      const memory = escapeMarkdownCell(renderResidencyCell(
+        item.peak_memory_bytes,
+        item.peak_memory_bytes_reason,
+        formatPeakMemoryBytes,
+      ));
+      lines.push(`| ${project} | ${state} | ${files} | ${memory} |`);
+    }
+  }
+
   const deltas = Array.isArray(summary.first_diagnostic_deltas)
     ? summary.first_diagnostic_deltas
     : [];
@@ -820,6 +925,30 @@ function renderStepSummaryMarkdown(summary, options) {
   }
 
   return `${lines.join("\n")}\n`;
+}
+
+function renderResidencyCell(value, reason, formatter) {
+  if (value !== null && value !== undefined && Number.isFinite(Number(value))) {
+    return formatter(Number(value));
+  }
+  return reason ? `n/a (${reason})` : "n/a";
+}
+
+function formatFilesReached(value) {
+  return Number.isInteger(value) ? value.toLocaleString("en-US") : String(value);
+}
+
+function formatPeakMemoryBytes(value) {
+  if (!Number.isFinite(value) || value <= 0) return String(value);
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  let scaled = value;
+  let unit = 0;
+  while (scaled >= 1024 && unit < units.length - 1) {
+    scaled /= 1024;
+    unit += 1;
+  }
+  const digits = scaled >= 100 ? 0 : scaled >= 10 ? 1 : 2;
+  return `${scaled.toFixed(digits)} ${units[unit]}`;
 }
 
 function escapeMarkdownCell(value) {
