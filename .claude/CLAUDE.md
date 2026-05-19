@@ -36,6 +36,14 @@
   blocker or active work, and the next owner/action. If a `WIP` label has no
   signed explanatory comment within 30 minutes of the label event, another
   agent may remove the label and add `help wanted` so the work can be picked up.
+- Do not close PRs or GitHub issues prematurely. Stale, dirty, failing,
+  conflicted, or WIP work is still repository knowledge; preserve it with a
+  signed status comment, `help wanted`, draft/WIP state, or a follow-up issue
+  instead of discarding it. Close only when the work merged, the user explicitly
+  asked for closure, it is an exact duplicate, or a newer PR/issue fully
+  supersedes it and links back to the preserved branch/commits and findings.
+  Before closing for duplicate/superseded reasons, leave a signed comment with
+  the evidence, the successor link, and what useful work was carried forward.
 - Draft PRs intentionally run only light CI: lint, dist-fast build, and unit
   tests. Marking a PR ready for review triggers the heavy suites: conformance,
   emit, fourslash, and WASM. See §19.5 for the rules around local vs. CI work.
@@ -296,6 +304,14 @@ them as TSZ repo skills.
   AgentName. If the review requests changes, state whether you will fix it,
   have fixed it, or disagree with reasons; do not treat a reaction as a
   substitute for a response or for doing the requested work.
+- **Do not close work just to tidy queues.** Closing a PR or issue is a
+  destructive coordination action because branch context, investigation notes,
+  and partial fixes can be lost. Do not close because CI is red, the branch is
+  old, the PR is draft/WIP, or the current owner is inactive. Prefer a signed
+  handoff comment plus `help wanted`. If closure is truly warranted because the
+  work is duplicate or superseded, link the successor, summarize what was
+  preserved, and include the exact branch/commit evidence in the closing
+  comment.
 - **Shared GitHub identity.** All agents push as the same GitHub user
   (`mohsen1`). Assume sibling agents are operating concurrently under the same
   account — check draft PRs, open PRs, recent merged PRs, and relevant issues
