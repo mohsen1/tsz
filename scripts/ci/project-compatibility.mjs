@@ -426,6 +426,7 @@ function knownBlockersFrom({ exitClass, phase, diagnosticSubsystems, diagnosticC
   if (exitClass === "fixture invalid") add("reference fixture invalid");
   if (exitClass === "runner error") add("benchmark runner error");
   if (exitClass === "tsz unavailable") add("tsz unavailable in benchmark runner");
+  if (exitClass === "oracle unavailable") add("tsc oracle unavailable");
   if (phase && phase !== "check") add(`${phase} phase blocker`);
 
   for (const group of diagnosticSubsystems) {
@@ -446,7 +447,11 @@ function lastSuccessfulPhaseFrom({ exitClass, diagnosticStatus }) {
 
 function rowStateFrom({ exitClass, diagnosticStatus }) {
   if (exitClass === "exit success" && diagnosticStatus === "none") return "green";
-  if (exitClass === "fixture invalid" || exitClass === "tsz unavailable") return "gray";
+  if (
+    exitClass === "fixture invalid" ||
+    exitClass === "tsz unavailable" ||
+    exitClass === "oracle unavailable"
+  ) return "gray";
   if (String(diagnosticStatus || "").toLowerCase().includes("diagnostic mismatch")) {
     return "yellow";
   }
@@ -469,6 +474,7 @@ function ownerTrackFrom({ exitClass, diagnosticSubsystems }) {
   if (exitClass === "fixture invalid") return "Track 1 project-corpus harness/config";
   if (exitClass === "runner error") return "Track 1 benchmark runner";
   if (exitClass === "tsz unavailable") return "Track 1 benchmark runner";
+  if (exitClass === "oracle unavailable") return "Track 1 tsc oracle evidence";
 
   const primary = diagnosticSubsystems[0]?.subsystem;
   return ownerTrackForSubsystem(primary) || "Track 1 triage";

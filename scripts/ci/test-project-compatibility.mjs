@@ -438,6 +438,17 @@ withTempDir((dir) => {
       },
       expected: "unknown",
     },
+    {
+      name: "tsc-oracle-not-collected",
+      env: {
+        COMPAT_EXIT_CLASS: "oracle unavailable",
+        COMPAT_PHASE: "oracle",
+        COMPAT_DIAGNOSTIC_STATUS: "tsc oracle unavailable",
+        COMPAT_TSZ_EXIT_CODES: "0",
+        COMPAT_TSGO_EXIT_CODES: "0",
+      },
+      expected: "unknown",
+    },
   ];
 
   for (const testCase of cases) {
@@ -457,6 +468,13 @@ withTempDir((dir) => {
       `${testCase.name}: oracle_classification`,
     );
   }
+  assert.equal(rows[2].state, "gray");
+  assert.equal(rows[2].first_failure_class, "tsc oracle unavailable");
+  assert.equal(rows[2].owner_track, "Track 1 tsc oracle evidence");
+  assert.deepEqual(rows[2].known_blockers, [
+    "tsc oracle unavailable",
+    "oracle phase blocker",
+  ]);
 });
 
 // No tsc oracle signal at all → unknown.
@@ -746,6 +764,12 @@ withTempDir((dir) => {
       name: "missing-tsz",
       exitClass: "tsz unavailable",
       diagnosticStatus: "runner setup incomplete",
+      expectedState: "gray",
+    },
+    {
+      name: "missing-oracle",
+      exitClass: "oracle unavailable",
+      diagnosticStatus: "tsc oracle unavailable",
       expectedState: "gray",
     },
   ];

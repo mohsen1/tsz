@@ -526,6 +526,7 @@ project_failure_status() {
         timeout) echo "compiler timed out" ;;
         oom) echo "compiler OOM or killed" ;;
         crash) echo "compiler crashed" ;;
+        "oracle unavailable") echo "tsc oracle unavailable" ;;
         *) echo "diagnostic mismatch or compiler error" ;;
     esac
 }
@@ -1752,7 +1753,17 @@ run_project_benchmark() {
                 ratio=$(printf "%.2f" "$(echo "$tsz_mean / $tsgo_mean" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
             fi
 
-            record_project_compatibility "$name" "exit success" "check" "none" "" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "0" "0"
+            local success_exit_class="exit success"
+            local success_phase="check"
+            local success_diagnostic_status="none"
+            local success_diagnostic_delta=""
+            if [ -z "$tsc_exit_codes" ]; then
+                success_exit_class="oracle unavailable"
+                success_phase="oracle"
+                success_diagnostic_status="tsc oracle unavailable"
+                success_diagnostic_delta="tsc oracle was not collected for this project row"
+            fi
+            record_project_compatibility "$name" "$success_exit_class" "$success_phase" "$success_diagnostic_status" "$success_diagnostic_delta" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "0" "0"
             RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},${tsz_ms},${tsgo_ms},${tsz_lps},${tsgo_lps},${winner},${ratio},\n"
         fi
     fi
@@ -2003,6 +2014,7 @@ function knownBlockersFrom(recorded, diagnosticSubsystems, diagnosticDeltas) {
   if (exitClass === "fixture invalid") add("reference fixture invalid");
   if (exitClass === "runner error") add("benchmark runner error");
   if (exitClass === "tsz unavailable") add("tsz unavailable in benchmark runner");
+  if (exitClass === "oracle unavailable") add("tsc oracle unavailable");
   if (phase && phase !== "check") add(`${phase} phase blocker`);
 
   for (const group of diagnosticSubsystems) {
@@ -2085,7 +2097,11 @@ function lastSuccessfulPhaseFrom(recorded) {
 function rowStateFrom(recorded) {
   if (recorded.state) return recorded.state;
   if (recorded.exit_class === "exit success" && recorded.diagnostic_status === "none") return "green";
-  if (recorded.exit_class === "fixture invalid" || recorded.exit_class === "tsz unavailable") return "gray";
+  if (
+    recorded.exit_class === "fixture invalid" ||
+    recorded.exit_class === "tsz unavailable" ||
+    recorded.exit_class === "oracle unavailable"
+  ) return "gray";
   if (String(recorded.diagnostic_status || "").toLowerCase().includes("diagnostic mismatch")) return "yellow";
   return "red";
 }

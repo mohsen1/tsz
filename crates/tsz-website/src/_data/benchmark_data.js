@@ -5,6 +5,7 @@ import { marked } from "marked";
 import {
   COMPILE_CANARY_PROJECT_ROWS,
   COMPATIBILITY_CORPUS_ROWS,
+  PROJECT_ROWS_BY_NAME,
   REQUIRED_PROJECT_ROWS,
 } from "../../../../scripts/bench/project-rows.mjs";
 import { fmt } from "./loc.js";
@@ -104,6 +105,25 @@ function hasTiming(value) {
   return Number.isFinite(time) && time > 0;
 }
 
+function isProjectBenchmark(row) {
+  return Boolean(row?.name && PROJECT_ROWS_BY_NAME[row.name]);
+}
+
+function hasGreenProjectCompatibility(row) {
+  if (!isProjectBenchmark(row)) return true;
+
+  const compatibility = row?.compatibility;
+  if (!compatibility || typeof compatibility !== "object") return false;
+
+  const state = String(compatibility.state || "").toLowerCase();
+  const exitClass = String(compatibility.exit_class || "").toLowerCase();
+  const diagnosticStatus = String(compatibility.diagnostic_status || "").toLowerCase();
+  return state === "green"
+    && exitClass === "exit success"
+    && (!diagnosticStatus || diagnosticStatus === "none")
+    && hasCompleteCompatibilityMetadata(compatibility);
+}
+
 function fastestTiming(row) {
   const timings = [row?.tsz_ms, row?.tsgo_ms].map(Number).filter((time) => Number.isFinite(time) && time > 0);
   return timings.length ? Math.min(...timings) : Infinity;
@@ -131,7 +151,11 @@ function compareByTszSpeedup(a, b) {
 }
 
 function hasSuccessfulTiming(row) {
-  return !row?.status && row?.winner !== "error" && hasTiming(row?.tsz_ms) && hasTiming(row?.tsgo_ms);
+  return !row?.status
+    && row?.winner !== "error"
+    && hasTiming(row?.tsz_ms)
+    && hasTiming(row?.tsgo_ms)
+    && hasGreenProjectCompatibility(row);
 }
 
 function isFailedBenchmark(row) {
@@ -249,6 +273,7 @@ function normalizedKnownBlockers(compatibility, diagnosticSubsystems, fallbackBl
   if (exitClass === "fixture invalid") add("reference fixture invalid");
   if (exitClass === "runner error") add("benchmark runner error");
   if (exitClass === "tsz unavailable") add("tsz unavailable in benchmark runner");
+  if (exitClass === "oracle unavailable") add("tsc oracle unavailable");
   if (phase && phase !== "check") add(`${phase} phase blocker`);
 
   for (const group of diagnosticSubsystems) {
@@ -514,8 +539,18 @@ function withExpectedProjectRows(results) {
 function compatibilityState(row) {
   const compatibility = row?.compatibility || {};
   const diagnosticStatus = String(compatibility.diagnostic_status || "").toLowerCase();
+  const recordedState = String(compatibility.state || "").toLowerCase();
+  if (recordedState === "gray") {
+    return {
+      className: "gray",
+      stateLabel: "Gray",
+      exitClass: firstPresent(compatibility.exit_class, "missing or incomplete artifact"),
+      phase: firstPresent(compatibility.phase, "artifact"),
+      diagnosticDeltas: firstPresent(compatibility.diagnostic_deltas, "not available"),
+    };
+  }
   const compatibilityGreen = (
-    String(compatibility.state || "").toLowerCase() === "green" ||
+    recordedState === "green" ||
     String(compatibility.exit_class || "").toLowerCase() === "exit success"
   ) && diagnosticStatus === "none";
   if (compatibilityGreen && hasCompleteCompatibilityMetadata(compatibility)) {
