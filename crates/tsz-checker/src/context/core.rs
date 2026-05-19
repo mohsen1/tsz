@@ -976,7 +976,7 @@ impl<'a> CheckerContext<'a> {
             return Some(v);
         }
         // Backslash-normalized variant (only allocates when input has backslashes).
-        let normalized: Option<String> = if file_name.contains('\\') {
+        let normalized: Option<String> = if file_name.as_bytes().contains(&b'\\') {
             let n = file_name.replace('\\', "/");
             if let Some(v) = map.get(&n) {
                 return Some(v);

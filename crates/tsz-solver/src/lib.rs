@@ -209,10 +209,14 @@ pub use caches::db::{QueryDatabase, TypeDatabase};
 pub use caches::query_cache::{
     QueryCache, QueryCacheStatistics, RelationCacheProbe, RelationCacheStats, SharedQueryCache,
 };
-pub use canonicalize::*;
-pub use classes::inheritance::*;
+pub use canonicalize::Canonicalizer;
+pub use classes::inheritance::InheritanceGraph;
 pub use contextual::{ContextualTypeContext, apply_contextual_type, rest_argument_element_type};
-pub use def::*;
+pub use def::{
+    ContentAddressedDefIds, DefId, DefKind, DefinitionInfo, DefinitionStore, EnumMemberValue,
+    FileChange, FileChangeSet, InvalidationSummary, StoreStatistics, diff_fingerprints,
+    incremental, resolver,
+};
 pub use diagnostics::SubtypeFailureReason;
 pub use diagnostics::builders::{
     DiagnosticBuilder, DiagnosticCollector, SourceLocation, SpannedDiagnosticBuilder,
@@ -223,9 +227,12 @@ pub use diagnostics::reduce::deep_reduce_for_display;
 pub use diagnostics::{
     DiagnosticArg, DiagnosticSeverity, PendingDiagnostic, PendingDiagnosticBuilder, SourceSpan,
 };
-pub use evaluation::evaluate::*;
+pub use evaluation::evaluate::{
+    TypeEvaluator, evaluate_conditional, evaluate_index_access, evaluate_index_access_with_options,
+    evaluate_keyof, evaluate_mapped, evaluate_type, evaluate_type_with_request,
+};
 pub use evaluation::session::EvaluationSession;
-pub use instantiation::application::*;
+pub use instantiation::application::{ApplicationEvaluator, ApplicationResult};
 pub use instantiation::instantiate::{
     MAX_INSTANTIATION_DEPTH, TypeInstantiator, TypeSubstitution, fill_application_defaults,
     instantiate_function_with_type_args, instantiate_generic, instantiate_type,
@@ -235,16 +242,32 @@ pub use instantiation::instantiate::{
     instantiate_type_with_infer, instantiate_type_with_infer_cached, substitute_this_type,
     substitute_this_type_at_return_position, substitute_this_type_cached,
 };
-pub use intern::type_factory::*;
-pub use narrowing::*;
-pub use objects::*;
+pub use intern::type_factory::TypeFactory;
+pub use narrowing::{
+    CachedPropertyType, DiscriminantInfo, GuardSense, NarrowingCache, NarrowingContext,
+    NarrowingResult, NullishFilter, OptionalPropertyChainKey, TypeGuard, TypeofKind,
+    find_discriminants, is_definitely_nullish, is_nullish_type, narrow_by_discriminant,
+    narrow_by_typeof, remove_nullish, remove_nullish_query, remove_undefined, split_nullish_type,
+    type_contains_undefined,
+};
+pub use objects::{
+    ApparentMemberKind, ElementAccessEvaluator, ElementAccessResult, IndexKind,
+    IndexSignatureResolver, ObjectLiteralBuilder, PropertyCollectionResult, apparent,
+    apparent_object_member_kind, apparent_primitive_member_kind, apparent_primitive_members,
+    apparent_primitive_shape, collect_properties, element_access, index_signatures,
+    literal_value_intrinsic_kind,
+};
 pub use operations::compound_assignment;
 pub use operations::compound_assignment::{
     fallback_compound_assignment_result, is_assignment_operator, is_compound_assignment_operator,
     is_logical_compound_assignment_operator, map_compound_assignment_to_binary,
 };
 pub use operations::expression_ops;
-pub use operations::expression_ops::*;
+pub use operations::expression_ops::{
+    compute_best_common_type, compute_best_common_type_cached, compute_conditional_expression_type,
+    compute_template_expression_type, compute_template_expression_type_contextual,
+    is_template_literal_contextual_type, normalize_object_union_members_for_write_target,
+};
 pub use operations::{
     AssignabilityChecker, BinaryOpEvaluator, BinaryOpResult, CallEvaluator, CallResult,
     MAX_CONSTRAINT_RECURSION_DEPTH, get_contextual_signature_cached_with_compat_checker,
@@ -252,10 +275,17 @@ pub use operations::{
     get_contextual_signature_for_arity_with_compat_checker,
     get_contextual_signature_with_compat_checker,
 };
-pub use relations::compat::*;
-pub use relations::judge::*;
+pub use relations::compat::{AssignabilityOverrideProvider, CompatChecker, NoopOverrideProvider};
+pub use relations::judge::{
+    CallableKind, DefaultJudge, IterableKind, Judge, JudgeConfig, PropertyResult, TruthinessKind,
+};
 pub use relations::lawyer::AnyPropagationRules;
-pub use relations::relation_queries::*;
+pub use relations::relation_queries::{
+    AssignabilityFailureAnalysis, RelationContext, RelationKind, RelationPolicy,
+    RelationQueryInputs, RelationResult, analyze_assignability_failure_with_resolver,
+    are_type_params_assignable, check_application_variance, query_relation,
+    query_relation_with_overrides, query_relation_with_resolver,
+};
 pub use relations::subtype::{
     AnyPropagationMode, SubtypeChecker, SubtypeResult, TypeEnvironment, TypeResolver,
     are_types_structurally_identical, is_subtype_of, reset_subtype_thread_local_state,

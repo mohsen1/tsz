@@ -1016,3 +1016,221 @@ fn test_fast_resolver_matches_legacy_map_entries() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Arbitrary-extension declaration files (`<base>.d.<ext>.ts`, `<ext>` outside
+// TS/JS/JSON).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_arbitrary_ext_decl_user_parts_extracts_user_form() {
+    // Non-TS/JS/JSON inner extensions: the helper returns the (base, ext)
+    // parts the user types in their import (`<base>.<ext>`).
+    assert_eq!(
+        arbitrary_ext_decl_user_parts("component.d.html.ts"),
+        Some(("component", "html")),
+    );
+    assert_eq!(
+        arbitrary_ext_decl_user_parts("styles.d.css.ts"),
+        Some(("styles", "css")),
+    );
+    assert_eq!(
+        arbitrary_ext_decl_user_parts("Button.d.svelte.ts"),
+        Some(("Button", "svelte")),
+    );
+    assert_eq!(
+        arbitrary_ext_decl_user_parts("widget.d.vue.ts"),
+        Some(("widget", "vue")),
+    );
+    // Nested paths: the `.d.` split is rightmost so the base preserves its
+    // directory prefix and only the file-level shape participates.
+    assert_eq!(
+        arbitrary_ext_decl_user_parts("src/components/Button.d.svelte.ts"),
+        Some(("src/components/Button", "svelte")),
+    );
+}
+
+#[test]
+fn test_arbitrary_ext_decl_user_parts_rejects_ts_js_json_inner_ext() {
+    // TS/JS/JSON-wrapped declaration files are handled by
+    // `is_arbitrary_extension_declaration_file` (they are dropped from the
+    // target index entirely). The user-form helper must return None for
+    // every member of that set.
+    for inner in ["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs", "json"] {
+        let file = format!("foo.d.{inner}.ts");
+        assert_eq!(
+            arbitrary_ext_decl_user_parts(&file),
+            None,
+            "user-form helper must not claim TS/JS/JSON-wrapped decl `{file}`",
+        );
+    }
+}
+
+#[test]
+fn test_arbitrary_ext_decl_user_parts_rejects_non_decl_shapes() {
+    // Plain TS files have no `.d.` infix.
+    assert_eq!(arbitrary_ext_decl_user_parts("foo.ts"), None);
+    assert_eq!(arbitrary_ext_decl_user_parts("foo.tsx"), None);
+    // Normal `.d.ts` has no second extension between `.d.` and `.ts`.
+    assert_eq!(arbitrary_ext_decl_user_parts("foo.d.ts"), None);
+    // Empty inner ext (`<base>.d..ts`) is invalid.
+    assert_eq!(arbitrary_ext_decl_user_parts("foo.d..ts"), None);
+    // Inner ext containing a slash or dot is rejected as a defensive shape
+    // check (these are not real arbitrary-ext spellings).
+    assert_eq!(arbitrary_ext_decl_user_parts("foo.d.svelte.kit.ts"), None);
+    // Missing trailing `.ts` (the file is not a TS source).
+    assert_eq!(arbitrary_ext_decl_user_parts("foo.d.html"), None);
+    // Empty base.
+    assert_eq!(arbitrary_ext_decl_user_parts(".d.html.ts"), None);
+    // Non-decl file ending in the right extension by coincidence.
+    assert_eq!(arbitrary_ext_decl_user_parts("foo.html"), None);
+    assert_eq!(arbitrary_ext_decl_user_parts("foo.html.ts"), None);
+}
+
+#[test]
+fn test_build_module_resolution_maps_registers_arbitrary_ext_decl_under_user_form() {
+    let files = vec![
+        "/proj/main.ts".to_string(),
+        "/proj/component.d.html.ts".to_string(),
+        "/proj/styles.d.css.ts".to_string(),
+        "/proj/widgets/Button.d.svelte.ts".to_string(),
+    ];
+    let (paths, modules) = build_module_resolution_maps(&files);
+
+    // User-form specifiers resolve to the declaration file.
+    assert_eq!(paths.get(&(0, "./component.html".to_string())), Some(&1));
+    assert_eq!(paths.get(&(0, "./styles.css".to_string())), Some(&2));
+    assert_eq!(
+        paths.get(&(0, "./widgets/Button.svelte".to_string())),
+        Some(&3),
+    );
+
+    // Additive: the legacy naive `<base>.d.<ext>` strip form and the
+    // `<base>.d.<ext>.ts` extension form remain registered for fixture
+    // compatibility. The user-form is the new addition; both spellings
+    // resolve to the same target file.
+    assert_eq!(paths.get(&(0, "./component.d.html".to_string())), Some(&1));
+    assert_eq!(
+        paths.get(&(0, "./component.d.html.ts".to_string())),
+        Some(&1)
+    );
+
+    // Module set mirrors the path map.
+    assert!(modules.contains("./component.html"));
+    assert!(modules.contains("./styles.css"));
+    assert!(modules.contains("./widgets/Button.svelte"));
+    assert!(modules.contains("./component.d.html"));
+}
+
+#[test]
+fn test_arbitrary_ext_decl_renamed_extensions() {
+    // Section §25 generalization: the rule must not be keyed on `.html` /
+    // `.css` / `.svelte`. Any non-TS/JS/JSON arbitrary extension that the
+    // user can type in an import specifier must register under the same
+    // user-form.
+    let files = vec![
+        "/proj/main.ts".to_string(),
+        "/proj/asset.d.png.ts".to_string(),
+        "/proj/shader.d.wgsl.ts".to_string(),
+        "/proj/template.d.mustache.ts".to_string(),
+    ];
+    let (paths, _) = build_module_resolution_maps(&files);
+    assert_eq!(paths.get(&(0, "./asset.png".to_string())), Some(&1));
+    assert_eq!(paths.get(&(0, "./shader.wgsl".to_string())), Some(&2));
+    assert_eq!(paths.get(&(0, "./template.mustache".to_string())), Some(&3));
+}
+
+#[test]
+fn test_arbitrary_ext_decl_does_not_disturb_ts_js_json_wrapped_files() {
+    // Regression guard for the existing `test_arbitrary_extension_declaration_file_is_not_mapped`
+    // invariant: TS/JS/JSON-wrapped declaration files remain unmapped.
+    let files = vec![
+        "/proj/app.ts".to_string(),
+        "/proj/foo.d.ts.ts".to_string(),
+        "/proj/bar.d.json.ts".to_string(),
+        "/proj/baz.d.js.ts".to_string(),
+    ];
+    let (paths, modules) = build_module_resolution_maps(&files);
+    for spec in [
+        "./foo.d.ts",
+        "./foo.json",
+        "./bar.json",
+        "./baz.js",
+        "./foo",
+        "./bar",
+        "./baz",
+    ] {
+        assert!(
+            !paths.contains_key(&(0, spec.to_string())),
+            "TS/JS/JSON-wrapped decl file must not register {spec}",
+        );
+        assert!(
+            !modules.contains(spec),
+            "TS/JS/JSON-wrapped decl file must not register {spec} in module set",
+        );
+    }
+}
+
+#[test]
+fn test_fast_resolver_arbitrary_ext_decl() {
+    let files = [
+        "/proj/main.ts",
+        "/proj/component.d.html.ts",
+        "/proj/styles.d.css.ts",
+        "/proj/widgets/Button.d.svelte.ts",
+    ];
+    let idx = file_index_from(&files);
+
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/main.ts", "./component.html", &idx),
+        Some(1),
+    );
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/main.ts", "./styles.css", &idx),
+        Some(2),
+    );
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/main.ts", "./widgets/Button.svelte", &idx),
+        Some(3),
+    );
+
+    // Additive: the legacy naive `.d.<ext>` form also resolves (preserved
+    // for fixture compatibility).
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/main.ts", "./component.d.html", &idx),
+        Some(1),
+    );
+
+    // Parent traversal works.
+    assert_eq!(
+        resolve_specifier_via_file_index(
+            "/proj/widgets/Button.d.svelte.ts",
+            "../component.html",
+            &idx,
+        ),
+        Some(1),
+    );
+}
+
+#[test]
+fn test_fast_resolver_arbitrary_ext_decl_matches_legacy_map() {
+    // The fast resolver must resolve every (src, specifier) the legacy map
+    // registers when arbitrary-extension decl files are present.
+    let files = vec![
+        "/proj/main.ts".to_string(),
+        "/proj/component.d.html.ts".to_string(),
+        "/proj/widgets/Button.d.svelte.ts".to_string(),
+    ];
+    let (legacy, _) = build_module_resolution_maps(&files);
+    let idx = file_index_from(&files.iter().map(String::as_str).collect::<Vec<_>>());
+    for ((src_idx, specifier), &tgt) in legacy.iter() {
+        let got = resolve_specifier_via_file_index(&files[*src_idx], specifier, &idx);
+        assert_eq!(
+            got,
+            Some(tgt),
+            "fast resolver disagreed for src={} spec={}",
+            files[*src_idx],
+            specifier,
+        );
+    }
+}

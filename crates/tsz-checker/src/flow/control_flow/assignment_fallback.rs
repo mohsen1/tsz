@@ -440,7 +440,7 @@ impl<'a> FlowAnalyzer<'a> {
             return None;
         }
 
-        let mut explicit_type_args = Vec::new();
+        let mut explicit_type_args: smallvec::SmallVec<[TypeId; 4]> = smallvec::SmallVec::new();
         if let Some(type_arguments) = call.type_arguments.as_ref() {
             for &arg_idx in &type_arguments.nodes {
                 explicit_type_args.push(self.fallback_type_from_type_node_syntax(arg_idx)?);
@@ -452,7 +452,11 @@ impl<'a> FlowAnalyzer<'a> {
             let return_type = if explicit_type_args.is_empty() || sig.type_params.is_empty() {
                 sig.return_type
             } else {
-                let mut applied_args = explicit_type_args.clone();
+                let mut applied_args: smallvec::SmallVec<[TypeId; 4]> = explicit_type_args
+                    .iter()
+                    .copied()
+                    .take(sig.type_params.len())
+                    .collect();
                 if applied_args.len() < sig.type_params.len() {
                     for param in sig.type_params.iter().skip(applied_args.len()) {
                         applied_args.push(
@@ -462,9 +466,6 @@ impl<'a> FlowAnalyzer<'a> {
                                 .unwrap_or(TypeId::UNKNOWN),
                         );
                     }
-                }
-                if applied_args.len() > sig.type_params.len() {
-                    applied_args.truncate(sig.type_params.len());
                 }
                 let substitution =
                     TypeSubstitution::from_args(self.interner, &sig.type_params, &applied_args);
