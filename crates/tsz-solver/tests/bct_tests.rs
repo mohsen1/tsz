@@ -628,15 +628,15 @@ fn test_bct_uses_subtype_cache() {
     let interner = TypeInterner::new();
     let ctx = InferenceContext::new(&interner);
 
-    assert!(ctx.subtype_cache.borrow().is_empty());
+    assert_eq!(ctx.cache_statistics().subtype_entries, 0);
 
     let _ = ctx.best_common_type(&[TypeId::STRING, TypeId::NUMBER]);
-    let cache_size = ctx.subtype_cache.borrow().len();
+    let cache_size = ctx.cache_statistics().subtype_entries;
     assert!(cache_size > 0, "Subtype cache should be populated");
 
     // Calling again should reuse cache
     let _ = ctx.best_common_type(&[TypeId::STRING, TypeId::NUMBER]);
-    let cache_size_after = ctx.subtype_cache.borrow().len();
+    let cache_size_after = ctx.cache_statistics().subtype_entries;
     assert_eq!(cache_size, cache_size_after, "Cache should be reused");
 }
 

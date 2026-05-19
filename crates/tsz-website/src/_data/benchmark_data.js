@@ -230,7 +230,7 @@ function diagnosticCodesFromDeltas(deltas) {
   return codes;
 }
 
-function normalizedKnownBlockers(compatibility, diagnosticSubsystems) {
+function normalizedKnownBlockers(compatibility, diagnosticSubsystems, fallbackBlockers = []) {
   const existing = Array.isArray(compatibility?.known_blockers) ? compatibility.known_blockers : [];
   if (existing.length) {
     return existing.map(String).filter(Boolean).slice(0, 8);
@@ -262,6 +262,9 @@ function normalizedKnownBlockers(compatibility, diagnosticSubsystems) {
       : [];
   if (!blockers.length && diagnosticCodesFromDeltas(deltas).length) {
     add("unclassified diagnostic mismatch");
+  }
+  for (const blocker of fallbackBlockers) {
+    add(blocker);
   }
 
   return blockers;
@@ -554,25 +557,33 @@ function compatibilityState(row) {
 function compatibilityRowFor(definition, allResults, artifact) {
   const row = allResults.find((candidate) => candidate?.name === definition.name);
   const artifactFamily = firstPresent(row?.compatibility?.semantic_owner_family, row?.compatibility?.owner_family);
+  const ownerFamily = artifactFamily || definition.family;
   const compatibility = row?.compatibility || {};
   const diagnosticSubsystems = normalizedDiagnosticSubsystems(compatibility);
   const missingMetadata = missingCompatibilityMetadata(row, artifact);
   const artifactMetadata = artifactMetadataFor(row, artifact);
+  const state = compatibilityState(row);
+  const fallbackBlockers = state.className === "green"
+    ? []
+    : [
+        row?.status ? String(row.status) : "",
+        ownerFamily ? `owner family: ${ownerFamily}` : "",
+      ];
   return {
     ...definition,
-    family: artifactFamily || definition.family,
-    ...compatibilityState(row),
+    family: ownerFamily,
+    ...state,
     row,
     lines: row?.lines || 0,
     filesReached: compatibility.files_reached ?? null,
     firstFailureClass: compatibility.first_failure_class || null,
-    ownerTrack: compatibility.owner_track || null,
+    ownerTrack: firstPresent(compatibility.owner_track, definition.owner),
     reducedReproPath: compatibility.reduced_repro_path || null,
     lastSuccessfulPhase: normalizedLastSuccessfulPhase(compatibility),
     peakMemoryBytes: compatibility.peak_memory_bytes ?? null,
     emitStatus: compatibility.emit_status || "not in scope (noEmit project check)",
     dtsStatus: compatibility.dts_status || "not in scope (noEmit project check)",
-    knownBlockers: normalizedKnownBlockers(compatibility, diagnosticSubsystems),
+    knownBlockers: normalizedKnownBlockers(compatibility, diagnosticSubsystems, fallbackBlockers),
     exitCodes: compatibility.exit_codes && typeof compatibility.exit_codes === "object"
       ? {
           tsc: Array.isArray(compatibility.exit_codes.tsc) ? compatibility.exit_codes.tsc.slice(0, 8) : [],

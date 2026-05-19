@@ -428,6 +428,8 @@ try {
   assert.match(charts, /type-challenges tsc-clean assertions/);
 
   const compatibilityDashboard = getProjectCompatibilityDashboard();
+  assert.match(compatibilityDashboard, /owner track: Tracks 1, 2, 5/);
+  assert.match(compatibilityDashboard, /owner: baseline utility mapped\/conditional surface/);
   assert.match(compatibilityDashboard, /type-challenges assertions/);
   assert.match(compatibilityDashboard, /artifact generated: 2026-05-16T00:00:00Z/);
   assert.match(compatibilityDashboard, /commit: local/);
@@ -505,6 +507,9 @@ try {
   assert.match(failedOnlyCompatibility, /freshness warning: older than latest completed bench run 1003/);
   assert.match(failedOnlyCompatibility, /freshness warning: older than 2026-05-17T00:00:00Z bench artifact/);
   assert.match(failedOnlyCompatibility, /freshness warning: run status: cancelled/);
+  assert.match(failedOnlyCompatibility, /owner track: Tracks 1, 2, 5/);
+  assert.match(failedOnlyCompatibility, /compatibility metadata malformed/);
+  assert.match(failedOnlyCompatibility, /owner family: mapped\/conditional\/key-space utility surface/);
   assert.equal(
     [...failedOnlyCompatibility.matchAll(/fixture sources missing\/malformed\/unpinned/g)].length,
     3,
