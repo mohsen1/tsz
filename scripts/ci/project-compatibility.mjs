@@ -67,6 +67,42 @@ function toExitCodes(value) {
   return codes;
 }
 
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    const normalized = String(value ?? "").trim();
+    if (normalized) return normalized;
+  }
+  return null;
+}
+
+function githubRunUrl(env, runId) {
+  if (!runId || runId === "local") return null;
+  const serverUrl = firstNonEmpty(env.GITHUB_SERVER_URL, "https://github.com");
+  const repository = firstNonEmpty(env.GITHUB_REPOSITORY);
+  if (!repository) return null;
+  return `${serverUrl}/${repository}/actions/runs/${runId}`;
+}
+
+function artifactMetadata(env, prefix, generatedAt) {
+  const runId = firstNonEmpty(env[`${prefix}_WORKFLOW_RUN_ID`], env.GITHUB_RUN_ID, "local");
+  const runStatus = firstNonEmpty(
+    env[`${prefix}_RUN_STATUS`],
+    env.GITHUB_ACTIONS === "true" ? "completed" : "local",
+  );
+  return {
+    generated_at: firstNonEmpty(env[`${prefix}_GENERATED_AT`], generatedAt),
+    source_commit: firstNonEmpty(env[`${prefix}_SOURCE_COMMIT`], env.BENCH_TARGET_SHA, env.GITHUB_SHA, "local"),
+    workflow_name: firstNonEmpty(env[`${prefix}_WORKFLOW_NAME`], env.GITHUB_WORKFLOW, "local"),
+    workflow_run_id: runId,
+    workflow_run_url: firstNonEmpty(
+      env[`${prefix}_WORKFLOW_RUN_URL`],
+      githubRunUrl(env, runId),
+    ),
+    workflow_run_attempt: firstNonEmpty(env[`${prefix}_WORKFLOW_RUN_ATTEMPT`], env.GITHUB_RUN_ATTEMPT),
+    run_status: runStatus,
+  };
+}
+
 function fixtureSourcesFrom(value) {
   const sources = [];
   const seen = new Set();
@@ -470,6 +506,7 @@ function typeChallengesCleanAssertionMetadata(projectName) {
 }
 
 function record() {
+  const generatedAt = new Date().toISOString();
   const delta = process.env.COMPAT_DIAGNOSTIC_DELTA || "";
   const diagnosticDeltas = delta
     .split(/\r?\n/)
@@ -505,6 +542,7 @@ function record() {
   }
 
   const row = {
+    ...artifactMetadata(process.env, "COMPAT", generatedAt),
     name: projectName,
     state,
     exit_class: exitClass,
@@ -540,6 +578,7 @@ function record() {
 }
 
 function summarize() {
+  const generatedAt = new Date().toISOString();
   const { rows, malformedLineCount, malformedExamples } = readRows(process.env.SUMMARY_JSONL_FILE || "");
   let outputFile;
   try {
@@ -563,7 +602,7 @@ function summarize() {
   }, {});
 
   const summary = {
-    generated_at: new Date().toISOString(),
+    ...artifactMetadata(process.env, "SUMMARY", generatedAt),
     project_set: process.env.SUMMARY_PROJECT_SET || "required",
     project_filter: process.env.SUMMARY_PROJECT_FILTER || "",
     allow_failures: process.env.SUMMARY_ALLOW_FAILURES === "1",
