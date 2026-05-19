@@ -96,6 +96,53 @@ function basePairingReport(overrides = {}) {
   };
 }
 
+function writeCandidateFixture(dir) {
+  const typeCompile = path.join(dir, "type-challenges", ".tsz-compile");
+  const solutionsCompile = path.join(
+    dir,
+    "type-challenges-solutions",
+    ".tsz-compile",
+  );
+  const outputDir = path.join(dir, "assertions");
+  const manifestPath = path.join(outputDir, "type-challenges-assertions-manifest.json");
+  const pairingPath = path.join(dir, "pairing.json");
+  const report = basePairingReport();
+  report.counts.pairedSolutions = 1;
+  report.pairedSolutions = [report.pairedSolutions[0]];
+
+  writeFile(
+    path.join(typeCompile, "utils", "index.d.ts"),
+    "export type Expect<T extends true> = T;\nexport type Equal<X, Y> = true;\n",
+  );
+  writeFile(
+    path.join(solutionsCompile, "solutions", "easy-first.ts"),
+    "type First<T extends unknown[]> = T[0];\nexport {};\n",
+  );
+  writeFile(
+    path.join(typeCompile, "questions", "00014-easy-first", "template.ts"),
+    "type First<T extends unknown[]> = T[0];\n",
+  );
+  writeFile(
+    path.join(
+      typeCompile,
+      "test-cases",
+      "questions",
+      "00014-easy-first",
+      "test-cases.ts",
+    ),
+    "import type { Equal, Expect } from '@type-challenges/utils'\ntype cases = [Expect<Equal<First<[1, 2]>, 1>>]\n",
+  );
+  writeJson(pairingPath, report);
+
+  return {
+    typeCompile,
+    solutionsCompile,
+    outputDir,
+    manifestPath,
+    pairingPath,
+  };
+}
+
 withTempDir((dir) => {
   const typeCompile = path.join(dir, "type-challenges", ".tsz-compile");
   const solutionsCompile = path.join(
@@ -218,6 +265,144 @@ withTempDir((dir) => {
   assert.match(firstCandidate, /Expect<Equal<First<\[1, 2\]>, 1>>/);
   assert.ok(fs.existsSync(path.join(outputDir, "tsconfig.tsz-guard.json")));
   assert.ok(fs.existsSync(path.join(outputDir, "utils", "index.d.ts")));
+});
+
+withTempDir((dir) => {
+  const fixture = writeCandidateFixture(dir);
+  const outputDir = path.join(path.dirname(dir), `${path.basename(dir)}-outside-assertions`);
+  const manifestPath = path.join(outputDir, "manifest.json");
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      SCRIPT,
+      fixture.pairingPath,
+      fixture.typeCompile,
+      fixture.solutionsCompile,
+      outputDir,
+      manifestPath,
+    ],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /assertion candidate output directory must stay inside the fixture root/,
+  );
+  assert.equal(fs.existsSync(outputDir), false);
+});
+
+withTempDir((dir) => {
+  const fixture = writeCandidateFixture(dir);
+  const outputDir = fixture.typeCompile;
+  const manifestPath = path.join(outputDir, "manifest.json");
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      SCRIPT,
+      fixture.pairingPath,
+      fixture.typeCompile,
+      fixture.solutionsCompile,
+      outputDir,
+      manifestPath,
+    ],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /output directory must not overlap the official Type Challenges compile directory/,
+  );
+  assert.equal(
+    fs.existsSync(path.join(fixture.typeCompile, "utils", "index.d.ts")),
+    true,
+  );
+});
+
+withTempDir((dir) => {
+  const fixture = writeCandidateFixture(dir);
+  const manifestPath = path.join(dir, "manifest.json");
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      SCRIPT,
+      fixture.pairingPath,
+      fixture.typeCompile,
+      fixture.solutionsCompile,
+      fixture.outputDir,
+      manifestPath,
+    ],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /assertion candidate manifest path must stay inside the output directory/,
+  );
+  assert.equal(fs.existsSync(manifestPath), false);
+});
+
+withTempDir((dir) => {
+  const fixture = writeCandidateFixture(dir);
+  const manifestPath = path.join(fixture.outputDir, "tsconfig.tsz-guard.json");
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      SCRIPT,
+      fixture.pairingPath,
+      fixture.typeCompile,
+      fixture.solutionsCompile,
+      fixture.outputDir,
+      manifestPath,
+    ],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /assertion candidate manifest path must not clobber generated outputs/,
+  );
+});
+
+withTempDir((dir) => {
+  const fixture = writeCandidateFixture(dir);
+  fs.writeFileSync(fixture.outputDir, "not a directory\n", "utf8");
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      SCRIPT,
+      fixture.pairingPath,
+      fixture.typeCompile,
+      fixture.solutionsCompile,
+      fixture.outputDir,
+      fixture.manifestPath,
+    ],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /assertion candidate output directory exists but is not a directory/,
+  );
 });
 
 withTempDir((dir) => {

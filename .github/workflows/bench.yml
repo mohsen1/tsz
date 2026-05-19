@@ -35,7 +35,6 @@ env:
   BENCH_COLD: "1"
   BENCH_PGO: "1"
   BENCH_REQUIRE_PGO: "1"
-  TSC_NPM_SPEC: "6.0.2"
   GITHUB_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
   BENCH_TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
   CARGO_HOME: ${{ github.workspace }}/.ci-cache/cargo-home

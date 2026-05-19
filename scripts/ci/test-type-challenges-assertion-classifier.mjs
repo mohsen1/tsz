@@ -40,6 +40,33 @@ function writeExecutable(file, text) {
   fs.chmodSync(file, 0o755);
 }
 
+function writeValidOneCandidateFixture(candidates, manifest) {
+  writeJson(path.join(candidates, "tsconfig.tsz-guard.json"), {
+    compilerOptions: { noEmit: true },
+  });
+  writeFile(path.join(candidates, "assertions", "one.ts"), "type One = true;\n");
+  writeJson(manifest, {
+    fixture: "type-challenges-assertion-candidates",
+    sources: {
+      templates: { repository: "type", ref: "type-ref" },
+      testCases: { repository: "type", ref: "type-ref" },
+      solutions: { repository: "solutions", ref: "solutions-ref" },
+    },
+    counts: {
+      pairedSolutions: 1,
+      generatedAssertions: 1,
+      assertionsReferencingSolutionDeclaration: 1,
+      assertionsMissingSolutionDeclarationReference: 0,
+    },
+    entries: [
+      {
+        id: "one",
+        output: "assertions/one.ts",
+      },
+    ],
+  });
+}
+
 withTempDir((dir) => {
   const candidates = path.join(dir, "assertions");
   const manifest = path.join(candidates, "type-challenges-assertions-manifest.json");
@@ -1186,4 +1213,52 @@ withTempDir((dir) => {
     /counts\.assertionsMissingSolutionDeclarationReference must be a non-negative integer/,
   );
   assert.equal(fs.existsSync(output), false);
+});
+
+withTempDir((dir) => {
+  const candidates = path.join(dir, "assertions");
+  const manifest = path.join(candidates, "type-challenges-assertions-manifest.json");
+  const output = path.join(dir, "escaped-classification.json");
+
+  writeValidOneCandidateFixture(candidates, manifest);
+
+  const result = spawnSync(process.execPath, [SCRIPT, candidates, manifest, output], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /classification output must stay inside the candidate directory/);
+  assert.equal(fs.existsSync(output), false);
+});
+
+withTempDir((dir) => {
+  const candidates = path.join(dir, "assertions");
+  const manifest = path.join(candidates, "type-challenges-assertions-manifest.json");
+
+  writeValidOneCandidateFixture(candidates, manifest);
+
+  const result = spawnSync(process.execPath, [SCRIPT, candidates, manifest, manifest], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /classification output must not overwrite classifier inputs/);
+  const parsedManifest = JSON.parse(fs.readFileSync(manifest, "utf8"));
+  assert.equal(parsedManifest.fixture, "type-challenges-assertion-candidates");
+});
+
+withTempDir((dir) => {
+  const candidates = path.join(dir, "assertions");
+  const manifest = path.join(candidates, "type-challenges-assertions-manifest.json");
+  const output = path.join(candidates, "classification-dir");
+
+  writeValidOneCandidateFixture(candidates, manifest);
+  fs.mkdirSync(output, { recursive: true });
+
+  const result = spawnSync(process.execPath, [SCRIPT, candidates, manifest, output], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /classification output path is not a file/);
 });

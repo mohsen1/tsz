@@ -2902,17 +2902,13 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let Some(sym_id) = self.resolve_identifier_symbol(object_expr_idx) else {
-            return None;
-        };
+        let sym_id = self.resolve_identifier_symbol(object_expr_idx)?;
         let base_type = {
             let env = self.ctx.type_env.borrow();
             TypeResolver::resolve_type_query(&*env, tsz_solver::SymbolRef(sym_id.0), self.ctx.types)
         }
         .or_else(|| self.ctx.symbol_types.get(&sym_id).copied());
-        let Some(base_type) = base_type else {
-            return None;
-        };
+        let base_type = base_type?;
         let evaluated = self.evaluate_type_with_env(base_type);
         let base_type = if evaluated != TypeId::ERROR {
             evaluated

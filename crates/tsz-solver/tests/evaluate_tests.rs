@@ -4,6 +4,29 @@ use crate::def::DefId;
 use crate::{SubtypeChecker, TypeSubstitution, instantiate_type};
 
 #[test]
+fn evaluator_cache_statistics_report_entries_and_size() {
+    let interner = TypeInterner::new();
+    let mut evaluator = TypeEvaluator::new(&interner);
+
+    let empty = evaluator.cache_statistics();
+    assert_eq!(empty.conditional_subtype_entries, 0);
+    assert_eq!(empty.contains_infer_entries, 0);
+    assert_eq!(empty.estimated_size_bytes(), 0);
+
+    evaluator.cache_conditional_subtype(TypeId::STRING, TypeId::UNKNOWN, true);
+    evaluator.cache_conditional_subtype(TypeId::NUMBER, TypeId::STRING, false);
+    evaluator.cache_contains_infer(TypeId::BOOLEAN, false);
+
+    let populated = evaluator.cache_statistics();
+    assert_eq!(populated.conditional_subtype_entries, 2);
+    assert_eq!(populated.contains_infer_entries, 1);
+    assert!(
+        populated.estimated_size_bytes() > empty.estimated_size_bytes(),
+        "populated evaluator caches should report nonzero estimated residency"
+    );
+}
+
+#[test]
 fn test_conditional_true_branch() {
     let interner = TypeInterner::new();
 

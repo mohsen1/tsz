@@ -240,6 +240,48 @@ impl<'a> CheckerState<'a> {
         (has_getter, has_setter)
     }
 
+    fn private_property_declared_access_type(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+        is_write_context: bool,
+    ) -> Option<TypeId> {
+        let declarations = self.ctx.binder.get_symbol(sym_id)?.declarations.clone();
+
+        for decl_idx in declarations {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            if node.kind != tsz_parser::parser::syntax_kind_ext::PROPERTY_DECLARATION {
+                continue;
+            }
+            let Some(prop) = self.ctx.arena.get_property_decl(node) else {
+                continue;
+            };
+            let declared_type = if is_write_context {
+                self.class_property_relation_declared_type(decl_idx, prop)
+            } else {
+                self.effective_class_property_declared_type(decl_idx, prop)
+            };
+            if let Some(type_id) = declared_type {
+                let evaluated = self.evaluate_type_for_assignability(type_id);
+                if evaluated != type_id
+                    && crate::query_boundaries::common::object_shape_for_type(
+                        self.ctx.types,
+                        evaluated,
+                    )
+                    .is_some_and(|shape| {
+                        shape.string_index.is_some() || shape.number_index.is_some()
+                    })
+                {
+                    return Some(evaluated);
+                }
+                return Some(type_id);
+            }
+        }
+
+        None
+    }
+
     pub(crate) fn get_type_of_private_property_access(
         &mut self,
         idx: NodeIndex,
@@ -782,6 +824,19 @@ impl<'a> CheckerState<'a> {
                 }
             }
             return TypeId::ERROR;
+        }
+
+        if let Some(mut result_type) =
+            self.private_property_declared_access_type(symbols[0], is_write_context)
+        {
+            if let Some(cause) = nullish_cause {
+                if access.question_dot_token {
+                    result_type = factory.union2(result_type, TypeId::UNDEFINED);
+                } else {
+                    self.report_possibly_nullish_object(access.expression, cause);
+                }
+            }
+            return self.finalize_property_access_result(idx, result_type, is_write_context, false);
         }
 
         let declaring_type = self.resolve_type_for_property_access(declaring_type);

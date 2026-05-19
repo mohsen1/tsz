@@ -3116,10 +3116,19 @@ impl<'a> CheckerState<'a> {
                         .get_parameter_type_for_call(index, args.len())
                     });
                 if let Some(expected) = expected
-                    && !(expected == TypeId::NEVER
-                        && common::index_access_parts(self.ctx.types, actual).is_some_and(
-                            |(_, index)| common::contains_type_parameters(self.ctx.types, index),
-                        ))
+                    && !self.should_trust_solver_for_dependent_never_generic_arg(
+                        actual,
+                        expected,
+                        generic_instantiated_params
+                            .as_ref()
+                            .and_then(|params| {
+                                params.get(index).or_else(|| {
+                                    let last = params.last()?;
+                                    last.rest.then_some(last)
+                                })
+                            })
+                            .map(|param| param.type_id),
+                    )
                     && self
                         .checker_only_assignability_failure_reason(actual, expected)
                         .is_some()

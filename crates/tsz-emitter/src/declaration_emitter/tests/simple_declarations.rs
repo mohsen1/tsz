@@ -1969,8 +1969,8 @@ module.exports = make;
         .expect("Expected local typedef alias");
 
     assert!(
-        comment_pos < export_pos && export_pos < function_pos && function_pos < alias_pos,
-        "Expected commented export= function declaration and local alias after it: {output}"
+        export_pos < comment_pos && comment_pos < function_pos && function_pos < alias_pos,
+        "Expected export= first, source typedef comment on the function, and local alias after it: {output}"
     );
     assert!(
         !output.contains("export type Value"),

@@ -132,7 +132,7 @@ withTempDir((dir) => {
   fs.mkdirSync(path.join(compileDir, "solutions"), { recursive: true });
   fs.writeFileSync(path.join(compileDir, "solutions", "alpha.ts"), "type Alpha = string;\n");
 
-  const tsvPath = path.join(dir, "blank-ref.tsv");
+  const tsvPath = path.join(compileDir, "blank-ref.tsv");
   fs.writeFileSync(
     tsvPath,
     "output\tsource\tid\tlevel\ttitle\nsolutions/alpha.ts\ten/alpha.md\t1\teasy\tAlpha\n",
@@ -154,6 +154,66 @@ withTempDir((dir) => {
     result.stderr,
     /missing Type Challenges solutions repository, ref, or expected count/,
   );
+});
+
+withTempDir((dir) => {
+  const compileDir = path.join(dir, "compile");
+  fs.mkdirSync(path.join(compileDir, "solutions"), { recursive: true });
+  fs.writeFileSync(path.join(compileDir, "solutions", "alpha.ts"), "type Alpha = string;\n");
+
+  const tsvPath = path.join(compileDir, "entries.tsv");
+  fs.writeFileSync(
+    tsvPath,
+    "output\tsource\tid\tlevel\ttitle\nsolutions/alpha.ts\ten/alpha.md\t1\teasy\tAlpha\n",
+    "utf8",
+  );
+
+  const outsideManifest = path.join(dir, "outside-manifest.json");
+  const outsideResult = runManifest(tsvPath, outsideManifest);
+  assert.notEqual(outsideResult.status, 0);
+  assert.match(
+    outsideResult.stderr,
+    /solution manifest path must stay inside the compile directory/,
+  );
+  assert.equal(fs.existsSync(outsideManifest), false);
+
+  const inputResult = runManifest(tsvPath, tsvPath);
+  assert.notEqual(inputResult.status, 0);
+  assert.match(inputResult.stderr, /solution manifest path must not overwrite the TSV input/);
+
+  const outputResult = runManifest(tsvPath, path.join(compileDir, "solutions", "alpha.ts"));
+  assert.notEqual(outputResult.status, 0);
+  assert.match(
+    outputResult.stderr,
+    /solution manifest path must not clobber generated solution outputs/,
+  );
+});
+
+withTempDir((dir) => {
+  const compileDir = path.join(dir, "compile");
+  fs.mkdirSync(path.join(compileDir, "solutions"), { recursive: true });
+  fs.writeFileSync(path.join(compileDir, "solutions", "alpha.ts"), "type Alpha = string;\n");
+
+  const tsvPath = path.join(compileDir, "entries.tsv");
+  fs.writeFileSync(
+    tsvPath,
+    "output\tsource\tid\tlevel\ttitle\nsolutions/alpha.ts\ten/alpha.md\t1\teasy\tAlpha\n",
+    "utf8",
+  );
+
+  const missingParent = path.join(compileDir, "missing", "manifest.json");
+  const missingParentResult = runManifest(tsvPath, missingParent);
+  assert.notEqual(missingParentResult.status, 0);
+  assert.match(
+    missingParentResult.stderr,
+    /solution manifest parent directory does not exist/,
+  );
+
+  const directoryManifest = path.join(compileDir, "manifest-dir");
+  fs.mkdirSync(directoryManifest);
+  const directoryResult = runManifest(tsvPath, directoryManifest);
+  assert.notEqual(directoryResult.status, 0);
+  assert.match(directoryResult.stderr, /solution manifest path is not a file/);
 });
 
 withTempDir((dir) => {
@@ -228,7 +288,7 @@ withTempDir((dir) => {
   fs.writeFileSync(path.join(compileDir, "solutions", "alpha.ts"), "type Alpha = string;\n");
   fs.writeFileSync(path.join(dir, "outside.ts"), "type Outside = string;\n");
 
-  const outputTraversal = path.join(dir, "output-traversal.tsv");
+  const outputTraversal = path.join(compileDir, "output-traversal.tsv");
   fs.writeFileSync(
     outputTraversal,
     "output\tsource\tid\tlevel\ttitle\n../outside.ts\ten/alpha.md\t1\teasy\tAlpha\n",
@@ -238,7 +298,7 @@ withTempDir((dir) => {
   assert.notEqual(outputResult.status, 0);
   assert.match(outputResult.stderr, /unsafe manifest output path: \.\.\/outside\.ts/);
 
-  const sourceTraversal = path.join(dir, "source-traversal.tsv");
+  const sourceTraversal = path.join(compileDir, "source-traversal.tsv");
   fs.writeFileSync(
     sourceTraversal,
     "output\tsource\tid\tlevel\ttitle\nsolutions/alpha.ts\t../alpha.md\t1\teasy\tAlpha\n",
@@ -254,7 +314,7 @@ withTempDir((dir) => {
   const manifestPath = path.join(compileDir, "type-challenges-solutions-manifest.json");
   fs.mkdirSync(path.join(compileDir, "solutions", "alpha.ts"), { recursive: true });
 
-  const directoryOutput = path.join(dir, "directory-output.tsv");
+  const directoryOutput = path.join(compileDir, "directory-output.tsv");
   fs.writeFileSync(
     directoryOutput,
     "output\tsource\tid\tlevel\ttitle\nsolutions/alpha.ts\ten/alpha.md\t1\teasy\tAlpha\n",
@@ -271,7 +331,7 @@ withTempDir((dir) => {
   fs.mkdirSync(path.join(compileDir, "solutions"), { recursive: true });
   fs.writeFileSync(path.join(compileDir, "solutions", "alpha.ts"), "type Alpha = string;\n");
 
-  const badLevel = path.join(dir, "bad-level.tsv");
+  const badLevel = path.join(compileDir, "bad-level.tsv");
   fs.writeFileSync(
     badLevel,
     "output\tsource\tid\tlevel\ttitle\nsolutions/alpha.ts\ten/alpha.md\t1\tweird\tAlpha\n",
@@ -289,7 +349,7 @@ withTempDir((dir) => {
   fs.writeFileSync(path.join(compileDir, "solutions", "alpha.ts"), "type Alpha = string;\n");
   fs.writeFileSync(path.join(compileDir, "solutions", "beta.ts"), "type Beta = string;\n");
 
-  const duplicateOutput = path.join(dir, "duplicate-output.tsv");
+  const duplicateOutput = path.join(compileDir, "duplicate-output.tsv");
   fs.writeFileSync(
     duplicateOutput,
     [
@@ -307,7 +367,7 @@ withTempDir((dir) => {
     /duplicate Type Challenges solution output solutions\/alpha\.ts/,
   );
 
-  const duplicateSource = path.join(dir, "duplicate-source.tsv");
+  const duplicateSource = path.join(compileDir, "duplicate-source.tsv");
   fs.writeFileSync(
     duplicateSource,
     [

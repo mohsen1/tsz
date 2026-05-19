@@ -1,8 +1,7 @@
 //! Checker Context
 //!
 //! Holds the shared state used throughout the type checking process.
-//! This separates state from logic, allowing specialized checkers (expressions, statements)
-//! to borrow the context mutably.
+//! Separates state from logic so specialized checkers can borrow the context mutably.
 //!
 //! Sub-modules:
 //! - `constructors` - `CheckerContext` constructor methods
@@ -15,6 +14,7 @@ mod aliases;
 mod caches;
 mod compiler_options;
 mod cross_file_delegation_cache;
+mod cross_file_type_params_cache;
 pub use caches::{
     EnvEvalCache, NarrowableIdentifierCache, NodeTypeCache, SymbolNameCandidatesCache,
     SymbolTypeCache, TypeReferenceValidationCaches,
@@ -23,6 +23,9 @@ pub(crate) use compiler_options::is_declaration_file_name;
 pub(crate) use compiler_options::is_js_file_name;
 pub(crate) use compiler_options::should_resolve_jsdoc_for_file;
 pub use cross_file_delegation_cache::CrossFileDelegationCache;
+pub use cross_file_type_params_cache::{
+    CrossFileTypeParamsCacheStatistics, cross_file_type_params_cache_statistics,
+};
 mod constructors;
 mod core;
 mod cross_file_query;
@@ -80,7 +83,6 @@ use tsz_parser::parser::node::NodeArena;
 /// caller sees the first caller's work.
 pub type CrossFileTypeParamsCache =
     Arc<dashmap::DashMap<(u32, NodeIndex), Vec<tsz_solver::TypeParamInfo>>>;
-
 /// Maximum depth for nested `get_type_of_symbol` calls before giving up.
 ///
 /// Prevents stack overflow when resolving deeply recursive or circular

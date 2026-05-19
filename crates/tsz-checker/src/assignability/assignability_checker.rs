@@ -3,11 +3,12 @@
 
 use crate::query_boundaries::assignability::{
     AssignabilityEvalKind, AssignabilityQueryInputs, are_types_overlapping_with_env,
-    assignability_cache_key, check_application_variance_assignability,
-    classify_for_assignability_eval, contains_free_infer_types, get_allowed_keys, get_keyof_type,
-    get_string_literal_value, get_union_members, is_assignable_bivariant_with_resolver,
-    is_assignable_with_overrides, is_relation_cacheable, is_type_parameter_like,
-    keyof_object_properties, map_compound_members,
+    assignability_cache_key, callable_shape_for_type, check_application_variance_assignability,
+    classify_for_assignability_eval, contains_free_infer_types, function_shape_for_type,
+    get_allowed_keys, get_keyof_type, get_string_literal_value, get_union_members,
+    intersection_members, is_assignable_bivariant_with_resolver, is_assignable_with_overrides,
+    is_relation_cacheable, is_type_parameter_like, keyof_object_properties, lazy_def_id,
+    map_compound_members, type_application, type_param_info,
 };
 use crate::query_boundaries::common::{collect_lazy_def_ids, collect_type_queries};
 use crate::state::{CheckerOverrideProvider, CheckerState};
@@ -24,14 +25,10 @@ use tsz_solver::computation::TypeResolver;
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn callable_has_own_generic_signatures(&self, type_id: TypeId) -> bool {
-        if let Some(shape) =
-            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
-        {
+        if let Some(shape) = function_shape_for_type(self.ctx.types, type_id) {
             return !shape.type_params.is_empty();
         }
-        if let Some(shape) =
-            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, type_id)
-        {
+        if let Some(shape) = callable_shape_for_type(self.ctx.types, type_id) {
             return shape
                 .call_signatures
                 .iter()
@@ -48,13 +45,9 @@ impl<'a> CheckerState<'a> {
     /// This distinguishes narrowed callback parameters (e.g., `(x: number & T) => void`)
     /// from callbacks with standalone enclosing-scope type parameters (e.g., `(x: T) => void`).
     pub(crate) fn callable_params_contain_type_param_intersection(&self, type_id: TypeId) -> bool {
-        let params = if let Some(shape) =
-            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
-        {
+        let params = if let Some(shape) = function_shape_for_type(self.ctx.types, type_id) {
             shape.params.iter().map(|p| p.type_id).collect::<Vec<_>>()
-        } else if let Some(shape) =
-            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, type_id)
-        {
+        } else if let Some(shape) = callable_shape_for_type(self.ctx.types, type_id) {
             shape
                 .call_signatures
                 .iter()
@@ -64,9 +57,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         params.iter().any(|&param_type| {
-            if let Some(members) =
-                crate::query_boundaries::common::intersection_members(self.ctx.types, param_type)
-            {
+            if let Some(members) = intersection_members(self.ctx.types, param_type) {
                 members.iter().any(|&m| {
                     crate::query_boundaries::assignability::contains_type_parameters(
                         self.ctx.types,
@@ -700,10 +691,8 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
     ) -> bool {
         let is_type_alias_application = |type_id: TypeId| {
-            crate::query_boundaries::common::type_application(self.ctx.types, type_id)
-                .and_then(|app| {
-                    crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base)
-                })
+            type_application(self.ctx.types, type_id)
+                .and_then(|app| lazy_def_id(self.ctx.types, app.base))
                 .and_then(|def_id| self.ctx.definition_store.get(def_id))
                 .is_some_and(|def| def.kind == tsz_solver::def::DefKind::TypeAlias)
         };
@@ -2221,8 +2210,8 @@ impl<'a> CheckerState<'a> {
                     self.ctx.types,
                     target,
                 )
-            && crate::query_boundaries::common::type_param_info(self.ctx.types, s_obj).is_some()
-            && crate::query_boundaries::common::type_param_info(self.ctx.types, t_obj).is_some()
+            && type_param_info(self.ctx.types, s_obj).is_some()
+            && type_param_info(self.ctx.types, t_obj).is_some()
             && self.type_parameter_identities_match(s_obj, t_obj)
             && self.is_generic_index_key_assignable(s_idx, t_idx)
         {
@@ -2272,17 +2261,11 @@ impl<'a> CheckerState<'a> {
                     target,
                 )
             && self.is_assignable_to(s_idx, t_idx)
-            && let Some(t_param) =
-                crate::query_boundaries::common::type_param_info(self.ctx.types, t_obj)
+            && let Some(t_param) = type_param_info(self.ctx.types, t_obj)
             && t_param.constraint.is_some_and(|constraint| {
                 constraint == s_obj
-                    || (crate::query_boundaries::common::type_param_info(
-                        self.ctx.types,
-                        constraint,
-                    )
-                    .is_some()
-                        && crate::query_boundaries::common::type_param_info(self.ctx.types, s_obj)
-                            .is_some()
+                    || (type_param_info(self.ctx.types, constraint).is_some()
+                        && type_param_info(self.ctx.types, s_obj).is_some()
                         && self.type_parameter_identities_match(constraint, s_obj))
             })
         {
@@ -2308,8 +2291,8 @@ impl<'a> CheckerState<'a> {
                     target,
                 )
             && s_obj == t_obj
-            && crate::query_boundaries::common::type_param_info(self.ctx.types, s_idx).is_some()
-            && crate::query_boundaries::common::type_param_info(self.ctx.types, t_idx).is_some()
+            && type_param_info(self.ctx.types, s_idx).is_some()
+            && type_param_info(self.ctx.types, t_idx).is_some()
             && !self.type_parameter_identities_match(s_idx, t_idx)
         {
             return false;
@@ -2707,8 +2690,7 @@ impl<'a> CheckerState<'a> {
             return keyof_operand == object_type;
         }
 
-        if let Some(param_info) =
-            crate::query_boundaries::common::type_param_info(self.ctx.types, index_type)
+        if let Some(param_info) = type_param_info(self.ctx.types, index_type)
             && let Some(constraint) = param_info.constraint
             && let Some(keyof_operand) = get_keyof_type(self.ctx.types, constraint)
         {
@@ -2723,9 +2705,8 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        if crate::query_boundaries::common::type_param_info(self.ctx.types, source_key).is_some()
-            && crate::query_boundaries::common::type_param_info(self.ctx.types, target_key)
-                .is_some()
+        if type_param_info(self.ctx.types, source_key).is_some()
+            && type_param_info(self.ctx.types, target_key).is_some()
         {
             return self.type_param_constraint_chain_reaches(source_key, target_key);
         }
@@ -2747,8 +2728,8 @@ impl<'a> CheckerState<'a> {
         }
 
         if let (Some(source_param), Some(target_param)) = (
-            crate::query_boundaries::common::type_param_info(self.ctx.types, source),
-            crate::query_boundaries::common::type_param_info(self.ctx.types, target),
+            type_param_info(self.ctx.types, source),
+            type_param_info(self.ctx.types, target),
         ) {
             return source_param.name == target_param.name
                 && source_param.is_const == target_param.is_const
@@ -2839,9 +2820,7 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
 
-            let Some(current_param) =
-                crate::query_boundaries::common::type_param_info(self.ctx.types, current)
-            else {
+            let Some(current_param) = type_param_info(self.ctx.types, current) else {
                 return false;
             };
             let Some(constraint) = current_param.constraint else {
@@ -2859,8 +2838,7 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         candidate_types: &mut Vec<TypeId>,
     ) {
-        if let Some(param_info) =
-            crate::query_boundaries::common::type_param_info(self.ctx.types, object_type)
+        if let Some(param_info) = type_param_info(self.ctx.types, object_type)
             && let Some(constraint) = param_info.constraint
         {
             self.collect_deferred_index_access_candidate_types(constraint, candidate_types);
