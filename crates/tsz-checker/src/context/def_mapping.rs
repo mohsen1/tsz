@@ -709,7 +709,10 @@ impl<'a> CheckerContext<'a> {
     pub fn register_def_in_envs(&self, def_id: DefId, body: TypeId) {
         let body_changed = self.definition_store.get_body(def_id) != Some(body);
         self.definition_store.set_body(def_id, body);
-        if body_changed {
+        let had_type_params = self.def_type_params.borrow_mut().remove(&def_id).is_some();
+        self.def_no_type_params.borrow_mut().insert(def_id);
+        let no_type_params_changed = had_type_params;
+        if body_changed || no_type_params_changed {
             self.clear_type_evaluation_caches_for_def(def_id);
         }
         self.with_envs_for_register("insert_def", |env| {
@@ -733,7 +736,9 @@ impl<'a> CheckerContext<'a> {
         self.definition_store.set_body(def_id, body);
         self.definition_store
             .set_type_params(def_id, params.clone());
-        if body_changed || params_changed {
+        let no_type_params_changed =
+            !params.is_empty() && self.def_no_type_params.borrow_mut().remove(&def_id);
+        if body_changed || params_changed || no_type_params_changed {
             self.clear_type_evaluation_caches_for_def(def_id);
         }
         let declared_variances = TypeResolver::get_type_param_variance(self, def_id);
@@ -1026,6 +1031,7 @@ impl<'a> CheckerContext<'a> {
             // (e.g., `MyClass<T>` instead of just `MyClass`).
             self.definition_store
                 .set_type_params(def_id, params.clone());
+            self.def_no_type_params.borrow_mut().remove(&def_id);
             self.def_type_params.borrow_mut().insert(def_id, params);
         }
     }
