@@ -103,6 +103,10 @@ impl RecoverySites {
         self.sites.get(&node).copied()
     }
 
+    pub(crate) fn clear(&mut self) {
+        self.sites.clear();
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.sites.len()
     }
@@ -226,6 +230,19 @@ mod tests {
             sites.get(node(5)),
             Some(RecoveryReason::YieldOutsideGenerator)
         );
+    }
+
+    #[test]
+    fn clear_removes_file_local_recovery_sites() {
+        let mut sites = RecoverySites::default();
+        sites.record(node(5), RecoveryReason::YieldOutsideGenerator);
+        sites.record(node(6), RecoveryReason::ClassConstructorTargetUnresolved);
+
+        sites.clear();
+
+        assert!(sites.is_empty());
+        assert!(sites.get(node(5)).is_none());
+        assert!(sites.get(node(6)).is_none());
     }
 
     #[test]
