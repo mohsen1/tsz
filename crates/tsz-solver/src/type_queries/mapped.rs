@@ -857,8 +857,10 @@ fn classify_mapped_source_inner(db: &dyn TypeDatabase, source: TypeId) -> Mapped
 
 /// Whether a mapped template references K (the iteration variable). Used as a
 /// cheap precheck before full template substitution: when K is absent, the
-/// substitution would round-trip the template unchanged. Built-in intrinsics
-/// never reference K, so the visitor walk is skipped for them.
+/// substitution would round-trip the template unchanged. Matches both
+/// `TypeParameter` by name and `BoundParameter` (in-flight instantiations) —
+/// the latter distinguishes this from the more general
+/// `contains_type_parameter_named` predicate.
 pub fn template_references_iter_param(
     db: &dyn TypeDatabase,
     template: TypeId,

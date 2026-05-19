@@ -1309,13 +1309,11 @@ impl<'a> ContextualTypeContext<'a> {
                     let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
                     return ctx.get_property_type_inner(name, strip_optional_undefined);
                 }
-                // If evaluation deferred (e.g. { [K in keyof T]: TakeString } where T is a type
-                // parameter), use the mapped type's template as the contextual property type
-                // IF the template doesn't reference the mapped type's bound parameter or
-                // its iteration variable (TypeParameter with the same name).
-                // Without this check, templates like `({ key }: { key: key }) => void`
-                // would be returned uninstantiated, causing false TS2345 errors when the
-                // iteration variable `key` should be substituted with a concrete literal.
+                // Deferred mapped (e.g. `{ [K in keyof T]: TakeString }` with T
+                // generic): if the template doesn't reference K, return it
+                // verbatim as the contextual property type — otherwise templates
+                // like `({ key }: { key: key }) => void` would surface as
+                // contextual without K being substituted, causing false TS2345.
                 if !crate::type_queries::template_references_iter_param(
                     self.interner,
                     mapped.template,
