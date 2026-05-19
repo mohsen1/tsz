@@ -18,6 +18,7 @@ file_is_esm_map = { lifetime = "ProgramStable", reason = "shared immutable progr
 checking_computed_property_name = { lifetime = "DiagnosticsOnly", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
 name_resolution_diagnostics = { lifetime = "DiagnosticsOnly", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
 types_extending_array = { lifetime = "FileLocalReset", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+recovery_sites = { lifetime = "DiagnosticsOnly", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
 symbol_types = { lifetime = "FileLocalReset", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 symbol_instance_types = { lifetime = "FileLocalReset", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 enum_namespace_types = { lifetime = "FileLocalReset", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
