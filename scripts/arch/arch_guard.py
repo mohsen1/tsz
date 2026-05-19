@@ -280,9 +280,9 @@ LINE_LIMIT_CHECKS = [
         },
     ),
     (
-        "Checker computation boundary: type-computation monoliths must stay below 3169 LOC (#8226)",
+        "Checker computation boundary: type-computation monoliths must stay below 3100 LOC (#8226)",
         ROOT / "crates" / "tsz-checker" / "src" / "types" / "computation",
-        3169,
+        3100,
     ),
 ]
 
