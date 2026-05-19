@@ -4487,3 +4487,193 @@ fn test_synthesized_array_iterator_methods_see_es2025_helpers() {
         "Expected synthesized ArrayIterator methods to inherit es2025 iterator helpers. Got: {diagnostics:#?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Regression tests for issue #8422: cross-arena NodeIndex collision in
+// multi-lib built-in interface type lowering.
+//
+// Map<K,V> and Set<T> are declared across multiple lib files. Using the wrong
+// arena per-declaration injects spurious [Symbol.iterator] signatures and
+// produces false-positive TS2416 / TS2322.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_map_subclass_symbol_iterator_compatible_override_no_ts2416() {
+    let lib_files = load_lib_files_with_es2015_sublibs();
+    if lib_files.is_empty() {
+        return;
+    }
+    // Verify with two different class names to prove name-independence.
+    for (label, source) in [
+        (
+            "MyMap",
+            r#"
+class MyMap extends Map<string, number> {
+    [Symbol.iterator](): MapIterator<[string, number]> {
+        return super[Symbol.iterator]();
+    }
+}
+"#,
+        ),
+        (
+            "Bag",
+            r#"
+class Bag extends Map<string, number> {
+    [Symbol.iterator](): MapIterator<[string, number]> {
+        return super[Symbol.iterator]();
+    }
+}
+"#,
+        ),
+    ] {
+        let diagnostics = compile_with_es2015_sublibs(source);
+        let ts2416 = diagnostics_with_code(&diagnostics, 2416);
+        assert!(
+            ts2416.is_empty(),
+            "class {label} extending Map<string,number> with compatible [Symbol.iterator] \
+             override should NOT emit TS2416 — cross-arena collision was injecting extra \
+             Iterable signatures. Got: {ts2416:#?}"
+        );
+    }
+}
+
+#[test]
+fn test_set_subclass_symbol_iterator_compatible_override_no_ts2416() {
+    let lib_files = load_lib_files_with_es2015_sublibs();
+    if lib_files.is_empty() {
+        return;
+    }
+    // Set<T> also spans multiple lib arenas; verify the same fix applies.
+    for (label, source) in [
+        (
+            "NumberSet",
+            r#"
+class NumberSet extends Set<number> {
+    [Symbol.iterator](): SetIterator<number> {
+        return super[Symbol.iterator]();
+    }
+}
+"#,
+        ),
+        (
+            "TypedSet<E>",
+            r#"
+class TypedSet<E> extends Set<E> {
+    [Symbol.iterator](): SetIterator<E> {
+        return super[Symbol.iterator]();
+    }
+}
+"#,
+        ),
+    ] {
+        let diagnostics = compile_with_es2015_sublibs(source);
+        let ts2416 = diagnostics_with_code(&diagnostics, 2416);
+        assert!(
+            ts2416.is_empty(),
+            "class {label} extending Set<T> with compatible [Symbol.iterator] override \
+             should NOT emit TS2416. Got: {ts2416:#?}"
+        );
+    }
+}
+
+#[test]
+fn test_map_subclass_symbol_iterator_wrong_return_still_gets_ts2416() {
+    let lib_files = load_lib_files_with_es2015_sublibs();
+    if lib_files.is_empty() {
+        return;
+    }
+    // A genuinely incompatible override must still produce TS2416.
+    let diagnostics = compile_with_es2015_sublibs(
+        r#"
+class BadMap extends Map<string, number> {
+    [Symbol.iterator](): MapIterator<string> {
+        return null as any;
+    }
+}
+"#,
+    );
+    let ts2416_count = diagnostic_count(&diagnostics, 2416);
+    assert!(
+        ts2416_count >= 1,
+        "class with incompatible [Symbol.iterator] return type should emit TS2416. \
+         Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_cross_arena_computed_name_precompute_does_not_corrupt_user_symbol_names() {
+    // Regression for the precompute half of issue #8422: when in cross-arena lib
+    // delegation, precompute_computed_property_names and
+    // precompute_symbol_named_computed_property_names must NOT run through
+    // self.ctx.arena for lib declarations. A NodeIndex from a lib file arena that
+    // collides with a valid-but-unrelated node in self.ctx.arena would insert a
+    // wrong NodeIndex into the computed_symbol_names set, which could then
+    // incorrectly tag user-file expression nodes as symbol-named (false positive)
+    // or miss actual symbol-named lib members (false negative).
+    //
+    // This test uses a source file large enough to produce NodeIndex values that
+    // overlap with typical lib declaration NodeIndexes, and combines:
+    //   - a user interface with unique-symbol computed member names
+    //   - a class extending Map (whose [Symbol.iterator] is in a remote lib arena)
+    //   - a class overriding [Symbol.iterator] correctly (no TS2416)
+    //   - a class overriding [Symbol.iterator] incorrectly (TS2416 must fire)
+    // If precompute pollution occurs, the user symbol entries could receive wrong
+    // NodeIndex keys, breaking either the user interface or the Map override checks.
+    let lib_files = load_lib_files_with_es2015_sublibs();
+    if lib_files.is_empty() {
+        return;
+    }
+    let diagnostics = compile_with_es2015_sublibs(
+        r#"
+// Enough declarations to occupy low NodeIndex slots that lib files also use.
+const s1 = Symbol("s1");
+const s2 = Symbol("s2");
+const s3 = Symbol("s3");
+interface Tagged {
+    [s1]: number;
+    [s2]: string;
+    [s3]: boolean;
+}
+declare const t: Tagged;
+const _n: number = t[s1];
+const _s: string = t[s2];
+const _b: boolean = t[s3];
+
+// Cross-arena computed name: [Symbol.iterator] lives in es2015.iterable arena.
+// A compatible override must NOT trigger TS2416.
+class GoodMap extends Map<string, number> {
+    [Symbol.iterator](): MapIterator<[string, number]> {
+        return super[Symbol.iterator]();
+    }
+}
+
+// An incompatible override MUST trigger TS2416.
+class WrongMap extends Map<string, number> {
+    [Symbol.iterator](): MapIterator<string> {
+        return null as any;
+    }
+}
+"#,
+    );
+
+    let ts2416 = diagnostics_with_code(&diagnostics, 2416);
+    let ts2322 = diagnostics_with_code(&diagnostics, 2322);
+    assert!(
+        ts2416
+            .iter()
+            .all(|d| d.1.contains("WrongMap") || d.1.contains("[Symbol.iterator]")),
+        "TS2416 should only fire for WrongMap's incompatible [Symbol.iterator]. Got: {ts2416:#?}"
+    );
+    assert!(
+        ts2416.iter().all(|d| !d.1.contains("GoodMap")),
+        "GoodMap has a compatible [Symbol.iterator] and must NOT produce TS2416. Got: {ts2416:#?}"
+    );
+    assert!(
+        ts2322.is_empty(),
+        "No TS2322 expected for user symbol reads or Map usage. Got: {ts2322:#?}"
+    );
+    assert!(
+        !ts2416.is_empty(),
+        "WrongMap must produce at least one TS2416. Got: {diagnostics:#?}"
+    );
+}
