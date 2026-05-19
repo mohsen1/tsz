@@ -51,7 +51,8 @@ pub(crate) fn homomorphic_mapped_projection_target<R: TypeResolver>(
     let type_db = db.as_type_database();
     let candidate = if tsz_solver::type_queries::get_mapped_type(type_db, target).is_some() {
         target
-    } else if let Some(app) = tsz_solver::type_queries::get_type_application(type_db, target) {
+    } else {
+        let app = tsz_solver::type_queries::get_type_application(type_db, target)?;
         let def_id = tsz_solver::type_queries::get_lazy_def_id(type_db, app.base)?;
         let type_params = resolver.get_lazy_type_params(def_id)?;
         if type_params.is_empty() {
@@ -60,8 +61,6 @@ pub(crate) fn homomorphic_mapped_projection_target<R: TypeResolver>(
         let body = resolver.resolve_lazy(def_id, type_db)?;
         let substitution = TypeSubstitution::from_args(type_db, &type_params, &app.args);
         tsz_solver::instantiate_type_cached(type_db, Some(db), body, &substitution)
-    } else {
-        return None;
     };
 
     let mapped = tsz_solver::type_queries::get_mapped_type(type_db, candidate)?;

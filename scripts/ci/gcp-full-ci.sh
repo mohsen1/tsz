@@ -378,6 +378,8 @@ run_lint() {
   node scripts/ci/test-project-compile-guard-readiness-artifacts.mjs || return $?
   node scripts/ci/test-pr-ownership-report.mjs || return $?
   node scripts/ci/test-type-challenges-semantic-families.mjs || return $?
+  node scripts/ci/test-pr-ready-state.mjs || return $?
+  node scripts/ci/test-wip-state-comments.mjs || return $?
   node scripts/ci/test-project-compatibility.mjs || return $?
   node scripts/ci/test-type-challenges-solutions-manifest.mjs || return $?
   python3 scripts/ci/test_ci_resources.py || return $?

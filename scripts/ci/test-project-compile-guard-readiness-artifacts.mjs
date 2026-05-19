@@ -109,6 +109,81 @@ function assertRequiredCompatibilityFields(row) {
   }
 }
 
+function runGuardRaw(env) {
+  return spawnSync("bash", [GUARD_SCRIPT], {
+    cwd: ROOT,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      TSZ_PROJECT_COMPILE_SET: "required",
+      TSZ_PROJECT_COMPILE_FILTER: "^does-not-match-any-project$",
+      TSZ_PROJECT_COMPILE_INCLUDE_GENERATED_APPS: "0",
+      ...env,
+    },
+  });
+}
+
+withTempDir((dir) => {
+  const fixtureRoot = path.join(dir, "fixture-root");
+  const fakeTsz = path.join(dir, "fake-tsz");
+  const outsideJsonl = path.join(dir, "outside-project-compatibility.jsonl");
+  writeExecutable(fakeTsz, "#!/usr/bin/env bash\nexit 0\n");
+
+  const result = runGuardRaw({
+    TSZ_BIN: fakeTsz,
+    TSZ_PROJECT_COMPILE_FIXTURE_ROOT: fixtureRoot,
+    TSZ_PROJECT_COMPILE_COMPATIBILITY_JSONL: outsideJsonl,
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /project compatibility JSONL must stay inside fixture root/,
+  );
+  assert.equal(fs.existsSync(outsideJsonl), false);
+});
+
+withTempDir((dir) => {
+  const fixtureRoot = path.join(dir, "fixture-root");
+  const fakeTsz = path.join(dir, "fake-tsz");
+  const sharedOutput = path.join(fixtureRoot, "project-compatibility.json");
+  writeExecutable(fakeTsz, "#!/usr/bin/env bash\nexit 0\n");
+
+  const result = runGuardRaw({
+    TSZ_BIN: fakeTsz,
+    TSZ_PROJECT_COMPILE_FIXTURE_ROOT: fixtureRoot,
+    TSZ_PROJECT_COMPILE_COMPATIBILITY_JSONL: sharedOutput,
+    TSZ_PROJECT_COMPILE_COMPATIBILITY_SUMMARY: sharedOutput,
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /project compatibility JSONL and summary paths must be distinct/,
+  );
+  assert.equal(fs.existsSync(sharedOutput), false);
+});
+
+withTempDir((dir) => {
+  const fixtureRoot = path.join(dir, "fixture-root");
+  const fakeTsz = path.join(dir, "fake-tsz");
+  const summaryDir = path.join(fixtureRoot, "project-compatibility-summary.json");
+  writeExecutable(fakeTsz, "#!/usr/bin/env bash\nexit 0\n");
+  fs.mkdirSync(summaryDir, { recursive: true });
+
+  const result = runGuardRaw({
+    TSZ_BIN: fakeTsz,
+    TSZ_PROJECT_COMPILE_FIXTURE_ROOT: fixtureRoot,
+    TSZ_PROJECT_COMPILE_COMPATIBILITY_SUMMARY: summaryDir,
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /project compatibility summary path is not a file/,
+  );
+});
+
 withTempDir((dir) => {
   const fixtureRoot = path.join(dir, "fixture-root");
   const sourceRoot = path.join(
