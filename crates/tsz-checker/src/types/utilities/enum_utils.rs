@@ -977,6 +977,21 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // never is the bottom type (empty set). It has no values, so it cannot
+        // overlap with any type. tsc's `isTypeComparableTo` returns false for
+        // `never`, meaning `never` is not comparable to anything.
+        //
+        // This guard is needed beyond the top-level `left_narrow != NEVER` check
+        // in binary.rs because `never` can appear as a *member* of a union type
+        // (e.g. produced by `union_or_single_preserve` in narrowing) even when the
+        // union itself is not `never`. Without this, `is_assignable_to(never, x)`
+        // would return `true` (never is the bottom type, assignable to everything),
+        // causing a false "overlap" claim and silently suppressing TS2367.
+        if left == TypeId::NEVER || right == TypeId::NEVER {
+            tracing::trace!("has NEVER");
+            return true;
+        }
+
         // null/undefined are always comparable with any type (TSC's "comparable relation").
         // Even with strictNullChecks enabled, `null === x` and `undefined === x` should
         // never trigger TS2367.
