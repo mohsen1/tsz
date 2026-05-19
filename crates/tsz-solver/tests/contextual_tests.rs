@@ -2143,12 +2143,20 @@ fn build_consumer_fn(interner: &TypeInterner, param_type: TypeId) -> TypeId {
 
 /// Helper: build a generic type parameter named `name` with no constraint.
 fn build_unbounded_type_param(interner: &TypeInterner, name: &str) -> TypeId {
-    interner.intern(TypeData::TypeParameter(TypeParamInfo {
+    make_iter_param(interner, name).0
+}
+
+/// Helper: build a `(TypeId, TypeParamInfo)` pair for an unconstrained iteration
+/// variable named `name`. The info is needed for `MappedType { type_param, .. }`
+/// construction; the type is needed when referencing K in the template.
+fn make_iter_param(interner: &TypeInterner, name: &str) -> (TypeId, TypeParamInfo) {
+    let info = TypeParamInfo {
         name: interner.intern_string(name),
         constraint: None,
         default: None,
         is_const: false,
-    }))
+    };
+    (interner.intern(TypeData::TypeParameter(info)), info)
 }
 
 /// `{ [K in keyof T]: (v: T[K]) => void }` over a deferred type parameter T —
@@ -2237,16 +2245,8 @@ fn test_homomorphic_mapped_per_index_contextual_identity_name_type() {
     let interner = TypeInterner::new();
 
     let t_param = build_unbounded_type_param(&interner, "T");
-    let k_atom = interner.intern_string("K");
-    let k_info = TypeParamInfo {
-        name: k_atom,
-        constraint: None,
-        default: None,
-        is_const: false,
-    };
-    let k_type = interner.intern(TypeData::TypeParameter(k_info));
-    let t_index_k = interner.index_access(t_param, k_type);
-    let template = build_consumer_fn(&interner, t_index_k);
+    let (k_type, k_info) = make_iter_param(&interner, "K");
+    let template = build_consumer_fn(&interner, interner.index_access(t_param, k_type));
     let mapped = interner.mapped(MappedType {
         type_param: k_info,
         constraint: interner.keyof(t_param),
@@ -2275,16 +2275,8 @@ fn test_homomorphic_mapped_per_index_contextual_skips_key_remap() {
     let interner = TypeInterner::new();
 
     let t_param = build_unbounded_type_param(&interner, "T");
-    let k_atom = interner.intern_string("K");
-    let k_info = TypeParamInfo {
-        name: k_atom,
-        constraint: None,
-        default: None,
-        is_const: false,
-    };
-    let k_type = interner.intern(TypeData::TypeParameter(k_info));
-    let t_index_k = interner.index_access(t_param, k_type);
-    let template = build_consumer_fn(&interner, t_index_k);
+    let (k_type, k_info) = make_iter_param(&interner, "K");
+    let template = build_consumer_fn(&interner, interner.index_access(t_param, k_type));
     // A non-identity remap (`as never`) breaks positional alignment.
     let mapped = interner.mapped(MappedType {
         type_param: k_info,
@@ -2315,16 +2307,8 @@ fn test_homomorphic_mapped_per_index_contextual_intersection_constraint() {
     // Constraint: keyof T & string (a common idiom for narrowing keys)
     let intersected_constraint = interner.intersection(vec![keyof_t, TypeId::STRING]);
 
-    let k_atom = interner.intern_string("K");
-    let k_info = TypeParamInfo {
-        name: k_atom,
-        constraint: None,
-        default: None,
-        is_const: false,
-    };
-    let k_type = interner.intern(TypeData::TypeParameter(k_info));
-    let t_index_k = interner.index_access(t_param, k_type);
-    let template = build_consumer_fn(&interner, t_index_k);
+    let (k_type, k_info) = make_iter_param(&interner, "K");
+    let template = build_consumer_fn(&interner, interner.index_access(t_param, k_type));
     let mapped = interner.mapped(MappedType {
         type_param: k_info,
         constraint: intersected_constraint,
@@ -2355,19 +2339,12 @@ fn test_homomorphic_mapped_per_index_contextual_skips_finite_literal_keys() {
     let b_lit = interner.literal_string_atom(interner.intern_string("b"));
     let literal_union = interner.union(vec![a_lit, b_lit]);
 
-    let k_atom = interner.intern_string("K");
-    let k_info = TypeParamInfo {
-        name: k_atom,
-        constraint: None,
-        default: None,
-        is_const: false,
-    };
-    let template = TypeId::STRING;
+    let (_, k_info) = make_iter_param(&interner, "K");
     let mapped = interner.mapped(MappedType {
         type_param: k_info,
         constraint: literal_union,
         name_type: None,
-        template,
+        template: TypeId::STRING,
         readonly_modifier: None,
         optional_modifier: None,
     });

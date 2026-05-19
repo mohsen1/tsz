@@ -1316,20 +1316,11 @@ impl<'a> ContextualTypeContext<'a> {
                 // Without this check, templates like `({ key }: { key: key }) => void`
                 // would be returned uninstantiated, causing false TS2345 errors when the
                 // iteration variable `key` should be substituted with a concrete literal.
-                let mapped_param_name = mapped.type_param.name;
-                if mapped.template != TypeId::ANY
-                    && mapped.template != TypeId::ERROR
-                    && mapped.template != TypeId::NEVER
-                    && !crate::visitor::contains_type_matching(
-                        self.interner,
-                        mapped.template,
-                        |key| match key {
-                            TypeData::BoundParameter(_) => true,
-                            TypeData::TypeParameter(info) => info.name == mapped_param_name,
-                            _ => false,
-                        },
-                    )
-                {
+                if !crate::type_queries::template_references_iter_param(
+                    self.interner,
+                    mapped.template,
+                    mapped.type_param.name,
+                ) {
                     return Some(mapped.template);
                 }
                 // Fall back to the constraint of the mapped type's source.
@@ -1681,7 +1672,11 @@ fn try_mapped_per_index_template(
     if !constraint_iterates_positional_keys(db, mapped.constraint) {
         return None;
     }
-    if !template_references_iter_param(db, mapped.template, mapped.type_param.name) {
+    if !crate::type_queries::template_references_iter_param(
+        db,
+        mapped.template,
+        mapped.type_param.name,
+    ) {
         return None;
     }
 
@@ -1697,7 +1692,8 @@ fn try_mapped_per_index_template(
 }
 
 /// Whether the mapped's iteration domain includes positional numeric keys —
-/// `keyof X`, the `number` intrinsic, or an intersection containing either.
+/// `keyof X`, the `number` intrinsic, or an intersection of those. Intersections
+/// are canonicalized/flattened so a single level of recursion is sufficient.
 fn constraint_iterates_positional_keys(db: &dyn TypeDatabase, constraint: TypeId) -> bool {
     if constraint == TypeId::NUMBER {
         return true;
@@ -1713,25 +1709,6 @@ fn constraint_iterates_positional_keys(db: &dyn TypeDatabase, constraint: TypeId
             .any(|&m| constraint_iterates_positional_keys(db, m)),
         _ => false,
     }
-}
-
-/// Whether the mapped template actually references K (the iteration variable).
-/// Skips substitution work when K is absent — the template is index-invariant
-/// and would round-trip through `instantiate_mapped_template_for_property`
-/// unchanged. Mirrors the precheck used by the property-extraction path above.
-fn template_references_iter_param(
-    db: &dyn TypeDatabase,
-    template: TypeId,
-    iter_name: tsz_common::interner::Atom,
-) -> bool {
-    if matches!(template, TypeId::ANY | TypeId::ERROR | TypeId::NEVER) {
-        return false;
-    }
-    crate::visitor::contains_type_matching(db, template, |key| match key {
-        TypeData::BoundParameter(_) => true,
-        TypeData::TypeParameter(info) => info.name == iter_name,
-        _ => false,
-    })
 }
 
 /// Apply contextual type to infer a more specific type.
