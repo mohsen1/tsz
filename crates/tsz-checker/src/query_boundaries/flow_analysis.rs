@@ -414,7 +414,7 @@ pub(crate) fn evaluate_application_type(
     env: &tsz_solver::TypeEnvironment,
     type_id: TypeId,
 ) -> TypeId {
-    tsz_solver::ApplicationEvaluator::new(db, env).evaluate_or_original(type_id)
+    tsz_solver::computation::ApplicationEvaluator::new(db, env).evaluate_or_original(type_id)
 }
 
 fn types_are_subtype_with_env(
