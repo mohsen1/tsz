@@ -466,7 +466,7 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn lib_type_alias_declaration_name_matches(
+    pub(super) fn lib_type_alias_declaration_name_matches(
         arena: &NodeArena,
         decl_idx: NodeIndex,
         name: &str,
@@ -1337,7 +1337,11 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn source_file_type_node_contains_kind(arena: &NodeArena, root: NodeIndex, kind: u16) -> bool {
+    pub(super) fn source_file_type_node_contains_kind(
+        arena: &NodeArena,
+        root: NodeIndex,
+        kind: u16,
+    ) -> bool {
         let mut stack = vec![root];
         while let Some(idx) = stack.pop() {
             if arena.get(idx).is_some_and(|node| node.kind == kind) {
@@ -1348,7 +1352,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    fn source_file_type_node_contains_identifier_name(
+    pub(super) fn source_file_type_node_contains_identifier_name(
         arena: &NodeArena,
         root: NodeIndex,
         name: &str,
