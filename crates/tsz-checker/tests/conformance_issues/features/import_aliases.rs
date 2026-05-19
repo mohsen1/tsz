@@ -1262,6 +1262,125 @@ new Foo3();
     );
 }
 
+/// Node20/NodeNext CJS-of-ESM `"module.exports"` interop: plain ES6 default
+/// import `import Foo2 from M` in a `.cts` file resolves through the
+/// `"module.exports"` binding — `new Foo2()` must be TS2351 when the
+/// `"module.exports"` value is non-constructable.
+///
+/// Mirrors `esmModuleExports2.ts` (`importer-cts.cts` line 5:
+/// `import Foo2 from "./exporter.mjs"; new Foo2();`).
+#[test]
+fn test_esm_module_exports_default_import_uses_module_exports_value() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "exporter.mts",
+                r#"export default class Foo {}
+const oops = "oops";
+export { oops as "module.exports" };
+"#,
+            ),
+            (
+                "importer.cts",
+                r#"import Foo2 from "./exporter.mjs";
+new Foo2();
+"#,
+            ),
+        ],
+        "importer.cts",
+        CheckerOptions {
+            module: tsz_common::ModuleKind::Node20,
+            target: tsz_common::common::ScriptTarget::ES2023,
+            ..Default::default()
+        },
+    );
+    let ts2351 = diagnostics.iter().filter(|(c, _)| *c == 2351).count();
+    assert_eq!(
+        ts2351, 1,
+        "Expected 1 TS2351 for `new Foo2()` where Foo2 is a default import from ESM \
+         with non-constructable `module.exports`. Got: {diagnostics:#?}"
+    );
+}
+
+/// Node20/NodeNext CJS-of-ESM `"module.exports"` interop: CJS require binding
+/// `const Foo = require(M)` in a `.cjs` file resolves through the
+/// `"module.exports"` binding — `new Foo()` must be TS2351 when the
+/// `"module.exports"` value is non-constructable.
+///
+/// Mirrors `esmModuleExports2.ts` (`importer-cjs.cjs` line 2:
+/// `new Foo()`).
+#[test]
+fn test_esm_module_exports_cjs_require_binding_uses_module_exports_value() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "exporter.mts",
+                r#"export default class Foo {}
+const oops = "oops";
+export { oops as "module.exports" };
+"#,
+            ),
+            (
+                "importer.cjs",
+                r#"const Foo = require("./exporter.mjs");
+new Foo();
+"#,
+            ),
+        ],
+        "importer.cjs",
+        CheckerOptions {
+            module: tsz_common::ModuleKind::Node20,
+            target: tsz_common::common::ScriptTarget::ES2023,
+            check_js: true,
+            allow_js: true,
+            ..Default::default()
+        },
+    );
+    let ts2351 = diagnostics.iter().filter(|(c, _)| *c == 2351).count();
+    assert_eq!(
+        ts2351, 1,
+        "Expected 1 TS2351 for `new Foo()` in CJS file where Foo is require-bound \
+         to ESM with non-constructable `module.exports`. Got: {diagnostics:#?}"
+    );
+}
+
+/// Same as the CJS require case but with a renamed binding (`Bar` instead of
+/// `Foo`) — proves the rule is structural, not name-dependent.
+#[test]
+fn test_esm_module_exports_cjs_require_binding_with_renamed_alias() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "exporter.mts",
+                r#"export default class Foo {}
+const val = 42;
+export { val as "module.exports" };
+"#,
+            ),
+            (
+                "importer.cjs",
+                r#"const Bar = require("./exporter.mjs");
+new Bar();
+"#,
+            ),
+        ],
+        "importer.cjs",
+        CheckerOptions {
+            module: tsz_common::ModuleKind::Node20,
+            target: tsz_common::common::ScriptTarget::ES2023,
+            check_js: true,
+            allow_js: true,
+            ..Default::default()
+        },
+    );
+    let ts2351 = diagnostics.iter().filter(|(c, _)| *c == 2351).count();
+    assert_eq!(
+        ts2351, 1,
+        "Expected 1 TS2351 — fix must apply by structural shape, not by binding \
+         name. Got: {diagnostics:#?}"
+    );
+}
+
 /// Node20/NodeNext CJS-of-ESM `"module.exports"` interop applies to both
 /// `Node20` and `NodeNext` module modes. Mirrors the same shape under
 /// `NodeNext` to prove the rule is keyed on the module class, not on the

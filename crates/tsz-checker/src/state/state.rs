@@ -333,6 +333,33 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    pub(crate) fn require_call_module_specifier_for_identifier(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<String> {
+        let sym_id = self
+            .ctx
+            .binder
+            .get_node_symbol(idx)
+            .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, idx))?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        for &decl_idx in &symbol.declarations {
+            if decl_idx.is_none() {
+                continue;
+            }
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+                continue;
+            };
+            if let Some(spec) = self.get_require_module_specifier(var_decl.initializer) {
+                return Some(spec);
+            }
+        }
+        None
+    }
+
     pub(crate) fn require_call_bound_identifier_type(&mut self, idx: NodeIndex) -> Option<TypeId> {
         let sym_id = self
             .ctx

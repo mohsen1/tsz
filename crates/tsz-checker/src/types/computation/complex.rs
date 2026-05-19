@@ -273,6 +273,29 @@ impl<'a> CheckerState<'a> {
         Some(constructor_type)
     }
 
+    /// Resolve the `"module.exports"` constructor type for a CJS-of-ESM interop
+    /// `new` expression. Returns `None` when the interop does not apply, emits
+    /// TS2351 and returns `Some(TypeId::ERROR)` when the value is not
+    /// constructable, or returns `Some(ty)` when it is.
+    fn module_exports_interop_new_type(
+        &mut self,
+        module_name: &str,
+        callee_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        if !self.current_file_uses_module_exports_require_interop(module_name) {
+            return None;
+        }
+        let ty = self
+            .resolve_effective_module_exports(module_name)
+            .and_then(|exports| exports.get("module.exports"))
+            .map(|sym_id| self.get_type_of_symbol(sym_id))?;
+        if !crate::query_boundaries::common::has_construct_signatures(self.ctx.types, ty) {
+            self.error_not_constructable_at(ty, callee_idx);
+            return Some(TypeId::ERROR);
+        }
+        Some(ty)
+    }
+
     #[allow(dead_code)]
     pub(crate) fn get_type_of_new_expression(&mut self, idx: NodeIndex) -> TypeId {
         self.get_type_of_new_expression_with_request(idx, &TypingRequest::NONE)
@@ -375,20 +398,27 @@ impl<'a> CheckerState<'a> {
                     .unwrap_or_default();
                 if let Some(module_name) = self
                     .source_file_default_import_module_named(new_expr.expression, identifier_text)
-                    && self.current_file_uses_module_exports_require_interop(&module_name)
-                    && let Some(module_exports_type) = self
-                        .resolve_effective_module_exports(&module_name)
-                        .and_then(|exports| exports.get("module.exports"))
-                        .map(|sym_id| self.get_type_of_symbol(sym_id))
+                    && let Some(ty) =
+                        self.module_exports_interop_new_type(&module_name, new_expr.expression)
                 {
-                    if !crate::query_boundaries::common::has_construct_signatures(
-                        self.ctx.types,
-                        module_exports_type,
-                    ) {
-                        self.error_not_constructable_at(module_exports_type, new_expr.expression);
+                    if ty == TypeId::ERROR {
                         return TypeId::ERROR;
                     }
-                    module_exports_type
+                    ty
+                } else if let Some(module_name) = self
+                    .require_call_module_specifier_for_identifier(new_expr.expression)
+                    // TS1362 (type-only "module.exports") is handled by the identifier
+                    // resolution path; only intercept value exports here.
+                    && self
+                        .require_call_bound_identifier_type_only_kind(new_expr.expression)
+                        .is_none()
+                    && let Some(ty) =
+                        self.module_exports_interop_new_type(&module_name, new_expr.expression)
+                {
+                    if ty == TypeId::ERROR {
+                        return TypeId::ERROR;
+                    }
+                    ty
                 } else {
                     let direct_symbol = self
                         .ctx
