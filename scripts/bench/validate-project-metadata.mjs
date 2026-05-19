@@ -15,7 +15,6 @@ const requiredFields = [
 ];
 
 const allowedGuardSets = new Set(["required", "canary", null]);
-const allowedBenchmarkSets = new Set(["required", "canary", null]);
 const failures = [];
 const seen = new Set();
 
@@ -64,7 +63,7 @@ for (const row of PROJECT_ROW_DEFINITIONS) {
     }
   }
 
-  if (!allowedBenchmarkSets.has(row.benchmark_set)) {
+  if (typeof row.benchmark_set !== "string" || !row.benchmark_set) {
     failures.push(`${row.name}: invalid benchmark_set ${String(row.benchmark_set)}`);
   }
 

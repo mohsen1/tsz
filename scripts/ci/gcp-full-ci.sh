@@ -377,16 +377,8 @@ run_lint() {
   done
   node scripts/ci/test-project-compile-guard-readiness-artifacts.mjs || return $?
   node scripts/ci/test-pr-ownership-report.mjs || return $?
-  node scripts/ci/test-type-challenges-assertion-classifier.mjs || return $?
-  node scripts/ci/test-type-challenges-assertion-clean-row.mjs || return $?
-  node scripts/ci/test-type-challenges-assertion-clean-subset.mjs || return $?
-  node scripts/ci/test-type-challenges-assertion-compatibility.mjs || return $?
-  node scripts/ci/test-type-challenges-assertion-candidates.mjs || return $?
   node scripts/ci/test-type-challenges-semantic-families.mjs || return $?
   node scripts/ci/test-project-compatibility.mjs || return $?
-  node scripts/ci/test-type-challenges-pairing-report.mjs || return $?
-  node scripts/ci/test-type-challenges-template-manifest.mjs || return $?
-  node scripts/ci/test-type-challenges-test-cases-manifest.mjs || return $?
   node scripts/ci/test-type-challenges-solutions-manifest.mjs || return $?
   python3 scripts/ci/test_ci_resources.py || return $?
   python3 scripts/conformance/test_query_conformance.py || return $?

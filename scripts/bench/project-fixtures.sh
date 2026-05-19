@@ -169,14 +169,7 @@ tsz_project_fixture_sources() {
     large-ts-repo)
       printf 'large-ts-repo|%s|%s\n' "$LARGE_TS_REPO" "$LARGE_TS_REF"
       ;;
-    type-challenges-project)
-      printf 'type-challenges|%s|%s\n' "$TYPE_CHALLENGES_REPO" "$TYPE_CHALLENGES_REF"
-      ;;
     type-challenges-solutions-project)
-      printf 'type-challenges-solutions|%s|%s\n' "$TYPE_CHALLENGES_SOLUTIONS_REPO" "$TYPE_CHALLENGES_SOLUTIONS_REF"
-      ;;
-    type-challenges-assertion-candidates|type-challenges-assertions-tsc-clean)
-      printf 'type-challenges|%s|%s\n' "$TYPE_CHALLENGES_REPO" "$TYPE_CHALLENGES_REF"
       printf 'type-challenges-solutions|%s|%s\n' "$TYPE_CHALLENGES_SOLUTIONS_REPO" "$TYPE_CHALLENGES_SOLUTIONS_REF"
       ;;
   esac
