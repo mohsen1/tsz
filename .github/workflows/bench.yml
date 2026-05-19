@@ -745,7 +745,7 @@ jobs:
           path: |
             .target-bench/external
             .ci-cache/pnpm-store
-          key: bench-fixtures-${{ matrix.label }}-${{ runner.os }}-${{ hashFiles('scripts/bench/bench-vs-tsgo.sh', 'scripts/bench/project-fixtures.sh') }}
+          key: bench-fixtures-${{ matrix.label }}-${{ runner.os }}-${{ hashFiles('scripts/bench/bench-vs-tsgo.sh', 'scripts/bench/project-fixtures.sh', 'scripts/bench/project-rows.mjs') }}
           restore-keys: |
             bench-fixtures-${{ matrix.label }}-${{ runner.os }}-
             bench-fixtures-${{ runner.os }}-

@@ -236,6 +236,7 @@ pgo_profile_fingerprint() {
             'crates/**/Cargo.toml' \
             'crates/**/*.rs' \
             scripts/bench/project-fixtures.sh \
+            scripts/bench/project-rows.mjs \
             scripts/bench/bench-vs-tsgo.sh |
             sort |
             while IFS= read -r file; do
