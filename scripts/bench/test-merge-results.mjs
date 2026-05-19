@@ -86,6 +86,17 @@ function runMergeInputs(dir, inputs) {
   const output = path.join(dir, "merged.json");
   const result = spawnSync(process.execPath, [MERGE_SCRIPT, output, ...inputs], {
     cwd: ROOT,
+    env: {
+      ...process.env,
+      BENCH_TARGET_SHA: "",
+      GITHUB_ACTIONS: "",
+      GITHUB_REPOSITORY: "",
+      GITHUB_RUN_ATTEMPT: "",
+      GITHUB_RUN_ID: "",
+      GITHUB_SERVER_URL: "",
+      GITHUB_SHA: "",
+      GITHUB_WORKFLOW: "",
+    },
     encoding: "utf8",
   });
   return { ...result, output };
