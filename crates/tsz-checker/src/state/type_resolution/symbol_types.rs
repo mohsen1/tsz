@@ -5,7 +5,9 @@ use crate::query_boundaries::state::type_resolution as query;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use crate::symbols_domain::name_text::{entity_name_text_in_arena, expression_name_text_in_arena};
-use crate::types_domain::queries::lib_resolution::resolve_name_to_lib_symbol;
+use crate::types_domain::queries::lib_resolution::{
+    collect_lib_decls_with_arenas_in_contexts, dedup_decl_arenas, resolve_name_to_lib_symbol,
+};
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
@@ -433,10 +435,7 @@ impl<'a> CheckerState<'a> {
                 return structural_type;
             }
         }
-        // For ALIAS symbols (e.g., `import b = a.c`), resolve to the target
-        // symbol and re-enter type_reference_symbol_type if the target is a class
-        // or interface. This ensures we get the instance type, not the constructor
-        // type, when the alias is used in a type position like `x: b`.
+        // ALIAS: resolve to target so type position (e.g., `x: b`) gets the instance type.
         if let Some((_, flags, _, _)) = symbol_meta.as_ref()
             && flags & symbol_flags::ALIAS != 0
         {
@@ -718,13 +717,7 @@ impl<'a> CheckerState<'a> {
         (!members.is_empty()).then(|| self.ctx.types.union(members))
     }
 
-    /// Resolve the type meaning of a synthetic default export whose `value_declaration`
-    /// is a property access expression.
-    ///
-    /// For `export default C.B` where `C` is a class/namespace and `B` is both a
-    /// static property and a type (interface/type alias), the default export carries
-    /// the value meaning (`number`).  When the import is used as a type reference,
-    /// we need the type meaning (the interface `C.B`).
+    /// For `export default C.B`, returns the type meaning (interface/alias) of `B`, not its value meaning.
     fn resolve_default_export_property_type_meaning(
         &mut self,
         target_sym_id: SymbolId,
@@ -846,11 +839,7 @@ impl<'a> CheckerState<'a> {
                 .register_symbol_file_target(member_sym_id, file_idx);
         }
 
-        // For cross-file symbols, use delegation to compute the type in the
-        // correct arena context. Calling type_reference_symbol_type directly
-        // would use the current file's arena, causing NodeIndex collisions and,
-        // for class members, can lose the instance-side type and fall back to
-        // the constructor object type.
+        // Cross-file: delegate to ensure the correct arena context; direct calls cause NodeIndex collisions.
         if file_idx.is_some() {
             if member_symbol.has_any_flags(symbol_flags::CLASS)
                 && let Some((instance_type, params)) =
@@ -884,13 +873,7 @@ impl<'a> CheckerState<'a> {
         Some(self.type_reference_symbol_type(member_sym_id))
     }
 
-    /// Resolve an import alias to its target symbol using the cross-file resolution
-    /// infrastructure.
-    ///
-    /// This is used as a fallback when `resolve_alias_symbol` (which relies on the
-    /// binder's `module_exports`) fails for cross-file imports. Uses the checker's
-    /// `resolve_import_alias_and_register` which resolves relative module specifiers
-    /// from the declaring file's perspective.
+    /// Fallback alias resolution for cross-file imports when `resolve_alias_symbol` can't find the target.
     fn resolve_import_alias_cross_file(&self, sym_id: SymbolId) -> Option<SymbolId> {
         let lib_binders: Vec<_> = self
             .ctx
@@ -944,12 +927,8 @@ impl<'a> CheckerState<'a> {
         Some(target_sym_id)
     }
 
-    /// Compute the interface structural type from declarations, bypassing `get_type_of_symbol`.
-    ///
-    /// For merged interface+namespace symbols, `get_type_of_symbol` returns the namespace
-    /// type (via the MODULE branch in `compute_type_of_symbol`). This helper computes the
-    /// interface type directly from the interface declarations, which is needed when the
-    /// symbol is used in type position (e.g., `var f: Foo` where Foo is interface+namespace).
+    /// Bypasses `get_type_of_symbol` to get the interface type directly from declarations.
+    /// Needed for merged interface+namespace symbols where `get_type_of_symbol` returns the namespace type.
     pub(crate) fn compute_interface_type_from_declarations(&mut self, sym_id: SymbolId) -> TypeId {
         use tsz_lowering::TypeLowering;
 
@@ -1010,18 +989,29 @@ impl<'a> CheckerState<'a> {
             return merged;
         }
 
-        // Pre-compute computed property names that the lowering can't resolve from AST alone.
-        // This handles cases like `[k]` where k is a `const` unique symbol variable.
-        let computed_names = self.precompute_computed_property_names(&declarations);
-        let computed_symbol_names =
-            self.precompute_symbol_named_computed_property_names(&declarations);
+        // Cross-arena lib: precompute helpers and type-param push use self.ctx.arena, which is the
+        // wrong arena for each remote lib file. The merged lowering owns these facts via per-declaration
+        // arena traversal and get_well_known_symbol_name; skip them here to preserve the invariant.
+        let is_cross_arena_lib =
+            Self::in_cross_arena_interface_delegation() && !self.ctx.lib_contexts.is_empty();
+
+        let computed_names = if is_cross_arena_lib {
+            Default::default()
+        } else {
+            self.precompute_computed_property_names(&declarations)
+        };
+        let computed_symbol_names = if is_cross_arena_lib {
+            Default::default()
+        } else {
+            self.precompute_symbol_named_computed_property_names(&declarations)
+        };
         let prewarmed_type_params = self.prewarm_member_type_reference_params(&declarations);
 
-        // Get type parameters from the first interface declaration
         let first_decl = declarations.first().copied().unwrap_or(NodeIndex::NONE);
         let mut params = Vec::new();
         let mut updates = Vec::new();
-        if first_decl.is_some()
+        if !is_cross_arena_lib
+            && first_decl.is_some()
             && let Some(node) = self.ctx.arena.get(first_decl)
             && let Some(interface) = self.ctx.arena.get_interface(node)
         {
@@ -1030,7 +1020,6 @@ impl<'a> CheckerState<'a> {
 
         let type_param_bindings = self.get_type_param_bindings();
         let type_resolver = |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
-        // Stable-identity helper: prefer Lazy(DefId) over Ref(SymbolRef)
         let def_id_resolver = |node_idx: NodeIndex| self.resolve_def_id_for_lowering(node_idx);
         let value_resolver = |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
         let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
@@ -1080,11 +1069,23 @@ impl<'a> CheckerState<'a> {
         } else {
             lowering
         };
-        let interface_type =
-            lowering.lower_interface_declarations_with_symbol(&declarations, sym_id);
-        // Seed a partial structural interface type before heritage merging so
-        // recursive interface/namespace resolution can reuse the current shape
-        // instead of re-entering the full lowering + heritage pipeline.
+        let interface_type = if is_cross_arena_lib {
+            let decls_with_arenas = collect_lib_decls_with_arenas_in_contexts(
+                self.ctx.binder,
+                sym_id,
+                &declarations,
+                self.ctx.arena,
+                &self.ctx.lib_contexts,
+                None,
+            );
+            let deduped = dedup_decl_arenas(&decls_with_arenas);
+            lowering
+                .lower_merged_interface_declarations_with_symbol(&deduped, Some(sym_id))
+                .0
+        } else {
+            lowering.lower_interface_declarations_with_symbol(&declarations, sym_id)
+        };
+        // Seed partial type to break recursive re-entry before heritage merging.
         self.ctx
             .symbol_instance_types
             .insert(sym_id, interface_type);
@@ -1105,11 +1106,8 @@ impl<'a> CheckerState<'a> {
         &mut self,
         declarations: &[NodeIndex],
     ) -> rustc_hash::FxHashMap<tsz_solver::def::DefId, Vec<tsz_solver::TypeParamInfo>> {
-        // PERF: declaration files like react16.d.ts contain extremely large interface
-        // graphs. Walking every descendant of every interface just to prewarm an
-        // optional cache can dominate checker time. The lowering path already falls
-        // back to `ctx.get_def_type_params(def_id)` on demand, so skipping the eager
-        // prewarm here preserves correctness while avoiding repeated full-tree scans.
+        // PERF: skip for declaration files — large graphs (e.g. react16.d.ts) make the
+        // full-tree scan expensive; lowering falls back to get_def_type_params on demand.
         if self.ctx.is_declaration_file() {
             return rustc_hash::FxHashMap::default();
         }
@@ -1275,11 +1273,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Like `type_reference_symbol_type` but also returns the type parameters used.
-    ///
-    /// This is critical for Application type evaluation: when instantiating a generic
-    /// type, we need the body type AND the type parameters to be built from the SAME
-    /// call to `push_type_parameters`, so the `TypeIds` in the body match those in the
-    /// substitution. Otherwise, substitution fails because the `TypeIds` don't match.
+    /// Body and params must come from the SAME `push_type_parameters` call so `TypeId`s match during substitution.
     pub(crate) fn type_reference_symbol_type_with_params(
         &mut self,
         sym_id: SymbolId,

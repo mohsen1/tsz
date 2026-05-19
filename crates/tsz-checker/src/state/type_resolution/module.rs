@@ -2213,7 +2213,7 @@ impl<'a> CheckerState<'a> {
         let Some(source_file) = arena.source_files.first() else {
             return false;
         };
-        source_file.file_name.contains("node_modules")
+        path_has_node_modules_segment(&source_file.file_name)
     }
 
     /// Check if the target module's resolved file has an unambiguously ESM
@@ -2805,6 +2805,12 @@ impl<'a> CheckerState<'a> {
 
         false
     }
+}
+
+fn path_has_node_modules_segment(file_name: &str) -> bool {
+    file_name
+        .split(['/', '\\'])
+        .any(|component| component == "node_modules")
 }
 
 #[cfg(test)]

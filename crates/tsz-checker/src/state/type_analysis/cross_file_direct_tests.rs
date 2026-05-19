@@ -180,6 +180,9 @@ fn detects_external_package_declaration_paths() {
     assert!(is_external_package_declaration_file_name(
         r"C:\repo\node_modules\@types\node\fs.d.ts"
     ));
+    assert!(is_external_package_declaration_file_name(
+        "/repo/packages/app/node_modules/react/index.d.ts"
+    ));
 }
 
 #[test]
@@ -189,6 +192,12 @@ fn does_not_treat_local_declaration_paths_as_external_packages() {
     ));
     assert!(!is_external_package_declaration_file_name(
         "/repo/fixtures/node-modules-like/types.d.ts"
+    ));
+    assert!(!is_external_package_declaration_file_name(
+        "/repo/fixtures/node_modules_react/index.d.ts"
+    ));
+    assert!(!is_external_package_declaration_file_name(
+        "/repo/fixtures/node_modules"
     ));
 }
 

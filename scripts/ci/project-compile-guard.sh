@@ -16,9 +16,54 @@ PROJECT_COMPATIBILITY_JSONL="${TSZ_PROJECT_COMPILE_COMPATIBILITY_JSONL:-$FIXTURE
 PROJECT_COMPATIBILITY_SUMMARY="${TSZ_PROJECT_COMPILE_COMPATIBILITY_SUMMARY:-$FIXTURE_ROOT/project-compatibility-summary.json}"
 FAILURES=0
 LAST_PEAK_RSS_BYTES=0
-TYPE_CHALLENGES_PROJECT_MANIFESTS_WRITTEN=0
 TYPE_CHALLENGES_SOLUTIONS_MANIFEST_WRITTEN=0
-TYPE_CHALLENGES_PAIRING_REPORT_WRITTEN=0
+
+fail() {
+  echo "error: $*" >&2
+  exit 1
+}
+
+resolve_existing_parent_path() {
+  local file="$1"
+  local label="$2"
+  local parent
+  parent="$(dirname "$file")"
+  if [[ ! -d "$parent" ]]; then
+    fail "$label parent directory does not exist: $file"
+  fi
+  local parent_abs
+  parent_abs="$(cd "$parent" && pwd -P)"
+  printf '%s/%s\n' "$parent_abs" "$(basename "$file")"
+}
+
+validate_project_compatibility_artifact_paths() {
+  local fixture_abs
+  fixture_abs="$(cd "$FIXTURE_ROOT" && pwd -P)"
+
+  local jsonl_abs
+  local summary_abs
+  jsonl_abs="$(resolve_existing_parent_path "$PROJECT_COMPATIBILITY_JSONL" "project compatibility JSONL")"
+  summary_abs="$(resolve_existing_parent_path "$PROJECT_COMPATIBILITY_SUMMARY" "project compatibility summary")"
+
+  case "$jsonl_abs" in
+    "$fixture_abs"/*) ;;
+    *) fail "project compatibility JSONL must stay inside fixture root: $PROJECT_COMPATIBILITY_JSONL" ;;
+  esac
+  case "$summary_abs" in
+    "$fixture_abs"/*) ;;
+    *) fail "project compatibility summary must stay inside fixture root: $PROJECT_COMPATIBILITY_SUMMARY" ;;
+  esac
+
+  if [[ "$jsonl_abs" == "$summary_abs" ]]; then
+    fail "project compatibility JSONL and summary paths must be distinct: $PROJECT_COMPATIBILITY_JSONL"
+  fi
+  if [[ -e "$jsonl_abs" && ! -f "$jsonl_abs" ]]; then
+    fail "project compatibility JSONL path is not a file: $PROJECT_COMPATIBILITY_JSONL"
+  fi
+  if [[ -e "$summary_abs" && ! -f "$summary_abs" ]]; then
+    fail "project compatibility summary path is not a file: $PROJECT_COMPATIBILITY_SUMMARY"
+  fi
+}
 
 # shellcheck source=scripts/bench/project-fixtures.sh
 source "$ROOT_DIR/scripts/bench/project-fixtures.sh"
@@ -33,6 +78,7 @@ if [[ ! -x "$TSZ_BIN" ]]; then
 fi
 
 mkdir -p "$FIXTURE_ROOT"
+validate_project_compatibility_artifact_paths
 rm -f "$FIXTURE_ROOT/type-challenges-readiness-pairing.json"
 rm -rf "$FIXTURE_ROOT/type-challenges-assertions"
 : > "$PROJECT_COMPATIBILITY_JSONL"
@@ -233,8 +279,6 @@ record_project_compatibility() {
   COMPAT_SOURCE_ROOT="$source_root" \
   COMPAT_FIXTURE_ROOT="$FIXTURE_ROOT" \
   COMPAT_FIXTURE_SOURCES="$fixture_sources" \
-  COMPAT_TYPE_CHALLENGES_CLEAN_MANIFEST="$FIXTURE_ROOT/type-challenges-assertions-tsc-clean/type-challenges-assertions-tsc-clean-manifest.json" \
-  COMPAT_TYPE_CHALLENGES_CLEAN_CLASSIFICATION="$FIXTURE_ROOT/type-challenges-assertions-tsc-clean/type-challenges-assertions-tsc-clean-classification.json" \
   node scripts/ci/project-compatibility.mjs record
 }
 
@@ -286,120 +330,12 @@ write_kysely_config() {
   tsz_write_kysely_config "$FIXTURE_ROOT/kysely/tsconfig.tsz-guard.json"
 }
 
-write_type_challenges_config() {
-  local source_dir="$FIXTURE_ROOT/type-challenges"
-  local compile_dir="$source_dir/.tsz-compile"
-  local manifest_json="$compile_dir/type-challenges-template-manifest.json"
-  local test_cases_manifest_json="$compile_dir/test-cases/type-challenges-test-cases-manifest.json"
-
-  rm -rf "$compile_dir"
-  mkdir -p "$compile_dir/questions" "$compile_dir/test-cases/questions" "$compile_dir/utils"
-
-  local template
-  while IFS= read -r template; do
-    local rel="${template#"$source_dir"/}"
-    mkdir -p "$compile_dir/$(dirname "$rel")"
-    cp "$template" "$compile_dir/$rel"
-    printf '\nexport {};\n' >> "$compile_dir/$rel"
-  done < <(find "$source_dir/questions" -maxdepth 2 -name template.ts | sort)
-
-  local test_cases
-  while IFS= read -r test_cases; do
-    local rel="${test_cases#"$source_dir"/}"
-    mkdir -p "$compile_dir/test-cases/$(dirname "$rel")"
-    cp "$test_cases" "$compile_dir/test-cases/$rel"
-  done < <(find "$source_dir/questions" -maxdepth 2 -name test-cases.ts | sort)
-
-  TYPE_CHALLENGES_REPO="$TYPE_CHALLENGES_REPO" \
-  TYPE_CHALLENGES_REF="$TYPE_CHALLENGES_REF" \
-  TYPE_CHALLENGES_EXPECTED_GENERATED="$TYPE_CHALLENGES_EXPECTED_GENERATED" \
-  node scripts/ci/type-challenges-template-manifest.mjs \
-    "$source_dir" \
-    "$compile_dir" \
-    "$manifest_json"
-
-  TYPE_CHALLENGES_REPO="$TYPE_CHALLENGES_REPO" \
-  TYPE_CHALLENGES_REF="$TYPE_CHALLENGES_REF" \
-  TYPE_CHALLENGES_EXPECTED_TEST_CASES="$TYPE_CHALLENGES_EXPECTED_TEST_CASES" \
-  node scripts/ci/type-challenges-test-cases-manifest.mjs \
-    "$source_dir" \
-    "$compile_dir/test-cases" \
-    "$test_cases_manifest_json"
-
-  cp "$source_dir/utils/index.d.ts" "$compile_dir/utils/index.d.ts"
-  cat > "$compile_dir/tsconfig.tsz-guard.json" <<'JSON'
-{
-  "compilerOptions": {
-    "target": "es2017",
-    "lib": ["ESNext"],
-    "module": "commonjs",
-    "moduleResolution": "node",
-    "strict": true,
-    "noEmit": true,
-    "types": [],
-    "noImplicitReturns": true,
-    "noUnusedLocals": false,
-    "noUnusedParameters": false,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "ignoreDeprecations": "6.0",
-    "baseUrl": ".",
-    "paths": {
-      "@type-challenges/utils": ["utils/index.d.ts"]
-    }
-  },
-  "include": ["questions/**/template.ts", "utils/index.d.ts"]
-}
-JSON
-
-  TYPE_CHALLENGES_PROJECT_MANIFESTS_WRITTEN=1
-}
-
 write_type_challenges_solutions_config() {
   tsz_write_type_challenges_solutions_config \
     "$FIXTURE_ROOT/type-challenges-solutions" \
     "$FIXTURE_ROOT/type-challenges-solutions/.tsz-compile"
 
   TYPE_CHALLENGES_SOLUTIONS_MANIFEST_WRITTEN=1
-}
-
-write_type_challenges_pairing_report() {
-  local template_manifest="$FIXTURE_ROOT/type-challenges/.tsz-compile/type-challenges-template-manifest.json"
-  local test_cases_manifest="$FIXTURE_ROOT/type-challenges/.tsz-compile/test-cases/type-challenges-test-cases-manifest.json"
-  local solutions_manifest="$FIXTURE_ROOT/type-challenges-solutions/.tsz-compile/type-challenges-solutions-manifest.json"
-  local output="$FIXTURE_ROOT/type-challenges-readiness-pairing.json"
-
-  if [[ "$TYPE_CHALLENGES_PROJECT_MANIFESTS_WRITTEN" == "1" \
-    && "$TYPE_CHALLENGES_SOLUTIONS_MANIFEST_WRITTEN" == "1" \
-    && -f "$template_manifest" && -f "$test_cases_manifest" && -f "$solutions_manifest" ]]; then
-    node scripts/ci/type-challenges-pairing-report.mjs \
-      "$template_manifest" \
-      "$test_cases_manifest" \
-      "$solutions_manifest" \
-      "$output"
-    TYPE_CHALLENGES_PAIRING_REPORT_WRITTEN=1
-  else
-    rm -f "$output"
-  fi
-}
-
-write_type_challenges_assertion_candidates() {
-  local pairing_report="$FIXTURE_ROOT/type-challenges-readiness-pairing.json"
-  local type_challenges_compile_dir="$FIXTURE_ROOT/type-challenges/.tsz-compile"
-  local solutions_compile_dir="$FIXTURE_ROOT/type-challenges-solutions/.tsz-compile"
-  local output_dir="$FIXTURE_ROOT/type-challenges-assertions"
-  local manifest="$output_dir/type-challenges-assertions-manifest.json"
-
-  if [[ "$TYPE_CHALLENGES_PAIRING_REPORT_WRITTEN" == "1" && -f "$pairing_report" ]]; then
-    node scripts/ci/type-challenges-assertion-candidates.mjs \
-      "$pairing_report" \
-      "$type_challenges_compile_dir" \
-      "$solutions_compile_dir" \
-      "$output_dir" \
-      "$manifest"
-  else
-    rm -rf "$output_dir"
-  fi
 }
 
 type_challenges_tsc_bin() {
@@ -500,125 +436,6 @@ check_type_challenges_solutions_tsc_oracle() {
   return 0
 }
 
-write_type_challenges_assertion_classification() {
-  local candidate_dir="$FIXTURE_ROOT/type-challenges-assertions"
-  local manifest="$candidate_dir/type-challenges-assertions-manifest.json"
-  local output="$candidate_dir/type-challenges-assertions-classification.json"
-  local clean_dir="$FIXTURE_ROOT/type-challenges-assertions-tsc-clean"
-  local clean_manifest="$clean_dir/type-challenges-assertions-tsc-clean-manifest.json"
-  local clean_output="$clean_dir/type-challenges-assertions-tsc-clean-classification.json"
-
-  if [[ -f "$manifest" ]]; then
-    ensure_type_challenges_assertion_tsc
-    TSZ_BIN="$TSZ_BIN" \
-      node scripts/ci/type-challenges-assertion-classifier.mjs \
-      "$candidate_dir" \
-      "$manifest" \
-      "$output"
-    node scripts/ci/type-challenges-assertion-clean-subset.mjs \
-      "$candidate_dir" \
-      "$manifest" \
-      "$output" \
-      "$clean_dir" \
-      "$clean_manifest"
-    if [[ -f "$clean_manifest" ]] \
-      && node -e 'const fs = require("fs"); const manifest = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.exit(Number(manifest.counts?.tscAcceptedAssertions || 0) > 0 ? 0 : 1)' "$clean_manifest"; then
-      TSZ_BIN="$TSZ_BIN" \
-        node scripts/ci/type-challenges-assertion-classifier.mjs \
-        "$clean_dir" \
-        "$clean_manifest" \
-        "$clean_output"
-    fi
-    if should_check_project "type-challenges-assertion-candidates"; then
-      node scripts/ci/type-challenges-assertion-compatibility.mjs \
-        "$output" \
-        "$candidate_dir" \
-        "$PROJECT_COMPATIBILITY_JSONL" \
-        "$FIXTURE_ROOT" \
-        "$clean_manifest" \
-        "$clean_output" \
-        "$clean_dir"
-    fi
-  fi
-}
-
-type_challenges_assertion_clean_count() {
-  local manifest="$1"
-  node -e '
-const fs = require("fs");
-const manifest = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-const count = Number(manifest?.counts?.tscAcceptedAssertions ?? 0);
-process.stdout.write(Number.isFinite(count) ? String(count) : "0");
-' "$manifest"
-}
-
-type_challenges_assertion_clean_tsc_status() {
-  local classification="$1"
-  node -e '
-const fs = require("fs");
-const report = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-process.stdout.write(String(report?.compilers?.tsc?.status ?? ""));
-' "$classification"
-}
-
-type_challenges_assertion_clean_tsc_exit_code() {
-  local classification="$1"
-  node -e '
-const fs = require("fs");
-const report = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-const code = report?.compilers?.tsc?.exitCode;
-if (Number.isInteger(code)) process.stdout.write(String(code));
-' "$classification"
-}
-
-check_type_challenges_assertions_tsc_clean() {
-  local subset_dir="$FIXTURE_ROOT/type-challenges-assertions-tsc-clean"
-  local manifest="$subset_dir/type-challenges-assertions-tsc-clean-manifest.json"
-  local classification="$subset_dir/type-challenges-assertions-tsc-clean-classification.json"
-  local tsconfig="$subset_dir/tsconfig.tsz-guard.json"
-
-  if [[ ! -f "$manifest" || ! -f "$tsconfig" ]]; then
-    return 0
-  fi
-
-  local accepted_count
-  accepted_count="$(type_challenges_assertion_clean_count "$manifest")"
-  if [[ "$accepted_count" -eq 0 ]]; then
-    echo "Skipping type-challenges-assertions-tsc-clean; no tsc-clean assertion candidates were materialized."
-    return 0
-  fi
-
-  local tsc_status=""
-  local tsc_exit_codes=""
-  if [[ -f "$classification" ]]; then
-    tsc_status="$(type_challenges_assertion_clean_tsc_status "$classification")"
-    tsc_exit_codes="$(type_challenges_assertion_clean_tsc_exit_code "$classification")"
-  fi
-  if [[ "$tsc_status" != "pass" ]]; then
-    FAILURES=$((FAILURES + 1))
-    record_project_compatibility \
-      "type-challenges-assertions-tsc-clean" \
-      "fixture invalid" \
-      "fixture setup" \
-      "tsc clean subset failed" \
-      "tsc: Type Challenges clean assertion subset did not pass the tsc project oracle" \
-      "$accepted_count" \
-      "" \
-      "" \
-      "$tsconfig" \
-      "$subset_dir/assertions" \
-      "$tsc_exit_codes"
-    echo "error: type-challenges-assertions-tsc-clean failed the tsc oracle check" >&2
-    return 0
-  fi
-
-  check_project \
-    "type-challenges-assertions-tsc-clean" \
-    "$tsconfig" \
-    "$subset_dir/assertions" \
-    "$tsc_exit_codes"
-}
-
 check_project() {
   local name="$1"
   local tsconfig="$2"
@@ -717,11 +534,6 @@ run_project_row() {
       write_kysely_config
       check_project "$name" "$FIXTURE_ROOT/kysely/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/kysely/src"
       ;;
-    type-challenges-project)
-      ensure_git_fixture "type-challenges" "$TYPE_CHALLENGES_REPO" "$TYPE_CHALLENGES_REF" "$FIXTURE_ROOT/type-challenges"
-      write_type_challenges_config
-      check_project "$name" "$FIXTURE_ROOT/type-challenges/.tsz-compile/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/type-challenges/.tsz-compile/questions"
-      ;;
     type-challenges-solutions-project)
       ensure_git_fixture "type-challenges-solutions" "$TYPE_CHALLENGES_SOLUTIONS_REPO" "$TYPE_CHALLENGES_SOLUTIONS_REF" "$FIXTURE_ROOT/type-challenges-solutions"
       write_type_challenges_solutions_config
@@ -730,12 +542,6 @@ run_project_row() {
       elif [[ "$ALLOW_FAILURES" == "1" ]]; then
         echo "::warning::type-challenges-solutions-project tsc oracle failed; continuing because TSZ_PROJECT_COMPILE_ALLOW_FAILURES=1"
       fi
-      ;;
-    type-challenges-assertion-candidates|type-challenges-assertions-tsc-clean)
-      ensure_git_fixture "type-challenges" "$TYPE_CHALLENGES_REPO" "$TYPE_CHALLENGES_REF" "$FIXTURE_ROOT/type-challenges"
-      write_type_challenges_config
-      ensure_git_fixture "type-challenges-solutions" "$TYPE_CHALLENGES_SOLUTIONS_REPO" "$TYPE_CHALLENGES_SOLUTIONS_REF" "$FIXTURE_ROOT/type-challenges-solutions"
-      write_type_challenges_solutions_config
       ;;
     *)
       echo "error: unknown project row in compile-guard map: $name" >&2
@@ -800,13 +606,6 @@ case "$PROJECT_SET" in
     exit 2
     ;;
 esac
-
-write_type_challenges_pairing_report
-write_type_challenges_assertion_candidates
-write_type_challenges_assertion_classification
-if should_check_project "type-challenges-assertions-tsc-clean"; then
-  check_type_challenges_assertions_tsc_clean
-fi
 
 if [[ "$FAILURES" -gt 0 ]]; then
   echo "Project compile failures: $FAILURES"

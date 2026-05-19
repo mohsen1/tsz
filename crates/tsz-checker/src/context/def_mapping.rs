@@ -671,10 +671,10 @@ impl<'a> CheckerContext<'a> {
     //
     // **Visibility on borrow failure.** The two environments are owned through
     // `RefCell`s, so registration can race with another mutable borrow elsewhere
-    // in the checker. The `borrow_envs_for_register` helper unifies the
-    // try_borrow_mut pattern across registration sites and traces every failed
-    // borrow with the registration `name`, so silent disappearance of a
-    // registration becomes observable in logs / structured-error output.
+    // in the checker. The helper unifies the try_borrow_mut pattern across
+    // registration sites and traces every failed borrow with the registration
+    // `name`, so missed per-environment registrations become observable in
+    // logs / structured-error output.
     // See `docs/architecture/ROBUSTNESS_AUDIT_2026-04-26.md` item 1 (PR #A).
     fn with_envs_for_register(
         &self,
@@ -688,7 +688,7 @@ impl<'a> CheckerContext<'a> {
                     register = name,
                     target_env = "type_env",
                     error = ?e,
-                    "register-in-envs: try_borrow_mut failed; registration deferred (DefinitionStore fallback applies)"
+                    "register-in-envs: try_borrow_mut failed; skipped registration for this environment"
                 );
             }
         }
@@ -699,7 +699,7 @@ impl<'a> CheckerContext<'a> {
                     register = name,
                     target_env = "type_environment",
                     error = ?e,
-                    "register-in-envs: try_borrow_mut failed; registration deferred (DefinitionStore fallback applies)"
+                    "register-in-envs: try_borrow_mut failed; skipped registration for this environment"
                 );
             }
         }
@@ -779,6 +779,37 @@ impl<'a> CheckerContext<'a> {
         self.with_envs_for_register("register_class_extends", |env| {
             env.register_class_extends(def_id, parent_def_id);
         });
+    }
+
+    /// Register a `DefId` ↔ `SymbolId` bridge in **both** type environments.
+    ///
+    /// This keeps evaluator and flow-analyzer resolution paths aligned for
+    /// `TypeQuery`, inheritance, and solver-side DefId identity lookups.
+    pub fn register_def_symbol_mapping_in_envs(&self, def_id: DefId, sym_id: SymbolId) {
+        self.with_envs_for_register("register_def_symbol_mapping", |env| {
+            env.register_def_symbol_mapping(def_id, sym_id);
+        });
+    }
+
+    /// Register a `DefId` ↔ `SymbolId` bridge in the flow-analyzer environment.
+    ///
+    /// `register_resolved_type` historically populated this bridge only in
+    /// `type_environment`. Keep that path scoped so resolving a symbol's body
+    /// does not also change evaluator-side TypeQuery/Lazy resolution order.
+    pub fn register_def_symbol_mapping_in_type_environment(&self, def_id: DefId, sym_id: SymbolId) {
+        match self.type_environment.try_borrow_mut() {
+            Ok(mut env) => env.register_def_symbol_mapping(def_id, sym_id),
+            Err(e) => {
+                tracing::warn!(
+                    def_id = def_id.0,
+                    sym_id = sym_id.0,
+                    register = "register_def_symbol_mapping",
+                    target_env = "type_environment",
+                    error = ?e,
+                    "register-in-env: try_borrow_mut failed; skipped registration for this environment"
+                );
+            }
+        }
     }
 
     /// Register an augmented definition body in **both** type environments.
@@ -1290,9 +1321,7 @@ impl<'a> CheckerContext<'a> {
 
             // Register mapping for InheritanceGraph bridge (Phase 3.2)
             // This enables Lazy(DefId) types to use the O(1) InheritanceGraph
-            if let Ok(mut env) = self.type_environment.try_borrow_mut() {
-                env.register_def_symbol_mapping(def_id, sym_id);
-            }
+            self.register_def_symbol_mapping_in_type_environment(def_id, sym_id);
 
             // Set the body on the DefinitionInfo so the type formatter can
             // find type alias names via find_type_alias_by_body(). Without

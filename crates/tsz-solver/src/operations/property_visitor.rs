@@ -695,10 +695,10 @@ impl<'a> PropertyAccessEvaluator<'a> {
         };
 
         // Property access on union: partition into nullable and non-nullable members
-        let mut valid_results = Vec::new();
-        let mut valid_write_results = Vec::new();
+        let mut valid_results = Vec::with_capacity(non_unknown_members.len());
+        let mut valid_write_results = Vec::with_capacity(non_unknown_members.len());
         let mut any_has_divergent_write_type = false;
-        let mut nullable_causes = Vec::new();
+        let mut nullable_causes = Vec::with_capacity(non_unknown_members.len());
         let mut any_from_index = false; // ANY member used index signature (for noUncheckedIndexedAccess)
         let mut all_from_index = true; // ALL members used index signature (for TS2540 vs TS2542)
         let mut has_unknown_members = false;

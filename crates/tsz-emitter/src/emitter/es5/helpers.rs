@@ -192,10 +192,45 @@ impl<'a> Printer<'a> {
     }
 
     pub(in crate::emitter) fn emit_spread_expression(&mut self, node: &Node) {
-        // Get the expression inside the spread element
         if let Some(spread) = self.arena.get_spread(node) {
             self.emit(spread.expression);
         }
+    }
+
+    fn emit_spread_expr_from_idx(&mut self, spread_idx: NodeIndex) {
+        if let Some(spread_node) = self.arena.get(spread_idx) {
+            self.emit_spread_expression(spread_node);
+        }
+    }
+
+    /// Returns true when the spread element at `spread_idx` wraps a simple object literal.
+    ///
+    /// tsc uses the object literal directly as the `__assign` target (instead of
+    /// allocating a fresh `{}`) when the spread expression is an inline object
+    /// literal without nested spreads. If the inner literal has spreads, it
+    /// lowers to its own `__assign` chain and the outer spread must copy it
+    /// through `{}` instead of mutating that intermediate result.
+    fn spread_idx_is_simple_object_literal(&self, spread_idx: NodeIndex) -> bool {
+        let Some(spread_node) = self.arena.get(spread_idx) else {
+            return false;
+        };
+        let Some(spread) = self.arena.get_spread(spread_node) else {
+            return false;
+        };
+        let Some(expr_node) = self.arena.get(spread.expression) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+        let Some(literal) = self.arena.get_literal_expr(expr_node) else {
+            return false;
+        };
+        !literal.elements.nodes.iter().any(|&idx| {
+            self.arena
+                .get(idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT)
+        })
     }
 
     pub(in crate::emitter) fn emit_spread_expression_with_read(
@@ -564,10 +599,12 @@ impl<'a> Printer<'a> {
     /// Emit ES5-compatible object literal with computed properties and spread
     /// Uses TypeScript's __assign helper for exact tsc matching.
     ///
-    /// Spread patterns:
-    /// - { ...a } → __assign({}, a)
+    /// Spread patterns (variable spread `v`, object-literal spread `{x}`):
+    /// - { ...v }       → __assign({}, v)       (fresh target, variable spread)
+    /// - { ...{x} }     → __assign({x})          (literal spread: use it as target directly)
     /// - { a: 1, ...b } → __assign({ a: 1 }, b)
-    /// - { ...a, b: 1 } → __assign(__assign({}, a), { b: 1 })
+    /// - { ...a, b: 1 } → __assign(__assign({}, a), { b: 1 })   (variable spread first)
+    /// - { ...{x}, b: 1 } → __assign({x}, { b: 1 })             (literal spread first)
     /// - { a: 1, ...b, c: 2 } → __assign(__assign({ a: 1 }, b), { c: 2 })
     ///
     /// Computed properties (without spread):
@@ -828,11 +865,15 @@ impl<'a> Printer<'a> {
                 }
             }
             [ObjectSegment::Spread(spread_idx)] => {
-                // Only a spread element: { ...a } → __assign({}, a)
+                // { ...a } → __assign({}, a)  (variable: fresh empty target)
+                // { ...{x} } → __assign({x})  (object literal: use it as target directly)
                 self.write_helper("__assign");
-                self.write("({}, ");
-                if let Some(spread_node) = self.arena.get(*spread_idx) {
-                    self.emit_spread_expression(spread_node);
+                self.write("(");
+                if self.spread_idx_is_simple_object_literal(*spread_idx) {
+                    self.emit_spread_expr_from_idx(*spread_idx);
+                } else {
+                    self.write("{}, ");
+                    self.emit_spread_expr_from_idx(*spread_idx);
                 }
                 self.write(")");
             }
@@ -858,27 +899,29 @@ impl<'a> Printer<'a> {
                     self.emit_object_literal_entries_es5(elems);
                 }
                 self.write(", ");
-                if let Some(spread_node) = self.arena.get(*spread_idx) {
-                    self.emit_spread_expression(spread_node);
-                }
+                self.emit_spread_expr_from_idx(*spread_idx);
                 self.write(")");
             }
             [
                 ObjectSegment::Spread(spread_idx),
                 ObjectSegment::Elements(elems),
             ] => {
-                // Spread then elements: { ...a, b: 1 } → __assign(__assign({}, a), { b: 1 })
+                // { ...a, b: 1 }    → __assign(__assign({}, a), { b: 1 })  (variable)
+                // { ...{x}, b: 1 }  → __assign({x}, { b: 1 })              (object literal)
                 let has_computed = elems
                     .iter()
                     .any(|&idx| emit_utils::is_computed_property_member(self.arena, idx));
                 self.write_helper("__assign");
                 self.write("(");
-                self.write_helper("__assign");
-                self.write("({}, ");
-                if let Some(spread_node) = self.arena.get(*spread_idx) {
-                    self.emit_spread_expression(spread_node);
+                if self.spread_idx_is_simple_object_literal(*spread_idx) {
+                    self.emit_spread_expr_from_idx(*spread_idx);
+                } else {
+                    self.write_helper("__assign");
+                    self.write("({}, ");
+                    self.emit_spread_expr_from_idx(*spread_idx);
+                    self.write(")");
                 }
-                self.write("), ");
+                self.write(", ");
                 if has_computed {
                     let temp_var = self.make_unique_name_hoisted();
                     self.write("(");
@@ -909,16 +952,24 @@ impl<'a> Printer<'a> {
                 // Complex pattern: use Prefix-Wrap strategy for proper nested __assign
                 // Example: { a: 1, ...b, c: 2, ...d }
                 // Result: __assign(__assign(__assign({ a: 1 }, b), { c: 2 }), d)
+                //
+                // When the first segment is a spread of an object literal, use it
+                // directly as the innermost target (no extra `{}` wrapper):
+                // { ...{a:1}, b:2, ...c } → __assign(__assign({a:1}, {b:2}), c)
 
                 let total_segments = 1 + rest.len();
-                let first_is_spread = matches!(first, ObjectSegment::Spread(_));
+                let first_spread_is_obj_lit = match first {
+                    ObjectSegment::Spread(idx) => self.spread_idx_is_simple_object_literal(*idx),
+                    _ => false,
+                };
 
                 // 1. Emit the necessary number of __assign( calls
-                let num_assigns = if first_is_spread {
-                    total_segments
-                } else {
-                    total_segments - 1
-                };
+                let num_assigns =
+                    if matches!(first, ObjectSegment::Spread(_)) && !first_spread_is_obj_lit {
+                        total_segments
+                    } else {
+                        total_segments - 1
+                    };
 
                 for _ in 0..num_assigns {
                     self.write_helper("__assign");
@@ -964,11 +1015,13 @@ impl<'a> Printer<'a> {
                         }
                     }
                     ObjectSegment::Spread(spread_idx) => {
-                        self.write("{}, ");
-                        if let Some(spread_node) = self.arena.get(*spread_idx) {
-                            self.emit_spread_expression(spread_node);
+                        if first_spread_is_obj_lit {
+                            self.emit_spread_expr_from_idx(*spread_idx);
+                        } else {
+                            self.write("{}, ");
+                            self.emit_spread_expr_from_idx(*spread_idx);
+                            self.write(")");
                         }
-                        self.write(")");
                     }
                 }
 
@@ -1012,9 +1065,7 @@ impl<'a> Printer<'a> {
                             }
                         }
                         ObjectSegment::Spread(spread_idx) => {
-                            if let Some(spread_node) = self.arena.get(*spread_idx) {
-                                self.emit_spread_expression(spread_node);
-                            }
+                            self.emit_spread_expr_from_idx(*spread_idx);
                         }
                     }
                     self.write(")");

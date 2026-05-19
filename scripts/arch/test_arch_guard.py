@@ -318,6 +318,40 @@ class ArchGuardCheckerFileSizeBoundaryTests(unittest.TestCase):
             self.assertEqual(hits, [])
 
 
+class ArchGuardCheckerComputationFileSizeBoundaryTests(unittest.TestCase):
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _computation_file_size_check(self):
+        for entry in self.arch_guard.LINE_LIMIT_CHECKS:
+            name, base, limit = entry[0], entry[1], entry[2]
+            if name == (
+                "Checker computation boundary: type-computation monoliths "
+                "must stay below 3169 LOC (#8226)"
+            ):
+                return base, limit
+        self.fail(
+            "checker type-computation size boundary check is missing from "
+            "LINE_LIMIT_CHECKS"
+        )
+
+    def test_rule_exists_with_expected_limit(self):
+        base, limit = self._computation_file_size_check()
+        self.assertEqual(limit, 3169)
+        self.assertTrue(
+            str(base).endswith("crates/tsz-checker/src/types/computation")
+        )
+
+    def test_real_type_computation_files_pass_at_pinned_limit(self):
+        base, limit = self._computation_file_size_check()
+        hits = self.arch_guard.scan_line_limits(base, limit)
+        self.assertEqual(
+            hits,
+            [],
+            "type-computation monolith cap is too tight for the live files",
+        )
+
+
 class ArchGuardCoreLibFacadeSizeBoundaryTests(unittest.TestCase):
     def setUp(self):
         self.arch_guard = load_arch_guard_module()
@@ -366,7 +400,7 @@ class ArchGuardQueryBoundaryCommonSizeTests(unittest.TestCase):
 
     def test_rule_exists_with_current_limit(self):
         path, limit = self._query_common_size_check()
-        self.assertEqual(limit, 1996)
+        self.assertEqual(limit, 1926)
         self.assertTrue(
             str(path).endswith("crates/tsz-checker/src/query_boundaries/common.rs")
         )
@@ -378,6 +412,42 @@ class ArchGuardQueryBoundaryCommonSizeTests(unittest.TestCase):
             hits,
             [],
             "query_boundaries/common.rs cap is too tight for the live file",
+        )
+
+
+class ArchGuardSolverEngineSizeBoundaryTests(unittest.TestCase):
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _generic_call_resolver_size_check(self):
+        for entry in self.arch_guard.FILE_LINE_LIMIT_CHECKS:
+            name, path, limit = entry
+            if name == (
+                "Solver engine boundary: generic call resolver must stay at "
+                "current 3381 LOC baseline (#8209)"
+            ):
+                return path, limit
+        self.fail(
+            "generic call resolver size boundary check is missing from "
+            "FILE_LINE_LIMIT_CHECKS"
+        )
+
+    def test_rule_exists_with_current_limit(self):
+        path, limit = self._generic_call_resolver_size_check()
+        self.assertEqual(limit, 3381)
+        self.assertTrue(
+            str(path).endswith(
+                "crates/tsz-solver/src/operations/generic_call/resolve.rs"
+            )
+        )
+
+    def test_real_generic_call_resolver_passes_at_pinned_limit(self):
+        path, limit = self._generic_call_resolver_size_check()
+        hits = self.arch_guard.scan_file_line_limit(path, limit)
+        self.assertEqual(
+            hits,
+            [],
+            "generic call resolver cap is too tight for the live file",
         )
 
 
@@ -761,10 +831,12 @@ class ArchGuardCheckerContextLifetimeManifestTests(unittest.TestCase):
             [
                 "[arena]",
                 'lifetime = "FileLocalReset"',
+                'capability = "CheckerInputs"',
                 'reason = "borrowed current-file arena"',
                 "",
                 "[request_node_types]",
                 'lifetime = "SpeculationScoped"',
+                'capability = "SpeculationState"',
                 'reason = "snapshot by speculative return-type inference"',
             ]
         )
@@ -781,8 +853,8 @@ class ArchGuardCheckerContextLifetimeManifestTests(unittest.TestCase):
         )
         manifest_body = "\n".join(
             [
-                'arena = { lifetime = "FileLocalReset", reason = "current arena" }',
-                'binder = { lifetime = "FileLocalReset", reason = "current binder" }',
+                'arena = { lifetime = "FileLocalReset", capability = "CheckerInputs", reason = "current arena" }',
+                'binder = { lifetime = "FileLocalReset", capability = "CheckerInputs", reason = "current binder" }',
             ]
         )
         self.assertEqual(self._write_and_scan(struct_body, manifest_body), [])
@@ -800,6 +872,7 @@ class ArchGuardCheckerContextLifetimeManifestTests(unittest.TestCase):
             [
                 "[arena]",
                 'lifetime = "FileLocalReset"',
+                'capability = "CheckerInputs"',
                 'reason = "borrowed current-file arena"',
             ]
         )
@@ -819,10 +892,12 @@ class ArchGuardCheckerContextLifetimeManifestTests(unittest.TestCase):
             [
                 "[arena]",
                 'lifetime = "FileLocalReset"',
+                'capability = "CheckerInputs"',
                 'reason = "borrowed current-file arena"',
                 "",
                 "[removed_field]",
                 'lifetime = "FileLocalReset"',
+                'capability = "FileTypeCache"',
                 'reason = "old field"',
             ]
         )
@@ -836,6 +911,7 @@ class ArchGuardCheckerContextLifetimeManifestTests(unittest.TestCase):
             [
                 "[arena]",
                 'lifetime = "Unknown"',
+                'capability = "CheckerInputs"',
                 'reason = "unclassified"',
             ]
         )
@@ -849,6 +925,7 @@ class ArchGuardCheckerContextLifetimeManifestTests(unittest.TestCase):
             [
                 "[arena]",
                 'lifetime = "ForeverCache"',
+                'capability = "CheckerInputs"',
                 'reason = "invalid class"',
             ]
         )
@@ -856,12 +933,54 @@ class ArchGuardCheckerContextLifetimeManifestTests(unittest.TestCase):
         self.assertEqual(len(hits), 1)
         self.assertIn("invalid lifetime 'ForeverCache'", hits[0])
 
+    def test_missing_capability_is_reported(self):
+        struct_body = "pub struct CheckerContext { pub arena: NodeArena, }"
+        manifest_body = "\n".join(
+            [
+                "[arena]",
+                'lifetime = "FileLocalReset"',
+                'reason = "borrowed current-file arena"',
+            ]
+        )
+        hits = self._write_and_scan(struct_body, manifest_body)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("[arena] missing capability", hits[0])
+
+    def test_unknown_capability_is_reported(self):
+        struct_body = "pub struct CheckerContext { pub arena: NodeArena, }"
+        manifest_body = "\n".join(
+            [
+                "[arena]",
+                'lifetime = "FileLocalReset"',
+                'capability = "Unknown"',
+                'reason = "borrowed current-file arena"',
+            ]
+        )
+        hits = self._write_and_scan(struct_body, manifest_body)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("[arena] capability must not be Unknown", hits[0])
+
+    def test_invalid_capability_is_reported(self):
+        struct_body = "pub struct CheckerContext { pub arena: NodeArena, }"
+        manifest_body = "\n".join(
+            [
+                "[arena]",
+                'lifetime = "FileLocalReset"',
+                'capability = "GlobalBag"',
+                'reason = "borrowed current-file arena"',
+            ]
+        )
+        hits = self._write_and_scan(struct_body, manifest_body)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("invalid capability 'GlobalBag'", hits[0])
+
     def test_missing_reason_is_reported(self):
         struct_body = "pub struct CheckerContext { pub arena: NodeArena, }"
         manifest_body = "\n".join(
             [
                 "[arena]",
                 'lifetime = "FileLocalReset"',
+                'capability = "CheckerInputs"',
             ]
         )
         hits = self._write_and_scan(struct_body, manifest_body)
@@ -1248,6 +1367,67 @@ class ArchGuardRootSolverComputationImportCountTests(unittest.TestCase):
             name, search_roots, exclude_path_prefixes, max_references = entry
             hits = self.arch_guard.scan_root_solver_computation_import_count(
                 search_roots, exclude_path_prefixes, max_references
+            )
+            self.assertEqual(
+                hits,
+                [],
+                f"{name}: cap is too tight — guard fires at the live count.",
+            )
+
+    def test_flags_root_solver_explicit_computation_reexports(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-solver/src/lib.rs": (
+                    "pub use evaluation::evaluate::{evaluate_type, TypeEvaluator};\n"
+                    "pub use operations::widening;\n"
+                    "pub use diagnostics::DiagnosticArg;\n"
+                    "pub mod computation {\n"
+                    "    pub use crate::evaluation::evaluate::evaluate_type;\n"
+                    "}\n"
+                    "// pub use instantiation::instantiate::TypeSubstitution;\n"
+                ),
+            }
+        )
+        lib_rs = root / "crates" / "tsz-solver" / "src" / "lib.rs"
+        hits = self.arch_guard.scan_solver_root_explicit_reexport_count(
+            lib_rs,
+            ("evaluation", "operations", "instantiation"),
+            0,
+        )
+        self.assertEqual(len(hits), 4, f"unexpected hits: {hits!r}")
+        self.assertIn("lib.rs:1 evaluate_type", hits[0])
+        self.assertIn("lib.rs:1 TypeEvaluator", hits[1])
+        self.assertIn("lib.rs:2 widening", hits[2])
+        self.assertIn("total flat solver root explicit computation re-exports", hits[3])
+
+    def test_root_solver_explicit_reexport_count_passes_at_cap(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-solver/src/lib.rs": (
+                    "pub use evaluation::evaluate::{evaluate_type, TypeEvaluator};\n"
+                    "pub use diagnostics::DiagnosticArg;\n"
+                ),
+            }
+        )
+        lib_rs = root / "crates" / "tsz-solver" / "src" / "lib.rs"
+        scan = self.arch_guard.scan_solver_root_explicit_reexport_count
+        prefixes = ("evaluation",)
+        self.assertEqual(scan(lib_rs, prefixes, 2), [])
+        self.assertEqual(scan(lib_rs, prefixes, 3), [])
+
+    def test_root_solver_explicit_reexport_check_is_registered(self):
+        names = [
+            entry[0]
+            for entry in self.arch_guard.ROOT_SOLVER_EXPLICIT_REEXPORT_COUNT_CHECKS
+        ]
+        self.assertTrue(any("#8204" in name for name in names))
+
+    def test_root_solver_explicit_reexport_real_count_passes_at_pinned_cap(self):
+        """The explicit export cap must match the live count."""
+        for entry in self.arch_guard.ROOT_SOLVER_EXPLICIT_REEXPORT_COUNT_CHECKS:
+            name, file_path, prefixes, max_reexports = entry
+            hits = self.arch_guard.scan_solver_root_explicit_reexport_count(
+                file_path, prefixes, max_reexports
             )
             self.assertEqual(
                 hits,
@@ -1950,7 +2130,7 @@ class ArchGuardProjectFixtureSourceTests(unittest.TestCase):
     def test_pinned_project_rows_with_sources_pass(self):
         rows = """
 export const REQUIRED_PROJECT_ROWS = ["utility-types-project", "vite-vanilla-ts-app"];
-export const COMPILE_CANARY_PROJECT_ROWS = ["type-challenges-assertions-tsc-clean"];
+export const COMPILE_CANARY_PROJECT_ROWS = ["type-challenges-solutions-project"];
 """
         fixtures = """
 tsz_project_fixture_sources() {
@@ -1958,8 +2138,7 @@ tsz_project_fixture_sources() {
     utility-types-project)
       printf 'utility-types|repo|ref\\n'
       ;;
-    type-challenges-assertions-tsc-clean)
-      printf 'type-challenges|repo|ref\\n'
+    type-challenges-solutions-project)
       printf 'type-challenges-solutions|repo|ref\\n'
       ;;
   esac
@@ -1981,7 +2160,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     guard_set: null,
   },
   {
-    name: "type-challenges-project",
+    name: "type-challenges-solutions-project",
     benchmark_set: "canary",
     guard_set: "canary",
   },
@@ -2001,8 +2180,8 @@ tsz_project_fixture_sources() {
     utility-types-project)
       printf 'utility-types|repo|ref\\n'
       ;;
-    type-challenges-project)
-      printf 'type-challenges|repo|ref\\n'
+    type-challenges-solutions-project)
+      printf 'type-challenges-solutions|repo|ref\\n'
       ;;
   esac
 }
@@ -2012,7 +2191,7 @@ tsz_project_fixture_sources() {
     def test_missing_source_metadata_is_reported(self):
         rows = """
 export const REQUIRED_PROJECT_ROWS = ["utility-types-project"];
-export const COMPILE_CANARY_PROJECT_ROWS = ["type-challenges-project"];
+export const COMPILE_CANARY_PROJECT_ROWS = ["type-challenges-solutions-project"];
 """
         fixtures = """
 tsz_project_fixture_sources() {
@@ -2025,7 +2204,7 @@ tsz_project_fixture_sources() {
 """
         hits = self._write_and_scan(rows, fixtures)
         self.assertEqual(len(hits), 1)
-        self.assertIn("missing fixture source metadata for type-challenges-project", hits[0])
+        self.assertIn("missing fixture source metadata for type-challenges-solutions-project", hits[0])
 
     def test_stale_source_metadata_is_reported(self):
         rows = """
@@ -2089,7 +2268,7 @@ tsz_project_fixture_sources() {
     def test_malformed_source_metadata_line_is_reported(self):
         rows = """
 export const REQUIRED_PROJECT_ROWS = ["utility-types-project"];
-export const COMPILE_CANARY_PROJECT_ROWS = ["type-challenges-project"];
+export const COMPILE_CANARY_PROJECT_ROWS = ["type-challenges-solutions-project"];
 """
         fixtures = """
 tsz_project_fixture_sources() {
@@ -2097,8 +2276,8 @@ tsz_project_fixture_sources() {
     utility-types-project)
       printf 'utility-types|repo\\n'
       ;;
-    type-challenges-project)
-      printf 'type-challenges|repo|\\n'
+    type-challenges-solutions-project)
+      printf 'type-challenges-solutions|repo|\\n'
       ;;
   esac
 }
@@ -2110,7 +2289,7 @@ tsz_project_fixture_sources() {
             hits,
         )
         self.assertTrue(
-            any("malformed fixture source metadata for type-challenges-project" in hit for hit in hits),
+            any("malformed fixture source metadata for type-challenges-solutions-project" in hit for hit in hits),
             hits,
         )
 
@@ -2151,12 +2330,12 @@ class ArchGuardProjectInclusionPolicyTests(unittest.TestCase):
     def test_matching_compile_and_benchmark_inclusions_pass(self):
         rows = """
 export const REQUIRED_PROJECT_ROWS = ["utility-types-project", "vite-vanilla-ts-app"];
-export const COMPILE_CANARY_PROJECT_ROWS = ["type-challenges-assertion-candidates"];
+export const COMPILE_CANARY_PROJECT_ROWS = ["type-challenges-solutions-project"];
 """
         compile_guard = """
 if should_check_project "utility-types-project"; then :; fi
 if should_check_project "vite-vanilla-ts-app"; then :; fi
-if should_check_project "type-challenges-assertion-candidates"; then :; fi
+if should_check_project "type-challenges-solutions-project"; then :; fi
 """
         bench = """
 run_isolated "utility-types-project" run_utility_types_project_benchmarks
@@ -2253,9 +2432,9 @@ if should_check_project "type-fest-project"; then :; fi
     def test_compile_guard_only_rows_do_not_require_benchmark_inclusion(self):
         rows = """
 export const REQUIRED_PROJECT_ROWS = [];
-export const COMPILE_CANARY_PROJECT_ROWS = ["type-challenges-assertions-tsc-clean"];
+export const COMPILE_CANARY_PROJECT_ROWS = ["type-challenges-solutions-project"];
 """
-        compile_guard = 'if should_check_project "type-challenges-assertions-tsc-clean"; then :; fi'
+        compile_guard = 'if should_check_project "type-challenges-solutions-project"; then :; fi'
         bench = ""
         self.assertEqual(self._write_and_scan(rows, compile_guard, bench), [])
 
@@ -2496,6 +2675,24 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertIn("rendered.rs:1", hits[0])
         self.assertIn("rendered.rs:2", hits[1])
 
+    def test_flags_rendered_message_predicates(self):
+        pattern, _max_lines = self._check_by_name("rendered message predicates")
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/checkers/jsx/rendered.rs": (
+                    'if display.starts_with("IntrinsicAttributes") {}\n'
+                    'if target_display.ends_with(", Element>") {}\n'
+                    'if diagnostic.message_text.contains("Type") {}\n'
+                    'if source_text.contains("fixture shape") {}\n'
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 4, f"unexpected hits: {hits!r}")
+        self.assertIn("rendered.rs:1", hits[0])
+        self.assertIn("rendered.rs:2", hits[1])
+        self.assertIn("rendered.rs:3", hits[2])
+
     def test_flags_raw_diagnostic_assignability_predicates(self):
         pattern, _max_lines = self._check_by_name(
             "raw diagnostic assignability predicates"
@@ -2641,6 +2838,7 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertTrue(any("Emitter boundary" in name for name in names))
         self.assertTrue(any("file-name/path" in name for name in names))
         self.assertTrue(any("rendered type strings" in name for name in names))
+        self.assertTrue(any("rendered message predicates" in name for name in names))
         self.assertTrue(any("#8227" in name for name in names))
         self.assertTrue(any("diagnostic-local RelationRequest" in name for name in names))
         self.assertTrue(any("#8207" in name for name in names))
