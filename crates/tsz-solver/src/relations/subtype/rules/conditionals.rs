@@ -672,3 +672,58 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::intern::TypeInterner;
+    use crate::types::PropertyInfo;
+
+    fn optional_object(interner: &TypeInterner, name: &str, type_id: TypeId) -> TypeId {
+        interner.object(vec![PropertyInfo::opt(
+            interner.intern_string(name),
+            type_id,
+        )])
+    }
+
+    #[test]
+    fn conditional_extends_identity_distinguishes_optional_read_type() {
+        let interner = TypeInterner::new();
+        let number_or_undefined = interner.union2(TypeId::NUMBER, TypeId::UNDEFINED);
+        let optional_number = optional_object(&interner, "a", TypeId::NUMBER);
+        let optional_number_or_undefined = optional_object(&interner, "a", number_or_undefined);
+
+        let mut checker = SubtypeChecker::new(&interner);
+
+        assert!(
+            !checker.conditional_extends_types_equivalent(
+                optional_number,
+                optional_number_or_undefined
+            )
+        );
+        assert!(
+            !checker.conditional_extends_types_equivalent(
+                optional_number_or_undefined,
+                optional_number
+            )
+        );
+    }
+
+    #[test]
+    fn conditional_extends_identity_is_name_independent() {
+        let interner = TypeInterner::new();
+        let string_or_undefined = interner.union2(TypeId::STRING, TypeId::UNDEFINED);
+        let optional_string = optional_object(&interner, "renamed", TypeId::STRING);
+        let optional_string_or_undefined =
+            optional_object(&interner, "renamed", string_or_undefined);
+
+        let mut checker = SubtypeChecker::new(&interner);
+
+        assert!(
+            !checker.conditional_extends_types_equivalent(
+                optional_string,
+                optional_string_or_undefined
+            )
+        );
+    }
+}
