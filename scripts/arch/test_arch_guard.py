@@ -3127,14 +3127,23 @@ class ArchGuardPolicyTomlTests(unittest.TestCase):
     def _load_manifest(self, toml_text: str):
         return self._load_from_toml(toml_text, self.arch_guard._load_manifest_checks)
 
+    def _live_policy_data(self):
+        with self.arch_guard.POLICY_PATH.open("rb") as f:
+            return self.arch_guard._load_policy_toml(f)
 
-    def test_live_checks_matches_expected_count(self):
-        """CHECKS must be loaded from TOML and have the expected entry count."""
-        self.assertEqual(len(self.arch_guard.CHECKS), 33)
+    def test_live_checks_match_policy_entries(self):
+        """CHECKS must be loaded from the live TOML policy entries."""
+        data = self._live_policy_data()
+        pattern_entries = data.get("pattern_checks", [])
+        self.assertGreater(len(pattern_entries), 0)
+        self.assertEqual(len(self.arch_guard.CHECKS), len(pattern_entries))
 
-    def test_live_manifest_checks_matches_expected_count(self):
-        """MANIFEST_CHECKS must be loaded from TOML and have the expected entry count."""
-        self.assertEqual(len(self.arch_guard.MANIFEST_CHECKS), 3)
+    def test_live_manifest_checks_match_policy_entries(self):
+        """MANIFEST_CHECKS must be loaded from the live TOML policy entries."""
+        data = self._live_policy_data()
+        manifest_entries = data.get("manifest_checks", [])
+        self.assertGreater(len(manifest_entries), 0)
+        self.assertEqual(len(self.arch_guard.MANIFEST_CHECKS), len(manifest_entries))
 
     def test_live_policy_file_exists(self):
         policy_path = self.arch_guard.POLICY_PATH
@@ -3147,6 +3156,7 @@ class ArchGuardPolicyTomlTests(unittest.TestCase):
         """Each CHECKS entry must be (name, base_path, compiled_pattern, excludes_dict)."""
         for name, base, pattern, excludes in self.arch_guard.CHECKS:
             self.assertIsInstance(name, str)
+            self.assertGreater(len(name), 0)
             self.assertIsInstance(base, pathlib.Path)
             self.assertIsInstance(pattern, type(self.arch_guard.re.compile("")))
             self.assertIsInstance(excludes, dict)
@@ -3155,9 +3165,16 @@ class ArchGuardPolicyTomlTests(unittest.TestCase):
         """Each MANIFEST_CHECKS entry must be (name, file_path, compiled_pattern)."""
         for name, file_path, pattern in self.arch_guard.MANIFEST_CHECKS:
             self.assertIsInstance(name, str)
+            self.assertGreater(len(name), 0)
             self.assertIsInstance(file_path, pathlib.Path)
             self.assertIsInstance(pattern, type(self.arch_guard.re.compile("")))
 
+    def test_live_policy_names_are_unique(self):
+        check_names = [name for name, *_ in self.arch_guard.CHECKS]
+        manifest_names = [name for name, *_ in self.arch_guard.MANIFEST_CHECKS]
+
+        self.assertEqual(len(check_names), len(set(check_names)))
+        self.assertEqual(len(manifest_names), len(set(manifest_names)))
 
     def test_minimal_pattern_check_loads(self):
         """A pattern_checks entry with only required fields loads correctly."""
