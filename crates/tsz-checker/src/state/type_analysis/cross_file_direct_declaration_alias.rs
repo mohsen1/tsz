@@ -126,6 +126,14 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|params| !params.nodes.is_empty());
 
         if builtin_lib_alias {
+            if Self::source_file_type_node_contains_kind(
+                symbol_arena,
+                type_alias.type_node,
+                syntax_kind_ext::LITERAL_TYPE,
+            ) {
+                return None;
+            }
+
             let (alias_type, mut params) = self.resolve_lib_type_with_params(&name);
             let alias_type = alias_type?;
             if matches!(alias_type, TypeId::UNKNOWN | TypeId::ERROR) {

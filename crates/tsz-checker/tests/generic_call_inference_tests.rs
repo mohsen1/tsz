@@ -4386,6 +4386,42 @@ const childLabel: string = out.response.child.label;
     );
 }
 
+#[test]
+fn recursive_homomorphic_mapped_against_builtin_xml_http_request_no_unknown_property() {
+    // Mirrors TypeScript's `mappedTypeRecursiveInference.ts` DOM case.
+    let source = r#"
+interface A { a: A }
+declare let a: A;
+type Deep<T> = { [K in keyof T]: Deep<T[K]> }
+declare function foo<T>(deep: Deep<T>): T;
+const out = foo(a);
+out.a;
+out.a.a;
+out.a.a.a.a.a.a.a;
+
+interface B { [s: string]: B }
+declare let b: B;
+const oub = foo(b);
+oub.b;
+oub.b.b;
+oub.b.a.n.a.n.a;
+
+declare let xhr: XMLHttpRequest;
+const out2 = foo(xhr);
+out2.responseXML;
+out2.responseXML.activeElement.className.length;
+"#;
+    let diags = relevant_default_lib_diagnostics(source);
+    assert!(
+        lacks_diagnostic_code(&diags, 18046),
+        "recursive Deep<XMLHttpRequest> inference must not leave DOM chained accesses as unknown. Got: {diags:#?}"
+    );
+    assert!(
+        has_diagnostic_code(&diags, 2345),
+        "recursive Deep<XMLHttpRequest> inference should still reject the nullable DOM callback property like tsc. Got: {diags:#?}"
+    );
+}
+
 // ─── Higher-order function inference (HOFI) — tracks compiler/genericFunctionInference1.ts ─
 
 /// Locks in the existing correct behavior: a generic source function with a

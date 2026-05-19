@@ -82,4 +82,26 @@ fn direct_declaration_file_type_alias_lowers_builtin_dom_alias_body() {
             "{name} should populate the built-in lib delegation cache",
         );
     }
+
+    let literal_union_alias = "XMLHttpRequestResponseType";
+    let sym_id = state
+        .ctx
+        .binder
+        .file_locals
+        .get(literal_union_alias)
+        .unwrap_or_else(|| panic!("{literal_union_alias} should resolve to a DOM lib symbol"));
+    let delegate_arena = state
+        .ctx
+        .binder
+        .symbol_arenas
+        .get(&sym_id)
+        .map(std::convert::AsRef::as_ref)
+        .unwrap_or_else(|| panic!("{literal_union_alias} should have a delegate arena"));
+
+    assert!(
+        state
+            .direct_declaration_file_type_alias_result(sym_id, delegate_arena)
+            .is_none(),
+        "{literal_union_alias} should stay on the normal cross-file path so recursive mapped inference preserves its string-like apparent shape",
+    );
 }
