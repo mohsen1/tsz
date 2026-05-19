@@ -658,6 +658,37 @@ impl<'a> CheckerState<'a> {
         );
     }
 
+    fn implicit_any_parameter_reports(
+        &self,
+        parameters: &tsz_parser::parser::NodeList,
+    ) -> Vec<(NodeIndex, usize)> {
+        let mut reports = Vec::new();
+        let mut param_index = 0;
+        for &param_idx in &parameters.nodes {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+            // Skip `this` parameter
+            if let Some(name_node) = self.ctx.arena.get(param.name)
+                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                && ident.escaped_text.as_str() == "this"
+            {
+                continue;
+            }
+            // Skip parameters with type annotations
+            if param.type_annotation.is_some() {
+                param_index += 1;
+                continue;
+            }
+            reports.push((param_idx, param_index));
+            param_index += 1;
+        }
+        reports
+    }
+
     pub(crate) fn maybe_report_implicit_any_parameter_with_type_hint(
         &mut self,
         param: &tsz_parser::parser::node::ParameterData,
@@ -1527,41 +1558,29 @@ impl<'a> CheckerState<'a> {
             if self.find_jsdoc_for_function(func_idx).is_some() {
                 continue;
             }
-            let Some(node) = self.ctx.arena.get(func_idx) else {
-                continue;
+            let reports = {
+                let Some(node) = self.ctx.arena.get(func_idx) else {
+                    continue;
+                };
+                let parameters = if let Some(func) = self.ctx.arena.get_function(node) {
+                    &func.parameters
+                } else if let Some(method) = self.ctx.arena.get_method_decl(node) {
+                    &method.parameters
+                } else if let Some(accessor) = self.ctx.arena.get_accessor(node) {
+                    &accessor.parameters
+                } else {
+                    continue;
+                };
+                self.implicit_any_parameter_reports(parameters)
             };
-            let parameters = if let Some(func) = self.ctx.arena.get_function(node) {
-                &func.parameters
-            } else if let Some(method) = self.ctx.arena.get_method_decl(node) {
-                &method.parameters
-            } else if let Some(accessor) = self.ctx.arena.get_accessor(node) {
-                &accessor.parameters
-            } else {
-                continue;
-            };
-            let param_nodes: Vec<_> = parameters.nodes.clone();
-            let mut param_index = 0;
-            for &param_idx in &param_nodes {
+            for (param_idx, param_index) in reports {
                 let Some(param_node) = self.ctx.arena.get(param_idx) else {
                     continue;
                 };
                 let Some(param) = self.ctx.arena.get_parameter(param_node) else {
                     continue;
                 };
-                // Skip `this` parameter
-                if let Some(name_node) = self.ctx.arena.get(param.name)
-                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                    && ident.escaped_text.as_str() == "this"
-                {
-                    continue;
-                }
-                // Skip parameters with type annotations
-                if param.type_annotation.is_some() {
-                    param_index += 1;
-                    continue;
-                }
                 self.maybe_report_implicit_any_parameter(param, false, param_index);
-                param_index += 1;
             }
             self.ctx.implicit_any_checked_closures.insert(func_idx);
         }
@@ -1577,39 +1596,29 @@ impl<'a> CheckerState<'a> {
             if self.find_jsdoc_for_function(func_idx).is_some() {
                 continue;
             }
-            let Some(node) = self.ctx.arena.get(func_idx) else {
-                continue;
+            let reports = {
+                let Some(node) = self.ctx.arena.get(func_idx) else {
+                    continue;
+                };
+                let parameters = if let Some(func) = self.ctx.arena.get_function(node) {
+                    &func.parameters
+                } else if let Some(method) = self.ctx.arena.get_method_decl(node) {
+                    &method.parameters
+                } else if let Some(accessor) = self.ctx.arena.get_accessor(node) {
+                    &accessor.parameters
+                } else {
+                    continue;
+                };
+                self.implicit_any_parameter_reports(parameters)
             };
-            let parameters = if let Some(func) = self.ctx.arena.get_function(node) {
-                &func.parameters
-            } else if let Some(method) = self.ctx.arena.get_method_decl(node) {
-                &method.parameters
-            } else if let Some(accessor) = self.ctx.arena.get_accessor(node) {
-                &accessor.parameters
-            } else {
-                continue;
-            };
-            let param_nodes: Vec<_> = parameters.nodes.clone();
-            let mut param_index = 0;
-            for &param_idx in &param_nodes {
+            for (param_idx, param_index) in reports {
                 let Some(param_node) = self.ctx.arena.get(param_idx) else {
                     continue;
                 };
                 let Some(param) = self.ctx.arena.get_parameter(param_node) else {
                     continue;
                 };
-                if let Some(name_node) = self.ctx.arena.get(param.name)
-                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                    && ident.escaped_text.as_str() == "this"
-                {
-                    continue;
-                }
-                if param.type_annotation.is_some() {
-                    param_index += 1;
-                    continue;
-                }
                 self.maybe_report_implicit_any_parameter(param, false, param_index);
-                param_index += 1;
             }
         }
     }
