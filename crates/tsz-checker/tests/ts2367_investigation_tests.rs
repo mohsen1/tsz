@@ -4,11 +4,10 @@
 //! The key rule: when `never` appears as a union member, it must not
 //! contribute to the overlap check (never is the empty set, it overlaps nothing).
 
-use tsz_checker::test_utils::check_source_code_messages as collect_diagnostics;
+use tsz_checker::test_utils::check_source_codes;
 
 fn has_ts2367(source: &str) -> bool {
-    let diags = collect_diagnostics(source);
-    diags.iter().any(|(code, _)| *code == 2367)
+    check_source_codes(source).contains(&2367)
 }
 
 // ── Basic shapes ─────────────────────────────────────────────────────────────
@@ -84,19 +83,11 @@ if (a === b) {}
     );
 }
 
-// ── never in union: the core fix ─────────────────────────────────────────────
-//
-// `never` is the empty type (empty set of values). It cannot overlap with
-// any type. The fix adds an early return in `types_have_no_overlap_inner`
-// so that when `never` appears as a union member, it is correctly excluded
-// from the overlap calculation and does not silently suppress TS2367.
+// ── never in union ───────────────────────────────────────────────────────────
 
 #[test]
 fn test_never_in_left_union_is_ignored() {
-    // `1 | 2 | 3 | never` normalizes to `1 | 2 | 3`.  If `never` somehow
-    // reaches `types_have_no_overlap` as a union member (e.g. via
-    // `union_or_single_preserve` in narrowing), the `never` must not
-    // contribute overlap and must not suppress TS2367.
+    // `never` as a union member must not contribute overlap; TS2367 must still fire.
     assert!(
         has_ts2367(
             r#"
@@ -193,18 +184,16 @@ if (a === b) {}
 fn test_conditional_type_all_never_no_ts2367() {
     // When ALL branches evaluate to `never`, the top-level NEVER guard in
     // binary.rs fires, and TS2367 is correctly suppressed (unreachable code).
-    let diags = collect_diagnostics(
-        r#"
+    assert!(
+        !has_ts2367(
+            r#"
 type MyExtract<T, U> = T extends U ? T : never;
 declare const a: MyExtract<"a" | "b", number>;
 declare const b: "x" | "y";
 if (a === b) {}
-"#,
-    );
-    let ts2367 = diags.iter().filter(|(c, _)| *c == 2367).count();
-    assert_eq!(
-        ts2367, 0,
-        "Expected NO TS2367 when left evaluates to `never` (unreachable); got {diags:?}"
+"#
+        ),
+        "Expected NO TS2367 when left type fully resolves to `never` (unreachable branch)"
     );
 }
 
