@@ -540,6 +540,16 @@ impl DiagnosticSpeculationSnapshot {
         self.committed = true;
     }
 
+    /// Rollback and apply a filter while retaining this checkpoint for another
+    /// explicit rollback from the same speculative boundary.
+    pub(crate) fn rollback_filtered_reusable(
+        &self,
+        diagnostics: &mut DiagnosticState<'_, '_>,
+        keep: impl FnMut(&Diagnostic) -> bool,
+    ) {
+        diagnostics.rollback_diagnostics_filtered(&self.snapshot, keep);
+    }
+
     /// Access the underlying snapshot for manual operations.
     pub(crate) const fn snapshot(&self) -> &DiagnosticSnapshot {
         &self.snapshot
