@@ -855,6 +855,27 @@ fn classify_mapped_source_inner(db: &dyn TypeDatabase, source: TypeId) -> Mapped
     }
 }
 
+/// Whether a mapped template references K (the iteration variable). Used as a
+/// cheap precheck before full template substitution: when K is absent, the
+/// substitution would round-trip the template unchanged. Matches both
+/// `TypeParameter` by name and `BoundParameter` (in-flight instantiations) —
+/// the latter distinguishes this from the more general
+/// `contains_type_parameter_named` predicate.
+pub fn template_references_iter_param(
+    db: &dyn TypeDatabase,
+    template: TypeId,
+    iter_name: Atom,
+) -> bool {
+    if matches!(template, TypeId::ANY | TypeId::ERROR | TypeId::NEVER) {
+        return false;
+    }
+    crate::visitor::contains_type_matching(db, template, |key| match key {
+        TypeData::BoundParameter(_) => true,
+        TypeData::TypeParameter(info) => info.name == iter_name,
+        _ => false,
+    })
+}
+
 /// Check if a mapped type's `as` clause is identity-preserving (no remapping).
 ///
 /// Returns `true` when there's no `as` clause, or when the `as` clause maps
