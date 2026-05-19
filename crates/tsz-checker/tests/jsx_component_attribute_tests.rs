@@ -18,17 +18,22 @@ fn jsx_diagnostics(source: &str) -> Vec<(u32, String)> {
 }
 
 fn jsx_diagnostics_with_mode(source: &str, jsx_mode: JsxMode) -> Vec<(u32, String)> {
+    jsx_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            jsx_mode,
+            ..CheckerOptions::default()
+        },
+    )
+}
+
+fn jsx_diagnostics_with_options(source: &str, options: CheckerOptions) -> Vec<(u32, String)> {
     let file_name = "test.tsx";
     let mut parser = ParserState::new(file_name.to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut binder = tsz_binder::BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
-
-    let options = CheckerOptions {
-        jsx_mode,
-        ..CheckerOptions::default()
-    };
 
     let types = TypeInterner::new();
     let mut checker = CheckerState::new(
@@ -233,6 +238,123 @@ let x2 = <MyComp a="hi" />;
             diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
         ),
         "Expected TS2739 for missing constrained props on generic class JSX element, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_overloaded_class_optional_props_accept_possibly_undefined_attr_values() {
+    // JSX overload applicability checks the target prop's write surface. With
+    // default optional-property semantics, assigning a `T | undefined` value to
+    // an optional JSX prop is valid, so the overloaded class constructor should
+    // not fall through to TS2769. The second component varies both names and
+    // value shape so this locks the optional-write rule, not one spelling.
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+declare class TextBox {{
+    constructor(props: {{ value?: string }});
+    constructor(props: {{ value?: string }}, context?: any);
+    props: {{ value?: string }};
+}}
+
+declare class CounterBox {{
+    constructor(props: {{ amount?: number | false }});
+    constructor(props: {{ amount?: number | false }}, context?: any);
+    props: {{ amount?: number | false }};
+}}
+
+declare const maybeText: string | undefined;
+declare const maybeAmount: number | undefined;
+
+let a = <TextBox value={{maybeText}} />;
+let b = <CounterBox amount={{maybeAmount}} />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !has_code(&diags, diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL),
+        "Optional JSX props should accept possibly-undefined values under default optional-property semantics, got: {diags:?}"
+    );
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Optional JSX prop write surface should include undefined by default, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_overloaded_class_exact_optional_props_reject_implicit_undefined_attr_values() {
+    // Negative counterpart: with exact optional property types, an optional prop
+    // whose annotation omits `undefined` has a narrower write surface, so an
+    // explicit possibly-undefined JSX attribute should still fail overload
+    // applicability.
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+declare class ExactBox {{
+    constructor(props: {{ label?: string }});
+    constructor(props: {{ label?: string }}, context?: any);
+    props: {{ label?: string }};
+}}
+
+declare const maybeLabel: string | undefined;
+let x = <ExactBox label={{maybeLabel}} />;
+"#
+    );
+    let diags = jsx_diagnostics_with_options(
+        &source,
+        CheckerOptions {
+            exact_optional_property_types: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        has_code(&diags, diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL)
+            || has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Exact optional JSX prop write surface should reject implicit undefined, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_overloaded_class_uses_source_constraints_for_conditional_attr_values() {
+    // `ExtractValue<Wrapped>` is an unresolved conditional result, but
+    // `Wrapped extends SelectProps<any>` proves the extracted value is valid
+    // for `SelectProps<ExtractValue<Wrapped>>["value"]`. JSX overload
+    // applicability should use that source constraint instead of rejecting the
+    // class constructor overload set.
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+type OptionValues = string | number | boolean;
+interface Option<TValue = OptionValues> {{
+    value?: TValue;
+    [property: string]: any;
+}}
+type Options<TValue = OptionValues> = Array<Option<TValue>>;
+interface SelectProps<TValue = OptionValues> {{
+    value?: Option<TValue> | Options<TValue> | string | string[] | number | number[] | boolean;
+}}
+interface WrapperProps<T extends OptionValues> {{
+    value?: Option<T> | T;
+}}
+type ExtractValue<Wrapped> = Wrapped extends SelectProps<infer Value> ? Value : never;
+declare class Select<TValue = OptionValues> {{
+    constructor(props: SelectProps<TValue>);
+    constructor(props: SelectProps<TValue>, context?: any);
+    props: SelectProps<TValue>;
+}}
+function wrap<Wrapped extends SelectProps<any>>(props: WrapperProps<ExtractValue<Wrapped>>) {{
+    return <Select<ExtractValue<Wrapped>> value={{props.value}} />;
+}}
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !has_code(&diags, diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL),
+        "Conditional attr values should use referenced source constraints for JSX overload applicability, got: {diags:?}"
+    );
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Conditional attr value should be assignable to the target optional prop, got: {diags:?}"
     );
 }
 

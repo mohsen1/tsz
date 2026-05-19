@@ -1515,6 +1515,6 @@ impl Server {
             }))
         })();
 
-        self.stub_response(seq, request, result)
+        self.success_response(seq, request, result)
     }
 }

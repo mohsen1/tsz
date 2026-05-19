@@ -700,6 +700,41 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         if let Some(members) = union_list_id(self.interner, resolved_target) {
             let members = self.interner.type_list(members);
+            let application_shaped_comparison = application_id(self.interner, source).is_some()
+                || application_id(self.interner, target).is_some();
+            let source_members = union_list_id(self.interner, resolved_source)
+                .map(|list_id| self.interner.type_list(list_id).as_ref().to_vec())
+                .unwrap_or_else(|| vec![resolved_source]);
+            for &member in members.iter() {
+                if self.check_subtype(resolved_source, member).is_true() {
+                    continue;
+                }
+                for &source_member in &source_members {
+                    if self.check_subtype(source_member, member).is_true() {
+                        continue;
+                    }
+                    let member_reason = self.explain_failure_guarded(source_member, member);
+                    let missing_property = match member_reason {
+                        Some(SubtypeFailureReason::MissingProperty { property_name, .. }) => {
+                            Some(property_name)
+                        }
+                        Some(SubtypeFailureReason::MissingProperties {
+                            property_names, ..
+                        }) => property_names.first().copied(),
+                        _ => None,
+                    };
+                    if let Some(property_name) = missing_property {
+                        if application_shaped_comparison {
+                            return Some(SubtypeFailureReason::MissingProperty {
+                                property_name,
+                                source_type: source,
+                                target_type: target,
+                            });
+                        }
+                        break;
+                    }
+                }
+            }
             return Some(SubtypeFailureReason::NoUnionMemberMatches {
                 source_type: source,
                 target_union_members: members.as_ref().to_vec(),

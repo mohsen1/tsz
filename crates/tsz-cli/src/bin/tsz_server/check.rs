@@ -350,7 +350,7 @@ impl Server {
             Some(payload)
         })();
 
-        self.stub_response(seq, request, body)
+        self.success_response(seq, request, body)
     }
 
     pub(crate) fn run_check(

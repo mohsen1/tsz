@@ -7,7 +7,28 @@
 use crate::types::TypeId;
 
 /// Cache key for option-sensitive type evaluation.
-pub type EvaluationCacheKey = (TypeId, bool);
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct EvaluationCacheKey {
+    type_id: TypeId,
+    no_unchecked_indexed_access: bool,
+}
+
+impl EvaluationCacheKey {
+    pub const fn new(type_id: TypeId, no_unchecked_indexed_access: bool) -> Self {
+        Self {
+            type_id,
+            no_unchecked_indexed_access,
+        }
+    }
+
+    pub const fn type_id(self) -> TypeId {
+        self.type_id
+    }
+
+    pub const fn no_unchecked_indexed_access(self) -> bool {
+        self.no_unchecked_indexed_access
+    }
+}
 
 /// Options that affect type evaluation results.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -74,13 +95,13 @@ impl EvaluationRequest {
     }
 
     pub const fn cache_key(self) -> EvaluationCacheKey {
-        (self.type_id, self.options.no_unchecked_indexed_access())
+        EvaluationCacheKey::new(self.type_id, self.options.no_unchecked_indexed_access())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{EvaluationOptions, EvaluationRequest};
+    use super::{EvaluationCacheKey, EvaluationOptions, EvaluationRequest};
     use crate::TypeInterner;
     use crate::evaluation::evaluate::evaluate_type_with_request;
     use crate::types::TypeId;
@@ -91,7 +112,12 @@ mod tests {
 
         assert_eq!(request.type_id(), TypeId::STRING);
         assert!(!request.no_unchecked_indexed_access());
-        assert_eq!(request.cache_key(), (TypeId::STRING, false));
+        assert_eq!(
+            request.cache_key(),
+            EvaluationCacheKey::new(TypeId::STRING, false)
+        );
+        assert_eq!(request.cache_key().type_id(), TypeId::STRING);
+        assert!(!request.cache_key().no_unchecked_indexed_access());
     }
 
     #[test]
@@ -102,10 +128,13 @@ mod tests {
         );
 
         assert!(request.no_unchecked_indexed_access());
-        assert_eq!(request.cache_key(), (TypeId::NUMBER, true));
+        assert_eq!(
+            request.cache_key(),
+            EvaluationCacheKey::new(TypeId::NUMBER, true)
+        );
         assert_eq!(
             request.with_type_id(TypeId::BOOLEAN).cache_key(),
-            (TypeId::BOOLEAN, true)
+            EvaluationCacheKey::new(TypeId::BOOLEAN, true)
         );
     }
 

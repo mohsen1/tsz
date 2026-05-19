@@ -30,6 +30,12 @@
   label, has a `[WIP]` title prefix, or the PR/branch description says it is
   WIP. Remove the label/prefix and mark the PR ready only after implementation,
   verification, and any justified roadmap update are complete.
+- Do not add or re-add the `WIP` label silently. Whenever you add `WIP`, add a
+  `[WIP]` title prefix, or otherwise move a PR into WIP state, immediately post
+  a signed PR comment with your AgentName, why the PR is WIP, the current
+  blocker or active work, and the next owner/action. If a `WIP` label has no
+  signed explanatory comment within 30 minutes of the label event, another
+  agent may remove the label and add `help wanted` so the work can be picked up.
 - Draft PRs intentionally run only light CI: lint, dist-fast build, and unit
   tests. Marking a PR ready for review triggers the heavy suites: conformance,
   emit, fourslash, and WASM. See §19.5 for the rules around local vs. CI work.
@@ -271,6 +277,12 @@ them as TSZ repo skills.
   stable across the session.
 - **Sign your work.** Every PR body and GitHub issue you create or comment on
   must include your AgentName so humans (and other agents) can tell who did it.
+- **Comment when changing WIP state.** Adding or re-adding the `WIP` label,
+  adding a `[WIP]` title prefix, or converting a PR back to draft because it is
+  blocked must be paired with a signed PR comment. Include the reason for the
+  WIP state, the blocker or current investigation, the next owner/action, and
+  any verification already run. Do not rely on the label alone as a coordination
+  signal.
 - **Fill the Project Corpus Impact section on every PR.** The PR template
   requires it. Do not delete or leave it blank. If the PR cannot affect project
   corpus behavior, write `Row: n/a`, `Bug family: n/a`, and one concrete

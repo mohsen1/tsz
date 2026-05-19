@@ -2028,10 +2028,12 @@ pub(super) fn collect_diagnostics(
                 file_diagnostics.retain(|d| !is_checker_grammar_code_suppressed_in_js(d.code));
             }
 
-            // Apply @ts-expect-error / @ts-ignore directive suppression.
-            // tsc suppresses all diagnostics on the line following such directives
-            // and emits TS2578 for unused @ts-expect-error directives.
-            if let Some(source) = file.arena.get_source_file_at(file.source_file) {
+            // Apply @ts-expect-error / @ts-ignore directive suppression only
+            // when type checking ran. Under `--noCheck`, parse and JS grammar
+            // diagnostics still surface in tsc and directives do not hide them.
+            if !options.no_check
+                && let Some(source) = file.arena.get_source_file_at(file.source_file)
+            {
                 apply_ts_directive_suppression(
                     &file.file_name,
                     source.text.as_ref(),
@@ -2448,8 +2450,10 @@ fn run_check_on_existing_checker<'a>(
         file_diagnostics.retain(|d| !is_checker_grammar_code_suppressed_in_js(d.code));
     }
 
-    // Apply @ts-expect-error / @ts-ignore directive suppression.
-    if let Some(source) = file.arena.get_source_file_at(file.source_file) {
+    // Apply @ts-expect-error / @ts-ignore directive suppression only when type
+    // checking ran. Under `--noCheck`, parse and JS grammar diagnostics still
+    // surface in tsc and directives do not hide them.
+    if !no_check && let Some(source) = file.arena.get_source_file_at(file.source_file) {
         apply_ts_directive_suppression(
             &file.file_name,
             source.text.as_ref(),
@@ -4716,6 +4720,7 @@ declare namespace Intl {
             dependencies: _,
             type_reference_errors,
             resolution_mode_errors,
+            ..
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
             .expect("read source files");
 
@@ -5007,6 +5012,7 @@ const elem = <div className={class1, class2}/>;
             dependencies: _,
             type_reference_errors,
             resolution_mode_errors,
+            ..
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
             .expect("read source files");
 
@@ -5126,6 +5132,7 @@ const q: PromiseLike<number> = p;
             dependencies: _,
             type_reference_errors,
             resolution_mode_errors,
+            ..
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
             .expect("read source files");
 
@@ -5206,6 +5213,7 @@ async function f() {
             dependencies: _,
             type_reference_errors,
             resolution_mode_errors,
+            ..
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
             .expect("read source files");
 
@@ -5289,6 +5297,7 @@ type Recurse2 = {
             dependencies: _,
             type_reference_errors,
             resolution_mode_errors,
+            ..
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
             .expect("read source files");
 
@@ -5382,6 +5391,7 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
             dependencies: _,
             type_reference_errors,
             resolution_mode_errors,
+            ..
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
             .expect("read source files");
 
@@ -5629,6 +5639,7 @@ export const x = foo();
             dependencies: _,
             type_reference_errors,
             resolution_mode_errors,
+            ..
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
             .expect("read source files");
 
@@ -5731,6 +5742,7 @@ export type RowToColumns<TColumns> = {
             dependencies: _,
             type_reference_errors,
             resolution_mode_errors,
+            ..
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
             .expect("read source files");
 
@@ -6369,6 +6381,7 @@ let x2: string = f;
             dependencies: _,
             type_reference_errors,
             resolution_mode_errors,
+            ..
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
             .expect("read source files");
 
@@ -6480,6 +6493,7 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) => typeHandlers[p.t]?.(p
             dependencies: _,
             type_reference_errors,
             resolution_mode_errors,
+            ..
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
             .expect("read source files");
 
@@ -6578,6 +6592,7 @@ const nestedTuple = type([["ark", "|>", (x) => x.length]])
             dependencies: _,
             type_reference_errors,
             resolution_mode_errors,
+            ..
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
             .expect("read source files");
 
@@ -6666,6 +6681,7 @@ m(item => item.id < 5);
             dependencies: _,
             type_reference_errors,
             resolution_mode_errors,
+            ..
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
             .expect("read source files");
 
@@ -6748,6 +6764,7 @@ interface Buzz { id: number; buzz: string }
             dependencies: _,
             type_reference_errors,
             resolution_mode_errors,
+            ..
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
             .expect("read source files");
 
@@ -6837,6 +6854,7 @@ const obj: {field: Rule} = {
             dependencies: _,
             type_reference_errors,
             resolution_mode_errors,
+            ..
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
             .expect("read source files");
 
@@ -6958,6 +6976,7 @@ function foo() {
             dependencies: _,
             type_reference_errors,
             resolution_mode_errors,
+            ..
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
             .expect("read source files");
 
@@ -7189,6 +7208,7 @@ interface Node {
             dependencies: _,
             type_reference_errors,
             resolution_mode_errors,
+            ..
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
             .expect("read source files");
 

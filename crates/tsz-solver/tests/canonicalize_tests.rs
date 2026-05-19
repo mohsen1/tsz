@@ -912,6 +912,30 @@ fn canonicalize_caches_results() {
     assert_eq!(result1, result2);
 }
 
+#[test]
+fn canonicalizer_cache_statistics_account_for_entries_and_size() {
+    let interner = TypeInterner::new();
+    let env = TypeEnvironment::new();
+    let mut canon = Canonicalizer::new(&interner, &env);
+
+    let empty_stats = canon.cache_statistics();
+    assert_eq!(empty_stats.cache_entries, 0);
+    assert!(empty_stats.estimated_size_bytes > 0);
+
+    let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    canon.canonicalize(union);
+
+    let populated_stats = canon.cache_statistics();
+    assert_eq!(populated_stats.cache_entries, 1);
+    assert!(populated_stats.estimated_size_bytes >= empty_stats.estimated_size_bytes);
+
+    canon.canonicalize(union);
+    assert_eq!(
+        canon.cache_statistics().cache_entries,
+        populated_stats.cache_entries
+    );
+}
+
 // ===================================================================
 // Nested composite types
 // ===================================================================

@@ -577,12 +577,12 @@ fn test_bct_cached_matches_uncached_for_subtype_reduction() {
     ]);
     let unrelated = interner.object(vec![PropertyInfo::new(name_z, TypeId::BOOLEAN)]);
 
-    let uncached = crate::expression_ops::compute_best_common_type::<NoopResolver>(
+    let uncached = crate::operations::expression_ops::compute_best_common_type::<NoopResolver>(
         &interner,
         &[base, derived, unrelated],
         None,
     );
-    let cached = crate::expression_ops::compute_best_common_type_cached::<NoopResolver>(
+    let cached = crate::operations::expression_ops::compute_best_common_type_cached::<NoopResolver>(
         &interner,
         Some(&db),
         &[base, derived, unrelated],
@@ -615,13 +615,13 @@ fn test_bct_cache_records_miss_then_hit() {
 
     let stats0 = db.statistics();
 
-    let r1 = crate::expression_ops::compute_best_common_type_cached::<NoopResolver>(
+    let r1 = crate::operations::expression_ops::compute_best_common_type_cached::<NoopResolver>(
         &interner,
         Some(&db),
         &[base, derived, unrelated],
         None,
     );
-    let r2 = crate::expression_ops::compute_best_common_type_cached::<NoopResolver>(
+    let r2 = crate::operations::expression_ops::compute_best_common_type_cached::<NoopResolver>(
         &interner,
         Some(&db),
         &[base, derived, unrelated],
@@ -670,7 +670,7 @@ fn test_bct_cache_distinguishes_input_lists() {
     let unrelated_a = interner.object(vec![PropertyInfo::new(name_z, TypeId::BOOLEAN)]);
     let unrelated_b = interner.object(vec![PropertyInfo::new(name_w, TypeId::STRING)]);
 
-    let _ = crate::expression_ops::compute_best_common_type_cached::<NoopResolver>(
+    let _ = crate::operations::expression_ops::compute_best_common_type_cached::<NoopResolver>(
         &interner,
         Some(&db),
         &[base, derived, unrelated_a],
@@ -684,7 +684,7 @@ fn test_bct_cache_distinguishes_input_lists() {
 
     // A list that ALSO falls through to remove_subtypes_for_bct (no unit
     // types, no winning supertype, no constructor-only short-circuit).
-    let _ = crate::expression_ops::compute_best_common_type_cached::<NoopResolver>(
+    let _ = crate::operations::expression_ops::compute_best_common_type_cached::<NoopResolver>(
         &interner,
         Some(&db),
         &[base, derived, unrelated_b],
@@ -720,7 +720,7 @@ fn test_bct_cache_input_order_independence() {
     ]);
     let unrelated = interner.object(vec![PropertyInfo::new(name_z, TypeId::BOOLEAN)]);
 
-    let _ = crate::expression_ops::compute_best_common_type_cached::<NoopResolver>(
+    let _ = crate::operations::expression_ops::compute_best_common_type_cached::<NoopResolver>(
         &interner,
         Some(&db),
         &[base, derived, unrelated],
@@ -729,7 +729,7 @@ fn test_bct_cache_input_order_independence() {
     let stats_after_first = db.statistics();
 
     // Reorder the inputs — the sorted-key cache must hit.
-    let _ = crate::expression_ops::compute_best_common_type_cached::<NoopResolver>(
+    let _ = crate::operations::expression_ops::compute_best_common_type_cached::<NoopResolver>(
         &interner,
         Some(&db),
         &[unrelated, base, derived],
@@ -768,7 +768,7 @@ fn test_bct_cache_no_query_db_disables_cache() {
 
     let stats0 = db.statistics();
 
-    let _ = crate::expression_ops::compute_best_common_type_cached::<NoopResolver>(
+    let _ = crate::operations::expression_ops::compute_best_common_type_cached::<NoopResolver>(
         &interner,
         None,
         &[base, derived, unrelated],
@@ -800,7 +800,7 @@ fn test_bct_cache_resolver_present_distinct_from_absent() {
     let b = interner.object(vec![PropertyInfo::new(name_y, TypeId::STRING)]);
 
     // No-resolver path.
-    let _ = crate::expression_ops::compute_best_common_type_cached::<NoopResolver>(
+    let _ = crate::operations::expression_ops::compute_best_common_type_cached::<NoopResolver>(
         &interner,
         Some(&db),
         &[a, b],
@@ -810,7 +810,7 @@ fn test_bct_cache_resolver_present_distinct_from_absent() {
 
     // Same TypeIds but with a (no-op) resolver — must take a different slot.
     let resolver = NoopResolver;
-    let _ = crate::expression_ops::compute_best_common_type_cached::<NoopResolver>(
+    let _ = crate::operations::expression_ops::compute_best_common_type_cached::<NoopResolver>(
         &interner,
         Some(&db),
         &[a, b],

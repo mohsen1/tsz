@@ -122,6 +122,37 @@ pub(crate) fn get_literal_or_well_known_property_name(
 }
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn symbol_valued_binding_property_name(
+        &self,
+        expr_idx: NodeIndex,
+        expr_type: TypeId,
+    ) -> Option<String> {
+        if expr_type != TypeId::SYMBOL {
+            return None;
+        }
+
+        let expr_node = self.ctx.arena.get(expr_idx)?;
+        self.ctx.arena.get_identifier(expr_node)?;
+
+        let local_sym_id = self.resolve_identifier_symbol(expr_idx)?;
+        let sym_id = self
+            .ctx
+            .resolve_import_alias_and_register(local_sym_id)
+            .unwrap_or(local_sym_id);
+        let symbol = self.get_cross_file_symbol(sym_id)?;
+        let file_idx = self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .unwrap_or(symbol.decl_file_idx as usize);
+        let value_decl = symbol.value_declaration;
+        let decl_arena = self.ctx.get_arena_for_file(file_idx as u32);
+        if value_decl.is_none() || !decl_arena.is_const_variable_declaration(value_decl) {
+            return None;
+        }
+
+        Some(format!("__symbol_{}_{}", file_idx, sym_id.0))
+    }
+
     // =========================================================================
     // Section 27: Modifier and Member Access Utilities
     // =========================================================================
@@ -1142,6 +1173,11 @@ impl<'a> CheckerState<'a> {
                 self.evaluate_application_type(resolved_prop_name_type);
             let assignability_prop_name_type = self.evaluate_type_for_assignability(prop_name_type);
 
+            if let Some(sym_id) = self.resolve_computed_unique_symbol_property(computed.expression)
+            {
+                return Some(format!("__unique_{}", sym_id.0));
+            }
+
             // Fallback: when the computed expression is an identifier referencing a
             // variable initialized with or annotated as `Symbol.xxx`, resolve to the
             // canonical `[Symbol.xxx]` property name.  This handles patterns like:
@@ -1157,6 +1193,11 @@ impl<'a> CheckerState<'a> {
                     self.register_well_known_symbol_name_mapping(&well_known, symbol_ref);
                 }
                 return Some(well_known);
+            }
+            if let Some(symbol_name) =
+                self.symbol_valued_binding_property_name(computed.expression, prop_name_type)
+            {
+                return Some(symbol_name);
             }
             // When the computed property type resolves to a unique symbol (e.g.
             // `typeof Symbol.obs`), map it to the canonical `[Symbol.xxx]` format
@@ -1492,6 +1533,41 @@ impl<'a> CheckerState<'a> {
         self.ctx.checking_computed_property_name = prev_checking;
 
         crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, expr_type).is_some()
+    }
+
+    fn resolve_computed_unique_symbol_property(
+        &mut self,
+        expr_idx: NodeIndex,
+    ) -> Option<tsz_binder::SymbolId> {
+        let sym_id = self
+            .ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, expr_idx)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let decl = if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else {
+            symbol.primary_declaration()?
+        };
+        let mut decl_idx = decl;
+        let mut decl_node = self.ctx.arena.get(decl_idx)?;
+        if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            decl_idx = self.ctx.arena.get_extended(decl_idx)?.parent;
+            decl_node = self.ctx.arena.get(decl_idx)?;
+        }
+        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION
+            || !self.ctx.arena.is_const_variable_declaration(decl_idx)
+        {
+            return None;
+        }
+        let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        let has_unique_annotation = var_decl.type_annotation.is_some()
+            && self.is_unique_symbol_type_annotation(var_decl.type_annotation);
+        let has_symbol_initializer = var_decl.initializer.is_some()
+            && (self.is_symbol_call_initializer(var_decl.initializer)
+                || self.is_symbol_for_call_initializer(var_decl.initializer));
+
+        (has_unique_annotation || has_symbol_initializer).then_some(sym_id)
     }
 
     /// For an identifier expression, trace back to the variable's declaration

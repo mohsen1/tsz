@@ -17,7 +17,7 @@ use crate::hover::{HoverInfo, HoverProvider};
 use crate::rename::TextEdit;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::rename::WorkspaceEdit;
-use crate::resolver::{ScopeCache, ScopeCacheStats};
+use crate::resolver::{ScopeCache, ScopeCacheStats, scope_cache_estimated_size_bytes};
 use crate::signature_help::{SignatureHelp, SignatureHelpProvider};
 use crate::symbols::symbol_index::SymbolIndex;
 use tsz_binder::BinderState;
@@ -518,6 +518,9 @@ impl ProjectFile {
 
         // line_map
         size += std::mem::size_of::<LineMap>();
+
+        // LSP scope cache: per-file retained scope-chain snapshots.
+        size += scope_cache_estimated_size_bytes(&self.scope_cache);
 
         size
     }

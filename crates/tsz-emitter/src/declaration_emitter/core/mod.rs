@@ -24,6 +24,7 @@ use tsz_binder::{BinderState, SymbolId};
 use tsz_common::comments::CommentRange;
 use tsz_common::diagnostics::Diagnostic;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::NodeList;
 use tsz_parser::parser::node::NodeArena;
 use tsz_solver::TypeInterner;
 
@@ -119,6 +120,8 @@ pub struct DeclarationEmitter<'a> {
     pub(super) class_extends_another: bool,
     /// Track method names that have overload signatures in current class (to skip implementation signatures)
     pub(super) method_names_with_overloads: FxHashSet<String>,
+    /// Type parameters of the class currently being emitted (for method return type inference)
+    pub(super) current_class_type_params: Option<NodeList>,
     pub(super) all_comments: Vec<CommentRange>,
     pub(super) comment_emit_idx: usize,
     pub(super) current_statement_jsdoc_chain: Vec<String>,
@@ -282,6 +285,13 @@ pub struct DeclarationEmitter<'a> {
     /// can be resolved.
     pub(super) all_enum_values:
         FxHashMap<String, FxHashMap<String, crate::enums::evaluator::EnumValue>>,
+    /// Maps `(parent_sym_id, target_name)` → local alias names for `import alias = LocalNs`
+    /// declarations (non-require import-equals). Using the parent-and-name pair as the key
+    /// avoids SymbolId ambiguity: the binder may assign different IDs to the same namespace
+    /// in exports tables vs parent-chain traversal, but both share the same parent SymbolId
+    /// and `escaped_name`. Used to substitute alias names when printing qualified type names
+    /// only when a target has a single unambiguous alias.
+    pub(super) local_namespace_alias_targets: FxHashMap<(SymbolId, String), FxHashSet<String>>,
 }
 
 pub(super) struct SourceMapState {

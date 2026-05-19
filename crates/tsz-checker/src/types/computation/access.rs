@@ -1495,11 +1495,30 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Handle `symbol` (primitive) index on types with late-bound (computed) members.
-        // When a class declares `[expr]()` where `expr` has type `symbol`, the member
-        // is late-bound and not stored as a named property. tsc resolves `obj[expr]` to
-        // the computed member's type; we conservatively return `any` to avoid false
-        // positives like TS2722 ("Cannot invoke possibly undefined").
+        // Match const `symbol` computed members stored under stable binding keys.
+        if result_type.is_none()
+            && index_type == TypeId::SYMBOL
+            && !crate::query_boundaries::common::is_type_parameter(
+                self.ctx.types,
+                pre_resolution_object_type,
+            )
+            && let Some(property_name) =
+                self.symbol_valued_binding_property_name(access.name_or_argument, index_type)
+        {
+            let resolved_type = self.resolve_type_for_property_access(object_type_for_access);
+            let result = self.resolve_property_access_with_env(resolved_type, &property_name);
+            if let PropertyAccessResult::Success {
+                type_id,
+                write_type,
+                ..
+            } = result
+            {
+                use_index_signature_check = false;
+                result_type = Some(effective_write_result(type_id, write_type));
+            }
+        }
+
+        // Late-bound symbol members are not stored as named properties.
         if result_type.is_none()
             && index_type == TypeId::SYMBOL
             && crate::query_boundaries::common::has_late_bound_members(
@@ -1511,11 +1530,7 @@ impl<'a> CheckerState<'a> {
             use_index_signature_check = false;
         }
 
-        // Value-level element access whose index expression has type `any`.
-        // Under noUncheckedIndexedAccess, tsc routes value-level access with
-        // an `any` index through the receiver's applicable index signature, so
-        // reads still widen to `T | undefined` and writes reject `undefined`.
-        // With NUIA disabled, keep the type-level `T[any] = any` behavior.
+        // Under NUIA, value-level `any` indexes use the receiver index signature.
         if result_type.is_none()
             && index_type == TypeId::ANY
             && self.ctx.compiler_options.no_unchecked_indexed_access
@@ -1533,35 +1548,19 @@ impl<'a> CheckerState<'a> {
             use_index_signature_check = false;
         }
 
-        // Preserve mapped/generic key correlation through solver IndexAccess evaluation.
+        // Preserve mapped-type/generic-index relationships for solver evaluation.
         if result_type.is_none()
             && crate::query_boundaries::common::is_type_parameter(self.ctx.types, index_type)
         {
             let resolved_pre = self.resolve_lazy_type(pre_resolution_object_type);
-            let substitution_object = if crate::query_boundaries::common::application_id(
-                self.ctx.types,
-                pre_resolution_object_type,
-            )
-            .is_some()
-            {
-                Some(pre_resolution_object_type)
-            } else if let Some(alias) = self.ctx.types.get_display_alias(pre_resolution_object_type)
-                && crate::query_boundaries::common::application_id(self.ctx.types, alias).is_some()
-            {
-                Some(pre_resolution_object_type)
-            } else if crate::query_boundaries::common::mapped_type_id(self.ctx.types, resolved_pre)
+            if crate::query_boundaries::common::mapped_type_id(self.ctx.types, resolved_pre)
                 .is_some()
             {
-                Some(resolved_pre)
-            } else {
-                None
-            };
-            if let Some(substitution_object) = substitution_object {
                 let index_access = self
                     .ctx
                     .types
                     .factory()
-                    .index_access(substitution_object, index_type);
+                    .index_access(resolved_pre, index_type);
                 let evaluated = self.evaluate_type_with_env(index_access);
                 if evaluated != index_access && evaluated != TypeId::ERROR {
                     result_type = Some(evaluated);
@@ -1924,8 +1923,14 @@ impl<'a> CheckerState<'a> {
             if is_expando_write {
                 result_type = TypeId::ANY;
             }
-            // Suppress TS7053 for expando reads with unique-symbol keys when the
-            // callable already has binder-recorded unique-symbol expando writes.
+            // Suppress TS7053 for expando reads with unique symbol keys on function
+            // types. When `func[symKey]` where symKey is a const Symbol() variable
+            // and `func[symKey] = value` was assigned as an expando property, tsc
+            // does not emit TS7053 on the read side either.
+            // We check: (a) read context, (b) function type, (c) unique symbol index,
+            // (d) the object has ANY unique-symbol expando properties recorded by the
+            // binder. This avoids depending on exact SymbolId matching (which can
+            // fail due to lib-merge rewriting the binder's symbol arena).
             let is_expando_symbol_read = !skip_flow_narrowing
                 && !is_namespace_object
                 && crate::query_boundaries::common::is_function_type(
