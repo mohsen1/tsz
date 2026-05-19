@@ -153,6 +153,16 @@ export function validateProjectMetadata({
       failures.push(`${row.name}: invalid category ${String(row.category)}`);
     }
 
+    const missingExternalPinFields = new Set();
+    if (row.category === "external") {
+      for (const field of ["repo", "ref", "repo_env", "ref_env"]) {
+        if (!(field in row) || row[field] === undefined) {
+          missingExternalPinFields.add(field);
+          failures.push(`${row.name}: external row is missing required pin field ${field}`);
+        }
+      }
+    }
+
     if (!Array.isArray(row.readme_candidates) || row.readme_candidates.length === 0) {
       failures.push(`${row.name}: readme_candidates must be a non-empty array`);
     } else {
@@ -177,7 +187,11 @@ export function validateProjectMetadata({
     }
 
     for (const [valueField, envField] of pairedMetadataFields) {
-      if (row[valueField] !== undefined && row[envField] === undefined) {
+      if (
+        row[valueField] !== undefined
+        && row[envField] === undefined
+        && !missingExternalPinFields.has(envField)
+      ) {
         failures.push(`${row.name}: ${valueField} is set but ${envField} is missing`);
       }
     }

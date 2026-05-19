@@ -35,6 +35,9 @@ External rows (cloned from GitHub) also include pin fields:
 - `repo_env`: shell variable name that holds the URL (for overrides, e.g. `UTILITY_TYPES_REPO`)
 - `ref_env`: shell variable name that holds the ref (e.g. `UTILITY_TYPES_REF`)
 
+Rows with `category: "external"` must include all four pin fields so fixture
+setup has a stable clone source and override surface.
+
 Some generated rows include expected-count fields:
 
 - `expected_generated`: expected number of generated source files

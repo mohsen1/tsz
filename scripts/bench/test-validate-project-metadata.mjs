@@ -126,10 +126,29 @@ assert.deepEqual(
     })(),
   ]),
   [
-    "example-project: repo is set but repo_env is missing",
-    "example-project: ref is set but ref_env is missing",
+    "example-project: external row is missing required pin field repo_env",
+    "example-project: external row is missing required pin field ref_env",
     "example-project: expected_generated is set but expected_generated_env is missing",
     "example-project: expected_test_cases is set but expected_test_cases_env is missing",
+  ],
+);
+
+assert.deepEqual(
+  validate([
+    (() => {
+      const row = validRow({ name: "external-without-pins" });
+      delete row.repo;
+      delete row.ref;
+      delete row.repo_env;
+      delete row.ref_env;
+      return row;
+    })(),
+  ]),
+  [
+    "external-without-pins: external row is missing required pin field repo",
+    "external-without-pins: external row is missing required pin field ref",
+    "external-without-pins: external row is missing required pin field repo_env",
+    "external-without-pins: external row is missing required pin field ref_env",
   ],
 );
 
