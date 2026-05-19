@@ -1473,10 +1473,6 @@ impl QueryDatabase for QueryCache<'_> {
         self.subtype_reduction_cache.insert(key, result);
     }
 
-    fn is_subtype_of_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
-        self.is_subtype_of_with_policy(source, target, RelationPolicy::from_flags(flags))
-    }
-
     fn is_subtype_of_with_policy(
         &self,
         source: TypeId,
@@ -1563,10 +1559,6 @@ impl QueryDatabase for QueryCache<'_> {
             query_trace::relation_end(query_id, SUBTYPE_POLICY_TRACE_OP, result, false);
         }
         result
-    }
-
-    fn is_assignable_to_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
-        self.is_assignable_to_with_policy(source, target, RelationPolicy::from_flags(flags))
     }
 
     fn is_assignable_to_with_policy(
