@@ -115,6 +115,21 @@ fn is_dom_like_builtin_lib_file_name(file_name: &str) -> bool {
         || stem.starts_with("webworker.")
 }
 
+pub(crate) fn is_dom_builtin_lib_declaration_arena(arena: &NodeArena) -> bool {
+    arena.source_files.first().is_some_and(|source_file| {
+        if !source_file.is_declaration_file {
+            return false;
+        }
+        let basename = file_basename(&source_file.file_name);
+        let stem = basename
+            .strip_suffix(".generated.d.ts")
+            .or_else(|| basename.strip_suffix(".d.ts"))
+            .unwrap_or(basename);
+        let stem = stem.strip_prefix("lib.").unwrap_or(stem);
+        stem == "dom" || stem.starts_with("dom.")
+    })
+}
+
 pub(crate) fn is_direct_actual_lib_declaration_arena(arena: &NodeArena) -> bool {
     arena.source_files.first().is_some_and(|source_file| {
         if !source_file.is_declaration_file {
@@ -612,6 +627,14 @@ impl<'a> CheckerState<'a> {
         needs_cross_file_delegation: bool,
     ) -> Option<(TypeId, Vec<TypeParamInfo>)> {
         if let Some(result) = self.direct_builtin_lib_interface_symbol_type(
+            sym_id,
+            delegate_arena_source,
+            delegate_arena,
+            needs_cross_file_delegation,
+        ) {
+            return Some(result);
+        }
+        if let Some(result) = self.direct_value_merged_builtin_lib_interface_symbol_type(
             sym_id,
             delegate_arena_source,
             delegate_arena,

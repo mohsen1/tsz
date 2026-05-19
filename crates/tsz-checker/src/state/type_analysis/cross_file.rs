@@ -739,7 +739,6 @@ impl<'a> CheckerState<'a> {
             ) {
                 return Some(result);
             }
-
             let direct_target = if let Some(file_idx) = cross_file_idx {
                 let arena = self.ctx.get_arena_for_file(file_idx as u32);
                 let binder = self
