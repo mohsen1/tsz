@@ -34,6 +34,10 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
 
+        if self.short_circuit_left_operand_skips_right(operator, binary.left) {
+            return self.short_circuit_operand_type_parts(binary.left, depth + 1);
+        }
+
         let mut left_parts = self.short_circuit_operand_type_parts(binary.left, depth + 1)?;
         let right_parts = self.short_circuit_operand_type_parts(binary.right, depth + 1)?;
 
@@ -50,6 +54,152 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
         Some(parts)
+    }
+
+    fn short_circuit_left_operand_skips_right(&self, operator: u16, left_idx: NodeIndex) -> bool {
+        let Some(left_idx) = self.skip_parenthesized_expression_via_parent_node(left_idx) else {
+            return false;
+        };
+
+        match operator {
+            op if op == SyntaxKind::BarBarToken as u16 => {
+                self.expression_result_is_syntactically_always_truthy_for_declaration(left_idx, 0)
+            }
+            op if op == SyntaxKind::QuestionQuestionToken as u16 => {
+                self.expression_result_is_syntactically_non_nullish_for_declaration(left_idx, 0)
+            }
+            _ => false,
+        }
+    }
+
+    fn expression_result_is_syntactically_always_truthy_for_declaration(
+        &self,
+        expr_idx: NodeIndex,
+        depth: u32,
+    ) -> bool {
+        if depth > 8 {
+            return false;
+        }
+        let Some(expr_idx) = self.skip_parenthesized_expression_via_parent_node(expr_idx) else {
+            return false;
+        };
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        if self.expression_is_syntactically_always_truthy_for_declaration(expr_node) {
+            return true;
+        }
+
+        let Some(binary) = self.arena.get_binary_expr(expr_node) else {
+            return false;
+        };
+        match binary.operator_token {
+            op if op == SyntaxKind::BarBarToken as u16 => {
+                self.expression_result_is_syntactically_always_truthy_for_declaration(
+                    binary.left,
+                    depth + 1,
+                ) || self.expression_result_is_syntactically_always_truthy_for_declaration(
+                    binary.right,
+                    depth + 1,
+                )
+            }
+            op if op == SyntaxKind::QuestionQuestionToken as u16 => self
+                .expression_result_is_syntactically_always_truthy_for_declaration(
+                    binary.left,
+                    depth + 1,
+                ),
+            _ => false,
+        }
+    }
+
+    fn expression_result_is_syntactically_non_nullish_for_declaration(
+        &self,
+        expr_idx: NodeIndex,
+        depth: u32,
+    ) -> bool {
+        if depth > 8 {
+            return false;
+        }
+        let Some(expr_idx) = self.skip_parenthesized_expression_via_parent_node(expr_idx) else {
+            return false;
+        };
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        if self.expression_is_syntactically_non_nullish_for_declaration(expr_node) {
+            return true;
+        }
+
+        let Some(binary) = self.arena.get_binary_expr(expr_node) else {
+            return false;
+        };
+        match binary.operator_token {
+            op if op == SyntaxKind::BarBarToken as u16 => {
+                self.expression_result_is_syntactically_always_truthy_for_declaration(
+                    binary.left,
+                    depth + 1,
+                ) || self.expression_result_is_syntactically_non_nullish_for_declaration(
+                    binary.right,
+                    depth + 1,
+                )
+            }
+            op if op == SyntaxKind::QuestionQuestionToken as u16 => {
+                self.expression_result_is_syntactically_non_nullish_for_declaration(
+                    binary.left,
+                    depth + 1,
+                ) || self.expression_result_is_syntactically_non_nullish_for_declaration(
+                    binary.right,
+                    depth + 1,
+                )
+            }
+            _ => false,
+        }
+    }
+
+    fn expression_is_syntactically_always_truthy_for_declaration(
+        &self,
+        node: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        matches!(
+            node.kind,
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::CLASS_EXPRESSION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                || k == syntax_kind_ext::NEW_EXPRESSION
+                || k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || k == SyntaxKind::RegularExpressionLiteral as u16
+        ) || self.string_literal_is_syntactically_truthy(node)
+    }
+
+    fn expression_is_syntactically_non_nullish_for_declaration(
+        &self,
+        node: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        self.expression_is_syntactically_always_truthy_for_declaration(node)
+            || matches!(
+                node.kind,
+                k if k == SyntaxKind::NumericLiteral as u16
+                    || k == SyntaxKind::StringLiteral as u16
+                    || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                    || k == SyntaxKind::TrueKeyword as u16
+                    || k == SyntaxKind::FalseKeyword as u16
+                    || k == SyntaxKind::BigIntLiteral as u16
+            )
+    }
+
+    fn string_literal_is_syntactically_truthy(
+        &self,
+        node: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        if node.kind != SyntaxKind::StringLiteral as u16
+            && node.kind != SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        {
+            return false;
+        }
+        self.arena
+            .get_literal(node)
+            .is_some_and(|literal| !literal.text.is_empty())
     }
 
     fn short_circuit_operand_type_parts(

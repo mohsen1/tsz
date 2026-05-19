@@ -93,6 +93,112 @@ export const y: 0x8000_0000_0000_0000 = 0 as any;
     );
 }
 
+#[test]
+fn logical_or_function_expression_initializer_drops_unreachable_right_type() {
+    let output = emit_dts(
+        r#"
+var left = (() => 1) || "";
+var renamed = (function() { return "value"; }) || false;
+"#,
+    );
+
+    assert!(
+        output.contains("declare var left: () => number;"),
+        "Expected always-truthy arrow function left operand to determine `||` declaration type: {output}"
+    );
+    assert!(
+        output.contains("declare var renamed: () => string;"),
+        "Expected always-truthy function expression left operand to determine `||` declaration type: {output}"
+    );
+    assert!(
+        !output.contains("string | (() => number)") && !output.contains("false | (() => string)"),
+        "Right operands of always-truthy function expressions should not be emitted: {output}"
+    );
+}
+
+#[test]
+fn logical_or_object_producing_initializer_drops_unreachable_right_type() {
+    let output = emit_dts_with_binding(
+        r#"
+var objectLeft = ({ value: 1 }) || "";
+var arrayLeft = ([1, 2]) || false;
+var classLeft = (class Box {}) || undefined;
+class C {
+    private p: string;
+}
+class D {
+    private q: string;
+}
+var newLeft = new C() || new D();
+"#,
+    );
+
+    assert!(
+        output.contains("declare var objectLeft: {\n    value: number;\n};"),
+        "Expected object literal left operand to determine `||` declaration type: {output}"
+    );
+    assert!(
+        output.contains("declare var arrayLeft: number[];"),
+        "Expected array literal left operand to determine `||` declaration type: {output}"
+    );
+    assert!(
+        output.contains("declare var classLeft: {\n    new (): {};\n};"),
+        "Expected class expression left operand to determine `||` declaration type: {output}"
+    );
+    assert!(
+        !output.contains("undefined |"),
+        "Right operand of always-truthy class expression should not be emitted: {output}"
+    );
+    assert!(
+        output.contains("declare var newLeft: C;"),
+        "Expected new-expression left operand to determine `||` declaration type: {output}"
+    );
+    assert!(
+        !output.contains("C | D"),
+        "Right operand of always-truthy new expression should not be emitted: {output}"
+    );
+}
+
+#[test]
+fn logical_or_chained_new_expression_initializer_keeps_first_truthy_type() {
+    let output = emit_dts_with_binding(
+        r#"
+class Box<T> {
+    private value: T;
+}
+namespace Nested {
+    export class Box<T> {
+        private nested: T;
+    }
+}
+var first = new Box<string>() || new Nested.Box<number>() || (() => 1);
+"#,
+    );
+
+    assert!(
+        output.contains("declare var first: Box<string>;"),
+        "Expected the first always-truthy new expression to determine chained `||` declaration type: {output}"
+    );
+    assert!(
+        !output.contains("Nested.Box<number>") && !output.contains("() => number"),
+        "Unreachable later operands should not be emitted for chained new-expression `||`: {output}"
+    );
+}
+
+#[test]
+fn logical_or_sometimes_truthy_initializer_keeps_right_type() {
+    let output = emit_dts(
+        r#"
+var kept = ("" as string) || 1;
+"#,
+    );
+
+    assert!(
+        output.contains("declare var kept: string | number;"),
+        "Sometimes-truthy left operands must still include the reachable right operand: {output}"
+    );
+}
+
 // =============================================================================
 // 16. Rest Parameters
 // =============================================================================
