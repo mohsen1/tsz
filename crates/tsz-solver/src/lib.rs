@@ -239,7 +239,9 @@ pub use evaluation::evaluate::{
     evaluate_type_with_request,
 };
 pub use evaluation::session::EvaluationSession;
-pub use instantiation::application::{ApplicationEvaluator, ApplicationResult};
+pub use instantiation::application::{
+    ApplicationEvaluator, ApplicationEvaluatorCacheStatistics, ApplicationResult,
+};
 pub use instantiation::instantiate::{
     MAX_INSTANTIATION_DEPTH, TypeInstantiator, TypeSubstitution, fill_application_defaults,
     instantiate_function_with_type_args, instantiate_generic, instantiate_type,
@@ -281,9 +283,13 @@ pub use operations::{
     get_contextual_signature_for_arity_with_compat_checker,
     get_contextual_signature_with_compat_checker,
 };
-pub use relations::compat::{AssignabilityOverrideProvider, CompatChecker, NoopOverrideProvider};
+pub use relations::compat::{
+    AssignabilityOverrideProvider, CompatChecker, CompatCheckerCacheStatistics,
+    NoopOverrideProvider,
+};
 pub use relations::judge::{
-    CallableKind, DefaultJudge, IterableKind, Judge, JudgeConfig, PropertyResult, TruthinessKind,
+    CallableKind, DefaultJudge, DefaultJudgeCacheStatistics, IterableKind, Judge, JudgeConfig,
+    PropertyResult, TruthinessKind,
 };
 pub use relations::lawyer::AnyPropagationRules;
 pub use relations::relation_queries::{
