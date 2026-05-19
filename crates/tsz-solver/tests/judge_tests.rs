@@ -223,20 +223,42 @@ fn test_caching() {
     let setup = JudgeSetup::new();
     let judge = setup.judge();
 
+    let empty = judge.cache_statistics();
+    assert_eq!(empty.subtype_entries, 0);
+    assert_eq!(empty.eval_entries, 0);
+    assert_eq!(empty.estimated_size_bytes(), 0);
+
     // First call - not cached
     let result1 = judge.is_subtype(TypeId::NUMBER, TypeId::ANY);
     assert!(result1);
+    let populated = judge.cache_statistics();
+    assert_eq!(populated.subtype_entries, 1);
+    assert_eq!(populated.eval_entries, 0);
+    assert!(
+        populated.estimated_size_bytes() > empty.estimated_size_bytes(),
+        "populated judge subtype cache should report nonzero estimated residency"
+    );
 
     // Second call - should be cached
     let result2 = judge.is_subtype(TypeId::NUMBER, TypeId::ANY);
     assert!(result2);
+    let repeated = judge.cache_statistics();
+    assert_eq!(repeated.subtype_entries, populated.subtype_entries);
+    assert_eq!(repeated.eval_entries, populated.eval_entries);
+    assert_eq!(
+        repeated.estimated_size_bytes(),
+        populated.estimated_size_bytes()
+    );
 
     // Clear caches
     judge.clear_caches();
+    assert_eq!(judge.cache_statistics().subtype_entries, 0);
+    assert_eq!(judge.cache_statistics().eval_entries, 0);
 
     // Third call - cache was cleared, should still work
     let result3 = judge.is_subtype(TypeId::NUMBER, TypeId::ANY);
     assert!(result3);
+    assert_eq!(judge.cache_statistics().subtype_entries, 1);
 }
 
 // =============================================================================

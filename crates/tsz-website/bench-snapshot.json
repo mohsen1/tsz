@@ -1,5 +1,11 @@
 {
   "generated_at": "2026-05-17T01:23:02.991Z",
+  "source_commit": "61b95e7c2880e73c0882147f5a446c52ef259a60",
+  "workflow_name": "manual snapshot",
+  "workflow_run_id": "manual",
+  "workflow_run_url": null,
+  "workflow_run_attempt": null,
+  "run_status": "manually merged",
   "benchmark_runner": "scripts/bench/bench-vs-tsgo.sh",
   "merged_from": [
     "bench-results.json",

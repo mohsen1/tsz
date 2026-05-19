@@ -764,6 +764,9 @@ impl<'a> Printer<'a> {
         {
             return true;
         }
+        if self.namespace_block_contains_instantiated_module_named(body_node, ns_name) {
+            return true;
+        }
         // Use source text scan for bindings in nested functions/classes at any depth.
         // Nested namespace/module declarations have their own IIFE scope and do not
         // shadow this IIFE parameter at call sites, so exclude those keywords here.
@@ -788,6 +791,61 @@ impl<'a> Printer<'a> {
             };
         }
         false
+    }
+
+    fn namespace_block_contains_instantiated_module_named(
+        &self,
+        body_node: &tsz_parser::parser::node::Node,
+        ns_name: &str,
+    ) -> bool {
+        let Some(block) = self.arena.get_module_block(body_node) else {
+            return false;
+        };
+        let Some(stmts) = &block.statements else {
+            return false;
+        };
+        stmts.nodes.iter().copied().any(|stmt| {
+            let (decl_idx, is_declare) = if let Some(stmt_node) = self.arena.get(stmt)
+                && stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                && let Some(export) = self.arena.get_export_decl(stmt_node)
+            {
+                (
+                    export.export_clause,
+                    self.declaration_is_declare(export.export_clause),
+                )
+            } else {
+                (stmt, self.declaration_is_declare(stmt))
+            };
+            !is_declare && self.module_decl_chain_contains_instantiated_name(decl_idx, ns_name)
+        })
+    }
+
+    fn module_decl_chain_contains_instantiated_name(
+        &self,
+        module_idx: NodeIndex,
+        ns_name: &str,
+    ) -> bool {
+        let Some(module_node) = self.arena.get(module_idx) else {
+            return false;
+        };
+        if module_node.kind != syntax_kind_ext::MODULE_DECLARATION {
+            return false;
+        }
+        let Some(module) = self.arena.get_module(module_node) else {
+            return false;
+        };
+        if self.get_identifier_text_idx(module.name) == ns_name
+            && self.is_instantiated_module(module.body)
+        {
+            return true;
+        }
+        let Some(body_node) = self.arena.get(module.body) else {
+            return false;
+        };
+        if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+            return self.module_decl_chain_contains_instantiated_name(module.body, ns_name);
+        }
+        self.namespace_block_contains_instantiated_module_named(body_node, ns_name)
     }
 
     /// Collect (pos, end) byte ranges of every statement inside a namespace

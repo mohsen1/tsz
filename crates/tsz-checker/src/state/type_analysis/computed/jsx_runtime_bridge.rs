@@ -25,11 +25,11 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let file_name = decl_arena
+        let normalized_file_name = decl_arena
             .source_files
             .first()
             .map(|source_file| source_file.file_name.replace('\\', "/"));
-        let Some(file_name) = file_name else {
+        let Some(normalized_file_name) = normalized_file_name else {
             return false;
         };
 
@@ -46,12 +46,7 @@ impl<'a> CheckerState<'a> {
                 }
 
                 package_roots.iter().any(|package_root| {
-                    let runtime_dir_suffix =
-                        format!("/node_modules/{package_root}/{runtime_suffix}/");
-                    let runtime_file_suffix =
-                        format!("/node_modules/{package_root}/{runtime_suffix}.d.");
-                    file_name.contains(&runtime_dir_suffix)
-                        || file_name.contains(&runtime_file_suffix)
+                    jsx_runtime_path_matches(&normalized_file_name, package_root, runtime_suffix)
                 })
             })
     }
@@ -194,4 +189,108 @@ fn types_package_root_for_jsx_import_source(source: &str) -> Option<String> {
         format!("@types/{root}")
     };
     Some(root)
+}
+
+fn jsx_runtime_path_matches(
+    normalized_file_name: &str,
+    package_root: &str,
+    runtime_suffix: &str,
+) -> bool {
+    let components: Vec<&str> = normalized_file_name
+        .split('/')
+        .filter(|component| !component.is_empty())
+        .collect();
+    let package_components: Vec<&str> = package_root
+        .split('/')
+        .filter(|component| !component.is_empty())
+        .collect();
+    if package_components.is_empty() {
+        return false;
+    }
+
+    components
+        .windows(package_components.len() + 2)
+        .any(|window| {
+            window[0] == "node_modules"
+                && window[1..=package_components.len()] == package_components
+                && is_jsx_runtime_entry_component(
+                    window[package_components.len() + 1],
+                    runtime_suffix,
+                )
+        })
+}
+
+fn is_jsx_runtime_entry_component(component: &str, runtime_suffix: &str) -> bool {
+    component == runtime_suffix
+        || component
+            .strip_prefix(runtime_suffix)
+            .is_some_and(|suffix| suffix.starts_with(".d."))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::jsx_runtime_path_matches;
+
+    #[test]
+    fn matches_jsx_runtime_directory_entry() {
+        assert!(jsx_runtime_path_matches(
+            "/repo/node_modules/react/jsx-runtime/index.d.ts",
+            "react",
+            "jsx-runtime",
+        ));
+        assert!(jsx_runtime_path_matches(
+            r"C:\repo\node_modules\react\jsx-dev-runtime\index.d.ts"
+                .replace('\\', "/")
+                .as_str(),
+            "react",
+            "jsx-dev-runtime",
+        ));
+    }
+
+    #[test]
+    fn matches_jsx_runtime_declaration_file_entry() {
+        assert!(jsx_runtime_path_matches(
+            "/repo/node_modules/react/jsx-runtime.d.ts",
+            "react",
+            "jsx-runtime",
+        ));
+        assert!(jsx_runtime_path_matches(
+            "/repo/node_modules/@types/react/jsx-runtime.d.mts",
+            "@types/react",
+            "jsx-runtime",
+        ));
+    }
+
+    #[test]
+    fn matches_scoped_package_runtime_entry() {
+        assert!(jsx_runtime_path_matches(
+            "/repo/node_modules/@scope/pkg/jsx-runtime/index.d.ts",
+            "@scope/pkg",
+            "jsx-runtime",
+        ));
+        assert!(jsx_runtime_path_matches(
+            "/repo/node_modules/@types/scope__pkg/jsx-runtime.d.ts",
+            "@types/scope__pkg",
+            "jsx-runtime",
+        ));
+    }
+
+    #[test]
+    fn rejects_adjacent_substring_paths() {
+        assert!(!jsx_runtime_path_matches(
+            "/repo/node_modules/not-react/jsx-runtime/index.d.ts",
+            "react",
+            "jsx-runtime",
+        ));
+        assert!(!jsx_runtime_path_matches(
+            "/repo/node_modules/react/jsx-runtime-extra/index.d.ts",
+            "react",
+            "jsx-runtime",
+        ));
+        assert!(!jsx_runtime_path_matches(
+            "/repo/vendor/node_modules-react/jsx-runtime.d.ts",
+            "react",
+            "jsx-runtime",
+        ));
+    }
 }

@@ -394,15 +394,19 @@ c = d;
         .filter(|(code, _)| *code == 2322)
         .collect();
 
-    // tsc produces 0 errors here: Pick<A, 'x'> and Pick<B, 'x'> are both {x: string},
-    // so the assignments are structurally valid. The indexed access through the type
-    // parameter produces structurally equivalent results despite different type arguments.
-    // With NEEDS_STRUCTURAL_FALLBACK set for indexed access variance, the variance
-    // fast path correctly falls through to structural comparison which passes.
+    // tsc preserves the alias-application variance surface for `T<A>` and `T<B>`
+    // here, so the direct assignment fails even though the materialized `Pick`
+    // aliases are structurally compatible.
     assert_eq!(
         ts2322.len(),
-        0,
-        "Expected no TS2322 errors (matching tsc). Actual diagnostics: {diagnostics:#?}"
+        1,
+        "Expected one TS2322 error (matching tsc). Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322[0]
+            .1
+            .contains("Type 'T<A>' is not assignable to type 'T<B>'."),
+        "Expected alias-application TS2322. Actual diagnostics: {diagnostics:#?}"
     );
 }
 

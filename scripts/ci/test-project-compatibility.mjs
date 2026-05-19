@@ -51,6 +51,13 @@ withTempDir((dir) => {
     COMPAT_TSCONFIG_PATH: tsconfig,
     COMPAT_SOURCE_ROOT: sourceRoot,
     COMPAT_FIXTURE_ROOT: path.join(dir, "fixture"),
+    COMPAT_GENERATED_AT: "2026-05-19T01:02:03.000Z",
+    COMPAT_SOURCE_COMMIT: "abcdef1234567890",
+    COMPAT_WORKFLOW_NAME: "CI",
+    COMPAT_WORKFLOW_RUN_ID: "12345",
+    COMPAT_WORKFLOW_RUN_URL: "https://github.com/mohsen1/tsz/actions/runs/12345",
+    COMPAT_WORKFLOW_RUN_ATTEMPT: "2",
+    COMPAT_RUN_STATUS: "completed",
     COMPAT_FIXTURE_SOURCES: [
       "type-fest|https://github.com/sindresorhus/type-fest.git|4005f60",
       "type-fest|https://github.com/sindresorhus/type-fest.git|4005f60",
@@ -63,6 +70,13 @@ withTempDir((dir) => {
   const [row] = rows;
 
   assert.equal(row.name, "type-fest-project");
+  assert.equal(row.generated_at, "2026-05-19T01:02:03.000Z");
+  assert.equal(row.source_commit, "abcdef1234567890");
+  assert.equal(row.workflow_name, "CI");
+  assert.equal(row.workflow_run_id, "12345");
+  assert.equal(row.workflow_run_url, "https://github.com/mohsen1/tsz/actions/runs/12345");
+  assert.equal(row.workflow_run_attempt, "2");
+  assert.equal(row.run_status, "completed");
   assert.equal(row.state, "yellow");
   assert.equal(row.first_failure_class, "evaluation-inference-instantiation");
   assert.equal(row.owner_track, "Track 2/3 conditional, mapped, inference, instantiation");
@@ -85,6 +99,38 @@ withTempDir((dir) => {
   ]);
   assert.equal(row.diagnostic_subsystems[0].subsystem, "evaluation-inference-instantiation");
   assert.equal(row.diagnostic_subsystems[1].subsystem, "uncoded diagnostic");
+});
+
+withTempDir((dir) => {
+  const jsonl = path.join(dir, "compat.jsonl");
+  const cases = [
+    {
+      name: "",
+      message: "COMPAT_NAME must be a lowercase hyphenated project row slug",
+    },
+    {
+      name: "TypeFest",
+      message: "COMPAT_NAME must be a lowercase hyphenated project row slug",
+    },
+    {
+      name: "../type-fest-project",
+      message: "COMPAT_NAME must be a lowercase hyphenated project row slug",
+    },
+  ];
+
+  for (const testCase of cases) {
+    const result = runProjectCompatibility(["record"], {
+      COMPAT_JSONL_FILE: jsonl,
+      COMPAT_NAME: testCase.name,
+      COMPAT_EXIT_CLASS: "exit success",
+      COMPAT_PHASE: "check",
+      COMPAT_DIAGNOSTIC_STATUS: "none",
+    });
+
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, new RegExp(testCase.message));
+  }
+  assert.equal(fs.existsSync(jsonl), false);
 });
 
 withTempDir((dir) => {
@@ -121,6 +167,52 @@ withTempDir((dir) => {
 });
 
 withTempDir((dir) => {
+  const outside = path.join(path.dirname(dir), `${path.basename(dir)}-outside.jsonl`);
+  const result = runProjectCompatibility(["record"], {
+    COMPAT_JSONL_FILE: outside,
+    COMPAT_OUTPUT_ROOT: dir,
+    COMPAT_NAME: "sample-project",
+    COMPAT_EXIT_CLASS: "exit success",
+    COMPAT_PHASE: "check",
+    COMPAT_DIAGNOSTIC_STATUS: "none",
+  });
+
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /project compatibility JSONL must stay inside output root/);
+  assert.equal(fs.existsSync(outside), false);
+});
+
+withTempDir((dir) => {
+  const directoryOutput = path.join(dir, "compat.jsonl");
+  fs.mkdirSync(directoryOutput);
+  const result = runProjectCompatibility(["record"], {
+    COMPAT_JSONL_FILE: directoryOutput,
+    COMPAT_OUTPUT_ROOT: dir,
+    COMPAT_NAME: "sample-project",
+    COMPAT_EXIT_CLASS: "exit success",
+    COMPAT_PHASE: "check",
+    COMPAT_DIAGNOSTIC_STATUS: "none",
+  });
+
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /project compatibility JSONL path is not a file/);
+});
+
+withTempDir((dir) => {
+  const result = runProjectCompatibility(["record"], {
+    COMPAT_JSONL_FILE: path.join(dir, "missing", "compat.jsonl"),
+    COMPAT_OUTPUT_ROOT: dir,
+    COMPAT_NAME: "sample-project",
+    COMPAT_EXIT_CLASS: "exit success",
+    COMPAT_PHASE: "check",
+    COMPAT_DIAGNOSTIC_STATUS: "none",
+  });
+
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /project compatibility JSONL parent directory does not exist/);
+});
+
+withTempDir((dir) => {
   const jsonl = path.join(dir, "compat.jsonl");
   const result = runProjectCompatibility(["record"], {
     COMPAT_JSONL_FILE: jsonl,
@@ -147,29 +239,6 @@ withTempDir((dir) => {
     "relations-assignability",
   ]);
   assert.deepEqual(row.exit_codes, { tsc: [0], tsz: [1, 124], tsgo: [0] });
-});
-
-withTempDir((dir) => {
-  const jsonl = path.join(dir, "compat.jsonl");
-  const manifestDir = path.join(dir, "clean-manifest.json");
-  const classificationDir = path.join(dir, "clean-classification.json");
-  fs.mkdirSync(manifestDir, { recursive: true });
-  fs.mkdirSync(classificationDir, { recursive: true });
-
-  const result = runProjectCompatibility(["record"], {
-    COMPAT_JSONL_FILE: jsonl,
-    COMPAT_NAME: "type-challenges-assertions-tsc-clean",
-    COMPAT_EXIT_CLASS: "success",
-    COMPAT_PHASE: "check",
-    COMPAT_DIAGNOSTIC_STATUS: "no diagnostics",
-    COMPAT_TYPE_CHALLENGES_CLEAN_MANIFEST: manifestDir,
-    COMPAT_TYPE_CHALLENGES_CLEAN_CLASSIFICATION: classificationDir,
-  });
-
-  assert.equal(result.status, 0, result.stderr);
-  const [row] = fs.readFileSync(jsonl, "utf8").trim().split(/\r?\n/).map(JSON.parse);
-  assert.equal(row.name, "type-challenges-assertions-tsc-clean");
-  assert.equal(row.assertion_clean_subset, undefined);
 });
 
 withTempDir((dir) => {
@@ -340,10 +409,24 @@ withTempDir((dir) => {
     SUMMARY_PROJECT_FILTER: "type",
     SUMMARY_ALLOW_FAILURES: "1",
     SUMMARY_FAILURES: "1",
+    SUMMARY_GENERATED_AT: "2026-05-19T02:03:04.000Z",
+    SUMMARY_SOURCE_COMMIT: "123456abcdef",
+    SUMMARY_WORKFLOW_NAME: "Project compile guard",
+    SUMMARY_WORKFLOW_RUN_ID: "67890",
+    SUMMARY_WORKFLOW_RUN_URL: "https://github.com/mohsen1/tsz/actions/runs/67890",
+    SUMMARY_WORKFLOW_RUN_ATTEMPT: "1",
+    SUMMARY_RUN_STATUS: "completed",
   });
 
   assert.equal(result.status, 0, result.stderr);
   const payload = JSON.parse(fs.readFileSync(summary, "utf8"));
+  assert.equal(payload.generated_at, "2026-05-19T02:03:04.000Z");
+  assert.equal(payload.source_commit, "123456abcdef");
+  assert.equal(payload.workflow_name, "Project compile guard");
+  assert.equal(payload.workflow_run_id, "67890");
+  assert.equal(payload.workflow_run_url, "https://github.com/mohsen1/tsz/actions/runs/67890");
+  assert.equal(payload.workflow_run_attempt, "1");
+  assert.equal(payload.run_status, "completed");
   assert.equal(payload.project_set, "canary");
   assert.equal(payload.project_filter, "type");
   assert.equal(payload.allow_failures, true);
@@ -352,4 +435,40 @@ withTempDir((dir) => {
   assert.equal(payload.malformed_jsonl_lines, 1);
   assert.equal(payload.by_state.green, 1);
   assert.equal(payload.by_state.red, 1);
+});
+
+withTempDir((dir) => {
+  const jsonl = path.join(dir, "compat.jsonl");
+  fs.writeFileSync(jsonl, `${JSON.stringify({ name: "a", state: "green" })}\n`, "utf8");
+
+  const clobberResult = runProjectCompatibility(["summary"], {
+    SUMMARY_JSONL_FILE: jsonl,
+    SUMMARY_OUTPUT_FILE: jsonl,
+    SUMMARY_OUTPUT_ROOT: dir,
+  });
+  assert.equal(clobberResult.status, 1, clobberResult.stderr);
+  assert.match(
+    clobberResult.stderr,
+    /project compatibility summary must not overwrite an input artifact/,
+  );
+
+  const outside = path.join(path.dirname(dir), `${path.basename(dir)}-summary.json`);
+  const outsideResult = runProjectCompatibility(["summary"], {
+    SUMMARY_JSONL_FILE: jsonl,
+    SUMMARY_OUTPUT_FILE: outside,
+    SUMMARY_OUTPUT_ROOT: dir,
+  });
+  assert.equal(outsideResult.status, 1, outsideResult.stderr);
+  assert.match(outsideResult.stderr, /project compatibility summary must stay inside output root/);
+  assert.equal(fs.existsSync(outside), false);
+
+  const directoryOutput = path.join(dir, "summary.json");
+  fs.mkdirSync(directoryOutput);
+  const directoryResult = runProjectCompatibility(["summary"], {
+    SUMMARY_JSONL_FILE: jsonl,
+    SUMMARY_OUTPUT_FILE: directoryOutput,
+    SUMMARY_OUTPUT_ROOT: dir,
+  });
+  assert.equal(directoryResult.status, 1, directoryResult.stderr);
+  assert.match(directoryResult.stderr, /project compatibility summary path is not a file/);
 });

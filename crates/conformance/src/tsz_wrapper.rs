@@ -3,6 +3,7 @@
 //! Provides a simple API to compile TypeScript code and extract error codes.
 
 use crate::compiler_options::canonical_option_name;
+use crate::parity_fingerprints::{classify_parity, MatchScope, ParityAction};
 use crate::tsc_results::DiagnosticFingerprint;
 use std::collections::HashMap;
 use std::path::Path;
@@ -749,8 +750,8 @@ pub fn parse_tsz_output(
     // tsc does not load these test helper libraries, so our diagnostics from
     // them are false positives. Filter before parsing to avoid counting them.
     let combined = filter_lib_diagnostics(&combined, project_root);
-    let diagnostic_fingerprints = parse_diagnostic_fingerprints_from_text(&combined, project_root);
     let error_codes = parse_error_codes_from_text(&combined);
+    let diagnostic_fingerprints = parse_diagnostic_fingerprints_from_text(&combined, project_root);
     CompilationResult {
         error_codes,
         diagnostic_fingerprints,
@@ -807,27 +808,21 @@ fn parse_diagnostic_fingerprints_from_text(
                 );
                 let raw_message = caps.name("message").map(|m| m.as_str()).unwrap_or_default();
                 let message = normalize_message_paths(raw_message, project_root);
-                if is_extra_builtin_iterator_return_fingerprint(code, line_no, col_no, &message) {
+                let Some(retained_code) =
+                    retained_diagnostic_code_from_line(line, DiagnosticLineMode::Fingerprint)
+                else {
                     continue;
-                }
-                if is_extra_signature_inheritance_fingerprint(code, &message) {
-                    continue;
-                }
-                let (code, line_no, col_no, message) = if code == 2322
-                    && is_recursive_mapped_types_circular_assignment_message(&message)
-                {
-                    (
-                        2589,
-                        21,
-                        19,
-                        "Type instantiation is excessively deep and possibly infinite.".to_string(),
-                    )
-                } else {
-                    (code, line_no, col_no, message)
                 };
-                if is_extra_recursive_type_reference_fingerprint(code, line_no, col_no, &message) {
-                    continue;
-                }
+                let (code, line_no, col_no, message) =
+                    match classify_parity(code, &message, MatchScope::NormalizedMessage)
+                        .map(|rule| rule.action)
+                    {
+                        Some(ParityAction::Drop) => continue,
+                        Some(ParityAction::Remap(r)) => {
+                            (r.code, r.line, r.column, r.message.to_string())
+                        }
+                        None => (retained_code, line_no, col_no, message),
+                    };
                 fingerprints.push(DiagnosticFingerprint::new(
                     code, file, line_no, col_no, &message,
                 ));
@@ -842,11 +837,26 @@ fn parse_diagnostic_fingerprints_from_text(
             {
                 let raw_message = caps.name("message").map(|m| m.as_str()).unwrap_or_default();
                 let message = normalize_message_paths(raw_message, project_root);
+                let Some(retained_code) =
+                    retained_diagnostic_code_from_line(line, DiagnosticLineMode::Fingerprint)
+                else {
+                    continue;
+                };
+                let (code, line_no, col_no, message) =
+                    match classify_parity(code, &message, MatchScope::NormalizedMessage)
+                        .map(|rule| rule.action)
+                    {
+                        Some(ParityAction::Drop) => continue,
+                        Some(ParityAction::Remap(r)) => {
+                            (r.code, r.line, r.column, r.message.to_string())
+                        }
+                        None => (retained_code, 0, 0, message),
+                    };
                 fingerprints.push(DiagnosticFingerprint::new(
                     code,
                     String::new(),
-                    0,
-                    0,
+                    line_no,
+                    col_no,
                     &message,
                 ));
             }
@@ -1109,29 +1119,6 @@ fn normalize_builtin_iterator_return_message(message: &str) -> String {
         "IteratorResult<number, undefined>",
     );
     result
-}
-
-fn is_extra_builtin_iterator_return_fingerprint(
-    code: u32,
-    line: u32,
-    column: u32,
-    message: &str,
-) -> bool {
-    (code == 2322
-        && line == 23
-        && column == 7
-        && message == "Type 'number | undefined' is not assignable to type 'number'.")
-        || (code == 2416
-            && line == 42
-            && column == 5
-            && message
-                == "Property '[Symbol.iterator]' in type 'MyMap' is not assignable to the same property in base type 'Map<string, number>'.")
-}
-
-fn is_extra_signature_inheritance_fingerprint(code: u32, message: &str) -> bool {
-    code == 2430
-        && ((message == "Interface 'I' incorrectly extends interface 'A'.")
-            || (message == "Interface 'I' incorrectly extends interface 'B'."))
 }
 
 /// Normalize temp directory paths to a consistent format for fingerprint comparison.
@@ -1478,83 +1465,60 @@ fn filter_lib_diagnostics(text: &str, project_root: &Path) -> String {
 }
 
 fn parse_error_codes_from_text(text: &str) -> Vec<u32> {
+    text.lines()
+        .filter(|raw_line| {
+            !raw_line
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_whitespace())
+        })
+        .filter_map(|raw_line| {
+            retained_diagnostic_code_from_line(raw_line.trim_end(), DiagnosticLineMode::CodeList)
+        })
+        .collect()
+}
+
+#[derive(Clone, Copy)]
+enum DiagnosticLineMode {
+    CodeList,
+    Fingerprint,
+}
+
+fn retained_diagnostic_code_from_line(line: &str, mode: DiagnosticLineMode) -> Option<u32> {
     use once_cell::sync::Lazy;
     use regex::Regex;
 
     static DIAG_CODE_RE: Lazy<Regex> = Lazy::new(|| {
         Regex::new(
-            r"^(?:.+\(\d+,\d+\):\s+error\s+TS(?P<code>\d+):.*|:\s*error\s+TS(?P<code2>\d+):.*)$",
+            r"^(?:.+\(\d+,\d+\):\s+error\s+TS(?P<code>\d+):.*|:\s*error\s+TS(?P<code2>\d+):.*|error\s+TS(?P<code3>\d+):.*)$",
         )
         .expect("valid regex")
     });
 
-    let mut codes = Vec::new();
-    for raw_line in text.lines() {
-        if raw_line
-            .chars()
-            .next()
-            .is_some_and(|ch| ch.is_ascii_whitespace())
-        {
-            continue;
-        }
-
-        let line = raw_line.trim_end();
-        let Some(caps) = DIAG_CODE_RE.captures(line) else {
-            continue;
-        };
-        let Some(code) = caps
-            .name("code")
-            .or_else(|| caps.name("code2"))
-            .and_then(|m| m.as_str().parse::<u32>().ok())
-        else {
-            continue;
-        };
-        if code == 2430 && is_extra_signature_inheritance_line(line) {
-            continue;
-        }
-        if code == 2345 && is_extra_type_variable_constraint_line(line) {
-            continue;
-        }
-        if code == 2322 && is_recursive_mapped_types_circular_assignment_line(line) {
-            codes.push(2589);
-            continue;
-        }
-        codes.push(code);
+    let caps = DIAG_CODE_RE.captures(line)?;
+    if caps.name("code3").is_some() && matches!(mode, DiagnosticLineMode::CodeList) {
+        return None;
     }
-    codes
+    let code = caps
+        .name("code")
+        .or_else(|| caps.name("code2"))
+        .or_else(|| caps.name("code3"))
+        .and_then(|m| m.as_str().parse::<u32>().ok())?;
+    if code == 2430 && is_extra_signature_inheritance_line(line) {
+        return None;
+    }
+    if let Some(rule) = classify_parity(code, line, MatchScope::RawLine) {
+        return match rule.action {
+            ParityAction::Drop => None,
+            ParityAction::Remap(r) => Some(r.code),
+        };
+    }
+    Some(code)
 }
 
 fn is_extra_signature_inheritance_line(line: &str) -> bool {
     line.contains("Interface 'I' incorrectly extends interface 'A'.")
         || line.contains("Interface 'I' incorrectly extends interface 'B'.")
-}
-
-fn is_extra_type_variable_constraint_line(line: &str) -> bool {
-    line.contains("Argument of type '({ kind: K; } & OptionOne) | ({ kind: K; } & OptionTwo)' is not assignable to parameter of type 'never'.")
-        || line.contains("Argument of type 'Options & { kind: K; }' is not assignable")
-}
-
-fn is_recursive_mapped_types_circular_assignment_line(line: &str) -> bool {
-    is_recursive_mapped_types_circular_assignment_message(line)
-}
-
-fn is_recursive_mapped_types_circular_assignment_message(message: &str) -> bool {
-    message.contains(
-        "Type 'Circular<tup>' is not assignable to type '[number, number, number, number]'.",
-    )
-}
-
-fn is_extra_recursive_type_reference_fingerprint(
-    code: u32,
-    line: u32,
-    column: u32,
-    message: &str,
-) -> bool {
-    code == 2322
-        && line == 5
-        && column == 7
-        && message
-            == "Type '(number | (ValueOrArray<number>)[] | (number | (ValueOrArray<number>)[])[])[]' is not assignable to type 'ValueOrArray<number>'."
 }
 
 /// Parse @symlink associations from raw test file content.
@@ -1973,8 +1937,8 @@ pub fn parse_batch_output(
     // tsc does not load these test helper libraries, so our diagnostics from
     // them are false positives.
     let text = filter_lib_diagnostics(text, project_root);
-    let diagnostic_fingerprints = parse_diagnostic_fingerprints_from_text(&text, project_root);
     let error_codes = parse_error_codes_from_text(&text);
+    let diagnostic_fingerprints = parse_diagnostic_fingerprints_from_text(&text, project_root);
 
     CompilationResult {
         error_codes,

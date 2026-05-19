@@ -30,6 +30,21 @@ impl ScopeCacheStats {
 
 pub type ScopeCache = FxHashMap<u32, Vec<SymbolTable>>;
 
+#[must_use]
+pub fn scope_cache_entries(cache: &ScopeCache) -> usize {
+    cache.len()
+}
+
+#[must_use]
+pub fn scope_cache_estimated_size_bytes(cache: &ScopeCache) -> usize {
+    let mut size = cache.capacity()
+        * (std::mem::size_of::<u32>() + std::mem::size_of::<Vec<SymbolTable>>() + 8);
+    for scopes in cache.values() {
+        size += scopes.capacity() * std::mem::size_of::<SymbolTable>();
+    }
+    size
+}
+
 /// A lightweight scope chain reconstructed on demand.
 ///
 /// This mimics the binder's scope logic but focuses on resolving identifiers
@@ -802,5 +817,23 @@ impl<'a> ScopeWalker<'a> {
         if creates_scope {
             self.pop_scope();
         }
+    }
+}
+
+#[cfg(test)]
+mod cache_accounting_tests {
+    use super::*;
+
+    #[test]
+    fn scope_cache_statistics_report_entries_and_size() {
+        let mut cache = ScopeCache::default();
+        assert_eq!(scope_cache_entries(&cache), 0);
+        assert_eq!(scope_cache_estimated_size_bytes(&cache), 0);
+
+        cache.insert(1, vec![SymbolTable::new(), SymbolTable::new()]);
+        cache.insert(2, vec![SymbolTable::new()]);
+
+        assert_eq!(scope_cache_entries(&cache), 2);
+        assert!(scope_cache_estimated_size_bytes(&cache) >= 3 * std::mem::size_of::<SymbolTable>());
     }
 }
