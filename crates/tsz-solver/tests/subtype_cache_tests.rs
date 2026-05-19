@@ -10,10 +10,11 @@
 //! - Separates subtype and assignability caches (no cross-contamination)
 
 use super::*;
-use crate::caches::query_cache::{QueryCache, subtype_cache_config_from_legacy_flags};
+use crate::caches::query_cache::QueryCache;
 use crate::intern::TypeInterner;
+use crate::relations::relation_queries::RelationPolicy;
 use crate::relations::subtype::SubtypeChecker;
-use crate::types::{PropertyInfo, RelationCacheKey, TypeId};
+use crate::types::{PropertyInfo, RelationCacheConfig, RelationCacheKey, RelationFlags, TypeId};
 
 fn assert_repeated_subtype_check_reuses_entries(
     db: &QueryCache<'_>,
@@ -402,8 +403,16 @@ fn cache_key_includes_flags() {
 
 #[test]
 fn relation_cache_key_subtype_vs_assignable() {
-    let key_sub = RelationCacheKey::subtype(TypeId::STRING, TypeId::NUMBER, 0, 0);
-    let key_assign = RelationCacheKey::assignability(TypeId::STRING, TypeId::NUMBER, 0, 0);
+    let key_sub = RelationCacheKey::for_subtype(
+        TypeId::STRING,
+        TypeId::NUMBER,
+        RelationCacheConfig::default(),
+    );
+    let key_assign = RelationCacheKey::for_assignability(
+        TypeId::STRING,
+        TypeId::NUMBER,
+        RelationCacheConfig::default(),
+    );
 
     assert_ne!(
         key_sub, key_assign,
@@ -413,8 +422,16 @@ fn relation_cache_key_subtype_vs_assignable() {
 
 #[test]
 fn relation_cache_key_different_source_target() {
-    let key_ab = RelationCacheKey::subtype(TypeId::STRING, TypeId::NUMBER, 0, 0);
-    let key_ba = RelationCacheKey::subtype(TypeId::NUMBER, TypeId::STRING, 0, 0);
+    let key_ab = RelationCacheKey::for_subtype(
+        TypeId::STRING,
+        TypeId::NUMBER,
+        RelationCacheConfig::default(),
+    );
+    let key_ba = RelationCacheKey::for_subtype(
+        TypeId::NUMBER,
+        TypeId::STRING,
+        RelationCacheConfig::default(),
+    );
 
     assert_ne!(
         key_ab, key_ba,
@@ -424,8 +441,16 @@ fn relation_cache_key_different_source_target() {
 
 #[test]
 fn relation_cache_key_same_pair_same_key() {
-    let key1 = RelationCacheKey::subtype(TypeId::STRING, TypeId::NUMBER, 0, 0);
-    let key2 = RelationCacheKey::subtype(TypeId::STRING, TypeId::NUMBER, 0, 0);
+    let key1 = RelationCacheKey::for_subtype(
+        TypeId::STRING,
+        TypeId::NUMBER,
+        RelationCacheConfig::default(),
+    );
+    let key2 = RelationCacheKey::for_subtype(
+        TypeId::STRING,
+        TypeId::NUMBER,
+        RelationCacheConfig::default(),
+    );
 
     assert_eq!(
         key1, key2,
@@ -435,12 +460,15 @@ fn relation_cache_key_same_pair_same_key() {
 
 #[test]
 fn relation_cache_key_different_flags_different_key() {
-    let key_default = RelationCacheKey::subtype(TypeId::STRING, TypeId::NUMBER, 0, 0);
-    let key_strict = RelationCacheKey::subtype(
+    let key_default = RelationCacheKey::for_subtype(
         TypeId::STRING,
         TypeId::NUMBER,
-        RelationCacheKey::FLAG_STRICT_NULL_CHECKS,
-        0,
+        RelationCacheConfig::default(),
+    );
+    let key_strict = RelationCacheKey::for_subtype(
+        TypeId::STRING,
+        TypeId::NUMBER,
+        RelationCacheConfig::from_flags(RelationFlags::STRICT_NULL_CHECKS),
     );
 
     assert_ne!(
@@ -508,7 +536,11 @@ fn probe_returns_miss_before_check() {
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
 
-    let key = RelationCacheKey::subtype(TypeId::STRING, TypeId::UNKNOWN, 0, 0);
+    let key = RelationCacheKey::for_subtype(
+        TypeId::STRING,
+        TypeId::UNKNOWN,
+        RelationCacheConfig::default(),
+    );
     assert_eq!(
         db.probe_subtype_cache(key),
         crate::RelationCacheProbe::MissNotCached
@@ -529,7 +561,7 @@ fn probe_returns_hit_after_check() {
     let key = RelationCacheKey::for_subtype(
         hello,
         TypeId::STRING,
-        subtype_cache_config_from_legacy_flags(0),
+        RelationPolicy::from_flags(0).cache_config(),
     );
     assert_eq!(
         db.probe_subtype_cache(key),
@@ -547,7 +579,7 @@ fn probe_negative_hit_after_failed_check() {
     let key = RelationCacheKey::for_subtype(
         TypeId::STRING,
         TypeId::NUMBER,
-        subtype_cache_config_from_legacy_flags(0),
+        RelationPolicy::from_flags(0).cache_config(),
     );
     assert_eq!(
         db.probe_subtype_cache(key),

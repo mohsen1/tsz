@@ -33,10 +33,7 @@ impl<'a> CheckerState<'a> {
                 let body = def.body?;
                 crate::query_boundaries::common::keyof_inner_type(self.ctx.types, body)?;
                 let evaluated = self.evaluate_type_for_assignability(body);
-                (evaluated == ty
-                    || (self.is_assignable_to(evaluated, ty)
-                        && self.is_assignable_to(ty, evaluated)))
-                .then_some(def_id)
+                (evaluated == ty || self.are_mutually_assignable(evaluated, ty)).then_some(def_id)
             })
             .and_then(|def_id| self.keyof_type_alias_definition_display(def_id))
     }

@@ -470,7 +470,7 @@ impl Server {
                 .collect();
             Some(serde_json::json!(body))
         })();
-        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     pub(crate) fn handle_type_definition(
@@ -538,7 +538,7 @@ impl Server {
 
             Some(serde_json::json!(body))
         })();
-        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     pub(crate) fn handle_definition_and_bound_span(
@@ -691,7 +691,7 @@ impl Server {
                 "textSpan": text_span,
             }))
         })();
-        self.stub_response(seq, request, result)
+        self.success_response(seq, request, result)
     }
 
     /// Build the `textSpan` payload for `definitionAndBoundSpan` /
@@ -927,7 +927,7 @@ impl Server {
                 "symbolDisplayString": symbol_display_string,
             }))
         })();
-        self.stub_response(
+        self.success_response(
             seq,
             request,
             Some(result.unwrap_or(serde_json::json!({
@@ -1021,7 +1021,7 @@ impl Server {
                 "highlightSpans": highlight_spans,
             }]))
         })();
-        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     /// Find highlight groups across `files_to_search` using the project-level
@@ -1343,7 +1343,7 @@ impl Server {
                 }]
             }))
         })();
-        self.stub_response(
+        self.success_response(
             seq,
             request,
             Some(result.unwrap_or(serde_json::json!({
@@ -1635,7 +1635,7 @@ impl Server {
                 "references": references,
             }]))
         })();
-        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     fn build_quoted_alias_referenced_symbols(
@@ -2511,7 +2511,7 @@ impl Server {
                 "spans": [{"start": {"line": 1, "offset": 1}, "end": {"line": 1, "offset": 1}}],
             })
         };
-        self.stub_response(seq, request, Some(result.unwrap_or(fallback)))
+        self.success_response(seq, request, Some(result.unwrap_or(fallback)))
     }
 
     pub(crate) fn handle_navbar(
@@ -2708,7 +2708,7 @@ impl Server {
             }
             Some(serde_json::json!(items))
         })();
-        self.stub_response(
+        self.success_response(
             seq,
             request,
             Some(result.unwrap_or(serde_json::json!([{
@@ -2758,7 +2758,7 @@ impl Server {
             }
             Some(serde_json::json!(nav_items))
         })();
-        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     pub(crate) fn collect_navto_items(
@@ -2830,7 +2830,7 @@ impl Server {
                 .collect();
             Some(serde_json::json!(body))
         })();
-        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     pub(crate) fn handle_file_references(
@@ -2872,7 +2872,7 @@ impl Server {
                 "symbolName": format!("\"{}\"", file),
             }))
         })();
-        self.stub_response(
+        self.success_response(
             seq,
             request,
             Some(result.unwrap_or(serde_json::json!({"refs": [], "symbolName": ""}))),

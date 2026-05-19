@@ -149,6 +149,14 @@ pub(crate) struct ReturnTypeSnapshot {
 // ---------------------------------------------------------------------------
 
 impl<'a> CheckerContext<'a> {
+    /// Borrow the speculation-scoped state capability.
+    ///
+    /// This exposes rollback-sensitive checker state without handing callers
+    /// the full `CheckerContext` surface.
+    pub(crate) const fn speculation_state(&mut self) -> SpeculationState<'_, 'a> {
+        SpeculationState { ctx: self }
+    }
+
     /// Borrow the diagnostics-only speculation capability.
     ///
     /// This gives snapshot holders a narrow state handle instead of the full
@@ -434,11 +442,41 @@ impl<'a> CheckerContext<'a> {
     pub(crate) fn restore_ts2454_state(&mut self, snap: &FxHashSet<(u32, SymbolId)>) {
         self.emitted_ts2454_errors.clone_from(snap);
     }
+}
 
-    /// Restore implicit-any-checked closures state from a snapshot.
-    pub(crate) fn restore_implicit_any_closures(&mut self, snap: &FxHashSet<NodeIndex>) {
-        self.implicit_any_checked_closures.clone_from(snap);
+/// Snapshot of speculation-scoped implicit-any closure state.
+pub(crate) struct ImplicitAnyClosureSnapshot {
+    checked_closures: FxHashSet<NodeIndex>,
+}
+
+impl ImplicitAnyClosureSnapshot {
+    pub(crate) fn new(ctx: &CheckerContext) -> Self {
+        Self {
+            checked_closures: ctx.implicit_any_checked_closures.clone(),
+        }
     }
+
+    pub(crate) fn restore_preserving_contextual(self, speculation: &mut SpeculationState<'_, '_>) {
+        let contextual_closures: Vec<_> = speculation
+            .ctx
+            .implicit_any_contextual_closures
+            .iter()
+            .copied()
+            .collect();
+        speculation
+            .ctx
+            .implicit_any_checked_closures
+            .clone_from(&self.checked_closures);
+        speculation
+            .ctx
+            .implicit_any_checked_closures
+            .extend(contextual_closures);
+    }
+}
+
+/// Narrow capability for speculation-scoped state.
+pub(crate) struct SpeculationState<'ctx, 'a> {
+    ctx: &'ctx mut CheckerContext<'a>,
 }
 
 /// Narrow capability for diagnostics-only speculation operations.
@@ -538,6 +576,16 @@ impl DiagnosticSpeculationSnapshot {
     ) {
         diagnostics.rollback_diagnostics_filtered(&self.snapshot, keep);
         self.committed = true;
+    }
+
+    /// Rollback and apply a filter while retaining this checkpoint for another
+    /// explicit rollback from the same speculative boundary.
+    pub(crate) fn rollback_filtered_reusable(
+        &self,
+        diagnostics: &mut DiagnosticState<'_, '_>,
+        keep: impl FnMut(&Diagnostic) -> bool,
+    ) {
+        diagnostics.rollback_diagnostics_filtered(&self.snapshot, keep);
     }
 
     /// Access the underlying snapshot for manual operations.

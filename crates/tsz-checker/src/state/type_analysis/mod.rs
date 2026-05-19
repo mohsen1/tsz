@@ -14,6 +14,7 @@ pub(crate) mod cross_file;
 mod cross_file_cache;
 pub(crate) mod cross_file_direct;
 mod cross_file_env_merge;
+mod cross_file_globals;
 pub(crate) mod cross_file_query_types;
 mod cross_file_residue;
 mod cross_file_shared_cache;
