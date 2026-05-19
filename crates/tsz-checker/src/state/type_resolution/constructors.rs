@@ -1034,6 +1034,23 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // tsc adds `[x: string]: any` when a class extends a value whose
+        // constructor returns `any`.  The derived class instance type absorbs
+        // an implicit string-index signature with value type `any`.
+        if base_instance_type == TypeId::ANY {
+            let x_atom = self.ctx.types.intern_string("x");
+            Self::merge_index_signature(
+                string_index,
+                tsz_solver::IndexSignature {
+                    key_type: TypeId::STRING,
+                    value_type: TypeId::ANY,
+                    readonly: false,
+                    param_name: Some(x_atom),
+                },
+            );
+            return;
+        }
+
         match query::classify_for_base_instance_merge(self.ctx.types, base_instance_type) {
             query::BaseInstanceMergeKind::Object(base_shape_id) => {
                 let base_shape = self.ctx.types.object_shape(base_shape_id);

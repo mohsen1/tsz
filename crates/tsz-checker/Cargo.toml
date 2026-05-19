@@ -1413,5 +1413,9 @@ path = "tests/recovery_any_sites_tests.rs"
 name = "arbitrary_ext_decl_module_resolution_tests"
 path = "tests/arbitrary_ext_decl_module_resolution_tests.rs"
 
+[[test]]
+name = "mixin_any_base_index_sig_tests"
+path = "tests/mixin_any_base_index_sig_tests.rs"
+
 [lints]
 workspace = true
