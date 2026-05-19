@@ -152,7 +152,7 @@ obj.y = 'x';
 // ---------------------------------------------------------------------------
 
 /// When a nested property type mismatch is reported (class to type-literal
-/// assignment), the elaboration in related_information should name the
+/// assignment), the elaboration in `related_information` should name the
 /// *property* types (string/number), not the outer class type (D).
 #[test]
 fn nested_property_mismatch_shows_structural_types_not_outer_class() {
