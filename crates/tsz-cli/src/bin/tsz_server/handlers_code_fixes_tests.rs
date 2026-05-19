@@ -2850,7 +2850,7 @@ fn fix_missing_type_annotation_non_jsx_produces_no_fixes() {
     );
 }
 
-/// Calling with error_codes that do NOT include 9010 must return nothing
+/// Calling with `error_codes` that do NOT include 9010 must return nothing
 /// even when a TS9010 diagnostic is present — the guard is on the request,
 /// not the diagnostic bag.
 #[test]
