@@ -102,6 +102,47 @@ console.log(JSON.stringify(Object.fromEntries(entries)));
 NODE
 }
 
+tsz_generated_fixture_source() {
+  local row_name="$1"
+  local fixture_dir="$2"
+  local provenance_path="$fixture_dir/.tsz-fixture-provenance.json"
+
+  [ -n "$fixture_dir" ] || return 0
+  [ -f "$provenance_path" ] || return 0
+  command -v node >/dev/null 2>&1 || return 0
+
+  TSZ_FIXTURE_PROVENANCE_ROW="$row_name" \
+  TSZ_FIXTURE_PROVENANCE_FILE="$provenance_path" \
+  node --input-type=module <<'NODE'
+import fs from "node:fs";
+
+const rowName = process.env.TSZ_FIXTURE_PROVENANCE_ROW || "generated-project";
+const file = process.env.TSZ_FIXTURE_PROVENANCE_FILE || "";
+
+try {
+  const provenance = JSON.parse(fs.readFileSync(file, "utf8"));
+  const hashes = provenance.file_hashes && typeof provenance.file_hashes === "object"
+    ? provenance.file_hashes
+    : {};
+  const lockHash = hashes["package-lock.json"];
+  const packageHash = hashes["package.json"];
+  const ref = lockHash
+    ? `package-lock:${lockHash}`
+    : packageHash
+      ? `package-json:${packageHash}`
+      : null;
+  const template = String(provenance.template_name || rowName).trim();
+  const generator = String(provenance.generator_script || "generated").trim();
+
+  if (template && generator && ref) {
+    console.log(`${template}|generated:${generator}|${ref}`);
+  }
+} catch {
+  // Fixture provenance improves auditability but must not make project setup fail.
+}
+NODE
+}
+
 tsz_load_fixture_pins_from_rows() {
   command -v node >/dev/null 2>&1 || return 0
 
@@ -171,6 +212,18 @@ tsz_project_fixture_sources() {
       ;;
     type-challenges-solutions-project)
       printf 'type-challenges-solutions|%s|%s\n' "$TYPE_CHALLENGES_SOLUTIONS_REPO" "$TYPE_CHALLENGES_SOLUTIONS_REF"
+      ;;
+    vite-vanilla-ts-app)
+      local fixture_dir="${VITE_APP_BENCH_DIR:-}"
+      [ -n "$fixture_dir" ] || [ -z "${FIXTURE_ROOT:-}" ] || fixture_dir="$FIXTURE_ROOT/vite-vanilla-ts-live"
+      [ -n "$fixture_dir" ] || [ -z "${EXTERNAL_BENCH_DIR:-}" ] || fixture_dir="$EXTERNAL_BENCH_DIR/vite-vanilla-ts-live"
+      tsz_generated_fixture_source "$1" "$fixture_dir"
+      ;;
+    nextjs-fresh-app)
+      local fixture_dir="${NEXT_APP_BENCH_DIR:-}"
+      [ -n "$fixture_dir" ] || [ -z "${FIXTURE_ROOT:-}" ] || fixture_dir="$FIXTURE_ROOT/next-app-live"
+      [ -n "$fixture_dir" ] || [ -z "${EXTERNAL_BENCH_DIR:-}" ] || fixture_dir="$EXTERNAL_BENCH_DIR/next-app-live"
+      tsz_generated_fixture_source "$1" "$fixture_dir"
       ;;
   esac
 }

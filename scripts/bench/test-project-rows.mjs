@@ -19,7 +19,10 @@ import {
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
-const GENERATED_ROWS_WITH_FIXTURE_SOURCES = new Set();
+const GENERATED_ROWS_WITH_FIXTURE_SOURCES = new Set([
+  "vite-vanilla-ts-app",
+  "nextjs-fresh-app",
+]);
 const ROADMAP_REQUIRED_PROJECT_ROW_BY_LABEL = new Map([
   ["utility-types", "utility-types-project"],
   ["rxjs", "rxjs-project"],

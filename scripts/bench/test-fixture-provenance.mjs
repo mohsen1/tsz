@@ -17,8 +17,10 @@ import { fileURLToPath } from "node:url";
 import { PROVENANCE_FILENAME } from "./fixture-provenance.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
 const VITE_GENERATOR = path.join(SCRIPT_DIR, "generate-vite-app-fixture.mjs");
 const NEXT_GENERATOR = path.join(SCRIPT_DIR, "generate-next-app-fixture.mjs");
+const PROJECT_FIXTURES_SCRIPT = path.join(SCRIPT_DIR, "project-fixtures.sh");
 
 function runGenerator(generatorPath, outputDir) {
   const result = spawnSync(process.execPath, [generatorPath, "--dry-run", outputDir], {
@@ -66,6 +68,33 @@ fs.mkdirSync(path.join(process.cwd(), "node_modules"), { recursive: true });
     );
   }
   return result;
+}
+
+function projectFixtureSources(rowName, env = {}) {
+  const result = spawnSync("bash", ["-lc", 'source "$PROJECT_FIXTURES_SCRIPT"; tsz_project_fixture_sources "$ROW_NAME"'], {
+    cwd: ROOT,
+    env: {
+      ...process.env,
+      PROJECT_FIXTURES_SCRIPT,
+      ROW_NAME: rowName,
+      ...env,
+    },
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.status !== 0) {
+    throw new Error(
+      `tsz_project_fixture_sources ${rowName} exited with status ${result.status}:\n${result.stderr}`,
+    );
+  }
+  return result.stdout
+    .trim()
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => {
+      const [name, repository, ref] = line.split("|");
+      return { name, repository, ref };
+    });
 }
 
 function assertProvenanceShape(provenancePath, expectedTemplateName, generatorBasename) {
@@ -197,6 +226,26 @@ try {
     );
   });
 
+  test("Vite generated fixture source uses package-lock provenance", () => {
+    const liveDir = path.join(tmpBase, "vite-live-source");
+    runGeneratorWithFakeNpm(VITE_GENERATOR, liveDir);
+    const sources = projectFixtureSources("vite-vanilla-ts-app", {
+      VITE_APP_BENCH_DIR: liveDir,
+    });
+    assert.deepEqual(sources, [
+      {
+        name: "vite-vanilla-ts",
+        repository: "generated:scripts/bench/generate-vite-app-fixture.mjs",
+        ref: sources[0]?.ref,
+      },
+    ]);
+    assert.match(
+      sources[0]?.ref ?? "",
+      /^package-lock:[0-9a-f]{64}$/,
+      "generated Vite fixture source should use the package-lock hash",
+    );
+  });
+
   console.log("\ntest-fixture-provenance: Next.js generator");
   const nextDir = path.join(tmpBase, "next");
   let nextProvenance;
@@ -231,6 +280,24 @@ try {
     assert.ok(
       !fs.existsSync(path.join(nextDir, "node_modules")),
       "node_modules should NOT exist in dry-run output",
+    );
+  });
+
+  test("Next.js generated fixture source falls back to package.json provenance before install", () => {
+    const sources = projectFixtureSources("nextjs-fresh-app", {
+      NEXT_APP_BENCH_DIR: nextDir,
+    });
+    assert.deepEqual(sources, [
+      {
+        name: "next-app-router",
+        repository: "generated:scripts/bench/generate-next-app-fixture.mjs",
+        ref: sources[0]?.ref,
+      },
+    ]);
+    assert.match(
+      sources[0]?.ref ?? "",
+      /^package-json:[0-9a-f]{64}$/,
+      "dry-run generated Next fixture source should use the package.json hash",
     );
   });
 
