@@ -21,16 +21,59 @@ if (!classificationPath || !candidateDir || !outFile) {
   process.exit(2);
 }
 
-if (!fs.existsSync(classificationPath)) {
-  process.exit(0);
-}
-
-const report = JSON.parse(fs.readFileSync(classificationPath, "utf8"));
-
 function fail(message) {
   console.error(`error: ${message}`);
   process.exit(1);
 }
+
+if (!fs.existsSync(classificationPath)) {
+  process.exit(0);
+}
+
+function isInsideDirectory(root, file) {
+  const relative = path.relative(root, file);
+  return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+function validateCompatibilityOutputPath(outputPath, protectedInputPaths) {
+  if (typeof outputPath !== "string" || outputPath.trim() === "") {
+    fail("assertion compatibility output path must be a non-empty path");
+  }
+
+  const resolvedOutput = path.resolve(outputPath);
+  const resolvedFixtureRoot = path.resolve(
+    fixtureRoot || path.dirname(path.resolve(candidateDir)),
+  );
+  if (!isInsideDirectory(resolvedFixtureRoot, resolvedOutput)) {
+    fail(`assertion compatibility output must stay inside the fixture root: ${outputPath}`);
+  }
+
+  const protectedInputs = protectedInputPaths
+    .filter(Boolean)
+    .map((inputPath) => path.resolve(inputPath));
+  if (protectedInputs.includes(resolvedOutput)) {
+    fail(`assertion compatibility output must not overwrite an input artifact: ${outputPath}`);
+  }
+
+  if (fs.existsSync(resolvedOutput) && !fs.statSync(resolvedOutput).isFile()) {
+    fail(`assertion compatibility output path is not a file: ${outputPath}`);
+  }
+
+  const outputParent = path.dirname(resolvedOutput);
+  if (!fs.existsSync(outputParent) || !fs.statSync(outputParent).isDirectory()) {
+    fail(`assertion compatibility output parent directory does not exist: ${outputPath}`);
+  }
+
+  return resolvedOutput;
+}
+
+const resolvedOutFile = validateCompatibilityOutputPath(outFile, [
+  classificationPath,
+  cleanSubsetManifestPath,
+  cleanSubsetClassificationPath,
+]);
+
+const report = JSON.parse(fs.readFileSync(classificationPath, "utf8"));
 
 function validateClassificationCompilerReport(report) {
   if (report?.fixture !== "type-challenges-assertion-classification") {
@@ -1403,4 +1446,4 @@ const row = {
   },
 };
 
-fs.appendFileSync(outFile, `${JSON.stringify(row)}\n`, "utf8");
+fs.appendFileSync(resolvedOutFile, `${JSON.stringify(row)}\n`, "utf8");

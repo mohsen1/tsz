@@ -1250,6 +1250,25 @@ withTempDir((dir) => {
 withTempDir((dir) => {
   const candidates = path.join(dir, "assertions");
   const manifest = path.join(candidates, "type-challenges-assertions-manifest.json");
+  const tsconfig = path.join(candidates, "tsconfig.tsz-guard.json");
+
+  writeValidOneCandidateFixture(candidates, manifest);
+
+  const result = spawnSync(process.execPath, [SCRIPT, candidates, manifest, tsconfig], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /classification output must not overwrite classifier inputs/);
+  const parsedTsconfig = JSON.parse(fs.readFileSync(tsconfig, "utf8"));
+  assert.deepEqual(parsedTsconfig, {
+    compilerOptions: { noEmit: true },
+  });
+});
+
+withTempDir((dir) => {
+  const candidates = path.join(dir, "assertions");
+  const manifest = path.join(candidates, "type-challenges-assertions-manifest.json");
   const output = path.join(candidates, "classification-dir");
 
   writeValidOneCandidateFixture(candidates, manifest);

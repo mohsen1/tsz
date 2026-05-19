@@ -20,6 +20,53 @@ TYPE_CHALLENGES_PROJECT_MANIFESTS_WRITTEN=0
 TYPE_CHALLENGES_SOLUTIONS_MANIFEST_WRITTEN=0
 TYPE_CHALLENGES_PAIRING_REPORT_WRITTEN=0
 
+fail() {
+  echo "error: $*" >&2
+  exit 1
+}
+
+resolve_existing_parent_path() {
+  local file="$1"
+  local label="$2"
+  local parent
+  parent="$(dirname "$file")"
+  if [[ ! -d "$parent" ]]; then
+    fail "$label parent directory does not exist: $file"
+  fi
+  local parent_abs
+  parent_abs="$(cd "$parent" && pwd -P)"
+  printf '%s/%s\n' "$parent_abs" "$(basename "$file")"
+}
+
+validate_project_compatibility_artifact_paths() {
+  local fixture_abs
+  fixture_abs="$(cd "$FIXTURE_ROOT" && pwd -P)"
+
+  local jsonl_abs
+  local summary_abs
+  jsonl_abs="$(resolve_existing_parent_path "$PROJECT_COMPATIBILITY_JSONL" "project compatibility JSONL")"
+  summary_abs="$(resolve_existing_parent_path "$PROJECT_COMPATIBILITY_SUMMARY" "project compatibility summary")"
+
+  case "$jsonl_abs" in
+    "$fixture_abs"/*) ;;
+    *) fail "project compatibility JSONL must stay inside fixture root: $PROJECT_COMPATIBILITY_JSONL" ;;
+  esac
+  case "$summary_abs" in
+    "$fixture_abs"/*) ;;
+    *) fail "project compatibility summary must stay inside fixture root: $PROJECT_COMPATIBILITY_SUMMARY" ;;
+  esac
+
+  if [[ "$jsonl_abs" == "$summary_abs" ]]; then
+    fail "project compatibility JSONL and summary paths must be distinct: $PROJECT_COMPATIBILITY_JSONL"
+  fi
+  if [[ -e "$jsonl_abs" && ! -f "$jsonl_abs" ]]; then
+    fail "project compatibility JSONL path is not a file: $PROJECT_COMPATIBILITY_JSONL"
+  fi
+  if [[ -e "$summary_abs" && ! -f "$summary_abs" ]]; then
+    fail "project compatibility summary path is not a file: $PROJECT_COMPATIBILITY_SUMMARY"
+  fi
+}
+
 # shellcheck source=scripts/bench/project-fixtures.sh
 source "$ROOT_DIR/scripts/bench/project-fixtures.sh"
 tsz_sync_project_row_groups
@@ -33,6 +80,7 @@ if [[ ! -x "$TSZ_BIN" ]]; then
 fi
 
 mkdir -p "$FIXTURE_ROOT"
+validate_project_compatibility_artifact_paths
 rm -f "$FIXTURE_ROOT/type-challenges-readiness-pairing.json"
 rm -rf "$FIXTURE_ROOT/type-challenges-assertions"
 : > "$PROJECT_COMPATIBILITY_JSONL"
