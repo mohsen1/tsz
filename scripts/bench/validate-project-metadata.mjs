@@ -97,6 +97,7 @@ export function validateProjectMetadata({
   const failures = [];
   const seen = new Set();
   const fixtureDirs = new Map();
+  const envNames = new Map();
 
   for (const row of projectRows) {
     if (!isNonEmptyString(row.name)) {
@@ -183,6 +184,13 @@ export function validateProjectMetadata({
         failures.push(`${row.name}: ${field} must be a non-empty string when present`);
       } else if (field in row && !isShellVariableName(row[field])) {
         failures.push(`${row.name}: ${field} must be a valid shell variable name when present`);
+      } else if (field in row) {
+        const previous = envNames.get(row[field]);
+        if (previous) {
+          failures.push(`${row.name}: ${field} duplicates ${previous}: ${row[field]}`);
+        } else {
+          envNames.set(row[field], `${row.name}.${field}`);
+        }
       }
     }
 

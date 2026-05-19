@@ -52,7 +52,12 @@ assert.deepEqual(validate([validRow(), validRow()]), [
 assert.deepEqual(
   validate([
     validRow({ name: "first-project", fixture_dir: "shared-fixture" }),
-    validRow({ name: "second-project", fixture_dir: "shared-fixture" }),
+    validRow({
+      name: "second-project",
+      fixture_dir: "shared-fixture",
+      repo_env: "SECOND_REPO",
+      ref_env: "SECOND_REF",
+    }),
   ]),
   ["second-project: fixture_dir duplicates first-project: shared-fixture"],
 );
@@ -91,6 +96,27 @@ assert.deepEqual(
     "example-project: expected_test_cases_env must be a valid shell variable name when present",
     "example-project: expected_generated_env is set but expected_generated is missing or not a positive number",
     "example-project: expected_test_cases_env is set but expected_test_cases is missing or not a positive number",
+  ],
+);
+
+assert.deepEqual(
+  validate([
+    validRow({ name: "first-project", repo_env: "SHARED_REPO" }),
+    validRow({
+      name: "second-project",
+      repo_env: "SHARED_REPO",
+      ref_env: "SECOND_REF",
+      fixture_dir: "second-project",
+    }),
+    validRow({
+      name: "third-project",
+      ref_env: "SHARED_REPO",
+      fixture_dir: "third-project",
+    }),
+  ]),
+  [
+    "second-project: repo_env duplicates first-project.repo_env: SHARED_REPO",
+    "third-project: ref_env duplicates first-project.repo_env: SHARED_REPO",
   ],
 );
 

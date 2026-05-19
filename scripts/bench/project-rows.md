@@ -47,6 +47,8 @@ Some generated rows include expected-count fields:
 
 All `*_env` fields must be valid shell variable identifiers because
 `project-fixtures.sh` exports them for benchmark and compile-guard scripts.
+The same shell variable name must not be reused by another row or field because
+runtime fixture pin loading treats these names as global defaults.
 Pinned values and expected counts must keep their matching `*_env` field so
 the shared fixture loader can publish defaults while still honoring overrides.
 `fixture_dir` values must be unique across rows because runners materialize
