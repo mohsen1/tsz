@@ -36,7 +36,7 @@ Currently targeting **TypeScript `{{ts_version}}`**
   <span class="progress-stat">{{fourslash_rate}}% - {{fourslash_passed}}/{{fourslash_total}}</span>
 </div>
 
-<p class="loc-stat">{{total_loc}} lines of Rust across {{num_crates}} crates</p>
+<p class="loc-stat">{{total_loc}} lines of Rust across {{num_crates}} crates <span class="loc-stat-split">({{source_loc}} source · {{test_loc}} test)</span></p>
 
 Conformance is measured by diagnostic fingerprint comparison: each diagnostic must match `tsc` in error code, file, line, column, and message.
 

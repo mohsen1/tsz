@@ -233,6 +233,25 @@ pub(crate) const MAX_CONSTRAINT_ITERATIONS: usize = 100;
 #[allow(dead_code)] // Used by conditional type inference (not yet wired up)
 pub(crate) const MAX_TYPE_RECURSION_DEPTH: usize = 100;
 
+/// Operation-local cache statistics for [`InferenceContext`].
+///
+/// Owner: one inference request. The subtype memo is scoped to that request
+/// and is dropped with the context.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct InferenceContextCacheStatistics {
+    /// Entries in the inference subtype memo keyed by source and target `TypeId`.
+    pub(crate) subtype_entries: usize,
+    estimated_size_bytes: usize,
+}
+
+impl InferenceContextCacheStatistics {
+    /// Estimated heap bytes owned by inference memo tables.
+    #[must_use]
+    pub(crate) const fn estimated_size_bytes(self) -> usize {
+        self.estimated_size_bytes
+    }
+}
+
 /// Type inference context for a single function call or expression.
 pub(crate) struct InferenceContext<'a> {
     pub(crate) interner: &'a dyn TypeDatabase,
@@ -366,6 +385,18 @@ impl<'a> InferenceContext<'a> {
             top_level_in_return_type_unfixed: FxHashSet::default(),
             vars_with_substituted_candidates: FxHashSet::default(),
             in_array_element_context: false,
+        }
+    }
+
+    /// Return entry and size accounting for this context's operation-local caches.
+    #[must_use]
+    pub(crate) fn cache_statistics(&self) -> InferenceContextCacheStatistics {
+        let subtype_entries = self.subtype_cache.borrow().len();
+        let estimated_size_bytes =
+            subtype_entries.saturating_mul(std::mem::size_of::<((TypeId, TypeId), bool)>());
+        InferenceContextCacheStatistics {
+            subtype_entries,
+            estimated_size_bytes,
         }
     }
 

@@ -141,8 +141,18 @@ class ArchGuardSolverRelationBoundaryTests(unittest.TestCase):
                 return pattern, excludes
         self.fail("solver relation boundary check is missing from CHECKS")
 
+    def _solver_relation_policy_check(self):
+        for name, _base, pattern, excludes in self.arch_guard.CHECKS:
+            if (
+                name
+                == "Checker boundary: direct RelationPolicy/RelationContext usage outside query boundaries/tests"
+            ):
+                return pattern, excludes
+        self.fail("solver relation policy boundary check is missing from CHECKS")
+
     def test_rule_exists(self):
         self._solver_relation_check()
+        self._solver_relation_policy_check()
 
     def test_rule_flags_non_boundary_file(self):
         pattern, excludes = self._solver_relation_check()
@@ -151,6 +161,21 @@ class ArchGuardSolverRelationBoundaryTests(unittest.TestCase):
             text, pattern, "crates/tsz-checker/src/type_computation.rs", excludes
         )
         self.assertEqual(hits, [1])
+
+    def test_rule_flags_relation_policy_and_context_usage(self):
+        pattern, excludes = self._solver_relation_policy_check()
+        text = (
+            "let policy = tsz_solver::RelationPolicy::diagnostic_default();\n"
+            "let ctx = tsz_solver::RelationContext::default();\n"
+            "use tsz_solver::{RelationPolicy, TypeId};\n"
+        )
+        hits = self.arch_guard.find_matches(
+            text,
+            pattern,
+            "crates/tsz-checker/src/error_reporter/diagnostic.rs",
+            excludes,
+        )
+        self.assertEqual(hits, [1, 2, 3])
 
     def test_rule_ignores_query_boundaries_and_tests(self):
         pattern, excludes = self._solver_relation_check()
@@ -163,6 +188,63 @@ class ArchGuardSolverRelationBoundaryTests(unittest.TestCase):
         )
         self.assertEqual(query_boundary_hits, [])
         self.assertEqual(test_hits, [])
+
+        pattern, excludes = self._solver_relation_policy_check()
+        text = "let policy = tsz_solver::RelationPolicy::diagnostic_default();"
+        query_boundary_hits = self.arch_guard.find_matches(
+            text, pattern, "crates/tsz-checker/src/query_boundaries/assignability.rs", excludes
+        )
+        test_hits = self.arch_guard.find_matches(
+            text, pattern, "crates/tsz-checker/tests/relation_policy.rs", excludes
+        )
+        self.assertEqual(query_boundary_hits, [])
+        self.assertEqual(test_hits, [])
+
+
+class ArchGuardBinaryEvaluatorBoundaryTests(unittest.TestCase):
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _binary_evaluator_surface_check(self):
+        for name, _base, pattern, excludes in self.arch_guard.CHECKS:
+            if name == "Checker type-computation boundary: no direct BinaryOpEvaluator surface (#8226)":
+                return pattern, excludes
+        self.fail("BinaryOpEvaluator boundary check is missing from CHECKS")
+
+    def test_rule_exists(self):
+        self._binary_evaluator_surface_check()
+
+    def test_rule_flags_imports_and_signatures_outside_boundary(self):
+        pattern, excludes = self._binary_evaluator_surface_check()
+        text = "\n".join(
+            [
+                "use tsz_solver::computation::BinaryOpEvaluator;",
+                "fn helper(evaluator: &BinaryOpEvaluator) {}",
+            ]
+        )
+        hits = self.arch_guard.find_matches(
+            text, pattern, "crates/tsz-checker/src/types/computation/binary.rs", excludes
+        )
+        self.assertEqual(hits, [1, 2])
+
+    def test_rule_ignores_query_boundaries_tests_and_comments(self):
+        pattern, excludes = self._binary_evaluator_surface_check()
+        text = "/// `BinaryOpEvaluator` is documented here\nlet evaluator = BinaryOpEvaluator;"
+        query_boundary_hits = self.arch_guard.find_matches(
+            text, pattern, "crates/tsz-checker/src/query_boundaries/common.rs", excludes
+        )
+        test_hits = self.arch_guard.find_matches(
+            text, pattern, "crates/tsz-checker/src/tests/architecture_contract_tests.rs", excludes
+        )
+        comment_hits = self.arch_guard.find_matches(
+            "/// `BinaryOpEvaluator` comment only",
+            pattern,
+            "crates/tsz-checker/src/types/computation/binary.rs",
+            excludes,
+        )
+        self.assertEqual(query_boundary_hits, [])
+        self.assertEqual(test_hits, [])
+        self.assertEqual(comment_hits, [])
 
 
 class ArchGuardCoreWasmBoundaryTests(unittest.TestCase):
@@ -243,13 +325,16 @@ class ArchGuardCoreLibFacadeSizeBoundaryTests(unittest.TestCase):
     def _core_lib_size_check(self):
         for entry in self.arch_guard.FILE_LINE_LIMIT_CHECKS:
             name, path, limit = entry
-            if name == "Core boundary: tsz-core lib facade must stay under 500 LOC":
+            if (
+                name
+                == "Core boundary: tsz-core lib facade must stay at current 365 LOC baseline"
+            ):
                 return path, limit
         self.fail("core lib facade size boundary check is missing from FILE_LINE_LIMIT_CHECKS")
 
     def test_rule_exists_with_expected_limit(self):
         path, limit = self._core_lib_size_check()
-        self.assertEqual(limit, 500)
+        self.assertEqual(limit, 365)
         self.assertTrue(str(path).endswith("crates/tsz-core/src/lib.rs"))
 
     def test_scan_file_line_limit_flags_file_above_limit(self):
@@ -266,6 +351,34 @@ class ArchGuardCoreLibFacadeSizeBoundaryTests(unittest.TestCase):
             target.write_text("let x = 0;\n" * 10, encoding="utf-8")
             hits = self.arch_guard.scan_file_line_limit(target, 10)
             self.assertEqual(hits, [])
+
+
+class ArchGuardQueryBoundaryCommonSizeTests(unittest.TestCase):
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _query_common_size_check(self):
+        for entry in self.arch_guard.FILE_LINE_LIMIT_CHECKS:
+            name, path, limit = entry
+            if name == "Checker query boundary: common quarantine must not grow (#8225)":
+                return path, limit
+        self.fail("query boundary common size check is missing from FILE_LINE_LIMIT_CHECKS")
+
+    def test_rule_exists_with_current_limit(self):
+        path, limit = self._query_common_size_check()
+        self.assertEqual(limit, 1996)
+        self.assertTrue(
+            str(path).endswith("crates/tsz-checker/src/query_boundaries/common.rs")
+        )
+
+    def test_real_common_file_passes_at_pinned_limit(self):
+        path, limit = self._query_common_size_check()
+        hits = self.arch_guard.scan_file_line_limit(path, limit)
+        self.assertEqual(
+            hits,
+            [],
+            "query_boundaries/common.rs cap is too tight for the live file",
+        )
 
 
 class ArchGuardSolverTypeDataQuarantineTests(unittest.TestCase):
@@ -1143,6 +1256,96 @@ class ArchGuardRootSolverComputationImportCountTests(unittest.TestCase):
             )
 
 
+class ArchGuardQueryBoundaryCommonReferenceTests(unittest.TestCase):
+    """Cover the #8225 ratchet for broad query-boundary common callers."""
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _make_tree(self, files: dict[str, str]):
+        tmp = tempfile.mkdtemp()
+        root = pathlib.Path(tmp)
+        for rel, content in files.items():
+            full = root / rel
+            full.parent.mkdir(parents=True, exist_ok=True)
+            full.write_text(content, encoding="utf-8")
+        return root
+
+    def test_flags_direct_common_references_outside_query_boundaries(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/checkers/foo.rs": (
+                    "let shape = crate::query_boundaries::common::object_shape_for_type(db, ty);\n"
+                    "let lazy = query_boundaries::common::lazy_def_id(db, ty);\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_query_boundary_common_reference_count(
+            [root], ("crates/tsz-checker/src/query_boundaries/",), 0
+        )
+        self.assertEqual(len(hits), 3, f"unexpected hits: {hits!r}")
+        self.assertIn("foo.rs:1", hits[0])
+        self.assertIn("foo.rs:2", hits[1])
+        self.assertIn("total direct query_boundaries::common references", hits[2])
+
+    def test_excludes_query_boundaries_tests_and_comment_lines(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/query_boundaries/flow_analysis.rs": (
+                    "let shape = crate::query_boundaries::common::object_shape_for_type(db, ty);\n"
+                ),
+                "crates/tsz-checker/src/foo_tests.rs": (
+                    "let shape = crate::query_boundaries::common::object_shape_for_type(db, ty);\n"
+                ),
+                "crates/tsz-checker/tests/integration.rs": (
+                    "let shape = crate::query_boundaries::common::object_shape_for_type(db, ty);\n"
+                ),
+                "crates/tsz-checker/src/commented.rs": (
+                    "// let shape = crate::query_boundaries::common::object_shape_for_type(db, ty);\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_query_boundary_common_reference_count(
+            [root], ("crates/tsz-checker/src/query_boundaries/",), 0
+        )
+        self.assertEqual(hits, [], f"unexpected hits: {hits!r}")
+
+    def test_passes_when_at_or_under_cap(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/checkers/a.rs": (
+                    "let shape = crate::query_boundaries::common::object_shape_for_type(db, ty);\n"
+                ),
+                "crates/tsz-checker/src/checkers/b.rs": (
+                    "let lazy = query_boundaries::common::lazy_def_id(db, ty);\n"
+                ),
+            }
+        )
+        scan = self.arch_guard.scan_query_boundary_common_reference_count
+        self.assertEqual(scan([root], (), 2), [])
+        self.assertEqual(scan([root], (), 3), [])
+
+    def test_check_is_registered(self):
+        names = [
+            entry[0]
+            for entry in self.arch_guard.QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS
+        ]
+        self.assertTrue(any("#8225" in name for name in names))
+
+    def test_real_count_passes_at_pinned_cap(self):
+        """The pinned cap must match the live count (no off-by-one)."""
+        for entry in self.arch_guard.QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS:
+            name, search_roots, exclude_path_prefixes, max_references = entry
+            hits = self.arch_guard.scan_query_boundary_common_reference_count(
+                search_roots, exclude_path_prefixes, max_references
+            )
+            self.assertEqual(
+                hits,
+                [],
+                f"{name}: cap is too tight — guard fires at the live count.",
+            )
+
+
 class ArchGuardSnapshotRollbackTests(unittest.TestCase):
     """Cover `SNAPSHOT_ROLLBACK_FILE_COUNT_CHECKS` +
     `scan_snapshot_rollback_file_count`.
@@ -1152,7 +1355,8 @@ class ArchGuardSnapshotRollbackTests(unittest.TestCase):
     contributors who refactor `scan_snapshot_rollback_file_count` keep the
     invariants:
 
-      - all `CheckerContext::rollback_*` methods are flagged
+      - broad `CheckerContext::rollback_*` methods are flagged
+      - `DiagnosticSpeculationSnapshot` holder rollback methods are ignored
       - snapshot restorers (`restore_ts2454_state`,
         `restore_implicit_any_closures`) are flagged
       - `*guard.rollback(` SpeculationGuard calls are flagged
@@ -1204,6 +1408,28 @@ class ArchGuardSnapshotRollbackTests(unittest.TestCase):
             hits[5],
         )
 
+    def test_flags_split_chain_diagnostics_methods(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/split.rs": (
+                    "self.ctx\n"
+                    "    .rollback_diagnostics_filtered(&snap, |_| true);\n"
+                ),
+                "crates/tsz-checker/src/named_context.rs": (
+                    "checker_context\n"
+                    "    .rollback_diagnostics(&snap);\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_snapshot_rollback_file_count([root], (), 0)
+        self.assertEqual(len(hits), 3, f"unexpected hits: {hits!r}")
+        self.assertTrue(any("split.rs" in hit for hit in hits), hits)
+        self.assertTrue(any("named_context.rs" in hit for hit in hits), hits)
+        self.assertIn(
+            "total snapshot-rollback caller files outside speculation.rs: 2",
+            hits[2],
+        )
+
     def test_flags_snapshot_restorers(self):
         root = self._make_tree(
             {
@@ -1247,6 +1473,20 @@ class ArchGuardSnapshotRollbackTests(unittest.TestCase):
                 "crates/tsz-checker/src/unrelated.rs": (
                     "transaction.rollback();\n"
                     "db.rollback(&conn);\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_snapshot_rollback_file_count([root], (), 0)
+        self.assertEqual(hits, [], f"unexpected hits: {hits!r}")
+
+    def test_ignores_diagnostic_speculation_snapshot_holder_methods(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/snapshot_holder.rs": (
+                    "let snap = DiagnosticSpeculationSnapshot::new(&self.ctx);\n"
+                    "snap.rollback(&mut self.ctx.diagnostic_state());\n"
+                    "snap.rollback_filtered(&mut self.ctx.diagnostic_state(), |_| true);\n"
+                    "snap.commit(&mut self.ctx.diagnostic_state());\n"
                 ),
             }
         )
@@ -1611,6 +1851,36 @@ export const COMPATIBILITY_CORPUS_ROWS = [
 """
         self.assertEqual(self._write_and_scan(body), [])
 
+    def test_shared_project_row_definitions_pass(self):
+        body = """
+export const PROJECT_ROW_DEFINITIONS = [
+  {
+    name: "utility-types-project",
+    benchmark_set: "required",
+    guard_set: "required",
+  },
+  {
+    name: "zod-project",
+    benchmark_set: "canary",
+    guard_set: "canary",
+  },
+];
+
+export const REQUIRED_PROJECT_ROWS = PROJECT_ROW_DEFINITIONS
+  .filter((row) => row.benchmark_set === "required")
+  .map((row) => row.name);
+
+export const COMPILE_CANARY_PROJECT_ROWS = PROJECT_ROW_DEFINITIONS
+  .filter((row) => row.guard_set === "canary")
+  .map((row) => row.name);
+
+export const COMPATIBILITY_CORPUS_ROWS = PROJECT_ROW_DEFINITIONS.map((row) => ({
+  name: row.name,
+  label: row.label,
+}));
+"""
+        self.assertEqual(self._write_and_scan(body), [])
+
     def test_missing_dashboard_row_is_reported(self):
         body = """
 export const REQUIRED_PROJECT_ROWS = ["utility-types-project"];
@@ -1691,6 +1961,48 @@ tsz_project_fixture_sources() {
     type-challenges-assertions-tsc-clean)
       printf 'type-challenges|repo|ref\\n'
       printf 'type-challenges-solutions|repo|ref\\n'
+      ;;
+  esac
+}
+"""
+        self.assertEqual(self._write_and_scan(rows, fixtures), [])
+
+    def test_shared_project_row_definitions_with_sources_pass(self):
+        rows = """
+export const PROJECT_ROW_DEFINITIONS = [
+  {
+    name: "utility-types-project",
+    benchmark_set: "required",
+    guard_set: "required",
+  },
+  {
+    name: "vite-vanilla-ts-app",
+    benchmark_set: "required",
+    guard_set: null,
+  },
+  {
+    name: "type-challenges-project",
+    benchmark_set: "canary",
+    guard_set: "canary",
+  },
+];
+
+export const REQUIRED_PROJECT_ROWS = PROJECT_ROW_DEFINITIONS
+  .filter((row) => row.benchmark_set === "required")
+  .map((row) => row.name);
+
+export const COMPILE_CANARY_PROJECT_ROWS = PROJECT_ROW_DEFINITIONS
+  .filter((row) => row.guard_set === "canary")
+  .map((row) => row.name);
+"""
+        fixtures = """
+tsz_project_fixture_sources() {
+  case "$1" in
+    utility-types-project)
+      printf 'utility-types|repo|ref\\n'
+      ;;
+    type-challenges-project)
+      printf 'type-challenges|repo|ref\\n'
       ;;
   esac
 }
@@ -1848,6 +2160,50 @@ if should_check_project "type-challenges-assertion-candidates"; then :; fi
 """
         bench = """
 run_isolated "utility-types-project" run_utility_types_project_benchmarks
+run_isolated "vite-vanilla-ts-app" run_vite_app_project_benchmarks
+"""
+        self.assertEqual(self._write_and_scan(rows, compile_guard, bench), [])
+
+    def test_shared_project_row_definitions_with_dynamic_loops_pass(self):
+        rows = """
+export const PROJECT_ROW_DEFINITIONS = [
+  {
+    name: "utility-types-project",
+    benchmark_set: "required",
+    guard_set: "required",
+  },
+  {
+    name: "zod-project",
+    benchmark_set: "canary",
+    guard_set: "canary",
+  },
+  {
+    name: "vite-vanilla-ts-app",
+    benchmark_set: "required",
+    guard_set: null,
+  },
+];
+
+export const REQUIRED_PROJECT_ROWS = PROJECT_ROW_DEFINITIONS
+  .filter((row) => row.benchmark_set === "required")
+  .map((row) => row.name);
+
+export const COMPILE_CANARY_PROJECT_ROWS = PROJECT_ROW_DEFINITIONS
+  .filter((row) => row.guard_set === "canary")
+  .map((row) => row.name);
+"""
+        compile_guard = """
+for name in "${TSZ_COMPILE_GUARD_REQUIRED_ROWS[@]}"; do
+  if should_check_project "$name"; then :; fi
+done
+if should_check_project "vite-vanilla-ts-app"; then :; fi
+for name in "${TSZ_COMPILE_GUARD_CANARY_ROWS[@]}"; do
+  if should_check_project "$name"; then :; fi
+done
+"""
+        bench = """
+run_isolated "utility-types-project" run_utility_types_project_benchmarks
+run_isolated "zod-project" run_zod_project_benchmarks
 run_isolated "vite-vanilla-ts-app" run_vite_app_project_benchmarks
 """
         self.assertEqual(self._write_and_scan(rows, compile_guard, bench), [])
@@ -2140,6 +2496,115 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertIn("rendered.rs:1", hits[0])
         self.assertIn("rendered.rs:2", hits[1])
 
+    def test_flags_raw_diagnostic_assignability_predicates(self):
+        pattern, _max_lines = self._check_by_name(
+            "raw diagnostic assignability predicates"
+        )
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/error_reporter/diagnostic.rs": (
+                    "if self.is_assignable_to(source, target) {}\n"
+                    "if self.ctx.types.is_assignable_to(source, target) {}\n"
+                    "if self.is_assignable_to_with_env(source, target) {}\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 4, f"unexpected hits: {hits!r}")
+        self.assertIn("diagnostic.rs:1", hits[0])
+        self.assertIn("diagnostic.rs:2", hits[1])
+        self.assertIn("diagnostic.rs:3", hits[2])
+
+    def test_flags_diagnostic_local_relation_request_constructors(self):
+        pattern, _max_lines = self._check_by_name("diagnostic-local RelationRequest")
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/error_reporter/diagnostic.rs": (
+                    "let request = RelationRequest::assign(source, target);\n"
+                    "let request = RelationRequest::call_arg(source, target);\n"
+                    "let outcome = self.assign_relation_outcome(source, target);\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 3, f"unexpected hits: {hits!r}")
+        self.assertIn("diagnostic.rs:1", hits[0])
+        self.assertIn("diagnostic.rs:2", hits[1])
+        self.assertIn("total matching lines: 2", hits[2])
+
+    def test_flags_legacy_relation_bridge_call_surface(self):
+        pattern, _max_lines = self._check_by_name("#8207")
+        root = self._make_tree(
+            {
+                "crates/tsz-solver/src/types.rs": (
+                    "fn from_legacy_u8(raw: u8) -> CachedAnyMode { todo!() }\n"
+                    "let key = RelationCacheKey::subtype(source, target, flags);\n"
+                    "let flags = RelationFlags::from_bits_truncate(raw);\n"
+                    "let mode = CachedAnyMode::from_legacy_u8(raw);\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 5, f"unexpected hits: {hits!r}")
+        self.assertIn("types.rs:1", hits[0])
+        self.assertIn("types.rs:4", hits[3])
+        self.assertIn("total matching lines: 4", hits[4])
+
+    def test_legacy_relation_bridge_guard_ignores_text_only_mentions(self):
+        pattern, _max_lines = self._check_by_name("#8207")
+        root = self._make_tree(
+            {
+                "crates/tsz-solver/src/types.rs": (
+                    '// RelationCacheKey::subtype(source, target, flags)\n'
+                    'let message = "RelationCacheKey::subtype(source, target, flags)";\n'
+                    'let helper = "from_legacy_u8(raw)";\n'
+                    'let bare_name = "CachedAnyMode::from_legacy_u8";\n'
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(hits, [], f"unexpected hits: {hits!r}")
+
+    def test_flags_root_solver_wildcard_compat_reexports(self):
+        pattern, _max_lines = self._check_by_name("#8204")
+        root = self._make_tree(
+            {
+                "crates/tsz-solver/src/lib.rs": (
+                    "pub use evaluation::evaluate::*;\n"
+                    "pub mod query {\n"
+                    "    pub use crate::visitors::visitor::*;\n"
+                    "}\n"
+                    "// pub use operations::*;\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 2, f"unexpected hits: {hits!r}")
+        self.assertIn("lib.rs:1", hits[0])
+
+    def test_scan_regex_line_count_accepts_file_roots(self):
+        pattern, _max_lines = self._check_by_name(
+            "raw diagnostic assignability predicates"
+        )
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/assignability/assignability_diagnostics.rs": (
+                    "if self.is_assignable_to(source, target) {}\n"
+                ),
+            }
+        )
+        file_root = (
+            root
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "assignability"
+            / "assignability_diagnostics.rs"
+        )
+        hits = self.arch_guard.scan_regex_line_count([file_root], pattern, 0)
+        self.assertEqual(len(hits), 2, f"unexpected hits: {hits!r}")
+        self.assertIn("assignability_diagnostics.rs:1", hits[0])
+
     def test_excludes_tests_and_comment_lines(self):
         pattern, _max_lines = self._check_by_name("source_text.contains")
         root = self._make_tree(
@@ -2176,6 +2641,10 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertTrue(any("Emitter boundary" in name for name in names))
         self.assertTrue(any("file-name/path" in name for name in names))
         self.assertTrue(any("rendered type strings" in name for name in names))
+        self.assertTrue(any("#8227" in name for name in names))
+        self.assertTrue(any("diagnostic-local RelationRequest" in name for name in names))
+        self.assertTrue(any("#8207" in name for name in names))
+        self.assertTrue(any("#8204" in name for name in names))
 
     def test_real_counts_pass_at_pinned_caps(self):
         """The pinned caps must match the live count (no off-by-one)."""
@@ -2292,6 +2761,310 @@ class ArchGuardVisitedCloneTests(unittest.TestCase):
             search_roots, allowlist
         )
         self.assertEqual(hits, [], f"live visited.clone() allowlist is stale: {hits!r}")
+
+
+class ArchGuardPolicyTomlTests(unittest.TestCase):
+    """Verify that CHECKS and MANIFEST_CHECKS are loaded from the TOML policy file.
+
+    These tests exercise the loader functions directly with controlled TOML input
+    so engine correctness is validated independently of the live policy data.
+    """
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+
+    def _load_from_toml(self, toml_text: str, loader):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "test_policy.toml"
+            path.write_text(toml_text, encoding="utf-8")
+            return loader(path)
+
+    def _load_checks(self, toml_text: str):
+        return self._load_from_toml(toml_text, self.arch_guard._load_pattern_checks)
+
+    def _load_manifest(self, toml_text: str):
+        return self._load_from_toml(toml_text, self.arch_guard._load_manifest_checks)
+
+
+    def test_live_checks_matches_expected_count(self):
+        """CHECKS must be loaded from TOML and have the expected entry count."""
+        self.assertEqual(len(self.arch_guard.CHECKS), 33)
+
+    def test_live_manifest_checks_matches_expected_count(self):
+        """MANIFEST_CHECKS must be loaded from TOML and have the expected entry count."""
+        self.assertEqual(len(self.arch_guard.MANIFEST_CHECKS), 3)
+
+    def test_live_policy_file_exists(self):
+        policy_path = self.arch_guard.POLICY_PATH
+        self.assertTrue(
+            policy_path.exists(),
+            f"Policy file missing: {policy_path}",
+        )
+
+    def test_checks_are_tuples_with_correct_shape(self):
+        """Each CHECKS entry must be (name, base_path, compiled_pattern, excludes_dict)."""
+        for name, base, pattern, excludes in self.arch_guard.CHECKS:
+            self.assertIsInstance(name, str)
+            self.assertIsInstance(base, pathlib.Path)
+            self.assertIsInstance(pattern, type(self.arch_guard.re.compile("")))
+            self.assertIsInstance(excludes, dict)
+
+    def test_manifest_checks_are_tuples_with_correct_shape(self):
+        """Each MANIFEST_CHECKS entry must be (name, file_path, compiled_pattern)."""
+        for name, file_path, pattern in self.arch_guard.MANIFEST_CHECKS:
+            self.assertIsInstance(name, str)
+            self.assertIsInstance(file_path, pathlib.Path)
+            self.assertIsInstance(pattern, type(self.arch_guard.re.compile("")))
+
+
+    def test_minimal_pattern_check_loads(self):
+        """A pattern_checks entry with only required fields loads correctly."""
+        checks = self._load_checks("""
+[[pattern_checks]]
+name = "test rule"
+base = "crates"
+pattern = '\\bfoo\\b'
+""")
+        self.assertEqual(len(checks), 1)
+        name, base, pattern, excludes = checks[0]
+        self.assertEqual(name, "test rule")
+        self.assertEqual(excludes, {})
+        self.assertIsNotNone(pattern.search("foo"))
+        self.assertIsNone(pattern.search("foobar"))
+
+    def test_exclude_dirs_parsed_as_set(self):
+        checks = self._load_checks("""
+[[pattern_checks]]
+name = "r"
+base = "crates"
+pattern = '\\bx\\b'
+exclude_dirs = ["tests", "benches"]
+""")
+        _, _, _, excludes = checks[0]
+        self.assertIn("exclude_dirs", excludes)
+        self.assertIsInstance(excludes["exclude_dirs"], set)
+        self.assertEqual(excludes["exclude_dirs"], {"tests", "benches"})
+
+    def test_exclude_files_parsed_as_set(self):
+        checks = self._load_checks("""
+[[pattern_checks]]
+name = "r"
+base = "crates"
+pattern = '\\bx\\b'
+exclude_files = ["crates/foo/src/bar.rs", "crates/baz/src/qux.rs"]
+""")
+        _, _, _, excludes = checks[0]
+        self.assertIn("exclude_files", excludes)
+        self.assertIsInstance(excludes["exclude_files"], set)
+        self.assertEqual(
+            excludes["exclude_files"],
+            {"crates/foo/src/bar.rs", "crates/baz/src/qux.rs"},
+        )
+
+    def test_exclude_test_files_flag(self):
+        checks_on = self._load_checks("""
+[[pattern_checks]]
+name = "r"
+base = "crates"
+pattern = '\\bx\\b'
+exclude_test_files = true
+""")
+        _, _, _, excludes = checks_on[0]
+        self.assertTrue(excludes.get("exclude_test_files"))
+
+        checks_off = self._load_checks("""
+[[pattern_checks]]
+name = "r"
+base = "crates"
+pattern = '\\bx\\b'
+exclude_test_files = false
+""")
+        _, _, _, excludes_off = checks_off[0]
+        self.assertNotIn("exclude_test_files", excludes_off)
+
+    def test_ignore_comment_lines_flag(self):
+        checks_on = self._load_checks("""
+[[pattern_checks]]
+name = "r"
+base = "crates"
+pattern = '\\bx\\b'
+ignore_comment_lines = true
+""")
+        _, _, _, excludes = checks_on[0]
+        self.assertTrue(excludes.get("ignore_comment_lines"))
+
+    def test_multiple_pattern_checks_in_order(self):
+        checks = self._load_checks("""
+[[pattern_checks]]
+name = "first"
+base = "crates"
+pattern = '\\bfirst\\b'
+
+[[pattern_checks]]
+name = "second"
+base = "src"
+pattern = '\\bsecond\\b'
+""")
+        self.assertEqual(len(checks), 2)
+        self.assertEqual(checks[0][0], "first")
+        self.assertEqual(checks[1][0], "second")
+
+    def test_empty_exclude_dirs_not_added_to_excludes(self):
+        """An absent or empty exclude_dirs must not appear in the excludes dict."""
+        checks = self._load_checks("""
+[[pattern_checks]]
+name = "r"
+base = "crates"
+pattern = '\\bx\\b'
+""")
+        _, _, _, excludes = checks[0]
+        self.assertNotIn("exclude_dirs", excludes)
+
+
+    def test_loaded_pattern_works_with_find_matches(self):
+        """Patterns loaded from TOML produce the same find_matches results
+        as the equivalent Python re.compile call."""
+        checks = self._load_checks("""
+[[pattern_checks]]
+name = "boundary rule"
+base = "crates"
+pattern = '\\bCompatChecker::new\\b'
+exclude_dirs = ["query_boundaries", "tests"]
+ignore_comment_lines = true
+""")
+        name, base, pattern, excludes = checks[0]
+        hit_text = "let c = CompatChecker::new(db);"
+        comment_text = "// CompatChecker::new"
+        excluded_path = "crates/foo/src/query_boundaries/bar.rs"
+        normal_path = "crates/foo/src/checker.rs"
+
+        self.assertEqual(
+            self.arch_guard.find_matches(hit_text, pattern, normal_path, excludes),
+            [1],
+            "should flag a real use in a non-excluded file",
+        )
+        self.assertEqual(
+            self.arch_guard.find_matches(comment_text, pattern, normal_path, excludes),
+            [],
+            "should ignore a line starting with //",
+        )
+        self.assertEqual(
+            self.arch_guard.find_matches(hit_text, pattern, excluded_path, excludes),
+            [],
+            "should skip files in exclude_dirs",
+        )
+
+    def test_exclude_test_file_behaviour_through_loader(self):
+        """exclude_test_files=true must skip *_tests.rs files."""
+        checks = self._load_checks("""
+[[pattern_checks]]
+name = "no unwrap"
+base = "crates"
+pattern = '\\.unwrap\\(\\)'
+exclude_test_files = true
+ignore_comment_lines = true
+""")
+        _, _, pattern, excludes = checks[0]
+        hit = "let x = foo().unwrap();"
+        test_file = "crates/tsz-checker/src/foo_tests.rs"
+        prod_file = "crates/tsz-checker/src/foo.rs"
+
+        self.assertEqual(
+            self.arch_guard.find_matches(hit, pattern, test_file, excludes),
+            [],
+            "should skip *_tests.rs files",
+        )
+        self.assertEqual(
+            self.arch_guard.find_matches(hit, pattern, prod_file, excludes),
+            [1],
+            "should flag production files",
+        )
+
+
+    def test_manifest_check_pattern_and_multiline(self):
+        """manifest_checks patterns must be compiled with MULTILINE so ^ matches
+        at each line start within a Cargo.toml file."""
+        manifest_checks = self._load_manifest("""
+[[manifest_checks]]
+name = "no bad dep"
+file = "crates/tsz-emitter/Cargo.toml"
+pattern = '^\\s*bad-crate\\s*='
+""")
+        self.assertEqual(len(manifest_checks), 1)
+        name, file_path, pattern = manifest_checks[0]
+        self.assertEqual(name, "no bad dep")
+        # Pattern must match at line start within a multi-line string.
+        toml_content = "[dependencies]\nbad-crate = \"1.0\"\nother = \"2\"\n"
+        self.assertIsNotNone(pattern.search(toml_content))
+        self.assertIsNone(pattern.search("[dependencies]\n# bad-crate = \"1.0\"\n"))
+
+    def test_multiple_manifest_checks_in_order(self):
+        checks = self._load_manifest("""
+[[manifest_checks]]
+name = "first"
+file = "crates/a/Cargo.toml"
+pattern = '^\\s*dep-a\\s*='
+
+[[manifest_checks]]
+name = "second"
+file = "crates/b/Cargo.toml"
+pattern = '^\\s*dep-b\\s*='
+""")
+        self.assertEqual(len(checks), 2)
+        self.assertEqual(checks[0][0], "first")
+        self.assertEqual(checks[1][0], "second")
+
+
+    def test_new_rule_added_via_toml_is_immediately_active(self):
+        """Adding a new [[pattern_checks]] entry to the policy TOML must make
+        the rule active in CHECKS without any engine code changes.  This test
+        demonstrates the acceptance criterion from issue #8287."""
+        new_rule_toml = """
+[[pattern_checks]]
+name = "Custom rule: no forbidden_call() in production code"
+base = "crates"
+pattern = '\\.forbidden_call\\(\\)'
+exclude_dirs = ["tests"]
+ignore_comment_lines = true
+"""
+        checks = self._load_checks(new_rule_toml)
+        self.assertEqual(len(checks), 1)
+        name, base, pattern, excludes = checks[0]
+        self.assertEqual(name, "Custom rule: no forbidden_call() in production code")
+        self.assertEqual(excludes.get("exclude_dirs"), {"tests"})
+        self.assertTrue(excludes.get("ignore_comment_lines"))
+
+        # Verify the pattern matches what it should.
+        hit = "    self.forbidden_call();"
+        self.assertEqual(
+            self.arch_guard.find_matches(
+                hit, pattern, "crates/foo/src/lib.rs", excludes
+            ),
+            [1],
+        )
+        # And is ignored in tests/ dirs.
+        self.assertEqual(
+            self.arch_guard.find_matches(
+                hit, pattern, "crates/foo/tests/integration.rs", excludes
+            ),
+            [],
+        )
+
+    def test_new_manifest_rule_added_via_toml(self):
+        """Adding a new [[manifest_checks]] entry must work without engine changes."""
+        new_rule = """
+[[manifest_checks]]
+name = "No forbidden-dep"
+file = "crates/tsz-checker/Cargo.toml"
+pattern = '^\\s*forbidden-dep\\s*='
+"""
+        checks = self._load_manifest(new_rule)
+        self.assertEqual(len(checks), 1)
+        name, _, pattern = checks[0]
+        self.assertEqual(name, "No forbidden-dep")
+        self.assertIsNone(pattern.search("[dev-dependencies]\nallowed = \"1\"\n"))
+        self.assertIsNotNone(pattern.search("forbidden-dep = \"0.1\"\n"))
 
 
 if __name__ == "__main__":

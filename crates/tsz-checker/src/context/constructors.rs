@@ -63,6 +63,7 @@ impl<'a> CheckerContext<'a> {
             name_resolution_diagnostics: crate::context::NameResolutionDiagnostics::default(),
             no_implicit_override: false,
             types_extending_array: FxHashSet::default(),
+            recovery_sites: RefCell::new(crate::recovery::RecoverySites::default()),
             symbol_types: crate::context::SymbolTypeCache::with_capacity(binder.symbols.len()),
             symbol_instance_types: crate::context::SymbolTypeCache::with_capacity(
                 binder.symbols.len(),

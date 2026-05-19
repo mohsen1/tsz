@@ -38,6 +38,180 @@ pub(crate) fn enum_member_domain(db: &dyn TypeDatabase, type_id: TypeId) -> Type
         .unwrap_or(type_id)
 }
 
+pub(crate) fn type_has_typeof_result(
+    db: &dyn QueryDatabase,
+    env: Option<&tsz_solver::TypeEnvironment>,
+    type_id: TypeId,
+    typeof_result: &str,
+) -> bool {
+    let mut narrowing = tsz_solver::NarrowingContext::new(db);
+    if let Some(environment) = env {
+        narrowing = narrowing.with_resolver(environment);
+    }
+    narrowing.narrow_by_typeof(type_id, typeof_result) != TypeId::NEVER
+}
+
+pub(crate) fn cases_exhaust_type(
+    db: &dyn QueryDatabase,
+    env: Option<&tsz_solver::TypeEnvironment>,
+    switch_type: TypeId,
+    case_types: &[TypeId],
+) -> bool {
+    let switch_type = enum_member_domain(db.as_type_database(), switch_type);
+    if matches!(switch_type, TypeId::ERROR | TypeId::ANY | TypeId::UNKNOWN) || case_types.is_empty()
+    {
+        return false;
+    }
+    if case_types
+        .iter()
+        .any(|&ty| matches!(ty, TypeId::ERROR | TypeId::ANY | TypeId::UNKNOWN))
+    {
+        return false;
+    }
+
+    let mut narrowing = tsz_solver::NarrowingContext::new(db);
+    if let Some(environment) = env {
+        narrowing = narrowing.with_resolver(environment);
+    }
+    narrowing.narrow_excluding_types(switch_type, case_types) == TypeId::NEVER
+}
+
+fn resolve_assignment_reduction_type(
+    db: &dyn TypeDatabase,
+    env: Option<&tsz_solver::TypeEnvironment>,
+    type_id: TypeId,
+) -> TypeId {
+    let resolved = get_lazy_def_id(db, type_id)
+        .and_then(|def_id| env.and_then(|environment| environment.get_def(def_id)))
+        .unwrap_or(type_id);
+    env.map_or(resolved, |environment| {
+        evaluate_application_type(db, environment, resolved)
+    })
+}
+
+fn assignment_source_assignable_to_member(
+    db: &dyn TypeDatabase,
+    env: Option<&tsz_solver::TypeEnvironment>,
+    source: TypeId,
+    member: TypeId,
+) -> bool {
+    if let Some(environment) = env {
+        is_assignable_with_env(db, environment, source, member, true)
+    } else {
+        is_assignable_strict_null(db, source, member)
+    }
+}
+
+fn assigned_value_preserves_enum_identity(
+    db: &dyn TypeDatabase,
+    env: Option<&tsz_solver::TypeEnvironment>,
+    assigned_type: TypeId,
+    initial_enum_def: tsz_solver::def::DefId,
+) -> bool {
+    if let Some(members) = union_members_for_type(db, assigned_type) {
+        return !members.is_empty()
+            && members.iter().all(|&member| {
+                assigned_value_preserves_enum_identity(db, env, member, initial_enum_def)
+            });
+    }
+
+    let Some((def_id, _)) = tsz_solver::visitor::enum_components(db, assigned_type) else {
+        return false;
+    };
+    def_id == initial_enum_def
+        || env.is_some_and(|environment| {
+            environment.get_enum_parent(def_id) == Some(initial_enum_def)
+        })
+}
+
+/// Narrow an enum-typed assignment target by an assigned value while preserving
+/// nominal enum identity.
+///
+/// Bare literals and unrelated enum values collapse back to `initial_type` so a
+/// later read still reports nominal enum mismatches.
+pub(crate) fn narrow_enum_assignment_target(
+    db: &dyn TypeDatabase,
+    env: Option<&tsz_solver::TypeEnvironment>,
+    initial_resolved: TypeId,
+    assigned_resolved: TypeId,
+    initial_type: TypeId,
+) -> TypeId {
+    let Some((initial_def, _)) = tsz_solver::visitor::enum_components(db, initial_resolved) else {
+        return initial_type;
+    };
+    if assigned_value_preserves_enum_identity(db, env, assigned_resolved, initial_def) {
+        assigned_resolved
+    } else {
+        initial_type
+    }
+}
+
+/// Apply tsc-style assignment reduction for flow analysis.
+///
+/// The checker owns the CFG walk and chooses the assignment base. This boundary
+/// owns the reusable type algebra: resolving lazy/application wrappers, keeping
+/// enum identity, and filtering union members by one-way assignability from the
+/// assigned type.
+pub(crate) fn narrow_assignment(
+    db: &dyn TypeDatabase,
+    env: Option<&tsz_solver::TypeEnvironment>,
+    initial_type: TypeId,
+    assigned_type: TypeId,
+) -> TypeId {
+    if initial_type == TypeId::ANY
+        || initial_type == TypeId::ERROR
+        || initial_type == TypeId::UNKNOWN
+    {
+        return initial_type;
+    }
+
+    let resolved_initial = resolve_assignment_reduction_type(db, env, initial_type);
+
+    if enum_member_domain(db, resolved_initial) != resolved_initial {
+        let assigned_resolved = resolve_assignment_reduction_type(db, env, assigned_type);
+        if !is_assignable(db, assigned_resolved, resolved_initial) {
+            return initial_type;
+        }
+        return narrow_enum_assignment_target(
+            db,
+            env,
+            resolved_initial,
+            assigned_resolved,
+            initial_type,
+        );
+    }
+
+    let Some(members) = union_members_for_type(db, resolved_initial) else {
+        return initial_type;
+    };
+    if members.len() <= 1 {
+        return initial_type;
+    }
+
+    let assigned_type = resolve_assignment_reduction_type(db, env, assigned_type);
+    let assigned_members = union_members_for_type(db, assigned_type);
+    let mut kept = Vec::new();
+    for &member in &members {
+        let assignable_to_member =
+            assigned_members.as_ref().is_some_and(|sources| {
+                sources
+                    .iter()
+                    .any(|&source| assignment_source_assignable_to_member(db, env, source, member))
+            }) || assignment_source_assignable_to_member(db, env, assigned_type, member);
+        if assignable_to_member {
+            kept.push(member);
+        }
+    }
+
+    if kept.is_empty() {
+        initial_type
+    } else if kept.len() == 1 {
+        kept[0]
+    } else {
+        union_types(db, kept)
+    }
+}
+
 pub(crate) fn are_types_mutually_subtype(
     db: &dyn TypeDatabase,
     left: TypeId,
@@ -249,4 +423,61 @@ fn types_are_subtype_with_env(
         tsz_solver::RelationContext::default(),
     )
     .is_related()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tsz_solver::TypeInterner;
+
+    #[test]
+    fn assignment_reduction_preserves_top_like_initial_types() {
+        let db = TypeInterner::new();
+
+        assert_eq!(
+            narrow_assignment(&db, None, TypeId::ANY, TypeId::NUMBER),
+            TypeId::ANY
+        );
+        assert_eq!(
+            narrow_assignment(&db, None, TypeId::UNKNOWN, TypeId::NUMBER),
+            TypeId::UNKNOWN
+        );
+        assert_eq!(
+            narrow_assignment(&db, None, TypeId::ERROR, TypeId::NUMBER),
+            TypeId::ERROR
+        );
+    }
+
+    #[test]
+    fn assignment_reduction_keeps_non_union_initial_type() {
+        let db = TypeInterner::new();
+
+        assert_eq!(
+            narrow_assignment(&db, None, TypeId::STRING, TypeId::NUMBER),
+            TypeId::STRING
+        );
+    }
+
+    #[test]
+    fn assignment_reduction_filters_union_by_literal_source_assignability() {
+        let db = TypeInterner::new();
+        let initial = db.union(vec![TypeId::STRING, TypeId::NUMBER]);
+        let assigned = tsz_solver::type_queries::create_number_literal_type(&db, 42.0);
+
+        assert_eq!(
+            narrow_assignment(&db, None, initial, assigned),
+            TypeId::NUMBER
+        );
+    }
+
+    #[test]
+    fn assignment_reduction_keeps_original_union_when_no_member_matches() {
+        let db = TypeInterner::new();
+        let initial = db.union(vec![TypeId::STRING, TypeId::BOOLEAN]);
+
+        assert_eq!(
+            narrow_assignment(&db, None, initial, TypeId::NUMBER),
+            initial
+        );
+    }
 }

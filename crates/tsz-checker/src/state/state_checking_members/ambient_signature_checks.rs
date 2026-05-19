@@ -3,7 +3,7 @@
 //! For overload compatibility, signature utilities, and implicit-any return checks,
 //! see [`super::overload_compatibility`].
 
-use crate::context::TypingRequest;
+use crate::context::{TypingRequest, speculation::DiagnosticSpeculationSnapshot};
 use crate::query_boundaries::common::ContextualTypeContext;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -385,7 +385,7 @@ impl<'a> CheckerState<'a> {
             } else {
                 request.read().contextual_opt(None)
             };
-            let initializer_snap = self.ctx.snapshot_diagnostics();
+            let initializer_snap = DiagnosticSpeculationSnapshot::new(&self.ctx);
             let init_type = self.get_type_of_node_with_request(prop.initializer, &request);
             self.check_direct_class_expression_initializer(prop.initializer, &request);
             inferred_initializer_type = Some(init_type);
@@ -397,7 +397,7 @@ impl<'a> CheckerState<'a> {
                 && let Some(member_name) = self.get_member_name_display_text(prop.name)
             {
                 self.suppress_circular_initializer_relation_diagnostics(
-                    &initializer_snap,
+                    initializer_snap,
                     prop.initializer,
                 );
                 self.error_at_node_msg(

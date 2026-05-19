@@ -12,6 +12,7 @@ use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+use tsz_solver::computation::TypeResolver;
 use tsz_solver::{CachedPropertyType, TypeId};
 
 impl<'a> CheckerState<'a> {
@@ -613,7 +614,7 @@ impl<'a> CheckerState<'a> {
                 .is_none()
             {
                 let resolved_base = self.resolve_type_for_property_access(non_nullish_base);
-                let resolver_generation = tsz_solver::TypeResolver::resolver_generation(&self.ctx);
+                let resolver_generation = TypeResolver::resolver_generation(&self.ctx);
                 let cache_key = |base, name| (base, resolver_generation, name);
 
                 let cached_property_type = self

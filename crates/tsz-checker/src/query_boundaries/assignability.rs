@@ -1,7 +1,7 @@
 use tsz_common::Atom;
 use tsz_solver::{
     ObjectShape, PropertyInfo, QueryDatabase, SubtypeFailureReason, TypeDatabase, TypeId,
-    TypeResolver,
+    TypeResolver, TypeSubstitution,
 };
 
 pub(crate) use super::common::{contains_type_parameters, object_shape_for_type};
@@ -35,6 +35,50 @@ pub(crate) fn remapped_mapped_type_has_no_outer_type_params(
     type_id: TypeId,
 ) -> bool {
     tsz_solver::type_queries::remapped_mapped_type_has_no_outer_type_params(db, type_id)
+}
+
+/// Return an instantiated homomorphic mapped target that projects over `source`.
+///
+/// This preserves deferred targets such as `{ [P in keyof S]?: S[P] }` through
+/// checker-side assignability preparation so the solver relation can decide the
+/// mapped comparison structurally.
+pub(crate) fn homomorphic_mapped_projection_target<R: TypeResolver>(
+    db: &dyn QueryDatabase,
+    resolver: &R,
+    _source: TypeId,
+    target: TypeId,
+) -> Option<TypeId> {
+    let type_db = db.as_type_database();
+    let candidate = if tsz_solver::type_queries::get_mapped_type(type_db, target).is_some() {
+        target
+    } else if let Some(app) = tsz_solver::type_queries::get_type_application(type_db, target) {
+        let def_id = tsz_solver::type_queries::get_lazy_def_id(type_db, app.base)?;
+        let type_params = resolver.get_lazy_type_params(def_id)?;
+        if type_params.is_empty() {
+            return None;
+        }
+        let body = resolver.resolve_lazy(def_id, type_db)?;
+        let substitution = TypeSubstitution::from_args(type_db, &type_params, &app.args);
+        tsz_solver::instantiate_type_cached(type_db, Some(db), body, &substitution)
+    } else {
+        return None;
+    };
+
+    let mapped = tsz_solver::type_queries::get_mapped_type(type_db, candidate)?;
+    if mapped.name_type.is_some()
+        || mapped.optional_modifier == Some(tsz_solver::MappedModifier::Remove)
+    {
+        return None;
+    }
+
+    let mapped_source = tsz_solver::keyof_inner_type(type_db, mapped.constraint)?;
+    let (template_obj, template_idx) = tsz_solver::index_access_parts(type_db, mapped.template)?;
+    let idx_param = tsz_solver::type_param_info(type_db, template_idx)?;
+    if idx_param.name == mapped.type_param.name && template_obj == mapped_source {
+        Some(candidate)
+    } else {
+        None
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -293,6 +337,45 @@ pub(crate) fn has_recursive_type_parameter_constraint(
         info.constraint.is_some_and(|constraint| {
             tsz_solver::visitor::contains_type_parameter_named_shallow(db, constraint, info.name)
         })
+    })
+}
+
+/// Detect the `S[T1]` vs `S[T2]` mismatch pattern where T1/T2 are
+/// distinct type parameters and the object halves share a TypeId.
+/// Returns the failure reason that elaborates the TS2322 + TS5075
+/// chain, or `None` for any other pair.
+///
+/// Operates on the unevaluated pair so callers can short-circuit
+/// before `prepare_assignability_inputs` collapses both halves to
+/// the same evaluated shape. The same-object check is intentionally
+/// strict (TypeId equality) here; deeper unification is owned by the
+/// solver-side recognizer to keep this boundary helper free of a fresh
+/// subtype context.
+pub(crate) fn index_access_pair_distinct_type_param_keys_failure_reason(
+    db: &dyn TypeDatabase,
+    def_store: &tsz_solver::def::DefinitionStore,
+    source: TypeId,
+    target: TypeId,
+) -> Option<SubtypeFailureReason> {
+    let (s_obj, s_idx) = tsz_solver::index_access_parts(db, source)?;
+    let (t_obj, t_idx) = tsz_solver::index_access_parts(db, target)?;
+    if s_obj != t_obj {
+        return None;
+    }
+    tsz_solver::type_param_info(db, s_idx)?;
+    let t_param = tsz_solver::type_param_info(db, t_idx)?;
+    let same_identity = s_idx == t_idx
+        || def_store
+            .find_def_for_type(s_idx)
+            .zip(def_store.find_def_for_type(t_idx))
+            .is_some_and(|(source_def, target_def)| source_def == target_def);
+    if same_identity {
+        return None;
+    }
+    Some(SubtypeFailureReason::IndexAccessTypeParameterMismatch {
+        source_param: s_idx,
+        target_param: t_idx,
+        target_constraint: t_param.constraint,
     })
 }
 

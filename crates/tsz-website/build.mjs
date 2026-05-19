@@ -11,8 +11,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { execSync } from "node:child_process";
 import { marked } from "marked";
+import { computeLocSplit, fmt, unavailableLocSplit } from "./src/_data/loc.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..");
 const WEBSITE = import.meta.dirname;
@@ -49,10 +49,6 @@ function readIfExists(p) {
 function readJsonIfExists(p) {
   const text = readIfExists(p);
   return text ? JSON.parse(text) : null;
-}
-
-function fmt(n) {
-  return Number(n).toLocaleString("en-US");
 }
 
 function tszSpeedupScore(row) {
@@ -176,24 +172,9 @@ function extractMetrics() {
 
 function computeLoc() {
   try {
-    const output = execSync(
-      `find crates -path '*/target/*' -prune -o -path '*/src/*' -type f -name '*.rs' -print | xargs wc -l`,
-      { cwd: ROOT, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 }
-    );
-    const lines = output.trim().split("\n");
-    const totalLine = lines[lines.length - 1];
-    const totalMatch = totalLine.match(/^\s*(\d+)\s+total/);
-    const total = totalMatch ? Number(totalMatch[1]) : 0;
-
-    // Count crates
-    const cratesDir = path.join(ROOT, "crates");
-    const crates = fs.readdirSync(cratesDir, { withFileTypes: true })
-      .filter(d => d.isDirectory())
-      .length;
-
-    return { total: fmt(total), num_crates: String(crates) };
+    return computeLocSplit(ROOT);
   } catch {
-    return { total: "N/A", num_crates: "N/A" };
+    return unavailableLocSplit();
   }
 }
 
@@ -361,7 +342,7 @@ function build() {
 
   console.log("  Computing LOC...");
   const loc = computeLoc();
-  console.log(`    Total: ${loc.total} lines, ${loc.num_crates} crates`);
+  console.log(`    Total: ${loc.total_loc} lines (${loc.source_loc} source, ${loc.test_loc} test), ${loc.num_crates} crates`);
 
   console.log("  Loading benchmarks...");
   const benchData = loadBenchmarks();
@@ -370,7 +351,9 @@ function build() {
   // Template variables
   const vars = {
     ...metrics,
-    total_loc: loc.total,
+    total_loc: loc.total_loc,
+    source_loc: loc.source_loc,
+    test_loc: loc.test_loc,
     num_crates: loc.num_crates,
     benchmark_charts: benchmarkCharts,
   };
