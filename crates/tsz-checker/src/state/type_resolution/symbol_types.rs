@@ -989,28 +989,51 @@ impl<'a> CheckerState<'a> {
             return merged;
         }
 
-        // Cross-arena lib: precompute helpers and type-param push use self.ctx.arena, which is the
-        // wrong arena for each remote lib file. The merged lowering owns these facts via per-declaration
-        // arena traversal and get_well_known_symbol_name; skip them here to preserve the invariant.
-        let is_cross_arena_lib =
-            Self::in_cross_arena_interface_delegation() && !self.ctx.lib_contexts.is_empty();
+        // When cross-arena delegation is active, `declarations` contains NodeIndex values
+        // from multiple lib arenas (e.g., Map spans es2015.collection, es2015.iterable,
+        // esnext.collection). NodeIndex spaces are per-arena, so every prepass and the
+        // final lowering must read each declaration from its owning arena.
+        let cross_arena_lib_contexts = self.ctx.lib_contexts.clone();
+        let cross_arena_declarations =
+            if Self::in_cross_arena_interface_delegation() && !self.ctx.lib_contexts.is_empty() {
+                let decls_with_arenas =
+                crate::types_domain::queries::lib_decls::collect_lib_decls_with_arenas_in_contexts(
+                    self.ctx.binder,
+                    sym_id,
+                    &declarations,
+                    self.ctx.arena,
+                    &cross_arena_lib_contexts,
+                    None,
+                );
+                crate::types_domain::queries::lib_decls::dedup_decl_arenas(&decls_with_arenas)
+            } else {
+                Vec::new()
+            };
 
-        let computed_names = if is_cross_arena_lib {
-            Default::default()
-        } else {
+        // Pre-compute computed property names that the lowering can't resolve from AST alone.
+        // This handles cases like `[k]` where k is a `const` unique symbol variable.
+        let computed_names = if cross_arena_declarations.is_empty() {
             self.precompute_computed_property_names(&declarations)
-        };
-        let computed_symbol_names = if is_cross_arena_lib {
-            Default::default()
         } else {
-            self.precompute_symbol_named_computed_property_names(&declarations)
+            self.precompute_computed_property_names_in_arenas(&cross_arena_declarations)
         };
-        let prewarmed_type_params = self.prewarm_member_type_reference_params(&declarations);
+        let computed_symbol_names = if cross_arena_declarations.is_empty() {
+            self.precompute_symbol_named_computed_property_names(&declarations)
+        } else {
+            self.precompute_symbol_named_computed_property_names_in_arenas(
+                &cross_arena_declarations,
+            )
+        };
+        let prewarmed_type_params = if cross_arena_declarations.is_empty() {
+            self.prewarm_member_type_reference_params(&declarations)
+        } else {
+            self.prewarm_member_type_reference_params_in_arenas(&cross_arena_declarations)
+        };
 
         let first_decl = declarations.first().copied().unwrap_or(NodeIndex::NONE);
         let mut params = Vec::new();
         let mut updates = Vec::new();
-        if !is_cross_arena_lib
+        if cross_arena_declarations.is_empty()
             && first_decl.is_some()
             && let Some(node) = self.ctx.arena.get(first_decl)
             && let Some(interface) = self.ctx.arena.get_interface(node)
@@ -1069,23 +1092,19 @@ impl<'a> CheckerState<'a> {
         } else {
             lowering
         };
-        let interface_type = if is_cross_arena_lib {
-            let decls_with_arenas = collect_lib_decls_with_arenas_in_contexts(
-                self.ctx.binder,
-                sym_id,
-                &declarations,
-                self.ctx.arena,
-                &self.ctx.lib_contexts,
-                None,
-            );
-            let deduped = dedup_decl_arenas(&decls_with_arenas);
-            lowering
-                .lower_merged_interface_declarations_with_symbol(&deduped, Some(sym_id))
-                .0
-        } else {
+        let interface_type = if cross_arena_declarations.is_empty() {
             lowering.lower_interface_declarations_with_symbol(&declarations, sym_id)
+        } else {
+            lowering
+                .lower_merged_interface_declarations_with_symbol(
+                    &cross_arena_declarations,
+                    Some(sym_id),
+                )
+                .0
         };
-        // Seed partial type to break recursive re-entry before heritage merging.
+        // Seed a partial structural interface type before heritage merging so
+        // recursive interface/namespace resolution can reuse the current shape
+        // instead of re-entering the full lowering + heritage pipeline.
         self.ctx
             .symbol_instance_types
             .insert(sym_id, interface_type);
@@ -1359,9 +1378,10 @@ impl<'a> CheckerState<'a> {
                 // current arena. This handles cases like `[FOO_SYMBOL]?: number`
                 // inside `declare global { interface Promise<T> { ... } }`, where
                 // TypeLowering alone can't resolve the computed expression.
-                let computed_names = self.precompute_computed_property_names(&symbol.declarations);
-                let computed_symbol_names =
-                    self.precompute_symbol_named_computed_property_names(&symbol.declarations);
+                let computed_names =
+                    self.precompute_computed_property_names_in_arenas(&decls_with_arenas);
+                let computed_symbol_names = self
+                    .precompute_symbol_named_computed_property_names_in_arenas(&decls_with_arenas);
 
                 // Push type params, lower interface, pop type params.
                 // push_type_parameters uses self.ctx.arena (user arena) to read
