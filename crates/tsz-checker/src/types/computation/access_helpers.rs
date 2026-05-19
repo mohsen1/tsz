@@ -2,6 +2,7 @@
 //! numeric index extraction, and union/tuple diagnostic support.
 
 use crate::query_boundaries::type_checking_utilities as query;
+use crate::query_boundaries::type_computation::access as access_query;
 use crate::state::{CheckerState, EnumKind};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -360,7 +361,7 @@ impl<'a> CheckerState<'a> {
                 .is_some()
             || crate::query_boundaries::common::is_index_access_type(self.ctx.types, index_type)
             || crate::query_boundaries::common::is_conditional_type(self.ctx.types, index_type)
-            || crate::query_boundaries::common::is_generic_application(self.ctx.types, index_type)
+            || access_query::is_generic_application(self.ctx.types, index_type)
             || self.intersection_has_generic_index(index_type)
     }
 
@@ -441,36 +442,29 @@ impl<'a> CheckerState<'a> {
         index_type: TypeId,
         object_type: TypeId,
     ) -> bool {
-        if let Some(members) =
-            crate::query_boundaries::common::intersection_members(self.ctx.types, index_type)
-        {
+        if let Some(members) = access_query::intersection_members(self.ctx.types, index_type) {
             return members.iter().copied().any(|member| {
                 self.index_type_parameter_constraint_targets_object(member, object_type)
             });
         }
 
-        if let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, index_type)
-        {
+        if let Some(members) = access_query::union_members(self.ctx.types, index_type) {
             return members.iter().copied().any(|member| {
                 self.index_type_parameter_constraint_targets_object(member, object_type)
             });
         }
 
-        if let Some(param_info) =
-            crate::query_boundaries::common::type_param_info(self.ctx.types, index_type)
+        if let Some(param_info) = access_query::type_param_info(self.ctx.types, index_type)
             && let Some(constraint) = param_info.constraint
         {
-            if let Some(keyof_inner) =
-                crate::query_boundaries::common::keyof_inner_type(self.ctx.types, constraint)
-            {
+            if let Some(keyof_inner) = access_query::keyof_inner_type(self.ctx.types, constraint) {
                 return self.same_type_or_evaluates_to(keyof_inner, object_type);
             }
 
             return self.index_type_parameter_constraint_targets_object(constraint, object_type);
         }
 
-        if crate::query_boundaries::common::is_generic_application(self.ctx.types, index_type) {
+        if access_query::is_generic_application(self.ctx.types, index_type) {
             let evaluated = self.evaluate_type_with_env(index_type);
             if evaluated != index_type && evaluated != TypeId::ERROR {
                 return self.index_type_parameter_constraint_targets_object(evaluated, object_type);

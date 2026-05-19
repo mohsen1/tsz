@@ -328,6 +328,24 @@ pub(crate) fn contains_any_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool 
     tsz_solver::type_queries::contains_any_type(db, type_id)
 }
 
+pub(crate) fn type_param_info(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_solver::TypeParamInfo> {
+    tsz_solver::type_param_info(db, type_id)
+}
+
+pub(crate) fn index_access_types(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<(TypeId, TypeId)> {
+    tsz_solver::type_queries::get_index_access_types(db, type_id)
+}
+
+pub(crate) fn keyof_inner_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    tsz_solver::keyof_inner_type(db, type_id)
+}
+
 pub(crate) fn has_recursive_type_parameter_constraint(
     db: &dyn TypeDatabase,
     type_id: TypeId,

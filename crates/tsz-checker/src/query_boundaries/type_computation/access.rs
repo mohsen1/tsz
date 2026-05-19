@@ -11,6 +11,29 @@ pub(crate) fn is_valid_spread_type(db: &dyn TypeDatabase, type_id: TypeId) -> bo
     tsz_solver::type_queries::is_valid_spread_type(db, type_id)
 }
 
+pub(crate) fn intersection_members(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<TypeId>> {
+    tsz_solver::type_queries::get_intersection_members(db, type_id)
+}
+
+pub(crate) fn union_members(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<TypeId>> {
+    tsz_solver::type_queries::get_union_members(db, type_id)
+}
+
+pub(crate) fn type_param_info(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_solver::TypeParamInfo> {
+    tsz_solver::type_param_info(db, type_id)
+}
+
+pub(crate) fn keyof_inner_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    tsz_solver::keyof_inner_type(db, type_id)
+}
+
+pub(crate) fn is_generic_application(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::query::is_generic_application(db, type_id)
+}
+
 pub(crate) struct GenericIndexedAccessSubstitution {
     pub(crate) index_access: TypeId,
     pub(crate) type_to_evaluate: TypeId,

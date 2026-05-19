@@ -5,9 +5,10 @@ use crate::query_boundaries::assignability::{
     AssignabilityEvalKind, AssignabilityQueryInputs, are_types_overlapping_with_env,
     assignability_cache_key, check_application_variance_assignability,
     classify_for_assignability_eval, contains_free_infer_types, get_allowed_keys, get_keyof_type,
-    get_string_literal_value, get_union_members, is_assignable_bivariant_with_resolver,
-    is_assignable_with_overrides, is_relation_cacheable, is_type_parameter_like,
-    keyof_object_properties, map_compound_members,
+    get_string_literal_value, get_union_members, index_access_types,
+    is_assignable_bivariant_with_resolver, is_assignable_with_overrides, is_relation_cacheable,
+    is_type_parameter_like, keyof_inner_type, keyof_object_properties, map_compound_members,
+    type_param_info,
 };
 use crate::query_boundaries::common::{collect_lazy_def_ids, collect_type_queries};
 use crate::state::{CheckerOverrideProvider, CheckerState};
@@ -2722,16 +2723,14 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        if crate::query_boundaries::common::type_param_info(self.ctx.types, source).is_some()
-            && crate::query_boundaries::common::type_param_info(self.ctx.types, target).is_some()
+        if type_param_info(self.ctx.types, source).is_some()
+            && type_param_info(self.ctx.types, target).is_some()
         {
             return self.type_parameter_identities_match_for_index_access(source, target);
         }
 
-        if let Some((source_object, source_index)) =
-            crate::query_boundaries::common::index_access_types(self.ctx.types, source)
-            && let Some((target_object, target_index)) =
-                crate::query_boundaries::common::index_access_types(self.ctx.types, target)
+        if let Some((source_object, source_index)) = index_access_types(self.ctx.types, source)
+            && let Some((target_object, target_index)) = index_access_types(self.ctx.types, target)
         {
             return self.index_access_object_identities_match(source_object, target_object)
                 && self.index_access_type_surfaces_match(source_index, target_index);
@@ -2754,14 +2753,10 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        let Some(source_param) =
-            crate::query_boundaries::common::type_param_info(self.ctx.types, source)
-        else {
+        let Some(source_param) = type_param_info(self.ctx.types, source) else {
             return false;
         };
-        let Some(target_param) =
-            crate::query_boundaries::common::type_param_info(self.ctx.types, target)
-        else {
+        let Some(target_param) = type_param_info(self.ctx.types, target) else {
             return false;
         };
         if source_param.name != target_param.name {
@@ -2782,24 +2777,20 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        if crate::query_boundaries::common::type_param_info(self.ctx.types, source).is_some()
-            || crate::query_boundaries::common::type_param_info(self.ctx.types, target).is_some()
+        if type_param_info(self.ctx.types, source).is_some()
+            || type_param_info(self.ctx.types, target).is_some()
         {
             return self.type_parameter_identities_match_for_index_access(source, target);
         }
 
-        if let Some(source_inner) =
-            crate::query_boundaries::common::keyof_inner_type(self.ctx.types, source)
-            && let Some(target_inner) =
-                crate::query_boundaries::common::keyof_inner_type(self.ctx.types, target)
+        if let Some(source_inner) = keyof_inner_type(self.ctx.types, source)
+            && let Some(target_inner) = keyof_inner_type(self.ctx.types, target)
         {
             return self.index_access_type_surfaces_match(source_inner, target_inner);
         }
 
-        if let Some((source_object, source_index)) =
-            crate::query_boundaries::common::index_access_types(self.ctx.types, source)
-            && let Some((target_object, target_index)) =
-                crate::query_boundaries::common::index_access_types(self.ctx.types, target)
+        if let Some((source_object, source_index)) = index_access_types(self.ctx.types, source)
+            && let Some((target_object, target_index)) = index_access_types(self.ctx.types, target)
         {
             return self.index_access_object_identities_match(source_object, target_object)
                 && self.index_access_type_surfaces_match(source_index, target_index);
