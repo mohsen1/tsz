@@ -59,7 +59,7 @@ impl<'a> FileRenameProvider<'a> {
     /// for filtering to only those that actually reference the renamed file,
     /// since that requires knowing the module resolution context.
     pub fn find_import_specifier_nodes(&self, _root: NodeIndex) -> Vec<ImportLocation> {
-        let mut result = Vec::new();
+        let mut result = Vec::with_capacity(self.arena.nodes.len());
 
         // In the flat NodeArena structure, we do a simple linear scan of all nodes
         // This is efficient because NodeArena is contiguous in memory
