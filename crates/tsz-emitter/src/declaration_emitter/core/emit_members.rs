@@ -275,8 +275,8 @@ impl<'a> DeclarationEmitter<'a> {
                 .or_else(|| self.get_type_via_symbol_for_func(method_idx, method_name))
                 .or_else(|| cache.node_types.get(&method_idx.0).copied());
 
-            // With type params in scope, the body-text fallback lacks outer-param context and
-            // would produce `unknown` for every type parameter.
+            // When the selected return type mentions a scoped type parameter, the body-text
+            // fallback lacks outer-param context and would produce `unknown` for it.
             let all_param_nodes: Vec<NodeIndex> = self
                 .current_class_type_params
                 .iter()
@@ -288,7 +288,6 @@ impl<'a> DeclarationEmitter<'a> {
                         .flat_map(|p| p.nodes.iter().copied()),
                 )
                 .collect();
-            let has_type_params = !all_param_nodes.is_empty();
 
             if let Some(method_type_id) = method_type_id {
                 if let Some(predicate_text) = self
@@ -305,7 +304,9 @@ impl<'a> DeclarationEmitter<'a> {
                         && self.body_returns_void(method_body)
                     {
                         self.write(": void");
-                    } else if has_type_params {
+                    } else if self
+                        .type_mentions_scoped_type_param_nodes(return_type_id, &all_param_nodes)
+                    {
                         self.write(": ");
                         let text = self.print_type_id_with_outer_type_param_nodes(
                             return_type_id,
@@ -328,7 +329,8 @@ impl<'a> DeclarationEmitter<'a> {
                         self.write(": ");
                         self.write(&self.print_type_id(return_type_id));
                     }
-                } else if has_type_params
+                } else if self
+                    .type_mentions_scoped_type_param_nodes(method_type_id, &all_param_nodes)
                     && method_type_id != tsz_solver::types::TypeId::ANY
                     && method_type_id != tsz_solver::types::TypeId::UNKNOWN
                 {
@@ -384,6 +386,49 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(": any");
             }
         }
+    }
+
+    fn type_mentions_scoped_type_param_nodes(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+        param_nodes: &[NodeIndex],
+    ) -> bool {
+        if param_nodes.is_empty() {
+            return false;
+        }
+        let Some(interner) = self.type_interner else {
+            return false;
+        };
+
+        let mut param_type_ids = Vec::new();
+        if let Some(cache) = &self.type_cache {
+            param_type_ids.extend(
+                param_nodes
+                    .iter()
+                    .filter_map(|param_idx| cache.node_types.get(&param_idx.0).copied())
+                    .filter(|param_type_id| {
+                        tsz_solver::visitor::type_param_info(interner, *param_type_id).is_some()
+                    }),
+            );
+        }
+        if param_type_ids.iter().any(|param_type_id| {
+            tsz_solver::visitor::contains_type_by_id(interner, type_id, *param_type_id)
+        }) {
+            return true;
+        }
+
+        param_nodes.iter().any(|param_idx| {
+            self.arena
+                .get(*param_idx)
+                .and_then(|param_node| self.arena.get_type_parameter(param_node))
+                .and_then(|param| self.get_identifier_text(param.name))
+                .is_some_and(|name_text| {
+                    let name = interner.intern_string(&name_text);
+                    tsz_solver::visitor::contains_type_parameter_named_shallow(
+                        interner, type_id, name,
+                    )
+                })
+        })
     }
 
     pub(in crate::declaration_emitter) fn emit_method_function_type_return(
