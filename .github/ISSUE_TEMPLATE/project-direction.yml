@@ -1,0 +1,106 @@
+name: Project Direction Work
+description: File roadmap, coordination, project corpus, or architecture-direction work.
+title: "<area>: <intent>"
+labels:
+  - Project Direction
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for durable project-direction work: roadmap assumptions, owner-track coordination, project corpus health, architecture gates, or intake policy.
+
+        These fields improve issue intake only. They do not replace the `Project Corpus Impact` section required in every PR body.
+
+        Before asking for a compiler or harness fix, read the anti-hardcoding rules in `AGENTS.md` and state the structural rule instead of a single-test symptom.
+  - type: input
+    id: agent
+    attributes:
+      label: AgentName
+      description: Sign the issue with your stable AgentName.
+      placeholder: M1PD1
+    validations:
+      required: true
+  - type: dropdown
+    id: owner-track
+    attributes:
+      label: Owner Track
+      description: Pick the closest owning track. Use n/a only for docs-only, coordination-only, or test-harness-only work with no compiler owner.
+      options:
+        - solver
+        - checker
+        - parser
+        - binder
+        - scanner
+        - emitter
+        - transforms
+        - LSP/WASM
+        - conformance harness
+        - project corpus
+        - docs/coordination
+        - n/a
+    validations:
+      required: true
+  - type: input
+    id: project-row
+    attributes:
+      label: Project Corpus Row
+      description: Name the affected project corpus row, or write n/a for docs-only or harness-only work.
+      placeholder: vite-project, type-challenges-solutions-project, or n/a
+    validations:
+      required: true
+  - type: input
+    id: bug-family
+    attributes:
+      label: Bug Family
+      description: Name the behavior family or coordination family this issue belongs to. Use n/a only when there is no bug family.
+      placeholder: TS2322 assignability, emit DTS parity, WIP coordination, or n/a
+    validations:
+      required: true
+  - type: textarea
+    id: structural-rule
+    attributes:
+      label: Structural Rule
+      description: State the general rule. Avoid single-test names, filename checks, rendered-type strings, or user-chosen identifier names.
+      placeholder: "When <structural condition over syntax, symbols, and/or TypeId>, tsc <does X>; this change makes tsz <do X> too."
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence Artifact Or Command
+      description: Link the artifact or name the focused command that proves the issue. Use n/a for pure documentation or coordination work.
+      placeholder: "scripts/conformance/conformance-detail.json, python3 scripts/conformance/query-conformance.py --dashboard, or n/a"
+    validations:
+      required: true
+  - type: textarea
+    id: adjacent-cases
+    attributes:
+      label: Adjacent Cases
+      description: List at least three nearby cases that should share the same behavior. Use n/a for docs-only or coordination-only issues.
+      placeholder: |
+        - inline vs alias
+        - generic vs concrete
+        - direct vs nested wrapper
+    validations:
+      required: true
+  - type: textarea
+    id: non-goals
+    attributes:
+      label: Non-Goals
+      description: Name boundaries that should stay out of scope.
+      placeholder: |
+        - Do not update unrelated snapshots.
+        - Do not add single-test symptom patches.
+    validations:
+      required: true
+  - type: checkboxes
+    id: guardrails
+    attributes:
+      label: Guardrails
+      options:
+        - label: I checked open draft PRs, open PRs, recent merged PRs, and relevant issues for overlapping work.
+          required: true
+        - label: I read the anti-hardcoding rules in `AGENTS.md` and this issue is not asking for a single-test symptom patch.
+          required: true
+        - label: I understand that PRs still need their own `Project Corpus Impact` section even when this issue has project-row fields.
+          required: true
