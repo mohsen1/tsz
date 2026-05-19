@@ -9,8 +9,6 @@ TypeScript/tests/cases/compiler/computedPropertyBindingElementDeclarationNoCrash
 TypeScript/tests/cases/compiler/contextualTypeFunctionObjectPropertyIntersection.ts
 TypeScript/tests/cases/compiler/contextuallyTypedJsxAttribute2.tsx
 TypeScript/tests/cases/compiler/crossFileOverloadModifierConsistency.ts
-TypeScript/tests/cases/compiler/declarationEmitDestructuringObjectLiteralPattern.ts
-TypeScript/tests/cases/compiler/declarationEmitDestructuringObjectLiteralPattern2.ts
 TypeScript/tests/cases/compiler/declarationEmitMappedPrivateTypeTypeParameter.ts
 TypeScript/tests/cases/compiler/declarationsWithRecursiveInternalTypesProduceUniqueTypeParams.ts
 TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
@@ -39,6 +37,7 @@ TypeScript/tests/cases/compiler/reorderProperties.ts
 TypeScript/tests/cases/compiler/reverseMappedTypeContextualTypesPerElementOfTupleConstraint.ts
 TypeScript/tests/cases/compiler/reverseMappedTypeIntersectionConstraint.ts
 TypeScript/tests/cases/compiler/spyComparisonChecking.ts
+TypeScript/tests/cases/compiler/styledComponentsInstantiaionLimitNotReached.ts
 TypeScript/tests/cases/compiler/temporal.ts
 TypeScript/tests/cases/compiler/thislessFunctionsNotContextSensitive1.ts
 TypeScript/tests/cases/compiler/thislessFunctionsNotContextSensitive3.ts
@@ -56,14 +55,13 @@ TypeScript/tests/cases/conformance/jsx/tsxGenericAttributesType6.tsx
 TypeScript/tests/cases/conformance/node/esmModuleExports2.ts
 TypeScript/tests/cases/conformance/nonjsExtensions/declarationFileForHtmlFileWithinDeclarationFile.ts
 TypeScript/tests/cases/conformance/pedantic/noUncheckedIndexedAccessDestructuring.ts
-TypeScript/tests/cases/conformance/types/conditional/inferTypes1.ts
 TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccess.ts
 TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccessErrors.ts
 TypeScript/tests/cases/conformance/types/literal/templateLiteralTypes6.ts
 TypeScript/tests/cases/conformance/types/mapped/mappedTypeConstraints2.ts
 TypeScript/tests/cases/conformance/types/mapped/mappedTypes6.ts
+TypeScript/tests/cases/conformance/types/mapped/recursiveMappedTypes.ts
 TypeScript/tests/cases/conformance/types/members/indexSignatures1.ts
 TypeScript/tests/cases/conformance/types/spread/spreadUnion3.ts
 TypeScript/tests/cases/conformance/types/tuple/variadicTuples1.ts
-TypeScript/tests/cases/conformance/types/typeParameters/typeArgumentLists/instantiationExpressions.ts
 TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/unionAndIntersectionInference1.ts
