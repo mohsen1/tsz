@@ -664,6 +664,22 @@ impl<'a> DeclarationEmitter<'a> {
         scratch
     }
 
+    /// Scratch emitter pre-configured for emitting class members into the body
+    /// of an anonymous constructor object type (`{ new(...): { ...members... } }`).
+    /// Sets `indent_level` and `in_object_type_class_body = true` so that
+    /// property declarations use `: T` annotation form rather than `= value`
+    /// initializer form (initializer syntax is not allowed in object type
+    /// literals).
+    pub(in crate::declaration_emitter) fn scratch_object_type_body_emitter(
+        &self,
+        indent_level: u32,
+    ) -> DeclarationEmitter<'a> {
+        let mut scratch = self.scratch_declaration_emitter();
+        scratch.indent_level = indent_level;
+        scratch.in_object_type_class_body = true;
+        scratch
+    }
+
     pub(in crate::declaration_emitter) fn declaration_emittable_type_text(
         &self,
         initializer: NodeIndex,

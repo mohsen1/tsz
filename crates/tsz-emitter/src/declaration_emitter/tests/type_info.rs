@@ -1724,3 +1724,171 @@ import B = N;
         "Expected duplicate local aliases for the same namespace target to be ambiguous"
     );
 }
+
+// =============================================================================
+// Anonymous constructor object type body — property initializer syntax
+// =============================================================================
+//
+// Structural rule: when a function returns a class expression and the
+// declaration emit synthesizes an anonymous constructor object type
+// (`{ new (...args: any[]): { ...members... } }`), the body of that
+// constructor object type is an *object type literal*, not a class
+// declaration. Object type literals do not permit `name = value`
+// initializer syntax — only `name: T` annotation syntax. Member emit
+// must follow object-type-literal rules in that context.
+//
+// These tests cover at least two literal kinds (string, number, boolean)
+// and two binding-variable names so the structural fix is not keyed on
+// a particular identifier or literal value spelling.
+
+#[test]
+fn test_anon_ctor_object_type_readonly_string_literal_uses_colon_not_eq() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Constructor<T = {}> = new (...args: any[]) => T;
+function Tagged<B extends Constructor>(Base: B) {
+    return class extends Base {
+        readonly tag = "hello";
+    };
+}
+class Item {}
+export const TaggedItem = Tagged(Item);
+"#,
+    );
+
+    assert!(
+        output.contains("readonly tag: \"hello\""),
+        "Expected `readonly tag: \"hello\"` colon form in anonymous constructor object type: {output}"
+    );
+    assert!(
+        !output.contains("readonly tag = "),
+        "Expected no `=` initializer form in object type literal: {output}"
+    );
+}
+
+#[test]
+fn test_anon_ctor_object_type_readonly_number_literal_uses_colon_not_eq() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Constructor<T = {}> = new (...args: any[]) => T;
+function Stamped<C extends Constructor>(Source: C) {
+    return class extends Source {
+        readonly version = 42;
+        readonly count = 0;
+    };
+}
+class Doc {}
+export const StampedDoc = Stamped(Doc);
+"#,
+    );
+
+    assert!(
+        output.contains("readonly version: 42"),
+        "Expected number literal `readonly version: 42` colon form: {output}"
+    );
+    assert!(
+        output.contains("readonly count: 0"),
+        "Expected number literal `readonly count: 0` colon form: {output}"
+    );
+    assert!(
+        !output.contains("readonly version = ") && !output.contains("readonly count = "),
+        "Expected no `=` initializer form for object-type-literal numeric properties: {output}"
+    );
+}
+
+#[test]
+fn test_anon_ctor_object_type_readonly_boolean_literal_uses_colon_not_eq() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Constructor<T = {}> = new (...args: any[]) => T;
+function Flagged<TBase extends Constructor>(Base: TBase) {
+    return class extends Base {
+        readonly enabled = true;
+        readonly hidden = false;
+    };
+}
+class Widget {}
+export const FlaggedWidget = Flagged(Widget);
+"#,
+    );
+
+    assert!(
+        output.contains("readonly enabled: true"),
+        "Expected `readonly enabled: true` colon form: {output}"
+    );
+    assert!(
+        output.contains("readonly hidden: false"),
+        "Expected `readonly hidden: false` colon form: {output}"
+    );
+    assert!(
+        !output.contains("readonly enabled = ") && !output.contains("readonly hidden = "),
+        "Expected no `=` initializer form for object-type-literal boolean properties: {output}"
+    );
+}
+
+#[test]
+fn test_anon_ctor_object_type_static_readonly_literal_uses_colon_not_eq() {
+    // Static members emitted into the constructor object type's outer
+    // intersection arm (`{ new(...): { ... }; readonly STATIC_NAME: ... }`)
+    // are also in object-type-literal context and must use `:` form.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Constructor<T = {}> = new (...args: any[]) => T;
+function Branded<B extends Constructor>(Base: B) {
+    return class extends Base {
+        static readonly BRAND = "MyBrand";
+        static readonly VERSION = 1;
+    };
+}
+class Thing {}
+export const BrandedThing = Branded(Thing);
+"#,
+    );
+
+    assert!(
+        output.contains("readonly BRAND: \"MyBrand\""),
+        "Expected static `readonly BRAND: \"MyBrand\"` colon form: {output}"
+    );
+    assert!(
+        output.contains("readonly VERSION: 1"),
+        "Expected static `readonly VERSION: 1` colon form: {output}"
+    );
+    assert!(
+        !output.contains("readonly BRAND = ") && !output.contains("readonly VERSION = "),
+        "Expected no `=` initializer form for static members in object type literal: {output}"
+    );
+}
+
+#[test]
+fn test_top_level_class_declaration_still_uses_eq_initializer_form() {
+    // Negative case: regular class declarations (not inside an anonymous
+    // constructor object type) must still emit `readonly name = value`
+    // to match tsc's class-declaration emit, so the fix does not over-apply.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export class Direct {
+    readonly tag = "hello";
+    readonly version = 42;
+    readonly enabled = true;
+    static readonly BRAND = "MyBrand";
+}
+"#,
+    );
+
+    assert!(
+        output.contains("readonly tag = \"hello\""),
+        "Expected top-level class to keep `readonly tag = \"hello\"` initializer form: {output}"
+    );
+    assert!(
+        output.contains("readonly version = 42"),
+        "Expected top-level class to keep `readonly version = 42` initializer form: {output}"
+    );
+    assert!(
+        output.contains("readonly enabled = true"),
+        "Expected top-level class to keep `readonly enabled = true` initializer form: {output}"
+    );
+    assert!(
+        output.contains("readonly BRAND = \"MyBrand\""),
+        "Expected top-level class to keep `static readonly BRAND = \"MyBrand\"`: {output}"
+    );
+}
