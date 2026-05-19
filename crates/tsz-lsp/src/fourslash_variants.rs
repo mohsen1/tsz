@@ -1,10 +1,9 @@
 //! Shape-variant generator for fourslash fixtures.
 //!
-//! Answers `docs/plan/LSP_ROADMAP.md` open question 5. Per `CLAUDE.md` §25,
-//! a fourslash test must not assert behavior that only holds for the
-//! literal identifier names in its fixture. This module is the missing
-//! tooling: opt in by calling `shape_variants(source, &[...])` and running
-//! the same assertion against each generated source.
+//! Per `CLAUDE.md` §25, a fourslash test must not assert behavior that only
+//! holds for the literal identifier names in its fixture. This module is the
+//! missing tooling: opt in by calling `shape_variants(source, &[...])` and
+//! running the same assertion against each labeled generated source.
 //!
 //! ## Preservation contract
 //!
@@ -49,6 +48,14 @@ pub struct ShapeVariant {
     pub path_renames: &'static [(&'static str, &'static str)],
 }
 
+/// One generated fourslash source and the label that should be reported if
+/// assertions against that source fail.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShapeVariantSource {
+    pub label: &'static str,
+    pub source: String,
+}
+
 /// Generate the original source plus one rewritten copy per variant.
 ///
 /// The first element of the result is always the original source. Each
@@ -64,11 +71,17 @@ pub struct ShapeVariant {
 /// this when the test specifically asserts a built-in name such as
 /// `Promise`, `Iterable`, or a known lib path; those names are not user-
 /// chosen and renaming them is meaningless.
-pub fn shape_variants(source: &str, variants: &[ShapeVariant]) -> Vec<String> {
+pub fn shape_variants(source: &str, variants: &[ShapeVariant]) -> Vec<ShapeVariantSource> {
     let mut out = Vec::with_capacity(variants.len() + 1);
-    out.push(source.to_string());
+    out.push(ShapeVariantSource {
+        label: "original",
+        source: source.to_string(),
+    });
     for v in variants {
-        out.push(apply_variant(source, v));
+        out.push(ShapeVariantSource {
+            label: v.label,
+            source: apply_variant(source, v),
+        });
     }
     out
 }
@@ -360,8 +373,10 @@ mod tests {
         let src = "type T = number;";
         let outs = shape_variants(src, &[RENAME_T_TO_K]);
         assert_eq!(outs.len(), 2);
-        assert_eq!(outs[0], src);
-        assert_eq!(outs[1], "type K = number;");
+        assert_eq!(outs[0].label, "original");
+        assert_eq!(outs[0].source, src);
+        assert_eq!(outs[1].label, "rename_T_to_K");
+        assert_eq!(outs[1].source, "type K = number;");
     }
 
     #[test]

@@ -21,17 +21,29 @@
 //!    — must fail under at least one variant. This proves the generator
 //!    catches the class of bug §25 warns about.
 //!
-//! See `LSP_ROADMAP.md` open question 5 for the design rationale.
-
 use super::fourslash::FourslashTest;
-use super::fourslash_variants::{ShapeVariant, apply_variant, shape_variants};
+use super::fourslash_variants::{ShapeVariant, ShapeVariantSource, apply_variant, shape_variants};
+
+fn run_with_variant_label(variant: &ShapeVariantSource, f: impl FnOnce(&str)) {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&variant.source)));
+    if let Err(payload) = result {
+        let message = payload
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+            .unwrap_or("non-string panic payload");
+        panic!("shape variant `{}` failed: {message}", variant.label);
+    }
+}
 
 /// Run the `/*ref*/ -> /*def*/` go-to-definition assertion against the
 /// original source and against every renamed variant.
 fn assert_ref_resolves_to_def(source: &str, variants: &[ShapeVariant]) {
-    for src in shape_variants(source, variants) {
-        let mut t = FourslashTest::new(&src);
-        t.go_to_definition("ref").expect_at_marker("def");
+    for variant in shape_variants(source, variants) {
+        run_with_variant_label(&variant, |src| {
+            let mut t = FourslashTest::new(src);
+            t.go_to_definition("ref").expect_at_marker("def");
+        });
     }
 }
 
@@ -145,15 +157,17 @@ export const /*def*/value = 1;
 import { /*ref*/value } from './a';
 value;
 ";
-    for src in shape_variants(source, &RENAME_MODULE_A) {
-        let mut t = FourslashTest::from_content(&src);
-        // Sanity: marker file lookup is robust to the rename.
-        let def_file = t.marker_file("def");
-        assert!(
-            def_file == "a.ts" || def_file == "alpha.ts" || def_file == "omega.ts",
-            "unexpected def file after variant: {def_file}"
-        );
-        t.go_to_definition("ref").expect_at_marker("def");
+    for variant in shape_variants(source, &RENAME_MODULE_A) {
+        run_with_variant_label(&variant, |src| {
+            let mut t = FourslashTest::from_content(src);
+            // Sanity: marker file lookup is robust to the rename.
+            let def_file = t.marker_file("def");
+            assert!(
+                def_file == "a.ts" || def_file == "alpha.ts" || def_file == "omega.ts",
+                "unexpected def file after variant: {def_file}"
+            );
+            t.go_to_definition("ref").expect_at_marker("def");
+        });
     }
 }
 
