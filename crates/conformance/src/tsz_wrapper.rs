@@ -3,7 +3,7 @@
 //! Provides a simple API to compile TypeScript code and extract error codes.
 
 use crate::compiler_options::canonical_option_name;
-use crate::parity_fingerprints::{classify_parity, MatchScope, ParityAction};
+use crate::parity::fingerprints::{classify_parity, MatchScope, ParityAction};
 use crate::tsc_results::DiagnosticFingerprint;
 use std::collections::HashMap;
 use std::path::Path;
