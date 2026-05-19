@@ -61,11 +61,7 @@ impl<'a> CodeActionProvider<'a> {
 
         // Sort them
         let mut sorted = specifier_texts.clone();
-        sorted.sort_by(|a, b| {
-            let a_lower = a.to_lowercase();
-            let b_lower = b.to_lowercase();
-            a_lower.cmp(&b_lower)
-        });
+        sorted.sort_by_cached_key(|specifier| specifier.to_lowercase());
 
         // Check if already sorted
         if specifier_texts == sorted {
