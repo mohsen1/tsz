@@ -39,4 +39,5 @@ pub use code_action_provider::{
     CodeAction, CodeActionContext, CodeActionKind, CodeActionProvider, ImportCandidate,
     ImportCandidateKind,
 };
+#[cfg(test)]
 pub(crate) use code_action_quick_fixes::ADD_MISSING_AWAIT_TITLE;
