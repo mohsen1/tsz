@@ -488,3 +488,125 @@ const z = E[2];
         "Expected no errors for auto-increment enum reverse lookup, got: {diagnostics:?}"
     );
 }
+
+// ── Cross-enum nominal rejection via enum-member initializer (issue #8788) ──
+
+#[test]
+fn test_cross_enum_member_initializer_is_rejected() {
+    // Exact repro from issue #8788:
+    // `const a: A = A.Val` narrows `a` to the member type A.Val.
+    // That member must not be assignable to unrelated enum B. tsc: TS2322.
+    test_enum_assignability(
+        r"
+enum A { Val = 0 }
+enum B { Val = 0 }
+const a: A = A.Val;
+const b: B = a;
+",
+        1,
+    );
+}
+
+#[test]
+fn test_cross_enum_member_initializer_different_member_name() {
+    // Adjacent case: same structure but member name is `Member` instead of `Val`.
+    // The fix must not depend on the spelling of the member name.
+    test_enum_assignability(
+        r"
+enum P { Member = 0 }
+enum Q { Member = 0 }
+const p: P = P.Member;
+const q: Q = p;
+",
+        1,
+    );
+}
+
+#[test]
+fn test_cross_enum_member_initializer_auto_incremented() {
+    // Adjacent case: auto-incremented (no explicit initializer) members.
+    test_enum_assignability(
+        r"
+enum C { Alpha, Beta }
+enum D { Alpha, Beta }
+const c: C = C.Beta;
+const d: D = c;
+",
+        1,
+    );
+}
+
+#[test]
+fn test_cross_string_enum_member_initializer_is_rejected() {
+    // Adjacent case: string-valued enums. String enums are already nominally
+    // typed, but the member-initializer path must also reject cross-enum use.
+    test_enum_assignability(
+        r#"
+enum S1 { Hello = "hello" }
+enum S2 { Hello = "hello" }
+const s1: S1 = S1.Hello;
+const s2: S2 = s1;
+"#,
+        1,
+    );
+}
+
+#[test]
+fn test_cross_enum_whole_enum_typed_variable_is_rejected() {
+    // When the variable is typed as the whole enum (not narrowed to a member),
+    // cross-enum assignment must also emit TS2322.
+    test_enum_assignability(
+        r"
+enum E1 { Foo = 0 }
+enum E2 { Foo = 0 }
+declare const e1: E1;
+const e2: E2 = e1;
+",
+        1,
+    );
+}
+
+#[test]
+fn test_cross_enum_function_parameter_is_rejected() {
+    // Cross-enum rejection must fire through function call sites (TS2345).
+    let diagnostics = collect_diagnostics(
+        r"
+enum Fruit { Apple = 0 }
+enum Color { Apple = 0 }
+function takeColor(_c: Color) {}
+const f: Fruit = Fruit.Apple;
+takeColor(f);
+",
+    );
+    let ts2345 = diagnostics.iter().filter(|d| d.0 == 2345).count();
+    assert_eq!(
+        ts2345, 1,
+        "Expected 1 TS2345 for cross-enum function argument, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_same_enum_member_initializer_is_allowed() {
+    // Positive baseline: assigning a member of the SAME enum must not error.
+    test_enum_assignability(
+        r"
+enum E { Foo = 0, Bar = 1 }
+const x: E = E.Foo;
+const y: E = x;
+",
+        0,
+    );
+}
+
+#[test]
+fn test_cross_enum_member_to_number_is_allowed() {
+    // Structural path: enum member (numeric) is still assignable to number.
+    test_enum_assignability(
+        r"
+enum Z { Item = 42 }
+const z: Z = Z.Item;
+const n: number = z;
+",
+        0,
+    );
+}
