@@ -4897,7 +4897,7 @@ fn test_auto_import_import_clause_sorts_before_regular_auto_import() {
 
 /// Different names for bound variables (`K` vs `X`, `Widget` vs `Component`)
 /// must not affect whether the import-clause sort text applies.  The rule is
-/// structural (cursor is inside NAMED_IMPORTS), not spelling-dependent.
+/// structural (cursor is inside `NAMED_IMPORTS`), not spelling-dependent.
 #[test]
 fn test_auto_import_import_clause_sort_text_name_independent() {
     for export_name in &["alphaExport", "betaExport", "gammaExport"] {
@@ -4908,7 +4908,7 @@ fn test_auto_import_import_clause_sort_text_name_independent() {
         );
         project.set_file(
             "/src/consumer.ts".to_string(),
-            format!("import {{  }} from './lib';"),
+            "import {  } from './lib';".to_string(),
         );
         let completions = project
             .get_completions("/src/consumer.ts", Position::new(0, 9))
