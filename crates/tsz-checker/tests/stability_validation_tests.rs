@@ -59,7 +59,7 @@ fn test_boolean_option_with_trailing_delimiters() {
 fn test_recursive_type_depth_limit() {
     // Validates that recursive type expansion has proper depth limits
     // This should not cause OOM or stack overflow
-    use tsz_solver::MAX_INSTANTIATION_DEPTH;
+    use tsz_solver::computation::MAX_INSTANTIATION_DEPTH;
 
     // Verify the limit is set to a reasonable value
     assert_in_range(

@@ -7,9 +7,10 @@
 //! `TypeData` variants.
 
 use crate::def::DefId;
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::type_queries::data::{get_callable_shape, get_object_shape};
 use crate::types::{IntrinsicKind, TemplateSpan, TypeData, TypeId};
-use crate::{TypeDatabase, TypeResolver, TypeSubstitution, instantiate_type};
+use crate::{TypeDatabase, TypeResolver};
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
 
