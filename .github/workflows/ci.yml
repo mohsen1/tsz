@@ -951,11 +951,13 @@ jobs:
           count=0
           echo "Polling for all ${EXPECTED} conformance-shard-* artifacts (max ${MAX_WAIT}s)..."
           while [ "$elapsed" -lt "$MAX_WAIT" ]; do
-            count=$(curl -sf \
+            # Fetch artifact count and shard job statuses in parallel
+            api_response=$(curl -sf \
               -H "Authorization: Bearer ${GH_TOKEN}" \
               -H "Accept: application/vnd.github+json" \
               "https://api.github.com/repos/${REPO}/actions/runs/${RUN_ID}/artifacts?per_page=100" \
-              2>/dev/null | python3 -c "
+              2>/dev/null || echo '{}')
+            count=$(echo "$api_response" | python3 -c "
           import sys, json
           data = json.load(sys.stdin)
           c = sum(1 for a in data.get('artifacts', []) if a['name'].startswith('conformance-shard-'))
@@ -966,11 +968,36 @@ jobs:
               echo "All ${EXPECTED} shard artifacts indexed after ${elapsed}s."
               break
             fi
+            # If shard jobs have all finished but artifacts are still missing,
+            # check for failed shard jobs (runner disconnect) to fail fast.
+            jobs_response=$(curl -sf \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${REPO}/actions/runs/${RUN_ID}/jobs?per_page=100" \
+              2>/dev/null || echo '{}')
+            shard_summary=$(echo "$jobs_response" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          jobs = [j for j in data.get('jobs', []) if j.get('name','').startswith('conformance-')]
+          done = [j for j in jobs if j.get('status') == 'completed']
+          failed = [j['name'] for j in done if j.get('conclusion') not in ('success','skipped')]
+          print(f'done={len(done)} failed={len(failed)} names={failed}')
+          " 2>/dev/null || echo 'done=0 failed=0 names=[]')
+            echo "  shard jobs: ${shard_summary}"
+            # If all shards are done and we still don't have all artifacts, a shard
+            # failed without uploading (infra kill). Stop waiting and let the
+            # aggregate script report the exact shard count it collected.
+            done_count=$(echo "$shard_summary" | grep -oP 'done=\K[0-9]+' || echo 0)
+            failed_count=$(echo "$shard_summary" | grep -oP 'failed=\K[0-9]+' || echo 0)
+            if [ "${done_count}" -ge "${EXPECTED}" ] && [ "${failed_count}" -gt 0 ]; then
+              echo "warning: ${failed_count} shard job(s) failed (runner issue); artifact(s) will not appear — proceeding with ${count} available" >&2
+              break
+            fi
             sleep "${INTERVAL}"
             elapsed=$(( elapsed + INTERVAL ))
           done
           if [ "${count}" -lt "${EXPECTED}" ]; then
-            echo "warning: only ${count}/${EXPECTED} shard artifacts indexed after ${MAX_WAIT}s; proceeding" >&2
+            echo "warning: only ${count}/${EXPECTED} shard artifacts indexed after ${elapsed}s; proceeding" >&2
           fi
       - name: Download conformance shard results
         uses: actions/download-artifact@v4
