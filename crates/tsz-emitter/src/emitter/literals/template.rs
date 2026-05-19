@@ -150,10 +150,13 @@ impl<'a> Printer<'a> {
 
     /// Fallback delimiter detection when the parser did not record a raw
     /// token slice (synthetic recovery literals). We check whether the node
-    /// range itself ends with the expected closing delimiter.
+    /// range itself ends with the expected closing delimiter. When the
+    /// printer has no `source_text` reference we have no signal either way —
+    /// preserve the prior behavior of assuming the literal is terminated so
+    /// non-emit consumers don't observe truncated output.
     fn template_part_has_terminated_close(&self, node: &Node, close: &str) -> bool {
         let Some(text) = self.source_text else {
-            return false;
+            return true;
         };
         let end = node.end as usize;
         if end == 0 || end > text.len() {
