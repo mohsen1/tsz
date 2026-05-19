@@ -1941,7 +1941,9 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             {
                 TypeId::VOID
             }
-            k if k == syntax_kind_ext::METHOD_SIGNATURE => {
+            k if k == syntax_kind_ext::METHOD_SIGNATURE
+                || k == syntax_kind_ext::PROPERTY_SIGNATURE =>
+            {
                 self.checker.get_type_of_interface_member_simple(idx)
             }
             k if k == syntax_kind_ext::PARAMETER => {

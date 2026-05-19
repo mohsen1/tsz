@@ -37,6 +37,7 @@ export { TypeFoo as ExportedFoo };
 type ImportedFoo = import("./dep").Foo;
 
 interface Api {
+    readonly value: number;
     method(value: number): number;
 }
 
@@ -94,5 +95,19 @@ class Holder {
         method_type,
         TypeId::VOID,
         "method signatures should not be swallowed by syntax-only node handling"
+    );
+
+    let property_signature = first_node_of_kind(&arena, syntax_kind_ext::PROPERTY_SIGNATURE);
+    let property_type =
+        ExpressionDispatcher::new(&mut checker).dispatch_type_computation(property_signature);
+    assert_ne!(
+        property_type,
+        TypeId::ERROR,
+        "property signatures reached through broad walks should resolve to their declared type"
+    );
+    assert_ne!(
+        property_type,
+        TypeId::VOID,
+        "property signatures should not be treated as syntax-only nodes"
     );
 }
