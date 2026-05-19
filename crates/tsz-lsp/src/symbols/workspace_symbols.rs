@@ -117,10 +117,7 @@ impl<'a> WorkspaceSymbolsProvider<'a> {
         }
 
         // Sort by: match kind (exact < prefix < substring), then alphabetically by name
-        matches.sort_by(|a, b| {
-            a.0.cmp(&b.0)
-                .then_with(|| a.1.name.to_lowercase().cmp(&b.1.name.to_lowercase()))
-        });
+        matches.sort_by_cached_key(|(match_kind, info)| (*match_kind, info.name.to_lowercase()));
 
         matches
             .into_iter()
