@@ -291,7 +291,7 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         "Checker query boundary: direct common quarantine references outside query_boundaries (#8225)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         ("crates/tsz-checker/src/query_boundaries/",),
-        3412,  # +2 for TypeEnvironment/TypeInterner in def_mapping.rs #[cfg(test)] block (#8269)
+        3410,
     ),
 ]
 
