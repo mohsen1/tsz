@@ -193,6 +193,7 @@ impl<'a> CodeActionProvider<'a> {
                     .arena
                     .get_identifier_text(enum_data.name)
                     .unwrap_or("E");
+                members.reserve(enum_data.members.nodes.len());
                 for &member_idx in &enum_data.members.nodes {
                     if let Some(member_node) = self.arena.get(member_idx)
                         && let Some(member) = self.arena.get_enum_member(member_node)

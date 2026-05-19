@@ -93,6 +93,7 @@ pub mod type_handles {
 /// These functions inspect types but don't modify or create them.
 /// Safe for any consumer to import directly.
 pub mod query {
+    pub use crate::caches::db::TypeStore;
     pub use crate::visitors::visitor::{
         application_id, array_element_type, bound_parameter_index, callable_shape_id,
         collect_enum_def_ids, collect_infer_bindings, collect_lazy_def_ids,
