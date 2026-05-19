@@ -104,7 +104,10 @@ impl<'a> CheckerState<'a> {
             ResolutionModeOverride::Require
         ) && self.module_is_esm(module_specifier)
             && self
-                .resolve_effective_module_exports(module_specifier)
+                .resolve_effective_module_exports_from_file(
+                    module_specifier,
+                    Some(self.ctx.current_file_idx),
+                )
                 .is_some_and(|exports| exports.has("module.exports"))
     }
 }

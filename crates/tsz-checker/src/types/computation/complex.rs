@@ -286,7 +286,10 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let ty = self
-            .resolve_effective_module_exports(module_name)
+            .resolve_effective_module_exports_from_file(
+                module_name,
+                Some(self.ctx.current_file_idx),
+            )
             .and_then(|exports| exports.get("module.exports"))
             .map(|sym_id| self.get_type_of_symbol(sym_id))?;
         if !crate::query_boundaries::common::has_construct_signatures(self.ctx.types, ty) {
