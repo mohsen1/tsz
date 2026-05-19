@@ -376,6 +376,7 @@ run_lint() {
     node --check "$script" || return $?
   done
   node scripts/ci/test-project-compile-guard-readiness-artifacts.mjs || return $?
+  node scripts/ci/test-pr-ownership-report.mjs || return $?
   node scripts/ci/test-type-challenges-assertion-classifier.mjs || return $?
   node scripts/ci/test-type-challenges-assertion-clean-row.mjs || return $?
   node scripts/ci/test-type-challenges-assertion-clean-subset.mjs || return $?
