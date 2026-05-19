@@ -6,7 +6,7 @@ mod unknown_callback;
 
 use crate::call_checker::CallableContext;
 use crate::context::TypingRequest;
-use crate::context::speculation::DiagnosticSpeculationSnapshot;
+use crate::context::speculation::{DiagnosticSpeculationSnapshot, ImplicitAnyClosureSnapshot};
 use crate::query_boundaries::checkers::call as call_checker;
 use crate::query_boundaries::checkers::call::is_type_parameter_type;
 use crate::query_boundaries::common;
@@ -2771,12 +2771,13 @@ impl<'a> CheckerState<'a> {
         // closures as already-checked and skips TS7006 — silencing real implicit-any errors
         // for parameters whose object-literal-property contextual type is never (e.g., an
         // extra key C in a negated-type-like constraint mapped type maps to never).
-        let speculation_snap = suppress_diagnostics.then(|| self.ctx.snapshot_diagnostics());
+        let speculation_snap =
+            suppress_diagnostics.then(|| DiagnosticSpeculationSnapshot::new(&self.ctx));
         let implicit_any_closure_snapshot =
-            suppress_diagnostics.then(|| self.ctx.implicit_any_checked_closures.clone());
+            suppress_diagnostics.then(|| ImplicitAnyClosureSnapshot::new(&self.ctx));
         let provisional_context_snap =
             (!suppress_diagnostics && apply_contextual && expected_is_unresolved)
-                .then(|| self.ctx.snapshot_diagnostics());
+                .then(|| DiagnosticSpeculationSnapshot::new(&self.ctx));
         let arg_type = self.get_type_of_node_with_request(arg_idx, &request);
 
         if check_excess_properties
@@ -2806,7 +2807,7 @@ impl<'a> CheckerState<'a> {
             is_context_sensitive_arg.then_some((node.pos, node.end))
         });
 
-        if let Some(snap) = &speculation_snap {
+        if let Some(snap) = speculation_snap {
             let object_literal_method_param_spans: Vec<(u32, u32)> = arg_node
                 .filter(|node| node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
                 .and_then(|node| self.ctx.arena.get_literal_expr(node))
@@ -2859,7 +2860,7 @@ impl<'a> CheckerState<'a> {
                 .and_then(|callback_node| self.ctx.arena.get_function(callback_node))
                 .and_then(|func| self.ctx.arena.get(func.body))
                 .is_some_and(|body_node| body_node.kind == syntax_kind_ext::BLOCK);
-            let diag_len = snap.diagnostics_len;
+            let diag_len = snap.checkpoint();
             // Build pre-existing diagnostic keys for exact dedup.
             let existing_diag_keys: Vec<_> = self
                 .ctx
@@ -2870,7 +2871,8 @@ impl<'a> CheckerState<'a> {
                 .collect();
             let mut seen_new_diags = FxHashSet::default();
             let mut seen_diag_keys = existing_diag_keys;
-            self.ctx.rollback_diagnostics_filtered(snap, |diag| {
+            let types = self.ctx.types;
+            snap.rollback_filtered(&mut self.ctx.diagnostic_state(), |diag| {
                 if Self::should_preserve_speculative_call_diagnostic(diag) {
                     return true;
                 }
@@ -2944,19 +2946,19 @@ impl<'a> CheckerState<'a> {
                         if et == TypeId::UNKNOWN || et == TypeId::ERROR || et == TypeId::ANY {
                             return false;
                         }
-                        if !common::contains_type_parameters(self.ctx.types, et) {
+                        if !common::contains_type_parameters(types, et) {
                             return true;
                         }
                         // Expected type has type params — check if it's a single type
                         // parameter with a concrete constraint (the contextual callable
                         // source for callback args).
-                        let constraint = common::type_parameter_constraint(self.ctx.types, et);
+                        let constraint = common::type_parameter_constraint(types, et);
                         constraint.is_some_and(|c| {
                             c != TypeId::UNKNOWN
                                 && c != TypeId::ERROR
                                 && c != TypeId::ANY
-                                && !common::contains_type_parameters(self.ctx.types, c)
-                                && !common::contains_infer_types(self.ctx.types, c)
+                                && !common::contains_type_parameters(types, c)
+                                && !common::contains_infer_types(types, c)
                         })
                     });
                 let is_concrete_callback_assignability = is_function_arg_diag
@@ -2982,8 +2984,8 @@ impl<'a> CheckerState<'a> {
                     && !matches!(
                         request.contextual_type,
                         Some(ctx_type)
-                            if common::contains_type_parameters(self.ctx.types, ctx_type)
-                                || common::contains_infer_types(self.ctx.types, ctx_type)
+                            if common::contains_type_parameters(types, ctx_type)
+                                || common::contains_infer_types(types, ctx_type)
                     )
                     && callback_body_spans
                         .iter()
@@ -3075,20 +3077,11 @@ impl<'a> CheckerState<'a> {
             // Restore implicit-any closure tracking to the pre-round2 state so the final
             // retry pass can re-emit TS7006 for closures whose diagnostics were suppressed.
             if let Some(snapshot) = implicit_any_closure_snapshot {
-                let contextual_closures: Vec<_> = self
-                    .ctx
-                    .implicit_any_contextual_closures
-                    .iter()
-                    .copied()
-                    .collect();
-                self.ctx.restore_implicit_any_closures(&snapshot);
-                self.ctx
-                    .implicit_any_checked_closures
-                    .extend(contextual_closures);
+                snapshot.restore_preserving_contextual(&mut self.ctx.speculation_state());
             }
         }
-        if let Some(snap) = &provisional_context_snap {
-            self.ctx.rollback_diagnostics_filtered(snap, |diag| {
+        if let Some(snap) = provisional_context_snap {
+            snap.rollback_filtered(&mut self.ctx.diagnostic_state(), |diag| {
                 Self::should_preserve_speculative_call_diagnostic(diag)
                     || !provisional_context_arg_span
                         .is_some_and(|(start, end)| diag.start >= start && diag.start < end)
