@@ -235,7 +235,7 @@ withTempDir((dir) => {
     }),
   );
   writeJson(
-    path.join(typeCompile, "type-challenges-test-cases-manifest.json"),
+    path.join(typeCompile, "test-cases", "type-challenges-test-cases-manifest.json"),
     manifest({
       id: "13",
       output: "questions/00013-warm-hello-world/test-cases.ts",

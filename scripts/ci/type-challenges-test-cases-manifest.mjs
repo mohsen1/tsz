@@ -89,6 +89,39 @@ function validateUniqueChallengeIds(entries) {
   }
 }
 
+function validateManifestPath(file, entries) {
+  const resolvedCompileDir = path.resolve(compileDir);
+  const resolvedManifestPath = path.resolve(file);
+  if (
+    resolvedManifestPath === resolvedCompileDir ||
+    !resolvedManifestPath.startsWith(`${resolvedCompileDir}${path.sep}`)
+  ) {
+    console.error(`error: test-case manifest path must stay inside compile directory: ${file}`);
+    process.exit(1);
+  }
+
+  const generatedOutputs = new Set(
+    entries.map((entry) => path.resolve(resolvedCompileDir, entry.output)),
+  );
+  if (generatedOutputs.has(resolvedManifestPath)) {
+    console.error(`error: test-case manifest path must not overwrite generated output: ${file}`);
+    process.exit(1);
+  }
+
+  if (fs.existsSync(resolvedManifestPath) && !fs.statSync(resolvedManifestPath).isFile()) {
+    console.error(`error: test-case manifest path is not a file: ${file}`);
+    process.exit(1);
+  }
+
+  const manifestDir = path.dirname(resolvedManifestPath);
+  if (!fs.existsSync(manifestDir) || !fs.statSync(manifestDir).isDirectory()) {
+    console.error(`error: test-case manifest parent directory does not exist: ${file}`);
+    process.exit(1);
+  }
+
+  return resolvedManifestPath;
+}
+
 const questionsDir = path.join(sourceDir, "questions");
 if (!fs.existsSync(questionsDir)) {
   console.error(`error: Type Challenges questions directory not found: ${questionsDir}`);
@@ -135,6 +168,8 @@ if (entries.length !== expectedGenerated) {
   process.exit(1);
 }
 
+const resolvedManifestPath = validateManifestPath(manifestPath, entries);
+
 const manifest = {
   fixture: "type-challenges-project",
   source: {
@@ -147,4 +182,4 @@ const manifest = {
   entries,
 };
 
-fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+fs.writeFileSync(resolvedManifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
