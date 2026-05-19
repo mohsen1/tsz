@@ -557,6 +557,15 @@ impl<'a> Printer<'a> {
         ) {
             return true;
         }
+        if self.emit_parenthesized_optional_receiver_access_tail_call(
+            access_node.kind,
+            access_expression,
+            access_name_or_argument,
+            access_question_dot_token,
+            args,
+        ) {
+            return true;
+        }
 
         if !access_question_dot_token {
             return false;
@@ -664,6 +673,71 @@ impl<'a> Printer<'a> {
         }
         self.emit_access_suffix(receiver_access_node.kind, receiver_name_or_argument);
         self.emit_call_arguments(&receiver_node, receiver_call.arguments.as_ref());
+        self.write(")");
+        self.emit_access_suffix(access_kind, access_name_or_argument);
+        self.write(").call(");
+        self.write(&receiver_temp);
+        self.emit_optional_call_tail_arguments(args.as_ref());
+        true
+    }
+
+    fn emit_parenthesized_optional_receiver_access_tail_call(
+        &mut self,
+        access_kind: u16,
+        access_expression: NodeIndex,
+        access_name_or_argument: NodeIndex,
+        access_question_dot_token: bool,
+        args: &Option<tsz_parser::parser::NodeList>,
+    ) -> bool {
+        if access_question_dot_token {
+            return false;
+        }
+        let Some(receiver_access_node) = self.arena.get(access_expression).copied() else {
+            return false;
+        };
+        if receiver_access_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && receiver_access_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return false;
+        }
+        let Some(receiver_access) = self.arena.get_access_expr(&receiver_access_node) else {
+            return false;
+        };
+        if !receiver_access.question_dot_token {
+            return false;
+        }
+
+        let receiver_base_expression = receiver_access.expression;
+        let receiver_name_or_argument = receiver_access.name_or_argument;
+
+        self.write("(");
+        let receiver_temp;
+        if self.is_simple_nullish_expression(receiver_base_expression) {
+            receiver_temp = self.make_unique_name_hoisted();
+            self.emit(receiver_base_expression);
+            self.write(" === null || ");
+            self.emit(receiver_base_expression);
+            self.write(" === void 0 ? void 0 : ");
+            self.write("(");
+            self.write(&receiver_temp);
+            self.write(" = ");
+            self.emit(receiver_base_expression);
+        } else {
+            let base_temp = self.make_unique_name_hoisted();
+            receiver_temp = self.make_unique_name_hoisted();
+            self.write("(");
+            self.write(&base_temp);
+            self.write(" = ");
+            self.emit(receiver_base_expression);
+            self.write(") === null || ");
+            self.write(&base_temp);
+            self.write(" === void 0 ? void 0 : ");
+            self.write("(");
+            self.write(&receiver_temp);
+            self.write(" = ");
+            self.write(&base_temp);
+        }
+        self.emit_access_suffix(receiver_access_node.kind, receiver_name_or_argument);
         self.write(")");
         self.emit_access_suffix(access_kind, access_name_or_argument);
         self.write(").call(");

@@ -1817,6 +1817,55 @@ const o = { nested() { return { b(n: number) { return n; } }; } };
         );
     }
 
+    #[test]
+    fn parenthesized_optional_tail_property_call_preserves_tail_receiver() {
+        let source = "\
+const o = { a: { b(n: number) { return n; } } };
+(o?.a.b)(1);
+";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("(o === null || o === void 0 ? void 0 : (_a = o.a).b).call(_a, 1)"),
+            "Parenthesized optional tail property callee must capture `o.a` for .call(_a).\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn parenthesized_optional_tail_element_call_preserves_tail_receiver() {
+        let source = "\
+const o = { a: { b(n: number) { return n; } } };
+(o?.a[\"b\"])(1);
+";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output
+                .contains("(o === null || o === void 0 ? void 0 : (_a = o.a)[\"b\"]).call(_a, 1)"),
+            "Parenthesized optional tail element callee must capture `o.a` for .call(_a).\nOutput:\n{output}"
+        );
+    }
+
     /// Complex (non-identifier) expression in optional method call MUST use a temp.
     /// `f()?.b()` needs a temp to avoid calling `f()` twice.
     #[test]
