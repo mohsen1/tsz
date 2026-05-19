@@ -1528,6 +1528,9 @@ impl<'a> Printer<'a> {
         {
             let has_inner_class_temp =
                 self.reserve_es5_computed_key_inner_class_temps(computed.expression);
+            let expression_text = self
+                .computed_key_expression_generates_downlevel_temp(computed.expression)
+                .then(|| self.capture_emit(computed.expression));
             let temp_name = if has_inner_class_temp {
                 self.make_unique_name_fresh()
             } else {
@@ -1536,11 +1539,74 @@ impl<'a> Printer<'a> {
             self.emit_param_assignment_prefix(started);
             self.write(&temp_name);
             self.write(" = ");
-            self.emit(computed.expression);
+            if let Some(expression_text) = expression_text {
+                self.write(&expression_text);
+            } else {
+                self.emit(computed.expression);
+            }
             return Some(temp_name);
         }
 
         None
+    }
+
+    fn computed_key_expression_generates_downlevel_temp(&self, idx: NodeIndex) -> bool {
+        if !self.ctx.needs_es2020_lowering {
+            return false;
+        }
+
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+
+        if let Some(binary) = self.arena.get_binary_expr(node) {
+            if binary.operator_token == SyntaxKind::QuestionQuestionToken as u16
+                && !self.is_simple_nullish_expression(binary.left)
+            {
+                return true;
+            }
+            return self.computed_key_expression_generates_downlevel_temp(binary.left)
+                || self.computed_key_expression_generates_downlevel_temp(binary.right);
+        }
+
+        if let Some(access) = self.arena.get_access_expr(node) {
+            if access.question_dot_token && !self.is_simple_nullish_expression(access.expression) {
+                return true;
+            }
+            return self.computed_key_expression_generates_downlevel_temp(access.expression)
+                || self.computed_key_expression_generates_downlevel_temp(access.name_or_argument);
+        }
+
+        if let Some(call) = self.arena.get_call_expr(node) {
+            if node.is_optional_chain() && !self.is_simple_nullish_expression(call.expression) {
+                return true;
+            }
+            if self.computed_key_expression_generates_downlevel_temp(call.expression) {
+                return true;
+            }
+            return call.arguments.as_ref().is_some_and(|args| {
+                args.nodes
+                    .iter()
+                    .copied()
+                    .any(|arg| self.computed_key_expression_generates_downlevel_temp(arg))
+            });
+        }
+
+        if let Some(paren) = self.arena.get_parenthesized(node) {
+            return self.computed_key_expression_generates_downlevel_temp(paren.expression);
+        }
+
+        if let Some(assertion) = self.arena.get_type_assertion(node) {
+            return self.computed_key_expression_generates_downlevel_temp(assertion.expression);
+        }
+
+        if let Some(cond) = self.arena.get_conditional_expr(node) {
+            return self.computed_key_expression_generates_downlevel_temp(cond.condition)
+                || self.computed_key_expression_generates_downlevel_temp(cond.when_true)
+                || self.computed_key_expression_generates_downlevel_temp(cond.when_false);
+        }
+
+        false
     }
 
     pub(in crate::emitter) fn emit_param_array_binding_element(

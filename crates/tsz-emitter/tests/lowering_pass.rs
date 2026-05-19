@@ -1,7 +1,7 @@
 use super::*;
 use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::ParserState;
-use tsz_parser::parser::node::NodeArena;
+use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
 
@@ -168,6 +168,54 @@ fn test_lowering_pass_es2015_arrow_param_binding_class_temp_uses_body_prologue()
         ),
         "ES2015 arrow binding parameters that need function-scoped class temps should use a body prologue"
     );
+}
+
+#[test]
+fn test_lowering_pass_es2015_arrow_param_binding_nullish_key_uses_body_prologue() {
+    assert_es2015_arrow_param_binding_key_uses_body_prologue(
+        "const a = () => undefined; (({ [a() ?? \"d\"]: c = \"\" }) => {})();",
+        "ES2015 arrow binding parameters with downlevel nullish computed keys should use a body prologue",
+    );
+}
+
+#[test]
+fn test_lowering_pass_es2015_arrow_param_binding_optional_chain_key_uses_body_prologue() {
+    assert_es2015_arrow_param_binding_key_uses_body_prologue(
+        "const a = () => undefined; (({ [a()?.d]: c = \"\" }) => {})();",
+        "ES2015 arrow binding parameters with downlevel optional-chain computed keys should use a body prologue",
+    );
+}
+
+fn assert_es2015_arrow_param_binding_key_uses_body_prologue(source: &str, message: &str) {
+    let (arena, root) = parse(source);
+    let mut ctx = EmitContext::default();
+    ctx.set_target(ScriptTarget::ES2015);
+
+    let lowering = LoweringPass::new(&arena, &ctx);
+    let transforms = lowering.run(root);
+
+    let arrow_idx = find_first_arrow_function(&arena, root).expect("expected arrow function");
+    assert!(
+        matches!(
+            transforms.get(arrow_idx),
+            Some(TransformDirective::ES5FunctionParameters { .. })
+        ),
+        "{message}"
+    );
+}
+
+fn find_first_arrow_function(arena: &NodeArena, root: NodeIndex) -> Option<NodeIndex> {
+    let mut stack = vec![root];
+    while let Some(idx) = stack.pop() {
+        let Some(node) = arena.get(idx) else {
+            continue;
+        };
+        if node.kind == syntax_kind_ext::ARROW_FUNCTION {
+            return Some(idx);
+        }
+        stack.extend(arena.get_children(idx));
+    }
+    None
 }
 
 #[test]
