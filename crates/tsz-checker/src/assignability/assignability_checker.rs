@@ -2017,10 +2017,24 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
     ) -> (TypeId, TypeId) {
         self.ensure_relation_inputs_ready(&[source, target]);
-        let source = self.substitute_this_type_if_needed(source);
-        let target = self.substitute_this_type_if_needed(target);
-        let source = self.evaluate_type_for_assignability(source);
-        let target = self.evaluate_type_for_assignability(target);
+        let raw_source = self.substitute_this_type_if_needed(source);
+        let raw_target = self.substitute_this_type_if_needed(target);
+        let source = self.evaluate_type_for_assignability(raw_source);
+        let target = crate::query_boundaries::assignability::homomorphic_mapped_projection_target(
+            self.ctx.types,
+            &self.ctx,
+            raw_source,
+            raw_target,
+        )
+        .or_else(|| {
+            crate::query_boundaries::assignability::homomorphic_mapped_projection_target(
+                self.ctx.types,
+                &self.ctx,
+                source,
+                raw_target,
+            )
+        })
+        .unwrap_or_else(|| self.evaluate_type_for_assignability(raw_target));
         (source, target)
     }
 

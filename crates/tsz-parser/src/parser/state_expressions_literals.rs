@@ -1035,6 +1035,7 @@ impl ParserState {
         let start_pos = self.token_pos();
         let is_unterminated = self.scanner.is_unterminated();
         let text = self.scanner.get_token_value_ref().to_string();
+        let raw_text = Some(self.scanner.get_token_text_ref().to_string());
         let has_invalid_escape =
             (self.scanner.get_token_flags() & TokenFlags::ContainsInvalidEscape as u32) != 0;
         let end_pos = self.token_end();
@@ -1051,7 +1052,7 @@ impl ParserState {
             end_pos,
             LiteralData {
                 text,
-                raw_text: None,
+                raw_text,
                 value: None,
                 has_invalid_escape,
             },
@@ -1077,6 +1078,7 @@ impl ParserState {
 
     fn parse_template_head(&mut self) -> NodeIndex {
         let head_text = self.scanner.get_token_value_ref().to_string();
+        let raw_text = Some(self.scanner.get_token_text_ref().to_string());
         let has_invalid_escape =
             (self.scanner.get_token_flags() & TokenFlags::ContainsInvalidEscape as u32) != 0;
         let head_start = self.token_pos();
@@ -1090,7 +1092,7 @@ impl ParserState {
             head_end,
             LiteralData {
                 text: head_text,
-                raw_text: None,
+                raw_text,
                 value: None,
                 has_invalid_escape,
             },
@@ -1205,6 +1207,7 @@ impl ParserState {
 
         let is_unterminated = self.scanner.is_unterminated();
         let literal_text = self.scanner.get_token_value_ref().to_string();
+        let raw_text = Some(self.scanner.get_token_text_ref().to_string());
         let has_invalid_escape =
             (self.scanner.get_token_flags() & TokenFlags::ContainsInvalidEscape as u32) != 0;
         let literal_kind = if is_tail {
@@ -1227,7 +1230,7 @@ impl ParserState {
             literal_end,
             LiteralData {
                 text: literal_text,
-                raw_text: None,
+                raw_text,
                 value: None,
                 has_invalid_escape,
             },

@@ -93,11 +93,10 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        let member_nodes = class_info.member_nodes.clone();
         let mut tracked = rustc_hash::FxHashSet::default();
         tracked.insert(key.clone());
 
-        member_nodes.into_iter().any(|member_idx| {
+        class_info.member_nodes.iter().any(|&member_idx| {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
                 return false;
             };

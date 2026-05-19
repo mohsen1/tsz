@@ -255,14 +255,21 @@ def classify_retention(path: str, owner: str) -> str:
     return "unknown"
 
 
-def scan_file(path: Path) -> list[CacheCandidate]:
+def scrubbed_file_text(path: Path) -> str:
     raw_text = path.read_text(encoding="utf-8")
     code_lines: list[str] = []
     in_block_comment = False
     for raw_line in raw_text.splitlines():
         code, in_block_comment = scrub_comments_and_strings(raw_line, in_block_comment)
         code_lines.append(code)
+    return "\n".join(code_lines)
+
+
+def scan_file(path: Path, signal_text: str | None = None) -> list[CacheCandidate]:
+    file_text = scrubbed_file_text(path)
+    code_lines = file_text.splitlines()
     file_text = "\n".join(code_lines)
+    signal_text = signal_text if signal_text is not None else file_text
     rel = relative(path)
     owner = "<module>"
     struct_depth = 0
@@ -305,8 +312,8 @@ def scan_file(path: Path) -> list[CacheCandidate]:
                 name=name,
                 type=type_text,
                 retention=classify_retention(rel, owner),
-                stats_signal=has_stats_signal(file_text, name),
-                size_signal=has_size_signal(file_text, name),
+                stats_signal=has_stats_signal(signal_text, name),
+                size_signal=has_size_signal(signal_text, name),
             )
         )
         if struct_depth > 0 and not struct_match:
@@ -320,8 +327,17 @@ def scan_file(path: Path) -> list[CacheCandidate]:
 
 def scan(roots: Iterable[Path]) -> list[CacheCandidate]:
     candidates: list[CacheCandidate] = []
-    for path in iter_rust_files(roots):
-        candidates.extend(scan_file(path))
+    paths = list(iter_rust_files(roots))
+    text_by_path = {path: scrubbed_file_text(path) for path in paths}
+    signal_text_by_dir: dict[Path, str] = {}
+    for path in paths:
+        if path.parent not in signal_text_by_dir:
+            signal_text_by_dir[path.parent] = "\n".join(
+                text
+                for sibling, text in text_by_path.items()
+                if sibling.parent == path.parent
+            )
+        candidates.extend(scan_file(path, signal_text=signal_text_by_dir[path.parent]))
     return sorted(candidates, key=lambda c: (c.path, c.line, c.name))
 
 

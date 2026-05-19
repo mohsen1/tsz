@@ -375,12 +375,24 @@ impl<'a> CheckerState<'a> {
             );
             return;
         }
-        let skip_prop_checks = props_type == TypeId::ANY
-            || props_type == TypeId::ERROR
-            || crate::query_boundaries::common::contains_error_type_in_args(
+        let props_has_error_type_in_args =
+            crate::query_boundaries::common::contains_error_type_in_args(
                 self.ctx.types,
                 props_type,
             );
+        let intrinsic_props_have_known_surface = component_type.is_none()
+            && special_attr_component_type.is_none()
+            && !raw_props_has_type_params
+            && (crate::query_boundaries::common::object_shape_for_type(self.ctx.types, props_type)
+                .is_some()
+                || crate::query_boundaries::common::intersection_members(
+                    self.ctx.types,
+                    props_type,
+                )
+                .is_some());
+        let skip_prop_checks = props_type == TypeId::ANY
+            || props_type == TypeId::ERROR
+            || (props_has_error_type_in_args && !intrinsic_props_have_known_surface);
 
         let Some(attrs_node) = self.ctx.arena.get(attributes_idx) else {
             return;

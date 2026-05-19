@@ -1,10 +1,30 @@
-use super::CheckerState;
+use super::{CheckerState, path_has_node_modules_segment};
 use crate::context::{CheckerOptions, ScriptTarget};
 use crate::module_resolution::build_module_resolution_maps;
 use crate::query_boundaries::common::TypeInterner;
 use std::sync::Arc;
 use tsz_binder::{BinderState, symbol_flags};
 use tsz_parser::parser::ParserState;
+
+#[test]
+fn node_modules_package_context_uses_path_segments() {
+    assert!(path_has_node_modules_segment(
+        "/repo/node_modules/pkg/index.d.ts"
+    ));
+    assert!(path_has_node_modules_segment(
+        r"C:\repo\node_modules\pkg\index.d.ts"
+    ));
+    assert!(path_has_node_modules_segment(
+        "/repo/packages/app/node_modules/pkg/index.d.ts"
+    ));
+
+    assert!(!path_has_node_modules_segment(
+        "/repo/fixtures/node_modules_pkg/index.d.ts"
+    ));
+    assert!(!path_has_node_modules_segment(
+        "/repo/fixtures/not_node_modules/index.d.ts"
+    ));
+}
 
 #[test]
 fn module_augmentation_export_resolution_prefers_local_alias_over_named_reexport() {

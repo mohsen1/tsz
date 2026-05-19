@@ -1,14 +1,18 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { writeFixtureProvenance, parseGeneratorArgs } from "./fixture-provenance.mjs";
 
-const outputArg = process.argv[2];
+const { dryRun, outputDir: outputArg } = parseGeneratorArgs();
 if (!outputArg) {
-  console.error("Usage: generate-vite-app-fixture.mjs <output-dir>");
+  console.error("Usage: generate-vite-app-fixture.mjs [--dry-run] <output-dir>");
   process.exit(1);
 }
 const outputDir = path.resolve(outputArg);
+const SCRIPT_PATH = fileURLToPath(import.meta.url);
+const npmCommand = process.env.TSZ_FIXTURE_GENERATOR_NPM_BIN || "npm";
 
 function write(file, contents) {
   const target = path.join(outputDir, file);
@@ -214,7 +218,18 @@ writeBinary(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGOSHzRgAAAAABJRU5ErkJggg==",
 );
 
-const install = spawnSync("npm", ["install", "--silent", "--no-audit", "--no-fund"], {
+if (dryRun) {
+  writeFixtureProvenance({
+    outputDir,
+    generatorScript: SCRIPT_PATH,
+    templateName: "vite-vanilla-ts",
+    dryRun,
+    npmCommand,
+  });
+  process.exit(0);
+}
+
+const install = spawnSync(npmCommand, ["install", "--silent", "--no-audit", "--no-fund"], {
   cwd: outputDir,
   stdio: "inherit",
 });
@@ -222,3 +237,11 @@ const install = spawnSync("npm", ["install", "--silent", "--no-audit", "--no-fun
 if (install.status !== 0) {
   process.exit(install.status || 1);
 }
+
+writeFixtureProvenance({
+  outputDir,
+  generatorScript: SCRIPT_PATH,
+  templateName: "vite-vanilla-ts",
+  dryRun,
+  npmCommand,
+});

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
 # Shared project fixture metadata and config writers for benchmark and CI
-# project-compile guards. Keep fixture pins and generated tsconfig shapes here
-# so benchmark rows and compile guards cannot silently drift.
+# project-compile guards. Fixture pins (repo URLs and commit hashes) live in
+# project-rows.mjs as the single source of truth and are loaded at runtime
+# by tsz_load_fixture_pins_from_rows. Shell env vars override the defaults.
 
 if [ -z "${TSZ_PROJECT_FIXTURES_ROOT:-}" ] && [ -n "${BASH_SOURCE[0]:-}" ]; then
   TSZ_PROJECT_FIXTURES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -29,7 +30,6 @@ TSZ_COMPILE_GUARD_CANARY_ROWS=(
   "ts-toolbelt-project"
   "zod-project"
   "kysely-project"
-  "type-challenges-project"
   "type-challenges-solutions-project"
 )
 
@@ -84,49 +84,7 @@ NODE
 }
 
 tsz_validate_project_row_metadata() {
-  TSZ_PROJECT_ROWS_MJS="$TSZ_PROJECT_ROWS_MJS" node --input-type=module <<'NODE'
-import { pathToFileURL } from "node:url";
-const rowModule = await import(pathToFileURL(process.env.TSZ_PROJECT_ROWS_MJS || process.cwd() + "/scripts/bench/project-rows.mjs"));
-const { PROJECT_ROW_DEFINITIONS } = rowModule;
-
-const requiredFields = [
-  "name",
-  "label",
-  "owner",
-  "family",
-  "readme_candidates",
-  "fixture_dir",
-  "source_dir",
-  "guard_set",
-  "benchmark_set",
-  "category",
-];
-
-const failures = [];
-
-for (const row of PROJECT_ROW_DEFINITIONS) {
-  for (const field of requiredFields) {
-    if (!(field in row) || typeof row[field] === "undefined") {
-      failures.push(row.name + ": missing field " + field);
-    }
-  }
-
-  if (typeof row.name !== "string" || !row.name) {
-    failures.push("project row: invalid name");
-  }
-
-  if (typeof row.benchmark_set !== "string") {
-    failures.push(row.name + ": benchmark_set must be a string");
-  }
-}
-
-if (failures.length > 0) {
-  for (const failure of failures) {
-    console.error(failure);
-  }
-  process.exit(1);
-}
-NODE
+  node "$TSZ_PROJECT_FIXTURES_ROOT/scripts/bench/validate-project-metadata.mjs"
 }
 
 tsz_project_readme_candidates_json() {
@@ -144,32 +102,43 @@ console.log(JSON.stringify(Object.fromEntries(entries)));
 NODE
 }
 
-# External project fixture repositories and pinned refs.
-: "${UTILITY_TYPES_REPO:=https://github.com/piotrwitek/utility-types.git}"
-: "${UTILITY_TYPES_REF:=2ee1f6ecb241651ab22390fee7ee5349942efda2}"
-: "${TS_TOOLBELT_REPO:=https://github.com/millsp/ts-toolbelt.git}"
-: "${TS_TOOLBELT_REF:=b8a49285e3ed3a7d8bb8e0b433389eac46a5f140}"
-: "${TS_ESSENTIALS_REPO:=https://github.com/ts-essentials/ts-essentials.git}"
-: "${TS_ESSENTIALS_REF:=5abe8700b42068048bd3c368e0531b6defe56558}"
-: "${NEXTJS_REPO:=https://github.com/vercel/next.js.git}"
-: "${NEXTJS_REF:=09851e208cc62c8b6fe7a953b42c88e843129178}"
-: "${RXJS_REPO:=https://github.com/ReactiveX/rxjs.git}"
-: "${RXJS_REF:=e5351d02e225e275ac0e497c7b66eaa5f0c88791}"
-: "${TYPE_FEST_REPO:=https://github.com/sindresorhus/type-fest.git}"
-: "${TYPE_FEST_REF:=4005f60b65a7bd224154d6da46f45a63b42ce70f}"
-: "${ZOD_REPO:=https://github.com/colinhacks/zod.git}"
-: "${ZOD_REF:=93b0b6892cc0cfee8d0bec4e2e1242c7df771f95}"
-: "${KYSELY_REPO:=https://github.com/kysely-org/kysely.git}"
-: "${KYSELY_REF:=d4911be21cd568d3694dc7f879f72390635226d7}"
-: "${LARGE_TS_REPO:=https://github.com/mohsen1/large-ts-repo.git}"
-: "${LARGE_TS_REF:=e1b22bda18664a507ed0da19c155e0365d585b18}"
-: "${TYPE_CHALLENGES_REPO:=https://github.com/type-challenges/type-challenges.git}"
-: "${TYPE_CHALLENGES_REF:=0b0b0b18bcb7ac42dc22ce26ffb438231d4754b1}"
-: "${TYPE_CHALLENGES_EXPECTED_GENERATED:=190}"
-: "${TYPE_CHALLENGES_EXPECTED_TEST_CASES:=190}"
-: "${TYPE_CHALLENGES_SOLUTIONS_REPO:=https://github.com/ghaiklor/type-challenges-solutions.git}"
-: "${TYPE_CHALLENGES_SOLUTIONS_REF:=91a6d2986650475f29eeb3bd18ebd025128aa07e}"
-: "${TYPE_CHALLENGES_SOLUTIONS_EXPECTED_GENERATED:=78}"
+tsz_load_fixture_pins_from_rows() {
+  command -v node >/dev/null 2>&1 || return 0
+
+  local assignments
+  assignments="$(TSZ_PROJECT_ROWS_MJS="$TSZ_PROJECT_ROWS_MJS" node --input-type=module <<'NODE'
+import { pathToFileURL } from "node:url";
+const { PROJECT_ROW_DEFINITIONS } = await import(
+  pathToFileURL(process.env.TSZ_PROJECT_ROWS_MJS)
+);
+
+const PIN_FIELDS = [
+  ["repo_env", "repo"],
+  ["ref_env", "ref"],
+  ["expected_generated_env", "expected_generated"],
+  ["expected_test_cases_env", "expected_test_cases"],
+];
+
+for (const row of PROJECT_ROW_DEFINITIONS) {
+  for (const [envField, valueField] of PIN_FIELDS) {
+    if (row[envField] && row[valueField] !== undefined) {
+      process.stdout.write(row[envField] + "=" + row[valueField] + "\n");
+    }
+  }
+}
+NODE
+  )" || return 0
+
+  local varname value
+  while IFS='=' read -r varname value; do
+    [ -z "$varname" ] && continue
+    if [[ -z "${!varname+x}" ]]; then
+      export "$varname=$value"
+    fi
+  done <<< "$assignments"
+}
+
+tsz_load_fixture_pins_from_rows
 
 tsz_project_fixture_sources() {
   case "$1" in
@@ -200,14 +169,7 @@ tsz_project_fixture_sources() {
     large-ts-repo)
       printf 'large-ts-repo|%s|%s\n' "$LARGE_TS_REPO" "$LARGE_TS_REF"
       ;;
-    type-challenges-project)
-      printf 'type-challenges|%s|%s\n' "$TYPE_CHALLENGES_REPO" "$TYPE_CHALLENGES_REF"
-      ;;
     type-challenges-solutions-project)
-      printf 'type-challenges-solutions|%s|%s\n' "$TYPE_CHALLENGES_SOLUTIONS_REPO" "$TYPE_CHALLENGES_SOLUTIONS_REF"
-      ;;
-    type-challenges-assertion-candidates|type-challenges-assertions-tsc-clean)
-      printf 'type-challenges|%s|%s\n' "$TYPE_CHALLENGES_REPO" "$TYPE_CHALLENGES_REF"
       printf 'type-challenges-solutions|%s|%s\n' "$TYPE_CHALLENGES_SOLUTIONS_REPO" "$TYPE_CHALLENGES_SOLUTIONS_REF"
       ;;
   esac

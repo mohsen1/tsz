@@ -323,6 +323,15 @@ impl RelationFailure {
                 source_type: *source_type,
                 target_type: *target_type,
             },
+            Self::IndexAccessTypeParameterMismatch {
+                source_param,
+                target_param,
+                target_constraint,
+            } => SubtypeFailureReason::IndexAccessTypeParameterMismatch {
+                source_param: *source_param,
+                target_param: *target_param,
+                target_constraint: *target_constraint,
+            },
         }
     }
 

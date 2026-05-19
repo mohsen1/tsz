@@ -22,6 +22,26 @@ pub fn check_source(source: &str, file_name: &str, options: CheckerOptions) -> V
     check_source_with_file_is_esm(source, file_name, options, None)
 }
 
+/// Parse, bind, and type-check a TypeScript source string, returning every
+/// recovery fallback site recorded by [`crate::context::CheckerContext::recover_any`]
+/// during the check. Each entry is `(node_index, reason)`, sorted by node index.
+pub fn check_source_recovery_sites(
+    source: &str,
+    file_name: &str,
+    options: CheckerOptions,
+) -> Vec<(u32, crate::recovery::RecoveryReason)> {
+    with_checked_source(source, file_name, options, None, |checker| {
+        let mut snapshot: Vec<_> = checker
+            .ctx
+            .recovery_sites_snapshot()
+            .into_iter()
+            .map(|(idx, reason)| (idx.0, reason))
+            .collect();
+        snapshot.sort_by_key(|(idx, _)| *idx);
+        snapshot
+    })
+}
+
 /// Parse, bind, and type-check a source string with no lib contexts, source
 /// file test pragmas enabled, and an explicit Node module file-format
 /// classification.
@@ -31,6 +51,22 @@ pub fn check_source_with_file_is_esm(
     options: CheckerOptions,
     file_is_esm: Option<bool>,
 ) -> Vec<Diagnostic> {
+    with_checked_source(source, file_name, options, file_is_esm, |checker| {
+        checker.ctx.diagnostics.clone()
+    })
+}
+
+/// Run the canonical test parse → bind → check pipeline and hand the
+/// post-check `CheckerState` to `extract`. Used by the public test helpers
+/// to share one pipeline body so any change to setup (default options,
+/// pragmas, lib contexts) applies uniformly.
+fn with_checked_source<R>(
+    source: &str,
+    file_name: &str,
+    options: CheckerOptions,
+    file_is_esm: Option<bool>,
+    extract: impl FnOnce(&CheckerState<'_>) -> R,
+) -> R {
     let mut parser = ParserState::new(file_name.to_string(), source.to_string());
     let source_file = parser.parse_source_file();
 
@@ -46,11 +82,10 @@ pub fn check_source_with_file_is_esm(
         options,
     );
     checker.enable_source_file_test_pragmas();
-
     checker.ctx.set_lib_contexts(Vec::new());
     checker.ctx.file_is_esm = file_is_esm;
     checker.check_source_file(source_file);
-    checker.ctx.diagnostics.clone()
+    extract(&checker)
 }
 
 /// Parse, bind, and type-check a TypeScript source string with default options.
@@ -648,15 +683,17 @@ pub fn check_source_with_libs(
     options: CheckerOptions,
     lib_files: &[Arc<LibFile>],
 ) -> Vec<Diagnostic> {
+    if lib_files.is_empty() {
+        return with_checked_source(source, file_name, options, None, |checker| {
+            checker.ctx.diagnostics.clone()
+        });
+    }
+
     let mut parser = ParserState::new(file_name.to_string(), source.to_string());
     let source_file = parser.parse_source_file();
 
     let mut binder = BinderState::new();
-    if lib_files.is_empty() {
-        binder.bind_source_file(parser.get_arena(), source_file);
-    } else {
-        binder.bind_source_file_with_libs(parser.get_arena(), source_file, lib_files);
-    }
+    binder.bind_source_file_with_libs(parser.get_arena(), source_file, lib_files);
 
     let types = TypeInterner::new();
     let mut checker = CheckerState::new(
@@ -668,19 +705,15 @@ pub fn check_source_with_libs(
     );
     checker.enable_source_file_test_pragmas();
 
-    if lib_files.is_empty() {
-        checker.ctx.set_lib_contexts(Vec::new());
-    } else {
-        let lib_contexts: Vec<LibContext> = lib_files
-            .iter()
-            .map(|lib| LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-        checker.ctx.set_actual_lib_file_count(lib_files.len());
-    }
+    let lib_contexts: Vec<LibContext> = lib_files
+        .iter()
+        .map(|lib| LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    checker.ctx.set_lib_contexts(lib_contexts);
+    checker.ctx.set_actual_lib_file_count(lib_files.len());
 
     checker.check_source_file(source_file);
     checker.ctx.diagnostics.clone()

@@ -561,9 +561,9 @@ impl TypeInterner {
             }
         }
 
-        let mut call_signatures: Vec<CallSignature> = Vec::new();
-        let mut construct_signatures: Vec<CallSignature> = Vec::new();
-        let mut properties: Vec<PropertyInfo> = Vec::new();
+        let mut call_signatures: Vec<CallSignature> = Vec::with_capacity(members.len());
+        let mut construct_signatures: Vec<CallSignature> = Vec::with_capacity(members.len());
+        let mut properties: Vec<PropertyInfo> = Vec::with_capacity(members.len());
         let mut string_index: Option<IndexSignature> = None;
         let mut number_index: Option<IndexSignature> = None;
         let mut is_abstract = false;
@@ -675,7 +675,7 @@ impl TypeInterner {
     }
 
     fn try_merge_objects_in_intersection(&self, members: &[TypeId]) -> Option<TypeId> {
-        let mut objects: Vec<Arc<ObjectShape>> = Vec::new();
+        let mut objects: Vec<Arc<ObjectShape>> = Vec::with_capacity(members.len());
 
         // Check if all members are objects
         for &member in members {
@@ -691,7 +691,8 @@ impl TypeInterner {
         }
 
         // Merge all object properties using HashMap index for O(N) total instead of O(N²)
-        let mut merged_props: Vec<PropertyInfo> = Vec::new();
+        let total_property_count = objects.iter().map(|obj| obj.properties.len()).sum();
+        let mut merged_props: Vec<PropertyInfo> = Vec::with_capacity(total_property_count);
         let mut prop_index: rustc_hash::FxHashMap<Atom, usize> = rustc_hash::FxHashMap::default();
         let mut merged_string_index: Option<IndexSignature> = None;
         let mut merged_number_index: Option<IndexSignature> = None;
@@ -862,7 +863,7 @@ impl TypeInterner {
         &self,
         members: &[TypeId],
     ) -> (Option<TypeId>, SmallVec<[TypeId; 4]>) {
-        let mut objects: Vec<TypeId> = Vec::new();
+        let mut objects: Vec<TypeId> = Vec::with_capacity(members.len());
         let mut remaining: SmallVec<[TypeId; 4]> = SmallVec::new();
 
         // Separate objects from non-objects
@@ -909,7 +910,7 @@ impl TypeInterner {
         &self,
         members: &[TypeId],
     ) -> (Option<TypeId>, SmallVec<[TypeId; 4]>) {
-        let mut callables: Vec<TypeId> = Vec::new();
+        let mut callables: Vec<TypeId> = Vec::with_capacity(members.len());
         let mut remaining: SmallVec<[TypeId; 4]> = SmallVec::new();
 
         // Separate callables from non-callables
