@@ -1810,6 +1810,116 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn generic_callable_property_argument_display(
+        &mut self,
+        expr_idx: NodeIndex,
+        arg_type: TypeId,
+    ) -> Option<String> {
+        let node = self.ctx.arena.get(expr_idx)?;
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return None;
+        }
+        if !query_common::is_callable_type(self.ctx.types, arg_type) {
+            return None;
+        }
+
+        let declared_type = self
+            .resolve_qualified_symbol(expr_idx)
+            .map(|sym_id| self.get_type_of_symbol(sym_id))
+            .unwrap_or_else(|| self.elaboration_source_expression_type(expr_idx));
+        if matches!(declared_type, TypeId::ERROR | TypeId::UNKNOWN) {
+            return None;
+        }
+        if declared_type == arg_type {
+            return None;
+        }
+
+        let declared_is_generic_callable =
+            query_common::callable_shape_for_type(self.ctx.types, declared_type).is_some_and(
+                |shape| {
+                    shape
+                        .call_signatures
+                        .iter()
+                        .chain(shape.construct_signatures.iter())
+                        .any(|sig| !sig.type_params.is_empty())
+                },
+            ) || query_common::function_shape_for_type(self.ctx.types, declared_type)
+                .is_some_and(|shape| !shape.type_params.is_empty());
+        if !declared_is_generic_callable {
+            return None;
+        }
+
+        if let Some(display) = self.collapsed_generic_callable_property_display(declared_type) {
+            return Some(display);
+        }
+
+        Some(self.format_generic_callable_source_type(declared_type))
+    }
+
+    fn collapsed_generic_callable_property_display(&mut self, type_id: TypeId) -> Option<String> {
+        let shape = query_common::callable_shape_for_type(self.ctx.types, type_id)?;
+        if shape.call_signatures.is_empty()
+            || !shape.construct_signatures.is_empty()
+            || !shape.properties.is_empty()
+            || shape.string_index.is_some()
+            || shape.number_index.is_some()
+        {
+            return None;
+        }
+
+        let first = shape.call_signatures.first()?;
+        if first.type_params.is_empty() {
+            return None;
+        }
+        let first_display = self.format_generic_callable_source_type(
+            self.ctx
+                .types
+                .factory()
+                .function(Self::function_shape_from_call_signature(first)),
+        );
+        for signature in shape.call_signatures.iter().skip(1) {
+            let signature_display = self.format_generic_callable_source_type(
+                self.ctx
+                    .types
+                    .factory()
+                    .function(Self::function_shape_from_call_signature(signature)),
+            );
+            if signature_display != first_display {
+                return None;
+            }
+        }
+
+        Some(first_display)
+    }
+
+    fn function_shape_from_call_signature(
+        signature: &tsz_solver::CallSignature,
+    ) -> tsz_solver::FunctionShape {
+        tsz_solver::FunctionShape {
+            params: signature.params.clone(),
+            this_type: signature.this_type,
+            return_type: signature.return_type,
+            type_params: signature.type_params.clone(),
+            type_predicate: signature.type_predicate,
+            is_constructor: false,
+            is_method: signature.is_method,
+        }
+    }
+
+    fn format_generic_callable_source_type(&self, type_id: TypeId) -> String {
+        let mut formatter =
+            tsz_solver::TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols)
+                .with_def_store(&self.ctx.definition_store)
+                .with_diagnostic_mode()
+                .with_strict_null_checks(self.ctx.compiler_options.strict_null_checks)
+                .with_exact_optional_property_types(
+                    self.ctx.compiler_options.exact_optional_property_types,
+                );
+        formatter.format(type_id).into_owned()
+    }
+
     pub(in crate::error_reporter) fn format_call_argument_type_for_diagnostic(
         &mut self,
         arg_type: TypeId,
@@ -1873,6 +1983,10 @@ impl<'a> CheckerState<'a> {
         if let Some(display) =
             self.contextual_function_argument_display(arg_type, param_type, arg_idx)
         {
+            return display;
+        }
+
+        if let Some(display) = self.generic_callable_property_argument_display(expr_idx, arg_type) {
             return display;
         }
 

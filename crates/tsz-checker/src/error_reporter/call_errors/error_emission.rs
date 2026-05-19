@@ -880,6 +880,87 @@ impl<'a> CheckerState<'a> {
                 || shared_excess_property_name);
         let raw_argument_anchor =
             shared_argument_anchor.or_else(|| self.first_call_argument_anchor(idx));
+        let all_argument_failures_share_span = argument_failures
+            .first()
+            .and_then(|failure| failure.span.as_ref())
+            .is_some_and(|first_span| {
+                argument_failures.iter().all(|failure| {
+                    failure.span.as_ref().is_some_and(|span| {
+                        span.file == first_span.file
+                            && span.start == first_span.start
+                            && span.length == first_span.length
+                    })
+                })
+            });
+        let all_argument_failures_compare_callable_types =
+            argument_failures.iter().all(|failure| {
+                let (
+                    Some(tsz_solver::DiagnosticArg::Type(arg_type)),
+                    Some(tsz_solver::DiagnosticArg::Type(param_type)),
+                ) = (failure.args.first(), failure.args.get(1))
+                else {
+                    return false;
+                };
+                crate::query_boundaries::common::has_call_signatures(self.ctx.types, *arg_type)
+                    || crate::query_boundaries::common::has_call_signatures(
+                        self.ctx.types,
+                        *param_type,
+                    )
+                    || crate::query_boundaries::common::callable_shape_for_type(
+                        self.ctx.types,
+                        *arg_type,
+                    )
+                    .is_some()
+                    || crate::query_boundaries::common::callable_shape_for_type(
+                        self.ctx.types,
+                        *param_type,
+                    )
+                    .is_some()
+            });
+        let property_like_multi_arg_call = self.overload_callee_is_property_like(idx)
+            && self
+                .logical_call_argument_nodes(idx)
+                .is_some_and(|args| args.len() > 1);
+        let can_collapse_identical_argument_failures = (argument_failures.len() == 1
+            && !property_like_multi_arg_call)
+            || (all_argument_failures_share_span && all_argument_failures_compare_callable_types);
+        if all_failures_are_argument_mismatches
+            && identical_argument_failures
+            && can_collapse_identical_argument_failures
+            && let Some(selected_failure) = argument_failures
+                .iter()
+                .copied()
+                .filter(|failure| failure.span.is_some())
+                .max_by_key(|failure| failure.span.as_ref().map_or(0, |span| span.start))
+                .or_else(|| argument_failures.last().copied())
+            && let (
+                Some(tsz_solver::DiagnosticArg::Type(arg_type)),
+                Some(tsz_solver::DiagnosticArg::Type(param_type)),
+            ) = (selected_failure.args.first(), selected_failure.args.get(1))
+        {
+            let selected_failure_as_slice = [selected_failure];
+            let selected_failure_anchor = self
+                .shared_overload_argument_anchor_from_spans(idx, &selected_failure_as_slice)
+                .or_else(|| self.shared_overload_argument_anchor(idx, &selected_failure_as_slice));
+            let anchor_idx = selected_failure
+                .span
+                .as_ref()
+                .and_then(|span| {
+                    self.logical_call_argument_nodes(idx)?
+                        .into_iter()
+                        .find(|&arg_idx| {
+                            self.ctx.arena.get(arg_idx).is_some_and(|arg_node| {
+                                span.start >= arg_node.pos && span.start < arg_node.end
+                            })
+                        })
+                })
+                .or(selected_failure_anchor)
+                .or(raw_argument_anchor);
+            if let Some(anchor_idx) = anchor_idx {
+                self.error_argument_not_assignable_at(*arg_type, *param_type, anchor_idx);
+                return;
+            }
+        }
         let argument_anchor_is_callback = raw_argument_anchor
             .is_some_and(|anchor_idx| self.is_callback_expression_argument(anchor_idx));
         let callback_overloads_are_callable_only = argument_failures.iter().all(|failure| {
