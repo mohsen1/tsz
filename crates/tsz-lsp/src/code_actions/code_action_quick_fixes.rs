@@ -12,6 +12,7 @@ use crate::utils::find_node_at_offset;
 use rustc_hash::FxHashMap;
 use tsz_parser::NodeIndex;
 use tsz_parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 
 use super::code_action_provider::{CodeAction, CodeActionKind, CodeActionProvider};
 use tsz_common::position::Range;
@@ -45,6 +46,10 @@ impl<'a> CodeActionProvider<'a> {
 
         // Walk up to find the expression that should be awaited
         let expr_idx = self.find_awaitable_expression(node_idx)?;
+        if !self.can_insert_await_at(expr_idx) {
+            return None;
+        }
+
         let expr_node = self.arena.get(expr_idx)?;
         let expr_text = self
             .source
@@ -281,6 +286,51 @@ impl<'a> CodeActionProvider<'a> {
             current = self.arena.get_extended(current)?.parent;
         }
         None
+    }
+
+    fn can_insert_await_at(&self, start: NodeIndex) -> bool {
+        let mut current = start;
+        while current.is_some() {
+            let Some(node) = self.arena.get(current) else {
+                return false;
+            };
+
+            if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || node.kind == syntax_kind_ext::ARROW_FUNCTION
+            {
+                return self
+                    .arena
+                    .get_function(node)
+                    .is_some_and(|function| function.is_async);
+            }
+
+            if node.kind == syntax_kind_ext::METHOD_DECLARATION {
+                return self
+                    .arena
+                    .get_method_decl(node)
+                    .is_some_and(|method| self.has_async_modifier(method.modifiers.as_ref()));
+            }
+
+            if node.kind == syntax_kind_ext::CONSTRUCTOR
+                || node.kind == syntax_kind_ext::GET_ACCESSOR
+                || node.kind == syntax_kind_ext::SET_ACCESSOR
+            {
+                return false;
+            }
+
+            let Some(ext) = self.arena.get_extended(current) else {
+                return false;
+            };
+            current = ext.parent;
+        }
+
+        true
+    }
+
+    fn has_async_modifier(&self, modifiers: Option<&tsz_parser::NodeList>) -> bool {
+        self.arena
+            .has_modifier_ref(modifiers, SyntaxKind::AsyncKeyword)
     }
 
     fn find_require_statement(&self, offset: u32) -> Option<(u32, u32, String, String)> {

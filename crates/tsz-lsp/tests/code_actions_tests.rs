@@ -51,6 +51,46 @@ fn apply_text_edits(source: &str, line_map: &LineMap, edits: &[TextEdit]) -> Str
     result
 }
 
+fn add_missing_await_actions(source: &str, diagnostic_needle: &str) -> Vec<CodeAction> {
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let range = range_for_substring(source, &line_map, diagnostic_needle);
+    let diag = LspDiagnostic {
+        range,
+        severity: Some(DiagnosticSeverity::Error),
+        code: Some(PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        source: None,
+        message: "Property 'toString' does not exist on type 'Promise<number>'.".to_string(),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    };
+
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    provider.provide_code_actions(
+        root,
+        Range::new(Position::new(0, 0), Position::new(0, 0)),
+        CodeActionContext {
+            diagnostics: vec![diag],
+            only: Some(vec![CodeActionKind::QuickFix]),
+            import_candidates: Vec::new(),
+        },
+    )
+}
+
+fn has_add_missing_await_action(actions: &[CodeAction]) -> bool {
+    actions
+        .iter()
+        .any(|action| action.title == "Add missing 'await'")
+}
+
 #[test]
 fn test_extract_variable_property_access() {
     let source = "const x = foo.bar.baz + 1;";
@@ -1152,6 +1192,46 @@ fn test_quickfix_add_missing_property_to_class_element_access() {
         updated,
         "class Foo {\n  method() {\n    this[\"bar\"];\n  }\n  \"bar\": any;\n}\n"
     );
+}
+
+#[test]
+fn test_quickfix_add_missing_await_requires_await_legal_context() {
+    let cases = [
+        (
+            "async function can await",
+            "async function f() {\n  const p = fetchN();\n  return p.toString();\n}\n",
+            true,
+        ),
+        (
+            "async generator can await",
+            "async function* f() {\n  const p = fetchN();\n  return p.toString();\n}\n",
+            true,
+        ),
+        (
+            "non-async function cannot await",
+            "function f() {\n  const p = fetchN();\n  return p.toString();\n}\n",
+            false,
+        ),
+        (
+            "non-async generator cannot await",
+            "function* f() {\n  const p = fetchN();\n  return p.toString();\n}\n",
+            false,
+        ),
+        (
+            "nested async arrow inside generator can await",
+            "function* f() {\n  const p = fetchN();\n  const run = async () => p.toString();\n}\n",
+            true,
+        ),
+    ];
+
+    for (label, source, should_offer) in cases {
+        let actions = add_missing_await_actions(source, "toString");
+        assert_eq!(
+            has_add_missing_await_action(&actions),
+            should_offer,
+            "{label}: actions were {actions:#?}"
+        );
+    }
 }
 
 #[test]
