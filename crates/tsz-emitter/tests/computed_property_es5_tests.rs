@@ -124,6 +124,63 @@ fn computed_method_still_uses_computed_temp() {
     );
 }
 
+#[test]
+fn computed_method_super_call_in_arrow_uses_lexical_this() {
+    let source = r#"
+class Base {
+    bar() { return 0; }
+}
+class C extends Base {
+    foo() {
+        () => {
+            var obj = { [super.bar()]() { } };
+        };
+        return 0;
+    }
+}
+"#;
+    let output = emit_es5(source);
+
+    assert!(
+        output.contains("var _this = this;"),
+        "Arrow with a super call in a computed key should capture lexical this.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_super.prototype.bar.call(_this)"),
+        "Super method calls inside lowered arrow computed keys should bind the lexical this alias.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_super.prototype.bar.call(this)"),
+        "Super method calls inside the arrow must not bind the nested function's this.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn computed_method_super_element_call_in_arrow_uses_lexical_this() {
+    let source = r#"
+class Base {
+    bar() { return 0; }
+}
+class C extends Base {
+    foo(key) {
+        () => {
+            var obj = { [super[key]()]() { } };
+        };
+    }
+}
+"#;
+    let output = emit_es5(source);
+
+    assert!(
+        output.contains("_super.prototype[key].call(_this)"),
+        "Super element calls inside lowered arrow computed keys should bind the lexical this alias.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_super.prototype[key].call(this)"),
+        "Super element calls inside the arrow must not bind the nested function's this.\nOutput:\n{output}"
+    );
+}
+
 /// Issue #3968: An object literal spread whose leading element segment
 /// contains a computed property must lower the elements via the
 /// `(_a = {}, _a[k] = 1, _a)` pattern, not as an ES2015 `{ [k]: 1 }`

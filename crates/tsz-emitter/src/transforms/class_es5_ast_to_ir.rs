@@ -162,6 +162,21 @@ impl<'a> AstToIr<'a> {
         has_substitution
     }
 
+    fn current_this_ir(&self) -> IRNode {
+        if let Some(substitution) = self.current_this_substitution.take() {
+            self.current_this_substitution
+                .set(Some(substitution.clone()));
+            match substitution {
+                ThisSubstitution::Identifier(alias) => IRNode::Identifier(alias.into()),
+                ThisSubstitution::Raw(expr) => IRNode::Raw(expr.into()),
+            }
+        } else {
+            IRNode::This {
+                captured: self.this_captured.get(),
+            }
+        }
+    }
+
     fn can_delegate_es5_for_of_to_ast_printer(&self, idx: NodeIndex) -> bool {
         let has_es5_for_of_directive = self.transforms.as_ref().is_some_and(|transforms| {
             matches!(
@@ -485,20 +500,7 @@ impl<'a> AstToIr<'a> {
             k if k == SyntaxKind::FalseKeyword as u16 => IRNode::BooleanLiteral(false),
             k if k == SyntaxKind::NullKeyword as u16 => IRNode::NullLiteral,
             k if k == SyntaxKind::UndefinedKeyword as u16 => IRNode::Undefined,
-            k if k == SyntaxKind::ThisKeyword as u16 => {
-                if let Some(substitution) = self.current_this_substitution.take() {
-                    self.current_this_substitution
-                        .set(Some(substitution.clone()));
-                    match substitution {
-                        ThisSubstitution::Identifier(alias) => IRNode::Identifier(alias.into()),
-                        ThisSubstitution::Raw(expr) => IRNode::Raw(expr.into()),
-                    }
-                } else {
-                    IRNode::This {
-                        captured: self.this_captured.get(),
-                    }
-                }
-            }
+            k if k == SyntaxKind::ThisKeyword as u16 => self.current_this_ir(),
             k if k == SyntaxKind::SuperKeyword as u16 => IRNode::Super,
             k if k == syntax_kind_ext::CALL_EXPRESSION => self.convert_call_expression(idx),
             k if k == syntax_kind_ext::NEW_EXPRESSION => self.convert_new_expression(idx),
@@ -1358,9 +1360,7 @@ impl<'a> AstToIr<'a> {
                     object: Box::new(super_proto_method),
                     property: "call".to_string().into(),
                 };
-                let mut call_args = vec![IRNode::This {
-                    captured: self.this_captured.get(),
-                }];
+                let mut call_args = vec![self.current_this_ir()];
                 call_args.extend(args);
                 return Some(IRNode::CallExpr {
                     callee: Box::new(call_method),
@@ -1395,9 +1395,7 @@ impl<'a> AstToIr<'a> {
                     object: Box::new(super_proto_elem),
                     property: "call".to_string().into(),
                 };
-                let mut call_args = vec![IRNode::This {
-                    captured: self.this_captured.get(),
-                }];
+                let mut call_args = vec![self.current_this_ir()];
                 call_args.extend(args);
                 return Some(IRNode::CallExpr {
                     callee: Box::new(call_method),
@@ -1413,9 +1411,7 @@ impl<'a> AstToIr<'a> {
         let temp = self.generate_hoisted_temp();
         let temp_ref = || IRNode::id(temp.clone());
 
-        let mut call_args = vec![IRNode::This {
-            captured: self.this_captured.get(),
-        }];
+        let mut call_args = vec![self.current_this_ir()];
         call_args.extend(args);
 
         IRNode::ConditionalExpr {
