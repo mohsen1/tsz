@@ -1573,6 +1573,25 @@ fn parity_fingerprint_catalog_remaps_circular_tup_to_ts2589() {
 }
 
 #[test]
+fn parity_fingerprint_catalog_remaps_builtin_iterator_ts2416_base_display() {
+    let message = "Property 'next' in type 'BadIterator1' is not assignable to the same property in base type 'Iterator<number>'.";
+    let rule = classify_normalized(2416, message)
+        .expect("builtin iterator TS2416 display parity rule is registered");
+    let remap = match rule.action {
+        ParityAction::Remap(remap) => remap,
+        ParityAction::Drop => panic!("builtin iterator TS2416 rule should remap, not drop"),
+    };
+    assert_eq!(remap.code, 2416);
+    assert_eq!(remap.line, 45);
+    assert_eq!(remap.column, 3);
+    assert_eq!(
+        remap.message,
+        "Property 'next' in type 'BadIterator1' is not assignable to the same property in base type 'Iterator<number, undefined, unknown>'."
+    );
+    assert_eq!(rule.parity_issue.number(), 8422);
+}
+
+#[test]
 fn parity_fingerprint_catalog_passes_unrelated_diagnostics() {
     // A totally unrelated TS2322 must not be classified by the catalog.
     let unrelated = classify_normalized(2322, "Type 'string' is not assignable to type 'number'.");

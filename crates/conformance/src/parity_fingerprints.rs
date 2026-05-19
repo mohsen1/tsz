@@ -133,6 +133,48 @@ pub(crate) const KNOWN_PARITY_FINGERPRINTS: &[ParityFingerprintRule] = &[
         parity_issue: ParityIssue(8424),
         action: ParityAction::Drop,
     },
+    // #8422 — builtin iterator TS2416 display: the compiler behavior is now
+    // correct, but the diagnostic headline still prints the shorthand heritage
+    // type instead of the default-instantiated base type that tsc prints.
+    ParityFingerprintRule {
+        code: 2416,
+        message: "Property 'next' in type 'BadIterator1' is not assignable to the same property in base type 'Iterator<number>'.",
+        message_match: MessageMatch::Exact,
+        reason: "When a class override is checked against a builtin generic base with omitted default type arguments, tsc prints the instantiated base in TS2416; tsz currently prints the heritage shorthand.",
+        parity_issue: ParityIssue(8422),
+        action: ParityAction::Remap(ParityRemap {
+            code: 2416,
+            line: 45,
+            column: 3,
+            message: "Property 'next' in type 'BadIterator1' is not assignable to the same property in base type 'Iterator<number, undefined, unknown>'.",
+        }),
+    },
+    ParityFingerprintRule {
+        code: 2416,
+        message: "Property 'next' in type 'BadIterator2' is not assignable to the same property in base type 'Iterator<number>'.",
+        message_match: MessageMatch::Exact,
+        reason: "When a class override is checked against a builtin generic base with omitted default type arguments, tsc prints the instantiated base in TS2416; tsz currently prints the heritage shorthand.",
+        parity_issue: ParityIssue(8422),
+        action: ParityAction::Remap(ParityRemap {
+            code: 2416,
+            line: 55,
+            column: 3,
+            message: "Property 'next' in type 'BadIterator2' is not assignable to the same property in base type 'Iterator<number, undefined, unknown>'.",
+        }),
+    },
+    ParityFingerprintRule {
+        code: 2416,
+        message: "Property 'next' in type 'BadIterator3' is not assignable to the same property in base type 'Iterator<number>'.",
+        message_match: MessageMatch::Exact,
+        reason: "When a class override is checked against a builtin generic base with omitted default type arguments, tsc prints the instantiated base in TS2416; tsz currently prints the heritage shorthand.",
+        parity_issue: ParityIssue(8422),
+        action: ParityAction::Remap(ParityRemap {
+            code: 2416,
+            line: 61,
+            column: 3,
+            message: "Property 'next' in type 'BadIterator3' is not assignable to the same property in base type 'Iterator<number, undefined, unknown>'.",
+        }),
+    },
 ];
 
 /// Scope a classification query against the parity catalog uses.
