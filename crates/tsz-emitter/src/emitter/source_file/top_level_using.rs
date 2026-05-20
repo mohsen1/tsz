@@ -1626,8 +1626,28 @@ impl<'a> Printer<'a> {
         is_legacy_decorator_class: bool,
     ) -> String {
         let current_indent = "    ".repeat(self.writer.indent_level() as usize);
-        if let Some(stripped) = emitted.strip_prefix(&current_indent) {
-            emitted = stripped.to_string();
+        if emitted.starts_with(&current_indent) {
+            emitted.drain(..current_indent.len());
+        }
+
+        // render_simple_tc39_decorated_class_es5 bakes base_indent and the writer's auto-indent
+        // also fires, causing double-indentation on the first line for non-legacy ES5 classes.
+        if !is_legacy_decorator_class && self.ctx.target_es5 {
+            let first_nl = emitted.find('\n').unwrap_or(emitted.len());
+            let ws = first_nl - emitted[..first_nl].trim_start().len();
+            if ws > 0 {
+                emitted.drain(..ws);
+            }
+            if !self.in_top_level_using_scope {
+                let export_stmt =
+                    self.top_level_using_export_binding_stmt(export_name, binding_name);
+                if !emitted.ends_with('\n') {
+                    emitted.push('\n');
+                }
+                emitted.push_str(&current_indent);
+                emitted.push_str(&export_stmt);
+                return emitted;
+            }
         }
 
         if is_legacy_decorator_class && !self.in_top_level_using_scope {
@@ -1717,11 +1737,9 @@ impl<'a> Printer<'a> {
         export_name: &str,
         is_es_module_output: bool,
     ) -> String {
-        let leading_indent = Some("    ".repeat(self.writer.indent_level() as usize));
-        if let Some(indent) = leading_indent.as_ref()
-            && let Some(stripped) = emitted.strip_prefix(indent)
-        {
-            emitted = stripped.to_string();
+        let leading_indent = "    ".repeat(self.writer.indent_level() as usize);
+        if emitted.starts_with(&leading_indent) {
+            emitted.drain(..leading_indent.len());
         }
         // Default-exported decorated classes emitted *inside* a System
         // top-level `using` block are threaded through a `_default`
@@ -1754,13 +1772,11 @@ impl<'a> Printer<'a> {
 
         let export_stmt = if is_es_module_output {
             format!("{local_expr};")
-        } else if let Some(indent) = leading_indent.as_ref() {
+        } else {
             format!(
-                "{indent}{}",
+                "{leading_indent}{}",
                 self.top_level_using_export_binding_stmt(export_name, &local_expr)
             )
-        } else {
-            self.top_level_using_export_binding_stmt(export_name, &local_expr)
         };
 
         if export_name == "default" {
@@ -1977,24 +1993,40 @@ impl<'a> Printer<'a> {
         {
             if let Some(expr) = self.capture_tc39_decorated_class_expression(idx, &display_name) {
                 if let Some(export_name) = export_name.as_ref() {
-                    if !is_es_module_output {
+                    let is_named_class = class.name.is_some();
+                    // Named classes outside a using scope use SEPARATE form in system
+                    // modules: the class assignment is emitted first on its own line,
+                    // then the export binding references the already-assigned variable.
+                    // This matches tsc which only uses COMBINED (inline inside exports_1)
+                    // when the class is inside a top-level using scope.
+                    // Anonymous default classes outside a using scope still use COMBINED
+                    // but without the `_default` tracker since there is no using cleanup.
+                    if !is_es_module_output && !self.in_top_level_using_scope && is_named_class {
+                        self.write(&binding_name);
+                        self.write(" = ");
+                        self.write(&expr);
+                        self.write(";");
+                        self.write_line();
                         self.write_export_binding_start(export_name);
-                    }
-                    if export_name == "default" {
-                        self.write("_default = ");
-                        if class.name.is_some() {
+                        self.write(&binding_name);
+                        self.write_export_binding_end();
+                    } else {
+                        if !is_es_module_output {
+                            self.write_export_binding_start(export_name);
+                        }
+                        if export_name == "default" && self.in_top_level_using_scope {
+                            self.write("_default = ");
+                        }
+                        if is_named_class || export_name != "default" {
                             self.write(&binding_name);
                             self.write(" = ");
                         }
-                    } else {
-                        self.write(&binding_name);
-                        self.write(" = ");
-                    }
-                    self.write(&expr);
-                    if !is_es_module_output {
-                        self.write_export_binding_end();
-                    } else {
-                        self.write(";");
+                        self.write(&expr);
+                        if !is_es_module_output {
+                            self.write_export_binding_end();
+                        } else {
+                            self.write(";");
+                        }
                     }
                 } else {
                     self.write(&binding_name);
@@ -2172,6 +2204,34 @@ impl<'a> Printer<'a> {
             };
             rewritten = emitted.replacen(&format!("class {binding_name}"), &replacement, 1);
         }
+        // Handle conflict-renamed variables: register_block_scoped_class may return
+        // `C_1` when `C` is already in scope at the hoisting site. In top-level using
+        // context the outer var is separately hoisted, so rewrite every occurrence of
+        // the renamed identifier back to binding_name.
+        if rewritten == emitted {
+            let trimmed_emitted = emitted.trim_start();
+            if let Some(rest_after_var) = trimmed_emitted.strip_prefix("var ") {
+                let indent_len = emitted.len() - trimmed_emitted.len();
+                if let Some(eq_idx) = rest_after_var.find(" = ") {
+                    let declared_name = &rest_after_var[..eq_idx];
+                    let suffix = if declared_name.len() > binding_name.len() {
+                        &declared_name[binding_name.len()..]
+                    } else {
+                        ""
+                    };
+                    if declared_name.starts_with(binding_name.as_str())
+                        && suffix.starts_with('_')
+                        && suffix[1..].parse::<u32>().is_ok()
+                    {
+                        let indent = &emitted[..indent_len];
+                        let body_start =
+                            indent_len + "var ".len() + declared_name.len() + " = ".len();
+                        let body = emitted[body_start..].replace(declared_name, &binding_name);
+                        rewritten = format!("{indent}{binding_name} = {body}");
+                    }
+                }
+            }
+        }
 
         self.writer.truncate(before_len);
         if let Some(export_name) = export_name.as_ref() {
@@ -2203,47 +2263,34 @@ impl<'a> Printer<'a> {
                     &format!("{binding_name} = "),
                     1,
                 );
+                // In system modules, use COMBINED (class body inline inside exports_1)
+                // only when the class is inside a top-level using scope and the export
+                // is not a default export. Default exports and classes outside a using
+                // scope always use SEPARATE: the assignment on its own line followed by
+                // the export binding. This matches tsc emit exactly.
                 if self.in_system_execute_body {
                     let leading_indent = "    ".repeat(self.writer.indent_level() as usize);
-                    if let Some(stripped) = rewritten.strip_prefix(&leading_indent) {
-                        rewritten = stripped.to_string();
+                    if rewritten.starts_with(&leading_indent) {
+                        rewritten.drain(..leading_indent.len());
                     }
-                }
-                if self.in_system_execute_body && export_name == "default" && class.name.is_none() {
-                    self.write(&rewritten);
-                    if !rewritten.trim_end().ends_with(';') {
-                        self.write(";");
+                    if self.in_top_level_using_scope && export_name != "default" {
+                        let trimmed = rewritten.strip_suffix(';').unwrap_or(&rewritten);
+                        self.write_export_binding_start(export_name);
+                        self.write(trimmed);
+                        self.write_export_binding_end();
+                    } else {
+                        self.write(&rewritten);
+                        if !rewritten.trim_end().ends_with(';') {
+                            self.write(";");
+                        }
+                        self.write_line();
+                        self.write_export_binding_start(export_name);
+                        if export_name == "default" && self.in_top_level_using_scope {
+                            self.write("_default = ");
+                        }
+                        self.write(&binding_name);
+                        self.write_export_binding_end();
                     }
-                    self.write_line();
-                    self.write_export_binding_start(export_name);
-                    // Inside a top-level using-block, the export must hop
-                    // through the closure's `_default` tracker so re-exports
-                    // observe the post-decorator value
-                    // (`exports_1("default", _default = default_1);`).
-                    if self.in_top_level_using_scope {
-                        self.write("_default = ");
-                    }
-                    self.write(&binding_name);
-                    self.write_export_binding_end();
-                } else if self.in_system_execute_body
-                    && (has_explicit_export_modifier || export_name == "default")
-                {
-                    let trimmed = rewritten.strip_suffix(';').unwrap_or(&rewritten);
-                    self.write_export_binding_start(export_name);
-                    if export_name == "default" && class.name.is_some() {
-                        self.write("_default = ");
-                    }
-                    self.write(trimmed);
-                    self.write_export_binding_end();
-                } else if self.in_system_execute_body {
-                    self.write(&rewritten);
-                    if !rewritten.trim_end().ends_with(';') {
-                        self.write(";");
-                    }
-                    self.write_line();
-                    self.write_export_binding_start(export_name);
-                    self.write(&binding_name);
-                    self.write_export_binding_end();
                 } else {
                     self.write_export_binding_start(export_name);
                     self.write(&rewritten);
@@ -2301,8 +2348,8 @@ impl<'a> Printer<'a> {
             }
         } else {
             let leading_indent = "    ".repeat(self.writer.indent_level() as usize);
-            if let Some(stripped) = rewritten.strip_prefix(&leading_indent) {
-                rewritten = stripped.to_string();
+            if rewritten.starts_with(&leading_indent) {
+                rewritten.drain(..leading_indent.len());
             }
             self.write(&rewritten);
             if !rewritten.trim_end().ends_with(';') {
