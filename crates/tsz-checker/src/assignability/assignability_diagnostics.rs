@@ -1467,8 +1467,8 @@ impl<'a> CheckerState<'a> {
         evaluated != target
             && evaluated != TypeId::UNKNOWN
             && evaluated != TypeId::ERROR
-            && (self.is_assignable_to_with_env(source, evaluated)
-                || self.is_assignable_to_with_env(source, contextual)
+            && (self.diagnostic_relation_boolean_guard_with_env(source, evaluated)
+                || self.diagnostic_relation_boolean_guard_with_env(source, contextual)
                 || self.self_referential_mapped_intersection_accepts_object_literal(
                     source, evaluated, arg_idx,
                 ))
@@ -1501,7 +1501,7 @@ impl<'a> CheckerState<'a> {
             let Some(shape) =
                 crate::query_boundaries::common::object_shape_for_type(self.ctx.types, member)
             else {
-                if !self.is_assignable_to_with_env(source, member) {
+                if !self.diagnostic_relation_boolean_guard_with_env(source, member) {
                     return false;
                 }
                 continue;
@@ -1509,9 +1509,9 @@ impl<'a> CheckerState<'a> {
 
             allowed_keys.extend(shape.properties.iter().map(|prop| prop.name));
             if shape.string_index.is_some() || shape.number_index.is_some() {
-                return self.is_assignable_to_with_env(source, member);
+                return self.diagnostic_relation_boolean_guard_with_env(source, member);
             }
-            if !self.is_assignable_to_with_env(source, member) {
+            if !self.diagnostic_relation_boolean_guard_with_env(source, member) {
                 return false;
             }
         }
