@@ -987,35 +987,27 @@ impl<'a> CheckerState<'a> {
             return merged;
         }
 
-        // When cross-arena delegation is active, `declarations` may contain NodeIndex values
-        // from multiple lib arenas (e.g., Map spans es2015.collection, es2015.iterable,
-        // esnext.collection). NodeIndex spaces are per-arena, so every prepass and the
-        // final lowering must read each declaration from its owning arena.
-        //
-        // Important: only enable the multi-arena path when declarations genuinely span more
-        // than one NodeArena. `collect_lib_decls_with_arenas_in_contexts` always returns at
-        // least one pair per declaration (falling back to ctx.arena), so the deduped result
-        // is never empty. We use a cross-arena arena-ptr scan to distinguish the real case
-        // (some decls live in a different arena) from the common case (all decls in ctx.arena),
-        // avoiding the behavioral difference of lower_merged_interface_declarations_with_symbol
-        // for single-arena interfaces resolved inside the delegation scope.
-        let cross_arena_lib_contexts = self.ctx.lib_contexts.clone();
+        // Multi-lib built-ins (Map, Set, WeakMap, …) span several NodeArenas; each declaration
+        // must be lowered with the arena that owns it. collect_lib_decls_with_arenas_in_contexts
+        // always returns ≥1 pair per declaration (falling back to ctx.arena), so we scan for a
+        // pair whose arena ptr differs from ctx.arena before committing to the multi-arena path.
+        // Lifetime note: arena refs inside cross_arena_declarations borrow from lib_ctxs,
+        // so the clone must outlive the Vec.
+        let lib_ctxs = self.ctx.lib_contexts.clone();
         let cross_arena_declarations =
-            if Self::in_cross_arena_interface_delegation() && !self.ctx.lib_contexts.is_empty() {
+            if Self::in_cross_arena_interface_delegation() && !lib_ctxs.is_empty() {
                 let decls_with_arenas =
                 crate::types_domain::queries::lib_decls::collect_lib_decls_with_arenas_in_contexts(
                     self.ctx.binder,
                     sym_id,
                     &declarations,
                     self.ctx.arena,
-                    &cross_arena_lib_contexts,
+                    &lib_ctxs,
                     None,
                 );
                 let deduped =
                     crate::types_domain::queries::lib_decls::dedup_decl_arenas(&decls_with_arenas);
                 let ctx_arena_ptr = self.ctx.arena as *const tsz_parser::parser::NodeArena;
-                // Only use the multi-arena path when at least one declaration genuinely
-                // belongs to a different NodeArena than ctx.arena.
                 if deduped
                     .iter()
                     .any(|(_, a)| !std::ptr::eq(*a as *const _, ctx_arena_ptr))

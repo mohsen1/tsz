@@ -6,15 +6,19 @@ use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> CheckerState<'a> {
+    fn with_current_arena(&self, declarations: &[NodeIndex]) -> Vec<(NodeIndex, &'a NodeArena)> {
+        declarations
+            .iter()
+            .map(|&decl_idx| (decl_idx, self.ctx.arena))
+            .collect()
+    }
+
     pub(crate) fn prewarm_member_type_reference_params(
         &mut self,
         declarations: &[NodeIndex],
     ) -> rustc_hash::FxHashMap<tsz_solver::def::DefId, Vec<tsz_solver::TypeParamInfo>> {
-        let declarations_with_arenas: Vec<_> = declarations
-            .iter()
-            .map(|&decl_idx| (decl_idx, self.ctx.arena))
-            .collect();
-        self.prewarm_member_type_reference_params_in_arenas(&declarations_with_arenas)
+        let decls = self.with_current_arena(declarations);
+        self.prewarm_member_type_reference_params_in_arenas(&decls)
     }
 
     pub(crate) fn prewarm_member_type_reference_params_in_arenas(
@@ -74,11 +78,8 @@ impl<'a> CheckerState<'a> {
         &mut self,
         declarations: &[NodeIndex],
     ) -> rustc_hash::FxHashMap<(NodeIndex, usize), tsz_common::Atom> {
-        let declarations_with_arenas: Vec<_> = declarations
-            .iter()
-            .map(|&decl_idx| (decl_idx, self.ctx.arena))
-            .collect();
-        self.precompute_computed_property_names_in_arenas(&declarations_with_arenas)
+        let decls = self.with_current_arena(declarations);
+        self.precompute_computed_property_names_in_arenas(&decls)
     }
 
     pub(crate) fn precompute_computed_property_names_in_arenas(
@@ -132,11 +133,8 @@ impl<'a> CheckerState<'a> {
         &mut self,
         declarations: &[NodeIndex],
     ) -> rustc_hash::FxHashSet<(NodeIndex, usize)> {
-        let declarations_with_arenas: Vec<_> = declarations
-            .iter()
-            .map(|&decl_idx| (decl_idx, self.ctx.arena))
-            .collect();
-        self.precompute_symbol_named_computed_property_names_in_arenas(&declarations_with_arenas)
+        let decls = self.with_current_arena(declarations);
+        self.precompute_symbol_named_computed_property_names_in_arenas(&decls)
     }
 
     pub(crate) fn precompute_symbol_named_computed_property_names_in_arenas(
