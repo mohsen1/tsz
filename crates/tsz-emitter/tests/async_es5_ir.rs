@@ -25,7 +25,9 @@ fn transform_and_print(source: &str) -> String {
 // where each absent slot is sparse, allocate region boundary labels
 // just-in-time so resume labels stay sequential within each region, bind the
 // caught exception via `_a.sent()`, and route breaks from both try and catch
-// through the same shared exit target (finally or end).
+// to the region's *end* label. tsc's `__generator` driver routes the pending
+// break through a finally region by pushing onto `_.ops`; breaking directly
+// to the finally label would leave `_.ops` empty and wedge `endfinally`.
 
 #[test]
 fn try_catch_finally_with_await_in_each_block_lowers_to_sequential_state_machine() {
@@ -42,16 +44,16 @@ fn try_catch_finally_with_await_in_each_block_lowers_to_sequential_state_machine
         "Try body yield must live at the start label that trys.push references.\nOutput:\n{output}"
     );
     assert!(
-        output.contains("case 1:") && output.contains("return [3 /*break*/, 4];"),
-        "Try-body resume must come immediately after start and break to the finally label.\nOutput:\n{output}"
+        output.contains("case 1:") && output.contains("return [3 /*break*/, 6];"),
+        "Try-body resume must break to the region end label so the runtime can route through finally via `_.ops`.\nOutput:\n{output}"
     );
     assert!(
         output.contains("case 2: return [4 /*yield*/, b()];"),
         "Catch body must start at the catch label and emit its yield.\nOutput:\n{output}"
     );
     assert!(
-        output.contains("case 3:") && output.contains("return [3 /*break*/, 4];"),
-        "Catch-body resume must come immediately after the catch label and break to the finally label.\nOutput:\n{output}"
+        output.contains("case 3:") && output.contains("return [3 /*break*/, 6];"),
+        "Catch-body resume must also break to the region end label; the driver pushes the break onto `_.ops` and dispatches finally for cleanup.\nOutput:\n{output}"
     );
     assert!(
         output.contains("case 4: return [4 /*yield*/, c()];"),
@@ -111,8 +113,8 @@ fn try_finally_without_catch_in_async_keeps_sparse_catch_slot() {
         "Try-finally without a catch must emit the sparse catch slot.\nOutput:\n{output}"
     );
     assert!(
-        output.contains("case 1:") && output.contains("return [3 /*break*/, 2];"),
-        "Try-body break must target the finally label when no catch is present.\nOutput:\n{output}"
+        output.contains("case 1:") && output.contains("return [3 /*break*/, 4];"),
+        "Try-body break must target the end label even when a finally is present — the runtime routes the break through finally via `_.ops`.\nOutput:\n{output}"
     );
     assert!(
         output.contains("case 2: return [4 /*yield*/, c()];"),

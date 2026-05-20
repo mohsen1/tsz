@@ -4776,7 +4776,16 @@ impl<'a> AsyncES5Transformer<'a> {
             catch_label,
             finally_label,
             end_label,
-            exit_target: finally_label.unwrap_or(end_label),
+            // Breaks from try/catch must target the region's end label even when
+            // a finally exists; tsc's `__generator` driver detects the active try
+            // entry on a `[3 /*break*/, end]` op, pushes the pending break onto
+            // `_.ops`, then jumps to the finally label. After `[7 /*endfinally*/]`
+            // pops `_.ops`, the driver resumes the original break against an
+            // empty `_.trys` stack and lands at `end`. Breaking directly to the
+            // finally label would jump there without pushing onto `_.ops`, so
+            // `endfinally` would pop an empty stack and the state machine would
+            // wedge.
+            exit_target: end_label,
         };
         let cases_tail = cases[cases_start..]
             .iter_mut()
