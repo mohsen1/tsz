@@ -5,12 +5,12 @@
 //!
 //! These functions operate purely on `TypeIds` and maintain no AST dependencies.
 
-use crate::TypeDatabase;
-use crate::TypeResolver;
 use crate::caches::db::QueryDatabase;
 use crate::caches::subtype_reduction_cache::SubtypeReductionKey;
-use crate::is_subtype_of;
+use crate::construction::TypeDatabase;
 use crate::relations::subtype::SubtypeChecker;
+use crate::relations::subtype::TypeResolver;
+use crate::relations::subtype::is_subtype_of;
 use crate::types::{
     IntrinsicKind, ObjectFlags, PropertyInfo, TemplateSpan, TypeData, TypeId, Visibility,
 };

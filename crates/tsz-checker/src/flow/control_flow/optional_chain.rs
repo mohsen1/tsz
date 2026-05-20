@@ -4,7 +4,8 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::BinaryExprData;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{TypeGuard, TypeId, TypeofKind};
+use tsz_solver::TypeId;
+use tsz_solver::narrowing::{TypeGuard, TypeofKind};
 
 impl<'a> FlowAnalyzer<'a> {
     pub(crate) fn contains_optional_chain(&self, idx: NodeIndex) -> bool {

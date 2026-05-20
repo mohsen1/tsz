@@ -7,7 +7,7 @@ use tsz_checker::context::CheckerOptions;
 use tsz_checker::module_resolution::build_module_resolution_maps;
 use tsz_common::common::ModuleKind;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn get_diagnostics(source: &str, file_name: &str) -> Vec<(u32, String)> {
     let mut parser = ParserState::new(file_name.to_string(), source.to_string());

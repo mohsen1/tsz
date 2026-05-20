@@ -3,7 +3,8 @@ use crate::query_boundaries::common::union_members;
 use crate::query_boundaries::flow as flow_boundary;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{AccessExprData, Node};
-use tsz_solver::{GuardSense, NarrowingContext, TypeGuard, TypeId};
+use tsz_solver::TypeId;
+use tsz_solver::narrowing::{GuardSense, NarrowingContext, TypeGuard};
 
 impl<'a> FlowAnalyzer<'a> {
     pub(crate) fn narrow_call_expression_condition(

@@ -10,7 +10,7 @@ use tsz_checker::test_utils::load_compiled_lib_files;
 use tsz_common::checker_options::{CheckerOptions, JsxMode};
 use tsz_common::diagnostics::{Diagnostic, diagnostic_codes};
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 /// Compile JSX source with inline JSX namespace and return diagnostics.
 fn jsx_diagnostics(source: &str) -> Vec<(u32, String)> {

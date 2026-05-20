@@ -1,4 +1,4 @@
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::types::{
     IndexSignature, IntrinsicKind, LiteralValue, ObjectFlags, ObjectShape, PropertyInfo, TypeId,
     Visibility,

@@ -15,7 +15,7 @@ use super::*;
 use tsz_binder::BinderState;
 use tsz_common::position::LineMap;
 use tsz_parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 /// Completion labels at `position` for the given source string.
 fn completion_labels(source: &str, position: Position) -> Vec<String> {

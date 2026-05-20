@@ -141,7 +141,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     fn get_overloaded_source_signature_for_arity(
-        db: &dyn crate::TypeDatabase,
+        db: &dyn crate::construction::TypeDatabase,
         type_id: TypeId,
         arg_count: usize,
         prefer_construct: bool,
@@ -187,7 +187,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     pub(super) fn get_source_signature_for_target(
-        db: &dyn crate::TypeDatabase,
+        db: &dyn crate::construction::TypeDatabase,
         source_type: TypeId,
         target_type: TypeId,
     ) -> Option<(FunctionShape, FunctionShape)> {
@@ -242,7 +242,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     pub(super) fn contains_tuple_like_parameter_target(
-        db: &dyn crate::TypeDatabase,
+        db: &dyn crate::construction::TypeDatabase,
         type_id: TypeId,
     ) -> bool {
         if type_id.is_intrinsic() {

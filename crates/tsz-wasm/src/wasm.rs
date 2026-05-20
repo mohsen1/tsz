@@ -41,7 +41,7 @@
 use serde::{Deserialize, Serialize};
 use std::panic;
 use tsz::parallel::{BindStats, CheckStats, ParallelStats, compile_files};
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 use wasm_bindgen::prelude::{JsValue, wasm_bindgen};
 
 /// WASM-compatible type interner for parallel type checking.

@@ -44,7 +44,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn generic_new_constraint_preserves_literals(
-        db: &dyn tsz_solver::QueryDatabase,
+        db: &dyn tsz_solver::construction::QueryDatabase,
         ty: TypeId,
     ) -> bool {
         if matches!(
