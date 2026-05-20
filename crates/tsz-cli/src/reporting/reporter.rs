@@ -1,6 +1,6 @@
 use colored::Colorize;
 use rustc_hash::FxHashMap;
-use std::path::{Component, Path, PathBuf};
+use std::path::Path;
 
 use crate::locale;
 use tsz::checker::diagnostics::{Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation};
@@ -540,7 +540,7 @@ impl Reporter {
             let cwd_path = Path::new(cwd);
             // Try the file path as-is first.
             let file_path = Path::new(file);
-            if let Some(rel) = Self::diff_paths(file_path, cwd_path) {
+            if let Some(rel) = crate::fs::diff_paths(file_path, cwd_path) {
                 let as_is = rel.to_string_lossy().into_owned();
                 // Canonical-vs-as-is mismatches show up as a leading `..`
                 // chain — e.g. cwd `/private/tmp/x` vs file `/tmp/x/y.ts`
@@ -553,7 +553,7 @@ impl Reporter {
                     return as_is;
                 }
                 if let Ok(canonical) = file_path.canonicalize()
-                    && let Some(canon_rel) = Self::diff_paths(&canonical, cwd_path)
+                    && let Some(canon_rel) = crate::fs::diff_paths(&canonical, cwd_path)
                 {
                     let canon_str = canon_rel.to_string_lossy().into_owned();
                     // Only prefer the canonical-relative form if it's
@@ -568,28 +568,6 @@ impl Reporter {
             }
         }
         file.to_string()
-    }
-
-    /// Compute a relative path from `base` to `path`, similar to `pathdiff::diff_paths`.
-    fn diff_paths(path: &Path, base: &Path) -> Option<PathBuf> {
-        let path_components: Vec<Component<'_>> = path.components().collect();
-        let base_components: Vec<Component<'_>> = base.components().collect();
-        let common_len = path_components
-            .iter()
-            .zip(base_components.iter())
-            .take_while(|(a, b)| a == b)
-            .count();
-        if common_len == 0 && path.is_absolute() && base.is_absolute() {
-            return None;
-        }
-        let mut result = PathBuf::new();
-        for _ in common_len..base_components.len() {
-            result.push("..");
-        }
-        for component in &path_components[common_len..] {
-            result.push(component);
-        }
-        Some(result)
     }
 
     fn position_for(&mut self, file: &str, offset: u32) -> Option<(u32, u32)> {
