@@ -2085,3 +2085,24 @@ fn async_es5_no_dynamic_import_lowering_for_esnext() {
         "ESNext async ES5: import() must pass through unchanged.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn async_es5_system_dynamic_import_lowered_to_context_import() {
+    // System module: import() → context_1.import(specifier)
+    let output = emit_es5_with_module(
+        "async function load() { return await import(\"./sys-mod\"); }",
+        ModuleKind::System,
+    );
+    assert!(
+        output.contains("context_1.import(\"./sys-mod\")"),
+        "System async ES5: import() must become context_1.import(...).\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("require("),
+        "System async ES5: require() must not appear.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("Promise.resolve()"),
+        "System async ES5: Promise.resolve() CJS form must not appear.\nOutput:\n{output}"
+    );
+}
