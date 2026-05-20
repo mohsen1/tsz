@@ -7,6 +7,7 @@ use tsz_solver::{
 #[allow(unused_imports)]
 pub(crate) use tsz_solver::TypeInterner;
 pub(crate) use tsz_solver::judge::{DefaultJudge, Judge, JudgeConfig};
+pub(crate) use tsz_solver::narrowing::OptionalPropertyChainKey;
 pub(crate) use tsz_solver::objects::{IndexKind, IndexSignatureResolver};
 pub(crate) use tsz_solver::operations::property::PropertyAccessResult;
 pub(crate) use tsz_solver::operations::{AssignabilityChecker, CallResult};
@@ -15,9 +16,9 @@ pub(crate) use tsz_solver::type_queries::{
     is_remapped_mapped_index_access, remapped_mapped_index_access_result,
 };
 pub(crate) use tsz_solver::{
-    FunctionShape, IntrinsicKind, MappedType, ObjectFlags, OptionalPropertyChainKey, ParamInfo,
-    PendingDiagnostic, PendingDiagnosticBuilder, QueryDatabase, SourceLocation,
-    SubtypeFailureReason, TypeEnvironment, TypeFormatter, TypeResolver,
+    FunctionShape, IntrinsicKind, MappedType, ObjectFlags, ParamInfo, PendingDiagnostic,
+    PendingDiagnosticBuilder, QueryDatabase, SourceLocation, SubtypeFailureReason, TypeEnvironment,
+    TypeFormatter, TypeResolver,
     computation::{ContextualTypeContext, TypeSubstitution, instantiate_generic},
 };
 
@@ -1774,11 +1775,11 @@ pub(crate) fn is_function_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 }
 
 pub(crate) fn remove_undefined(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    tsz_solver::remove_undefined(db, type_id)
+    tsz_solver::narrowing::remove_undefined(db, type_id)
 }
 
 pub(crate) fn remove_nullish(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    tsz_solver::remove_nullish(db, type_id)
+    tsz_solver::narrowing::remove_nullish(db, type_id)
 }
 
 pub(crate) fn contains_this_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
@@ -1826,7 +1827,7 @@ pub(crate) fn is_module_namespace_type(db: &dyn TypeDatabase, type_id: TypeId) -
 }
 
 pub(crate) fn is_nullish_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::is_nullish_type(db, type_id)
+    tsz_solver::narrowing::is_nullish_type(db, type_id)
 }
 
 pub(crate) fn is_structurally_deferred_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
@@ -1834,7 +1835,7 @@ pub(crate) fn is_structurally_deferred_type(db: &dyn TypeDatabase, type_id: Type
 }
 
 pub(crate) fn type_contains_undefined(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_contains_undefined(db, type_id)
+    tsz_solver::narrowing::type_contains_undefined(db, type_id)
 }
 
 pub(crate) fn instantiate_function_with_type_args(
@@ -1863,7 +1864,7 @@ pub(crate) fn split_nullish_type(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> (Option<TypeId>, Option<TypeId>) {
-    tsz_solver::split_nullish_type(db, type_id)
+    tsz_solver::narrowing::split_nullish_type(db, type_id)
 }
 
 pub(crate) fn instantiate_type_preserving_meta(
