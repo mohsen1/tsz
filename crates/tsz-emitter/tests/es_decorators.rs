@@ -900,8 +900,9 @@ fn base_class_with_instance_member_decorator_does_not_get_super_call() {
 }
 
 #[test]
-fn synthetic_constructor_appears_before_instance_methods() {
-    // tsc places the constructor before instance methods in the class body.
+fn synthetic_constructor_appears_after_instance_methods() {
+    // When the source has no constructor, tsc appends the synthesized
+    // constructor after emitted instance members in the class body.
     let source = "@dec class Child extends Base { @dec method() {} }";
     let output = emit_decorator_with(source, true, true);
     let ctor_pos = output.find("constructor(");
@@ -915,7 +916,29 @@ fn synthetic_constructor_appears_before_instance_methods() {
         "Expected method in output.\nOutput:\n{output}"
     );
     assert!(
-        ctor_pos.unwrap() < method_pos.unwrap(),
-        "Constructor must appear before the instance method.\nOutput:\n{output}"
+        method_pos.unwrap() < ctor_pos.unwrap(),
+        "Synthetic constructor must appear after the instance method.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn synthetic_constructor_appears_after_instance_fields() {
+    // Decorated fields keep their class-body position; the constructor only
+    // carries the final extra-initializer run.
+    let source = "class Child extends Base { @dec field = 1; }";
+    let output = emit_decorator_with(source, true, true);
+    let ctor_pos = output.find("constructor(");
+    let field_pos = output.find("field =");
+    assert!(
+        ctor_pos.is_some(),
+        "Expected constructor in output.\nOutput:\n{output}"
+    );
+    assert!(
+        field_pos.is_some(),
+        "Expected field in output.\nOutput:\n{output}"
+    );
+    assert!(
+        field_pos.unwrap() < ctor_pos.unwrap(),
+        "Synthetic constructor must appear after the instance field.\nOutput:\n{output}"
     );
 }
