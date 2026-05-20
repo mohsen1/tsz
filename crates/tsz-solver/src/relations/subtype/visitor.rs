@@ -407,8 +407,8 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         if let Some(t_callable_id) = callable_shape_id(self.checker.interner, self.target) {
             use crate::objects::{PropertyCollectionResult, collect_properties};
 
-            let mut call_signatures = Vec::new();
-            let mut construct_signatures = Vec::new();
+            let mut call_signatures = Vec::with_capacity(member_list.len());
+            let mut construct_signatures = Vec::with_capacity(member_list.len());
             for &member in member_list.iter() {
                 if let Some(s_callable_id) = callable_shape_id(self.checker.interner, member) {
                     let shape = self.checker.interner.callable_shape(s_callable_id);
