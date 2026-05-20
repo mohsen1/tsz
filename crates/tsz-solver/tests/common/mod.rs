@@ -4,7 +4,7 @@
 //! so consumers vary in which items they actually use. All items carry
 //! `#[allow(dead_code)]` to keep cross-binary unused-warning noise quiet.
 
-use crate::TypeInterner;
+use crate::construction::TypeInterner;
 use crate::relations::judge::{DefaultJudge, JudgeConfig};
 use crate::relations::subtype::TypeEnvironment;
 

@@ -1162,7 +1162,7 @@ mod numeric_helper_tests {
     use super::*;
     use std::borrow::Cow;
     use tsz_parser::parser::NodeArena;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     // ---- strip_numeric_separators ----
 

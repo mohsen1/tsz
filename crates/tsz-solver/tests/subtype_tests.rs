@@ -1,7 +1,7 @@
 use super::*;
-use crate::TypeInterner;
 use crate::Visibility;
 use crate::construction::QueryCache;
+use crate::construction::TypeInterner;
 use crate::def::DefId;
 use crate::diagnostics::SubtypeFailureReason;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};

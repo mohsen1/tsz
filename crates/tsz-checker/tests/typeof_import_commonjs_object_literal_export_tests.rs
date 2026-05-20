@@ -36,7 +36,7 @@ use tsz_binder::BinderState;
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn diagnostics_for_two_files(js_source: &str, ts_source: &str) -> Vec<(u32, u32, u32, String)> {
     let mut parser_js = ParserState::new("mod.js".to_string(), js_source.to_string());

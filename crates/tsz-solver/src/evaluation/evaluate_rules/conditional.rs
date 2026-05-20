@@ -1341,7 +1341,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     fn function_intrinsic_extends_callable_target(
-        interner: &dyn crate::TypeDatabase,
+        interner: &dyn crate::construction::TypeDatabase,
         check_type: TypeId,
         extends_type: TypeId,
     ) -> bool {

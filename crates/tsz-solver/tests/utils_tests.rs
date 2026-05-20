@@ -1,5 +1,5 @@
 use super::*;
-use crate::TypeInterner;
+use crate::construction::TypeInterner;
 
 #[test]
 fn test_is_numeric_literal_name() {

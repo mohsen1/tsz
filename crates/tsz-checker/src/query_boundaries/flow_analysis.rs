@@ -446,7 +446,7 @@ fn types_are_subtype_with_env(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     #[test]
     fn assignment_reduction_preserves_top_like_initial_types() {

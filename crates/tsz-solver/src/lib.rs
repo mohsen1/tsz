@@ -186,8 +186,7 @@ pub mod construction {
 }
 #[cfg(test)]
 #[allow(unused_imports)]
-pub(crate) use construction::{QueryDatabase, TypeDatabase};
-pub use intern::TypeInterner;
+pub(crate) use construction::{QueryDatabase, TypeDatabase, TypeInterner};
 #[cfg(test)]
 pub(crate) use operations::infer_generic_function;
 pub use visitors::visitor::{

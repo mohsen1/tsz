@@ -79,7 +79,7 @@ impl<'a> DeclarationEmitter<'a> {
     fn should_preserve_named_application_for_emit(
         &self,
         type_id: tsz_solver::types::TypeId,
-        interner: &tsz_solver::TypeInterner,
+        interner: &tsz_solver::construction::TypeInterner,
     ) -> bool {
         let Some(app_id) = tsz_solver::visitor::application_id(interner, type_id) else {
             return false;
@@ -108,7 +108,7 @@ impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn should_preserve_named_application_for_inferred_emit(
         &self,
         type_id: tsz_solver::types::TypeId,
-        interner: &tsz_solver::TypeInterner,
+        interner: &tsz_solver::construction::TypeInterner,
     ) -> bool {
         if !self.should_preserve_named_application_for_emit(type_id, interner) {
             return false;
@@ -185,7 +185,7 @@ impl<'a> DeclarationEmitter<'a> {
     fn type_contains_mapped_type_for_inferred_emit(
         &self,
         type_id: tsz_solver::types::TypeId,
-        interner: &tsz_solver::TypeInterner,
+        interner: &tsz_solver::construction::TypeInterner,
         depth: usize,
     ) -> bool {
         if depth > 16 {
@@ -237,7 +237,7 @@ impl<'a> DeclarationEmitter<'a> {
     fn display_alias_for_declaration_emit(
         &self,
         type_id: tsz_solver::types::TypeId,
-        interner: &tsz_solver::TypeInterner,
+        interner: &tsz_solver::construction::TypeInterner,
     ) -> tsz_solver::types::TypeId {
         self.display_alias_for_policy(
             type_id,
@@ -249,11 +249,11 @@ impl<'a> DeclarationEmitter<'a> {
     fn display_alias_for_policy(
         &self,
         type_id: tsz_solver::types::TypeId,
-        interner: &tsz_solver::TypeInterner,
+        interner: &tsz_solver::construction::TypeInterner,
         preserve_named_application: fn(
             &Self,
             tsz_solver::types::TypeId,
-            &tsz_solver::TypeInterner,
+            &tsz_solver::construction::TypeInterner,
         ) -> bool,
     ) -> tsz_solver::types::TypeId {
         interner
@@ -265,11 +265,11 @@ impl<'a> DeclarationEmitter<'a> {
     fn apply_display_aliases_to_preserved_application_args(
         &self,
         type_id: tsz_solver::types::TypeId,
-        interner: &tsz_solver::TypeInterner,
+        interner: &tsz_solver::construction::TypeInterner,
         preserve_named_application: fn(
             &Self,
             tsz_solver::types::TypeId,
-            &tsz_solver::TypeInterner,
+            &tsz_solver::construction::TypeInterner,
         ) -> bool,
     ) -> tsz_solver::types::TypeId {
         let Some(app_id) = tsz_solver::visitor::application_id(interner, type_id) else {
@@ -686,7 +686,7 @@ impl<'a> DeclarationEmitter<'a> {
         preserve_named_application: fn(
             &Self,
             tsz_solver::types::TypeId,
-            &tsz_solver::TypeInterner,
+            &tsz_solver::construction::TypeInterner,
         ) -> bool,
     ) -> String {
         if let Some(interner) = self.type_interner {

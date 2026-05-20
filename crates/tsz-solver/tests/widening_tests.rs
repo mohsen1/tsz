@@ -1,5 +1,5 @@
 use super::*;
-use crate::TypeInterner;
+use crate::construction::TypeInterner;
 use crate::types::{
     LiteralValue, OrderedFloat, PropertyInfo, SymbolRef, TypeData, TypeParamInfo, Visibility,
 };

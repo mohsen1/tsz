@@ -1,7 +1,8 @@
+use crate::construction::TypeInterner;
 use crate::relations::subtype::TypeEnvironment;
 use crate::relations::variance::compute_variance_with_resolver;
 use crate::types::Variance;
-use crate::{ConditionalType, TypeId, TypeInterner, TypeParamInfo};
+use crate::{ConditionalType, TypeId, TypeParamInfo};
 
 #[test]
 fn conditional_keyof_branch_variance_computation() {

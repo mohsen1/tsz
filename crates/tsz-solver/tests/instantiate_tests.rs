@@ -1,5 +1,5 @@
 use super::*;
-use crate::TypeInterner;
+use crate::construction::TypeInterner;
 use crate::def::DefId;
 use crate::instantiation::instantiate::{
     MAX_INSTANTIATION_DEPTH, TypeSubstitution, instantiate_generic, instantiate_type,

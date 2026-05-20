@@ -7783,7 +7783,7 @@ fn single_file_definition_store_from_binder() {
     let mut binder = crate::binder::BinderState::new();
     binder.bind_source_file(&parsed.arena, parsed.source_file);
 
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
     let store = create_definition_store_from_binder(&binder, &interner);
 
     // All 6 top-level declarations should have DefIds
@@ -7850,7 +7850,7 @@ type LocalType = number;
     let mut binder = crate::binder::BinderState::new();
     binder.bind_source_file(&parsed.arena, parsed.source_file);
 
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
     let store = create_definition_store_from_binder(&binder, &interner);
 
     // AugmentedGlobal should have is_global_augmentation = true
@@ -9098,7 +9098,7 @@ fn solver_from_semantic_defs_matches_core_helper() {
     let mut binder = crate::binder::BinderState::new();
     binder.bind_source_file(&parsed.arena, parsed.source_file);
 
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
 
     // Path A: core helper (delegates to solver factory internally)
     let store_a = crate::parallel::create_definition_store_from_binder(&binder, &interner);

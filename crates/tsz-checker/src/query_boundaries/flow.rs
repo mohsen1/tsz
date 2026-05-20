@@ -347,7 +347,7 @@ pub(crate) fn resolve_lazy_def_with_env(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     #[test]
     fn catch_variable_type_returns_unknown_when_flag_set() {
