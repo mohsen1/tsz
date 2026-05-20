@@ -438,7 +438,7 @@ impl<'a> NarrowingContext<'a> {
             );
 
             // First pass: check if any type parameter matches the instance type.
-            let mut type_param_results: Vec<(usize, TypeId)> = Vec::with_capacity(members.len());
+            let mut type_param_results: Vec<(usize, TypeId)> = Vec::new();
             for (i, &member) in members.iter().enumerate() {
                 if let Some(narrowed) = self.narrow_type_param(member, instance_type) {
                     type_param_results.push((i, narrowed));
@@ -448,7 +448,7 @@ impl<'a> NarrowingContext<'a> {
             let matching: Vec<TypeId> = if !type_param_results.is_empty() {
                 // Type parameter(s) matched: keep type params and exclude anonymous
                 // object types that can't be class instances at runtime.
-                let mut result = Vec::with_capacity(members.len());
+                let mut result = Vec::with_capacity(type_param_results.len());
                 let tp_indices: Vec<usize> = type_param_results.iter().map(|(i, _)| *i).collect();
                 for &(_, narrowed) in &type_param_results {
                     result.push(narrowed);
