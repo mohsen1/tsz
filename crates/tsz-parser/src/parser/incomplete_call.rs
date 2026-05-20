@@ -59,6 +59,16 @@ const fn is_ident_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
 }
 
+#[inline]
+fn is_less_than_or_equal(bytes: &[u8], idx: usize) -> bool {
+    idx + 1 < bytes.len() && bytes[idx + 1] == b'='
+}
+
+#[inline]
+fn is_greater_than_or_equal(bytes: &[u8], idx: usize) -> bool {
+    idx > 0 && bytes[idx - 1] == b'='
+}
+
 fn preceded_by_declaration_keyword(bytes: &[u8], probe: usize) -> bool {
     DECLARATION_KEYWORDS.iter().any(|keyword| {
         let kw = keyword.as_bytes();
@@ -211,8 +221,8 @@ pub fn find_incomplete_angle_call(source: &str, cursor: usize) -> Option<Incompl
     while idx > 0 {
         idx -= 1;
         match bytes[idx] {
-            b'>' if idx == 0 || bytes[idx - 1] != b'=' => depth += 1,
-            b'<' => {
+            b'>' if !is_greater_than_or_equal(bytes, idx) => depth += 1,
+            b'<' if !is_less_than_or_equal(bytes, idx) => {
                 if depth == 0 {
                     return build_context(source, idx, cursor, CallDelimiter::AngleBracket);
                 }
@@ -254,8 +264,8 @@ pub fn count_top_level_commas(source: &str, start: usize, end: usize) -> u32 {
             b']' => bracket = bracket.saturating_sub(1),
             b'{' => brace += 1,
             b'}' => brace = brace.saturating_sub(1),
-            b'<' => angle += 1,
-            b'>' if i == 0 || bytes[i - 1] != b'=' => angle = angle.saturating_sub(1),
+            b'<' if !is_less_than_or_equal(bytes, i) => angle += 1,
+            b'>' if !is_greater_than_or_equal(bytes, i) => angle = angle.saturating_sub(1),
             b',' if paren == 0 && bracket == 0 && brace == 0 && angle == 0 => commas += 1,
             _ => {}
         }
@@ -406,6 +416,26 @@ mod tests {
         assert!(find_incomplete_angle_call("no angle brackets", 17).is_none());
     }
 
+    #[test]
+    fn angle_less_equal_comparison_is_not_generic_trigger() {
+        let src = "foo <= value";
+        assert!(find_incomplete_angle_call(src, src.len()).is_none());
+    }
+
+    #[test]
+    fn angle_nested_less_equal_comparison_is_not_generic_trigger() {
+        let src = "outer(foo <= value";
+        assert!(find_incomplete_angle_call(src, src.len()).is_none());
+    }
+
+    #[test]
+    fn angle_less_than_generic_trigger_still_works() {
+        let src = "foo<T";
+        let ctx = find_incomplete_angle_call(src, src.len()).unwrap();
+        assert_eq!(ctx.callee_name, "foo");
+        assert_eq!(ctx.active_parameter, 0);
+    }
+
     // --- count_top_level_commas ---
 
     #[test]
@@ -433,6 +463,12 @@ mod tests {
     #[test]
     fn commas_nested_brackets() {
         assert_eq!(count_top_level_commas("a, [x, y], b", 0, 12), 2);
+    }
+
+    #[test]
+    fn commas_after_less_equal_comparison_are_top_level() {
+        let src = "a <= b, c";
+        assert_eq!(count_top_level_commas(src, 0, src.len()), 1);
     }
 
     // --- has_comma_between_offsets ---
