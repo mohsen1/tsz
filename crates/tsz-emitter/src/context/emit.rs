@@ -282,6 +282,12 @@ pub struct EmitContext {
     /// Original module kind before wrapper body override (AMD/UMD → `CommonJS`).
     /// Used by export assignment to emit `return X` instead of `module.exports = X` in AMD.
     pub original_module_kind: Option<ModuleKind>,
+
+    /// Outer `options.module` saved while a CommonJS-export-body mask is
+    /// active. Kept separate from `original_module_kind` so the AMD/UMD/System
+    /// wrapper kind survives a nested CJS-export mask.
+    pub cjs_export_body_outer_module: Option<ModuleKind>,
+
     pub file_is_module: bool,
 }
 
@@ -323,6 +329,7 @@ impl EmitContext {
             async_generator_shadowed_parameter_names: Vec::new(),
             auto_detect_module: false,
             original_module_kind: None,
+            cjs_export_body_outer_module: None,
             file_is_module: false,
         };
         ctx.sync_target_gates();
@@ -412,20 +419,37 @@ impl EmitContext {
         )
     }
 
-    /// Check if we're effectively in `CommonJS` mode, even when the module kind
-    /// is temporarily set to `None` inside export body emission.
-    ///
-    /// During CJS export emission, `options.module` is temporarily set to `None`
-    /// to prevent re-applying CJS transforms. But JSX calls still need to know
-    /// the true module kind to emit `(0, jsx_runtime_1.jsx)()` vs `_jsx()`.
+    /// Module kind that should drive emission decisions in a sub-emitter
+    /// (ES5 class lowering, namespace IIFE, etc.). Picks the CommonJS-export
+    /// mask first, then the wrapper kind, then `options.module`.
+    pub const fn outer_module_kind(&self) -> ModuleKind {
+        if let Some(outer) = self.cjs_export_body_outer_module {
+            return outer;
+        }
+        if let Some(original) = self.original_module_kind {
+            return original;
+        }
+        self.options.module
+    }
+
+    /// True when the emitted body is `CommonJS`-flavored: a real `CommonJS`
+    /// module, a `CommonJS`-export body mask, or an AMD/UMD/System wrapper
+    /// (whose body exposes `require`/`exports`).
     pub const fn is_effectively_commonjs(&self) -> bool {
         if self.options.module.is_commonjs() {
             return true;
         }
-        if let Some(original) = self.original_module_kind {
-            return original.is_commonjs();
+        if let Some(outer) = self.cjs_export_body_outer_module
+            && outer.is_commonjs()
+        {
+            return true;
         }
-        false
+        if let Some(original) = self.original_module_kind
+            && original.is_commonjs()
+        {
+            return true;
+        }
+        self.is_inside_module_wrapper_body()
     }
 }
 

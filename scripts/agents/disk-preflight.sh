@@ -18,7 +18,18 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   exit 0
 fi
 
+if [[ $# -gt 1 ]]; then
+  echo "Unknown option: $2 (try --help)" >&2
+  exit 2
+fi
+
 AGENT="${1:-unknown}"
+case "$AGENT" in
+  unknown|M1-A|M1-B|M1-C|M1-D|M4-A|M4-B|M4-C|M4-D|Studio-A|Studio-B|Studio-C|Studio-D|Studio-E|Studio-F|Reviewer) ;;
+  --*) echo "Unknown option: $AGENT (try --help)" >&2; exit 2 ;;
+  *) echo "unknown AgentName: $AGENT" >&2; exit 1 ;;
+esac
+
 ROOT="$(git rev-parse --show-toplevel)"
 
 echo "agent=$AGENT"
@@ -59,6 +70,9 @@ done
 
 echo ""
 echo "== TypeScript reuse sources =="
+if [[ -d "$ROOT/TypeScript/tests/cases" ]]; then
+  echo "current=$ROOT ts-populated"
+fi
 if [[ -d "$PRIMARY_TS/tests/cases" ]]; then
   echo "primary=$PRIMARY_REPO ts-populated"
 else

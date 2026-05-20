@@ -57,7 +57,7 @@ if [ -L "$SUBMODULE_PATH" ]; then
     fi
     echo "WARN: TypeScript symlink target is at ${LINKED_SHA:0:12}, expected ${PINNED_SHA:0:12}." >&2
     echo "      Run scripts/setup/reset-ts-submodule.sh in the primary checkout." >&2
-    exit 0
+    exit 1
 fi
 
 # Extract the "current" SHA (portable: no jq dependency)

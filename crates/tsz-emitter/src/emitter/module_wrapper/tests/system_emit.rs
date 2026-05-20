@@ -24,6 +24,21 @@ fn emit_system_es2015(source: &str) -> String {
     printer.get_output().to_string()
 }
 
+fn lower_emit_module(source: &str, module: ModuleKind, target: ScriptTarget) -> String {
+    let (parser, root) = parse_test_source(source);
+    let options = PrinterOptions {
+        module,
+        target,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let emit_plan = LoweringPass::new(&parser.arena, &ctx).run_plan(root);
+    let mut printer = Printer::with_emit_plan_and_options(&parser.arena, emit_plan, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    printer.get_output().to_string()
+}
+
 #[test]
 fn system_dotted_namespace_export_folds_outer_namespace_only() {
     let output = emit_system_es2015(
@@ -330,6 +345,74 @@ import(path);
     assert!(
         output.contains("context_1.import(path);"),
         "System dynamic import should use the wrapper context import hook.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn exported_async_function_dynamic_import_keeps_amd_wrapper_kind() {
+    let source = r#"export async function load(path: string) {
+    return import(path);
+}
+"#;
+    let output = lower_emit_module(source, ModuleKind::AMD, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("define([\"require\", \"exports\"], function (require, exports) {"),
+        "Exported async function should stay inside the AMD wrapper.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "return _a = path, new Promise((resolve_1, reject_1) => { require([_a], resolve_1, reject_1); }).then(__importStar);"
+        ),
+        "Dynamic import inside the CJS-export-masked async body should use AMD async require.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("Promise.resolve().then(() => __importStar(require(path)))"),
+        "AMD wrapper kind must not be erased to the CommonJS dynamic-import form.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn exported_async_function_dynamic_import_keeps_system_wrapper_kind() {
+    let source = r#"export async function load(path: string) {
+    return import(path);
+}
+"#;
+    let output = lower_emit_module(source, ModuleKind::System, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("System.register([], function (exports_1, context_1) {"),
+        "Exported async function should stay inside the System wrapper.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("context_1.import(path)"),
+        "Dynamic import inside the CJS-export-masked async body should use the System context import hook.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("require(path)"),
+        "System wrapper kind must not be erased to a require-based dynamic import.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn exported_async_function_dynamic_import_keeps_umd_wrapper_kind() {
+    let source = r#"export async function load(path: string) {
+    return import(path);
+}
+"#;
+    let output = lower_emit_module(source, ModuleKind::UMD, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains(
+            "var __syncRequire = typeof module === \"object\" && typeof module.exports === \"object\";"
+        ),
+        "UMD wrapper should keep the dynamic import runtime branch discriminator.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "return _a = path, __syncRequire ? Promise.resolve().then(() => __importStar(require(_a))) : new Promise((resolve_1, reject_1) => { require([_a], resolve_1, reject_1); }).then(__importStar);"
+        ),
+        "Dynamic import inside the CJS-export-masked async body should use the UMD loader branch.\nOutput:\n{output}"
     );
 }
 

@@ -74,7 +74,7 @@ while [[ $# -gt 0 ]]; do
     --full)    FULL=true; shift ;;
     --quiet)   QUIET=true; shift ;;
     -h|--help) usage; exit 0 ;;
-    *)         echo "Unknown option: $1 (try --help)"; exit 1 ;;
+    *)         echo "Unknown option: $1 (try --help)" >&2; exit 1 ;;
   esac
 done
 
@@ -229,8 +229,8 @@ rm -f "$REPO_ROOT"/tsc-cache*.json 2>/dev/null || true
 git -C "$REPO_ROOT" checkout -- scripts/conformance/tsc-cache-full.json 2>/dev/null || true
 
 # Phase 11: Reset TypeScript submodule to clean state.
-# Skip when TypeScript is a symlink — it points at the primary checkout's
-# submodule, which a worktree must not mutate (see link-ts-submodule.sh).
+# Skip when TypeScript is a symlink — it points at a shared checkout that this
+# worktree must not mutate (see link-ts-submodule.sh).
 if [ ! -L "$REPO_ROOT/TypeScript" ]; then
   git -C "$REPO_ROOT" submodule update --force 2>/dev/null || true
 fi
