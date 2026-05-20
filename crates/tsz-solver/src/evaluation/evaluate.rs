@@ -2965,8 +2965,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     let mut distributed = Vec::with_capacity(alternative_count);
                     for prefix in alternatives {
                         for spread in &spread_alternatives {
-                            let mut next = prefix.clone();
-                            next.extend(spread.iter().copied());
+                            let mut next = Vec::with_capacity(prefix.len() + spread.len());
+                            next.extend_from_slice(&prefix);
+                            next.extend_from_slice(spread);
                             distributed.push(next);
                         }
                     }

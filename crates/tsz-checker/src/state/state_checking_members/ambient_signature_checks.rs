@@ -819,17 +819,8 @@ impl<'a> CheckerState<'a> {
                     }
                     let promise_base = self
                         .ctx
-                        .binder
-                        .file_locals
-                        .get("Promise")
+                        .lib_promise_sym_id()
                         .map(|sym_id| self.ctx.create_lazy_type_ref(sym_id))
-                        .or_else(|| {
-                            let lib_binders = self.get_lib_binders();
-                            self.ctx
-                                .binder
-                                .get_global_type_with_libs("Promise", &lib_binders)
-                                .map(|sym_id| self.ctx.create_lazy_type_ref(sym_id))
-                        })
                         .unwrap_or(TypeId::PROMISE_BASE);
                     return_type = self
                         .ctx
