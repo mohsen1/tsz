@@ -96,6 +96,55 @@ fn test_type_printer_prints_named_unique_symbol_as_typeof() {
 }
 
 #[test]
+fn test_inferred_declarations_widen_unique_symbol_references() {
+    let source = "const key = Symbol();\nconst copied = key;\n";
+    let (parser, root) = parse_test_source(source);
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let root_node = parser.arena.get(root).expect("missing root node");
+    let source_file = parser
+        .arena
+        .get_source_file(root_node)
+        .expect("missing source file");
+    let copied_decl = parser
+        .arena
+        .get(source_file.statements.nodes[1])
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|stmt| parser.arena.get(stmt.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|decl_list| parser.arena.get(decl_list.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable_declaration(node))
+        .expect("missing copied declaration");
+
+    let interner = TypeInterner::new();
+    let unique = interner.unique_symbol(SymbolRef(1));
+    let array = interner.array(unique);
+    let object = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("key"),
+        unique,
+    )]);
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+
+    assert_eq!(
+        emitter.declaration_emittable_type_text(copied_decl.initializer, unique, "typeof key"),
+        "symbol"
+    );
+    assert_eq!(
+        emitter.declaration_emittable_type_text(copied_decl.initializer, array, "typeof key[]"),
+        "symbol[]"
+    );
+    assert_eq!(
+        emitter.declaration_emittable_type_text(
+            copied_decl.initializer,
+            object,
+            "{ key: typeof key }"
+        ),
+        "{\n    key: symbol;\n}"
+    );
+}
+
+#[test]
 fn test_intersection_type_in_declaration() {
     let output = emit_dts("export type Combined = { a: number } & { b: string };");
     assert!(output.contains("&"), "Expected intersection type: {output}");

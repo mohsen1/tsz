@@ -5,7 +5,7 @@
 //! returned object/class/function text using declaration-scope parameter types.
 
 use super::super::DeclarationEmitter;
-use tsz_parser::parser::node::NodeArena;
+use tsz_parser::parser::node::{MethodDeclData, NodeAccess, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
@@ -208,13 +208,139 @@ impl<'a> DeclarationEmitter<'a> {
         {
             self.print_type_id_with_outer_type_params(return_type_id, type_params)
         } else {
-            self.print_type_id(return_type_id)
+            let return_type_id = self.widen_unique_symbol_value_type_for_dts(return_type_id, 0);
+            self.print_type_id_for_inferred_declaration(return_type_id)
         };
         let text = self.restore_mapped_return_type_param_constraints(func, &text);
         let text = self.rewrite_returned_auto_accessor_parameter_unknowns(func, &text);
         let text = self.rewrite_returned_call_conditional_unknown_subject(func, &text);
         self.expand_mapped_alias_index_conditional_text(self.arena, &text)
             .unwrap_or(text)
+    }
+
+    pub(in crate::declaration_emitter) fn inferred_method_return_type_text(
+        &self,
+        method: &MethodDeclData,
+        return_type_id: tsz_solver::types::TypeId,
+    ) -> String {
+        let return_type_id = self.widen_unique_symbol_value_type_for_dts(return_type_id, 0);
+        let text = self.print_type_id_for_inferred_declaration(return_type_id);
+        self.wrap_async_method_return_type_text(method, text)
+    }
+
+    pub(in crate::declaration_emitter) fn wrap_async_method_return_type_text(
+        &self,
+        method: &MethodDeclData,
+        text: String,
+    ) -> String {
+        if self.method_is_async(method)
+            && !method.asterisk_token
+            && !Self::type_text_is_promise_like(&text)
+        {
+            format!("Promise<{text}>")
+        } else {
+            text
+        }
+    }
+
+    pub(in crate::declaration_emitter) fn method_is_async(&self, method: &MethodDeclData) -> bool {
+        self.arena
+            .has_modifier(&method.modifiers, SyntaxKind::AsyncKeyword)
+    }
+
+    pub(in crate::declaration_emitter) fn generator_yield_return_type_text(
+        &self,
+        is_async: bool,
+        body_idx: NodeIndex,
+    ) -> Option<String> {
+        let mut yield_type = None;
+        if !self.collect_unique_yield_type_text_from_node(body_idx, &mut yield_type, 0) {
+            return None;
+        }
+        let yield_type = yield_type.unwrap_or_else(|| "undefined".to_string());
+        let generator_name = if is_async {
+            "AsyncGenerator"
+        } else {
+            "Generator"
+        };
+        Some(format!("{generator_name}<{yield_type}, void, unknown>"))
+    }
+
+    fn collect_unique_yield_type_text_from_node(
+        &self,
+        node_idx: NodeIndex,
+        preferred: &mut Option<String>,
+        depth: usize,
+    ) -> bool {
+        if node_idx.is_none() || depth > 128 {
+            return true;
+        }
+        let Some(node) = self.arena.get(node_idx) else {
+            return true;
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::YIELD_EXPRESSION => {
+                let Some(yield_expr) = self.arena.get_unary_expr_ex(node) else {
+                    return false;
+                };
+                if yield_expr.asterisk_token {
+                    return false;
+                }
+                let type_text = if yield_expr.expression.is_none() {
+                    "undefined".to_string()
+                } else if let Some(text) = self
+                    .widened_inferred_expression_type_text(yield_expr.expression)
+                    .filter(|text| !text.is_empty() && text != "any")
+                {
+                    text
+                } else if let Some(text) = self
+                    .preferred_expression_type_text(yield_expr.expression)
+                    .filter(|text| !text.is_empty() && text != "any")
+                {
+                    text
+                } else if let Some(type_id) = self.get_node_type_or_names(&[yield_expr.expression])
+                {
+                    let type_id = self.widen_unique_symbol_value_type_for_dts(type_id, 0);
+                    self.print_type_id_for_inferred_declaration(type_id)
+                } else {
+                    return false;
+                };
+                self.merge_unique_type_text(preferred, type_text)
+            }
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                || k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::CLASS_DECLARATION
+                || k == syntax_kind_ext::CLASS_EXPRESSION
+                || k == syntax_kind_ext::METHOD_DECLARATION
+                || k == syntax_kind_ext::CONSTRUCTOR
+                || k == syntax_kind_ext::GET_ACCESSOR
+                || k == syntax_kind_ext::SET_ACCESSOR =>
+            {
+                true
+            }
+            _ => self
+                .arena
+                .get_children(node_idx)
+                .into_iter()
+                .all(|child_idx| {
+                    self.collect_unique_yield_type_text_from_node(child_idx, preferred, depth + 1)
+                }),
+        }
+    }
+
+    fn merge_unique_type_text(&self, preferred: &mut Option<String>, type_text: String) -> bool {
+        if let Some(existing) = preferred.as_ref() {
+            existing == &type_text
+        } else {
+            *preferred = Some(type_text);
+            true
+        }
+    }
+
+    fn type_text_is_promise_like(text: &str) -> bool {
+        text == "Promise" || text.starts_with("Promise<") || text.starts_with("globalThis.Promise<")
     }
 
     pub(in crate::declaration_emitter) fn restore_mapped_return_type_param_constraints(
@@ -842,6 +968,11 @@ impl<'a> DeclarationEmitter<'a> {
                     // return is equivalent to `return undefined` with
                     // widening to `void`. Matches declFileTypeAnnotationBuiltInType.
                     "void".to_string()
+                } else if let Some(text) = self
+                    .widened_inferred_expression_type_text(ret.expression)
+                    .filter(|text| !text.is_empty() && text != "any")
+                {
+                    text
                 } else if let Some(text) = self
                     .preferred_expression_type_text(ret.expression)
                     .filter(|text| !text.is_empty() && text != "any")
