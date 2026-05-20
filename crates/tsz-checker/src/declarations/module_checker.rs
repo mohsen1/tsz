@@ -16,6 +16,30 @@ impl<'a> CheckerState<'a> {
     // Export Module Specifier Validation
     // =========================================================================
 
+    /// Returns `true` when an `ExportDeclaration` clause is a `NAMED_EXPORTS`
+    /// node with zero specifiers (i.e. `export { } from "..."` or
+    /// `export type { } from "..."`).
+    ///
+    /// Such a declaration binds nothing from the module, so tsc skips
+    /// module resolution for it and emits no TS2307. Wildcard re-exports
+    /// (`export * from "..."`), namespace re-exports (`export * as ns from
+    /// "..."`), and absent export clauses are all distinct AST shapes and
+    /// fall through to the normal resolution path.
+    fn export_named_clause_is_empty(&self, export_clause_idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(clause_node) = self.ctx.arena.get(export_clause_idx) else {
+            return false;
+        };
+        if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+            return false;
+        }
+        self.ctx
+            .arena
+            .get_named_imports(clause_node)
+            .is_some_and(|named| named.elements.nodes.is_empty())
+    }
+
     /// Check export declaration module specifier for unresolved modules.
     ///
     /// Validates that the module specifier in an export ... from "module" statement
@@ -43,6 +67,16 @@ impl<'a> CheckerState<'a> {
         let Some(export_decl) = self.ctx.arena.get_export_decl(node) else {
             return;
         };
+
+        // Skip module resolution for `export { } from "..."` and
+        // `export type { } from "..."` — when the export clause is present
+        // (NAMED_EXPORTS) and contains zero specifiers, nothing is actually
+        // imported from the module, so tsc does not require the module to
+        // exist. We match that behavior structurally on the AST shape:
+        // export_decl + NAMED_EXPORTS clause + empty elements list.
+        if self.export_named_clause_is_empty(export_decl.export_clause) {
+            return;
+        }
 
         let resolution_mode =
             self.requested_resolution_mode(export_decl.attributes, export_decl.is_type_only);
@@ -801,14 +835,9 @@ impl<'a> CheckerState<'a> {
         // Resolve Promise as Lazy(DefId), the same form that type annotations use.
         // `var p: Promise<T>` goes through create_lazy_type_ref → Application(Lazy(DefId), [T]).
         // We must do the same here so that `import()` returns a structurally compatible type.
-        let lib_binders = self.get_lib_binders();
         let factory = self.ctx.types.factory();
 
-        if let Some(sym_id) = self
-            .ctx
-            .binder
-            .get_global_type_with_libs("Promise", &lib_binders)
-        {
+        if let Some(sym_id) = self.ctx.lib_promise_sym_id() {
             let _ = self.get_type_of_symbol(sym_id);
             // Ensure the Promise DefId has its type parameters and body registered
             // so that resolve_application_property can substitute T with the inner type.
@@ -911,11 +940,6 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // Skip type-only re-exports since they are not runtime symbols
-            if specifier.is_type_only {
-                continue;
-            }
-
             let name_idx = if specifier.property_name.is_some() {
                 specifier.property_name
             } else {
@@ -973,8 +997,9 @@ impl<'a> CheckerState<'a> {
                 && self.file_has_jsdoc_typedef_named(self.ctx.current_file_idx, &name_str);
 
             // Check if the symbol is a local declaration or import.
-            // file_locals includes merged globals from other files, so we must also
-            // verify decl_file_idx matches the current file (or is u32::MAX for single-file).
+            // file_locals includes merged globals from other files and cloned standard-lib
+            // globals, so verify the declaration belongs to this file or is an unstamped
+            // user-file symbol rather than a standard-lib symbol.
             // Inside ambient module declarations, file-level symbols are not local to the
             // module and should emit TS2661.
             let current_file_idx = self.ctx.current_file_idx as u32;
@@ -984,16 +1009,19 @@ impl<'a> CheckerState<'a> {
                 // scope chain: walk from the specifier's scope up to the first
                 // Module scope and check its symbol table.
                 self.is_name_in_enclosing_module_scope(&name_str, specifier_idx)
+            } else if has_local_jsdoc_typedef {
+                true
             } else {
                 self.ctx
                     .binder
                     .file_locals
                     .get(&name_str)
-                    .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
-                    .is_some_and(|sym| {
-                        sym.decl_file_idx == current_file_idx || sym.decl_file_idx == u32::MAX
+                    .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id).map(|sym| (sym_id, sym)))
+                    .is_some_and(|(sym_id, sym)| {
+                        sym.decl_file_idx == current_file_idx
+                            || (sym.decl_file_idx == u32::MAX
+                                && !self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id))
                     })
-                    || has_local_jsdoc_typedef
             };
 
             if is_local

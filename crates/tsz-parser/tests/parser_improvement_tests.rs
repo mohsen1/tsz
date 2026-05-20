@@ -1,6 +1,9 @@
 //! Tests for parser improvements to reduce TS1005 and TS2300 false positives
 
 use crate::parser::ParserState;
+use crate::parser::test_fixture::{
+    parse_source, parse_source_named, parse_source_with_language_version,
+};
 use tsz_common::ScriptTarget;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_common::position::LineMap;
@@ -15,8 +18,7 @@ interface I {
   public [a: string]: number;
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
 
@@ -38,8 +40,7 @@ interface I {
 #[test]
 fn parameter_array_binding_reserved_words_match_tsc_recovery_fingerprints() {
     let source = "function a4([while, for, public]){ }\nfunction a5(...while) { }\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let first_comma = source.find(", for").expect("comma after while") as u32;
@@ -96,6 +97,123 @@ fn parameter_array_binding_reserved_words_match_tsc_recovery_fingerprints() {
 }
 
 #[test]
+fn block_bodied_arrow_statement_recovers_invalid_conditional_tail_without_branch_cascades() {
+    let source = "(a?) => { return a; } ? (b)=>(c)=>81 : (c)=>(d)=>82;\n";
+    let question_pos = source.find(" ? (b)").expect("outer question") as u32 + 1;
+    let colon_pos = source.find(" : ").expect("outer colon") as u32 + 1;
+    let first_branch_arrow = source.find("(b)=>").expect("true branch arrow") as u32 + 3;
+    let second_branch_arrow = source.find("(c)=>81").expect("nested true branch arrow") as u32 + 3;
+    let (parser, root) = parse_source(source);
+
+    let diagnostics = parser.get_diagnostics();
+    let actual: Vec<_> = diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.start, diag.message.as_str()))
+        .collect();
+
+    assert_eq!(
+        actual,
+        vec![
+            (diagnostic_codes::EXPECTED, question_pos, "';' expected."),
+            (diagnostic_codes::EXPECTED, colon_pos, "';' expected."),
+        ],
+        "invalid conditional tail after a block-bodied arrow expression should recover like tsc, got {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|diag| diag.start == first_branch_arrow || diag.start == second_branch_arrow),
+        "branch-local arrows are recovered statements and must not produce cascaded TS1005 diagnostics: {diagnostics:?}"
+    );
+
+    let source_file = parser.get_arena().get_source_file_at(root).unwrap();
+    assert_eq!(
+        source_file.statements.nodes.len(),
+        3,
+        "tsc keeps the invalid conditional branches as recovered expression statements"
+    );
+    for &stmt_idx in &source_file.statements.nodes {
+        assert_eq!(
+            parser.get_arena().get(stmt_idx).unwrap().kind,
+            crate::parser::syntax_kind_ext::EXPRESSION_STATEMENT,
+            "each recovered conditional piece should remain an expression statement"
+        );
+    }
+}
+
+#[test]
+fn block_bodied_arrow_statement_recovers_invalid_tail_with_nested_conditional_branch() {
+    let source = "(a?) => { return a; } ? flag ? left : right : fallback;\n";
+    let question_pos = source.find(" ? flag").expect("outer question") as u32 + 1;
+    let nested_colon_pos = source.find(" : right").expect("nested colon") as u32 + 1;
+    let outer_colon_pos = source.find(" : fallback").expect("outer colon") as u32 + 1;
+    let (parser, _root) = parse_source(source);
+
+    let diagnostics = parser.get_diagnostics();
+    let actual: Vec<_> = diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.start, diag.message.as_str()))
+        .collect();
+
+    assert_eq!(
+        actual,
+        vec![
+            (diagnostic_codes::EXPECTED, question_pos, "';' expected."),
+            (diagnostic_codes::EXPECTED, outer_colon_pos, "';' expected."),
+        ],
+        "recovery should skip nested conditional branch contents and anchor at the outer `:`, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diag| diag.start != nested_colon_pos),
+        "nested branch colon should not be mistaken for the outer tail separator: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn block_bodied_arrow_statement_conditional_tail_ignores_nested_branch_semicolons() {
+    let source = "(a?) => { return a; } ? (() => { foo(); }) : bar;\n";
+    let question_pos = source.find(" ? (()").expect("outer question") as u32 + 1;
+    let inner_semicolon_pos = source.find("foo();").expect("inner semicolon") as u32 + 5;
+    let outer_colon_pos = source.find(" : bar").expect("outer colon") as u32 + 1;
+    let (parser, _root) = parse_source(source);
+
+    let diagnostics = parser.get_diagnostics();
+    let actual: Vec<_> = diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.start, diag.message.as_str()))
+        .collect();
+
+    assert_eq!(
+        actual,
+        vec![
+            (diagnostic_codes::EXPECTED, question_pos, "';' expected."),
+            (diagnostic_codes::EXPECTED, outer_colon_pos, "';' expected."),
+        ],
+        "recovery should skip nested branch semicolons and still anchor at the outer `:`, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diag| diag.start != inner_semicolon_pos),
+        "inner branch semicolon should not terminate outer conditional-tail recovery: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn parenthesized_arrow_condition_still_parses_conditional_branch_arrows() {
+    let source = "((a?) => { return a; }) ? (b?) => b : (c?) => c;\n";
+    let (parser, _root) = parse_source(source);
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics.is_empty(),
+        "parenthesized arrow expressions are valid conditional conditions and should not use statement-tail recovery, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_arrow_function_with_line_break_no_false_positive() {
     // Arrow function where => is missing but there's a line break
     // Should be more permissive to avoid false positives
@@ -103,8 +221,7 @@ fn test_arrow_function_with_line_break_no_false_positive() {
 const fn = (a: number, b: string)
 => a + b;
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     // Should not have cascading TS1005 errors
     let ts1005_count = parser
@@ -121,8 +238,7 @@ const fn = (a: number, b: string)
 #[test]
 fn parameter_type_predicate_tail_reports_comma_at_type_name() {
     let source = "function b2(a: b is A) {};";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
     let line_map = LineMap::build(source);
 
     let fingerprints: Vec<(u32, u32, u32, String)> = parser
@@ -162,8 +278,7 @@ fn parameter_type_predicate_tail_reports_comma_at_type_name() {
 #[test]
 fn index_signature_type_predicate_tail_defers_close_brace() {
     let source = "interface I2 {\n    [index: number]: p1 is C;\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
     let line_map = LineMap::build(source);
 
     let fingerprints: Vec<(u32, u32, u32, String)> = parser
@@ -208,8 +323,7 @@ namespace N {
     var e = (x: number, y: string): void;
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let ts1005_count = diagnostics.iter().filter(|d| d.code == 1005).count();
@@ -228,8 +342,7 @@ namespace N {
 #[test]
 fn test_typed_parenthesized_expression_followed_by_property_access_prefers_missing_arrow() {
     let source = "var v = (inspectedElement: any).props;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let dot_pos = source.find('.').expect("property access dot") as u32;
@@ -257,8 +370,7 @@ fn test_typed_parenthesized_expression_followed_by_property_access_prefers_missi
 #[test]
 fn test_parenthesized_initializer_with_stray_equals_before_block_prefers_semicolon_recovery() {
     let source = "x = (y = z ==== 'function') {";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     assert!(
@@ -282,8 +394,7 @@ fn test_await_using_array_target_assignment_recovers_with_semicolon_expected() {
     await using [a] = null;
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let equals_pos = source.find('=').expect("assignment token") as u32;
@@ -305,8 +416,7 @@ fn test_await_using_array_target_assignment_recovers_with_semicolon_expected() {
 #[test]
 fn test_in_expression_assignment_recovers_with_semicolon_expected() {
     let source = "'prop' in v = 10;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let equals_pos = source.find('=').expect("assignment token") as u32;
@@ -326,8 +436,7 @@ namespace N {
     var c = (x) => var k = 10;};
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let ts1005_count = diagnostics.iter().filter(|d| d.code == 1005).count();
@@ -346,8 +455,7 @@ namespace N {
 #[test]
 fn test_property_access_missing_name_at_eof_reports_ts1003_after_dot() {
     let source = "var p2 = window. ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let expected_start = source.find('.').expect("dot position") as u32 + 1;
@@ -371,8 +479,7 @@ namespace N {
     }
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let ts1109_count = diagnostics.iter().filter(|d| d.code == 1109).count();
@@ -395,8 +502,7 @@ interface Test {
   bind<T, A extends any[], B extends any[], R>(this: (this: T, ...args: [...A, ...B]) => R, thisArg: T, ...args: A): (...args: B) => R;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     assert!(
@@ -411,8 +517,7 @@ fn test_parenthesized_object_literal_after_arrow_is_not_treated_as_missing_arrow
 /** @template T @param {T|undefined} value @returns {T} */
 const cloneObjectGood = value => /** @type {T} */({ ...value });
 ";
-    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_named("test.js", source);
 
     let diagnostics = parser.get_diagnostics();
     assert!(
@@ -433,8 +538,7 @@ class C {
     #constructor = 3
 }
 "#;
-    let mut parser = ParserState::new("plainJSBinderErrors.js".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_named("plainJSBinderErrors.js", source);
 
     let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
     for code in [1359, 18012] {
@@ -454,8 +558,7 @@ class C {
     }
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     assert!(
@@ -471,8 +574,7 @@ fn test_parenthesized_conditional_expression_is_not_treated_as_missing_arrow() {
     let source = r#"
 var x: boolean = (true ? 1 : "");
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     assert!(
@@ -495,8 +597,7 @@ fn test_parenthesized_conditional_comma_expression_is_not_treated_as_missing_arr
 let xx: any;
 xx = (xx ? 3 : 4, 10);
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -514,8 +615,7 @@ const regexes: RegExp[] = [
   /\u{10000}[\u{10000}]/v,
 ];
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let ts1538_count = diagnostics
@@ -535,8 +635,7 @@ const regexes: RegExp[] = [
 #[test]
 fn test_middle_dot_identifier_part_parses_without_ts1127() {
     let source = "const a·b = 1;\na·b;\n";
-    let mut parser = ParserState::new("middle-dot-identifier.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_named("middle-dot-identifier.ts", source);
 
     let diagnostics = parser.get_diagnostics();
     assert!(
@@ -559,8 +658,7 @@ const regexes: RegExp[] = [
   /[\u{110000}]/u,
 ];
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let ts1198: Vec<_> = diagnostics
@@ -594,8 +692,7 @@ const regexes: RegExp[] = [
   /[\uD835\uDE08-\uD835\uDE21][\uD835\uDE21-\uD835\uDE08]/v,
 ];
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let ts1517_count = diagnostics
@@ -616,8 +713,7 @@ const q = /[\q{ab}]/v;
 const sub = /[a--b]/v;
 const missing = /[a&&]/v;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
@@ -651,8 +747,7 @@ const missing = /[a&&]/v;
 #[test]
 fn test_regex_hyphen_after_range_is_literal() {
     let source = "const idSuffixPattern = /^([a-z][a-z0-9-]*)(:[a-z0-9-.]*)?$/i;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     assert!(
@@ -664,13 +759,26 @@ fn test_regex_hyphen_after_range_is_literal() {
 }
 
 #[test]
+fn test_regex_hex_escape_range_start_does_not_report_ts1517() {
+    let source = r"const pattern = /[\x2D-9A-Z\\_a-z\xF8-\u02C1]/u;";
+    let (parser, _root) = parse_source(source);
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::RANGE_OUT_OF_ORDER_IN_CHARACTER_CLASS),
+        "Hex escapes should be decoded as one range atom before range-order checks: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_unicode_regex_trailing_hyphen_class_does_not_report_ts1508() {
     let source = r#"
 const unicode = /[a-]/u;
 const unicode_sets = /[a-]/v;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     assert!(
@@ -686,8 +794,7 @@ fn test_regex_character_class_escape_does_not_report_ts1517() {
     let source = r#"
 /(#?-?\d*\.\d\w*%?)|(@?#?[\w-?]+%?)/g;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     assert!(
@@ -706,8 +813,7 @@ fn test_regex_annexb_p_escape_does_not_consume_following_escape() {
     // following backslash. That mis-parsed `\P\w-_` as `P`, `w`, `-`, `_`
     // and then mis-detected `w-_` as an out-of-order range (TS1517).
     let source = "const a = /\\P[\\P\\w-_]/;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     assert!(
@@ -723,8 +829,7 @@ fn test_regex_non_bmp_inline_flags_emit_unknown_flag_diagnostics() {
     let source = r"
 const 𝘳𝘦𝘨𝘦𝘹 = /(?𝘴𝘪-𝘮:^𝘧𝘰𝘰.)/𝘨𝘮𝘶;
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let ts1499_count = diagnostics
@@ -741,8 +846,7 @@ const 𝘳𝘦𝘨𝘦𝘹 = /(?𝘴𝘪-𝘮:^𝘧𝘰𝘰.)/𝘨𝘮𝘶;
 #[test]
 fn test_regex_missing_parenthesis_reports_ts1005_at_regex_end() {
     let source = "// @target: es2015\nvar x = /fo(o/;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let expected_pos = source.rfind('/').expect("unterminated regex slash") as u32;
@@ -762,8 +866,7 @@ fn test_regex_missing_parenthesis_reports_ts1005_at_regex_end() {
 #[test]
 fn test_unterminated_regex_class_suppresses_missing_bracket() {
     let source = "let r = /[a/;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
@@ -787,8 +890,7 @@ fn test_unterminated_regex_class_suppresses_missing_bracket() {
 #[test]
 fn test_unterminated_regex_with_angle_text_reports_ts1161() {
     for source in ["const r = /<x>;\n", "const r = /a<x>;\n"] {
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let _root = parser.parse_source_file();
+        let (parser, _root) = parse_source(source);
 
         let diagnostics = parser.get_diagnostics();
         let ts1161 = diagnostics
@@ -852,8 +954,7 @@ const regexesWithBraces: RegExp[] = [
   /{2,1}??/u,
 ];
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let line_map = LineMap::build(source);
@@ -997,8 +1098,7 @@ fn test_parenthesized_conditional_object_literal_true_branch_is_not_treated_as_m
     let source = r#"
 var value = (Math.random() ? {} : null);
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -1010,8 +1110,7 @@ var value = (Math.random() ? {} : null);
 #[test]
 fn test_parenthesized_arrow_block_tail_keeps_trailing_semicolon_error() {
     let source = "a = (() => { } || a)";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let ts1005: Vec<_> = diagnostics.iter().filter(|d| d.code == 1005).collect();
@@ -1045,8 +1144,7 @@ var v: {
    <T>;
 };
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let ts1005: Vec<_> = diagnostics
@@ -1074,8 +1172,7 @@ var v: {
 #[test]
 fn test_parenthesized_divide_expression_before_block_is_not_treated_as_missing_arrow() {
     let source = "(a/8\n ){}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let block_pos = source.find('{').expect("block position") as u32;
@@ -1105,8 +1202,7 @@ fn test_parenthesized_divide_expression_before_block_is_not_treated_as_missing_a
 #[test]
 fn test_parameter_modifier_arrow_head_still_parses_as_arrow() {
     let source = "var v = (public x: string) => { };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -1118,8 +1214,7 @@ fn test_parameter_modifier_arrow_head_still_parses_as_arrow() {
 #[test]
 fn test_top_level_modifier_recovery_keeps_try_block_error() {
     let source = "cla <ss {\n  _ static try\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let ts1005: Vec<_> = diagnostics.iter().filter(|d| d.code == 1005).collect();
@@ -1158,8 +1253,7 @@ fn test_top_level_modifier_recovery_keeps_try_block_error() {
 #[test]
 fn test_object_literal_statement_recovery_after_shorthand_property() {
     let source = "var v = { a\nreturn;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let return_pos = source.find("return").expect("return position") as u32;
@@ -1183,8 +1277,7 @@ fn test_object_literal_statement_recovery_after_shorthand_property() {
 #[test]
 fn test_object_literal_statement_recovery_after_missing_initializer() {
     let source = "var v = { a:\nreturn;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let return_pos = source.find("return").expect("return position") as u32;
@@ -1215,8 +1308,7 @@ fn test_object_literal_statement_recovery_after_missing_initializer() {
 #[test]
 fn test_object_literal_statement_recovery_after_trailing_comma() {
     let source = "var v = { a: 1,\nreturn;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let return_pos = source.find("return").expect("return position") as u32;
@@ -1241,8 +1333,7 @@ fn test_object_literal_statement_recovery_after_trailing_comma() {
 #[test]
 fn test_function_parameter_list_missing_close_paren_reports_at_body_end() {
     let source = "function f(a {\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let body_start = source.find('{').expect("body start") as u32;
@@ -1274,8 +1365,7 @@ fn test_function_parameter_list_missing_close_paren_reports_at_body_end() {
 #[test]
 fn test_missing_arrow_return_type_is_not_treated_as_typed_arrow() {
     let source = "var v = (a): => { };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let colon_pos = source.find(':').expect("colon position") as u32;
@@ -1302,8 +1392,7 @@ fn test_missing_arrow_return_type_is_not_treated_as_typed_arrow() {
 #[test]
 fn test_array_literal_semicolon_recovers_as_missing_comma() {
     let source = "var texCoords = [2, 2, 0.5000001192092895, 0.8749999 ; 403953552, 0.5000001192092895, 0.8749999403953552];";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let semicolon_pos = source.find(';').expect("semicolon position") as u32;
@@ -1326,8 +1415,7 @@ fn test_array_literal_semicolon_recovers_as_missing_comma() {
 #[test]
 fn test_optional_rest_parameter_reports_at_question_mark() {
     let source = "(...arg?) => 102;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let question_pos = source.find('?').expect("question position") as u32;
@@ -1345,8 +1433,7 @@ fn test_optional_rest_parameter_reports_at_question_mark() {
 #[test]
 fn test_reserved_word_type_reference_in_parameter_does_not_emit_ts1359() {
     let source = "class Foo { public banana(x: break) { } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
 
@@ -1359,8 +1446,7 @@ fn test_reserved_word_type_reference_in_parameter_does_not_emit_ts1359() {
 #[test]
 fn test_variable_list_trailing_comma_reports_at_comma() {
     let source = "var a,\nreturn;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let comma_pos = source.find(',').expect("comma position") as u32;
@@ -1378,8 +1464,7 @@ fn test_variable_list_trailing_comma_reports_at_comma() {
 #[test]
 fn test_missing_function_parameter_comma_before_arrow_is_not_suppressed() {
     let source = "function (a => b;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let arrow_pos = source.find("=>").expect("arrow position") as u32;
@@ -1395,8 +1480,7 @@ fn test_missing_function_parameter_comma_before_arrow_is_not_suppressed() {
 #[test]
 fn test_repeated_top_level_close_parens_emit_separate_ts1128() {
     let source = "function foo() {\n}\n\nfunction foo() {\n}\n\n)\n)";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let ts1128_count = diagnostics.iter().filter(|diag| diag.code == 1128).count();
@@ -1412,8 +1496,7 @@ fn test_named_tuple_member_rest_type_after_colon_does_not_emit_ts1005() {
     let source = r#"
 type T = [first: string, rest: ...string[]?];
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     assert!(
         parser.get_diagnostics().iter().all(|d| d.code != 1005),
@@ -1427,8 +1510,7 @@ fn test_named_tuple_member_optional_type_after_colon_does_not_emit_ts1005() {
     let source = r#"
 type T = [element: string?];
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     assert!(
         parser.get_diagnostics().iter().all(|d| d.code != 1005),
@@ -1440,8 +1522,7 @@ type T = [element: string?];
 #[test]
 fn named_tuple_member_postfix_question_is_not_jsdoc_nullable() {
     let source = "type T = [a: string?];";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     assert!(
@@ -1456,8 +1537,7 @@ fn named_tuple_member_postfix_question_is_not_jsdoc_nullable() {
 #[test]
 fn tuple_type_missing_comma_reports_comma_without_bracket_cascade() {
     let source = "type T = [string number];";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let number_pos = source.find("number").expect("number token") as u32;
@@ -1485,8 +1565,7 @@ class Z {
 
 var a6: Z[][] = new   Z     [      ]   [  ];
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let ts1011_starts: Vec<u32> = parser
         .get_diagnostics()
@@ -1506,8 +1585,7 @@ var a6: Z[][] = new   Z     [      ]   [  ];
 #[test]
 fn test_export_type_alias_missing_type_at_eof_reports_after_equals() {
     let source = "import test from \"./test\";\nexport type test = \n";
-    let mut parser = ParserState::new("types2.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_named("types2.ts", source);
 
     let ts1110_starts: Vec<u32> = parser
         .get_diagnostics()
@@ -1537,8 +1615,7 @@ function foo(
     return a + b;
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     // Should not emit TS1005 for missing comma when there's a line break
     let ts1005_count = parser
@@ -1563,8 +1640,7 @@ interface Foo {
     b: string;
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     // Should not emit TS2300 for interface merging
     let ts2300_count = parser
@@ -1588,8 +1664,7 @@ function foo(x: number | string): void {
     console.log(x);
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     // Should not emit TS2300 for function overloads
     let ts2300_count = parser
@@ -1616,8 +1691,7 @@ function Utils() {
     console.log("constructor");
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     // Should not emit TS2300 for namespace + function merging
     let ts2300_count = parser
@@ -1640,8 +1714,7 @@ function foo() {
     42;
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     // Should not emit TS1005 for missing semicolon after return with line break
     let ts1005_count = parser
@@ -1664,8 +1737,7 @@ const obj = {
     b: 2,
 };
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     // Should not emit any errors for trailing comma
     assert!(
@@ -1685,8 +1757,7 @@ const arr = [
     3,
 ];
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     // Should not emit any errors for trailing comma
     assert!(
@@ -1707,8 +1778,7 @@ function foo(
     return a + b;
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     // Should not emit any errors for trailing comma in parameters
     assert!(
@@ -1725,8 +1795,7 @@ interface I {
     x: number = 1;
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let ts1246_count = parser
         .get_diagnostics()
@@ -1746,8 +1815,7 @@ type T = {
     x: number = 1;
 };
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let ts1247_count = parser
         .get_diagnostics()
@@ -1770,8 +1838,7 @@ fn test_void_return_type() {
     let source = r"
 declare function fn(arg0: boolean): void;
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     // Should not emit any parser errors for void return type
     assert!(
@@ -1798,8 +1865,7 @@ declare function fn10(): null;
 declare function fn11(): undefined;
 declare function fn12(): object;
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     // Should not emit any parser errors for primitive type keywords
     assert!(
@@ -1821,8 +1887,7 @@ type T5 = any;
 type T6 = unknown;
 type T7 = never;
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     // Should not emit any parser errors
     assert!(
@@ -1838,8 +1903,7 @@ fn test_primitive_types_in_parameters() {
     let source = r"
 declare function fn(a: void, b: string, c: number): boolean;
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     // Should not emit any parser errors
     assert!(
@@ -1856,8 +1920,7 @@ fn test_primitive_types_in_arrow_functions() {
 const arrow1: () => void = () => {};
 const arrow2: (x: number) => string = (x) => "";
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     // Should not emit any parser errors
     assert!(
@@ -2032,8 +2095,7 @@ interface JSONSchema4 {
   extends?: string | string[]
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diags = parser.get_diagnostics();
     assert!(
@@ -2052,8 +2114,7 @@ fn test_incomplete_binary_expression_recovery() {
     let source = r"const result = a +;
 const next = 1;";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     // Should produce an error for missing RHS
     let has_error = !parser.get_diagnostics().is_empty();
@@ -2074,8 +2135,7 @@ fn test_incomplete_assignment_recovery() {
     let source = r"let x =;
 let y = 2;";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     // Should produce an error for missing RHS
     assert!(
@@ -2097,8 +2157,7 @@ fn test_incomplete_conditional_expression_recovery() {
     let source = r"const result = a ? b :;
 const next = 1;";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     // Should produce error for missing false branch
     assert!(
@@ -2113,8 +2172,7 @@ fn test_expression_recovery_at_statement_boundary() {
     let source = r"const a = 1 +
 const b = 2;";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     // Should have errors but recover for next statement
     assert!(
@@ -2131,8 +2189,7 @@ function validFunction() {
     return 42;
 }";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     // Should have error for bad assignment
     assert!(
@@ -2159,8 +2216,7 @@ fn test_typeof_import_with_member_access() {
     let source = r#"
 export const foo: typeof import("./a").A.foo;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     // Should not emit TS1005 for member access after import()
     let ts1005_count = parser
@@ -2187,8 +2243,7 @@ fn test_typeof_import_with_nested_member_access() {
     let source = r#"
 export const foo: typeof import("./module").A.B.C;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     // Should not emit any errors for nested member access after import()
     assert!(
@@ -2204,8 +2259,7 @@ fn test_typeof_import_without_member_access() {
     let source = r#"
 export const foo: typeof import("./module");
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     // Should not emit any errors
     assert!(
@@ -2216,13 +2270,33 @@ export const foo: typeof import("./module");
 }
 
 #[test]
+fn test_typeof_import_non_string_literal_reports_ts1141() {
+    let source = r#"
+type ImportByKey<K extends string> = typeof import(K);
+type MappedImport<T extends string[]> = {
+    [K in T[number]]: typeof import(K);
+};
+"#;
+    let (parser, _root) = parse_source(source);
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1141_count = diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::STRING_LITERAL_EXPECTED)
+        .count();
+    assert_eq!(
+        ts1141_count, 2,
+        "Expected TS1141 for both typeof import(K) type queries, got {diagnostics:?}",
+    );
+}
+
+#[test]
 fn test_import_type_without_typeof() {
     // import("...").Type should parse without typeof
     let source = r#"
 export const a: import("./test1").T = null as any;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     // Should not emit parse errors
     let ts1005_count = parser
@@ -2261,8 +2335,7 @@ fn test_import_type_with_member_access() {
     let source = r#"
 export const a: import("./test1").T.U = null as any;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     // Should not emit parse errors
     assert!(
@@ -2278,8 +2351,7 @@ fn test_import_type_with_generic_arguments() {
     let source = r#"
 export const a: import("./test1").T<typeof import("./test2").theme> = null as any;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     // Should not emit parse errors
     let parse_errors = parser
@@ -2300,8 +2372,7 @@ fn test_import_type_with_invalid_import_attribute_key_reports_ts1478() {
     let source = r#"
 const a = (null as any as import("pkg", { with: {1234, "resolution-mode": "require"} }).RequireInterface);
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
     assert!(
@@ -2321,8 +2392,7 @@ fn test_typeof_import_defer_reports_missing_parens_in_type_query() {
     let source = r#"
 export type X = typeof import.defer("./a").Foo;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let ts1005_messages: Vec<&str> = diagnostics
@@ -2350,8 +2420,7 @@ export type Test3 = typeof import("./a.json", {
   },,
 });
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     assert!(
@@ -2380,8 +2449,7 @@ export type Test4 = typeof import("./a.json", {
   }
 });
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     assert!(
@@ -2405,8 +2473,7 @@ export type LocalInterface =
     & import("pkg", [ {"resolution-mode": "require"} ]).RequireInterface
     & import("pkg", [ {"resolution-mode": "import"} ]).ImportInterface;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     assert!(
@@ -2435,8 +2502,7 @@ fn test_import_type_options_identifier_recovery_reports_ts1134() {
 type Attribute1 = { with: {"resolution-mode": "require"} };
 export const a = (null as any as import("pkg", Attribute1).RequireInterface);
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     assert!(
@@ -2476,8 +2542,7 @@ fn test_import_type_options_array_recovery_in_cast_reports_trailing_comma_withou
     let source = r#"
 export const a = (null as any as import("pkg", [ {"resolution-mode": "require"} ]).RequireInterface);
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     assert!(
@@ -2512,8 +2577,7 @@ fn test_import_type_options_identifier_recovery_in_intersection_reports_ts1128_w
 export type LocalInterface =
     & import("pkg", Attribute1).RequireInterface;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     assert!(
@@ -2538,8 +2602,7 @@ fn test_type_argument_with_empty_jsdoc_wildcard_has_no_ts1110() {
     let source = r#"
 type T = Foo<?>;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
     assert!(
@@ -2568,8 +2631,7 @@ fn test_type_argument_with_jsdoc_prefix_type_emits_ts17020() {
     let source = r#"
 type T = Foo<?string>;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
     assert!(
@@ -2591,8 +2653,7 @@ fn test_type_argument_with_jsdoc_prefix_type_simplifies_ts17020_suggestion() {
     let source = r#"
 type T = Foo<?undefined>;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostic = parser
         .get_diagnostics()
@@ -2615,8 +2676,7 @@ fn test_expression_type_argument_with_empty_jsdoc_wildcard_emits_ts8020_only() {
     let source = r#"
 const WhatFoo = foo<?>;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
     assert!(
@@ -2643,8 +2703,7 @@ fn test_expression_type_argument_with_jsdoc_prefix_type_emits_ts17020_only() {
     let source = r#"
 const NopeFoo = foo<?string>;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
     assert!(
@@ -2669,8 +2728,7 @@ fn test_old_jsdoc_qualified_name_generic_reports_ts8020() {
     let source = r#"
 type T = Array.<string>;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
     assert!(
@@ -2703,8 +2761,7 @@ function hof2(f: function(this: number, string): string) {
     return f(12, 'hullo');
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
 
@@ -2739,8 +2796,7 @@ fn test_jsdoc_wildcard_type_reports_ts8020_only() {
     let source = r"
 let whatevs: * = 1001;
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
     assert_eq!(
@@ -2762,8 +2818,7 @@ fn test_optional_tuple_element() {
 interface Buzz { id: number; }
 type T = [Buzz?];
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     // Should not emit TS1005 or TS1110 for optional tuple element
     let ts1005_count = parser
@@ -2794,8 +2849,7 @@ fn test_readonly_optional_tuple_element() {
 interface Buzz { id: number; }
 type T = readonly [Buzz?];
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     // Should not emit any parser errors
     assert!(
@@ -2811,8 +2865,7 @@ fn test_named_tuple_element_still_works() {
     let source = r"
 type T = [name?: string];
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     // Should not emit any parser errors
     assert!(
@@ -2830,8 +2883,7 @@ interface A { a: number; }
 interface B { b: string; }
 type T = [A?, name: B, ...rest: string[]];
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     // Should not emit any parser errors
     assert!(
@@ -2850,8 +2902,7 @@ const x = fn(
 const y = 1;
 ";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let ts1135_count = diagnostics.iter().filter(|d| d.code == 1135).count();
@@ -2881,8 +2932,7 @@ fn test_argument_list_colon_followed_by_var_keyword_emits_ts1135() {
     // ',' expected at `(`.
     let source = "f(x: var (--a)\n);";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let ts1135 = diagnostics.iter().filter(|d| d.code == 1135).count();
@@ -2921,8 +2971,7 @@ fn test_argument_list_colon_followed_by_var_keyword_emits_ts1135() {
 #[test]
 fn test_invalid_unicode_escape_in_var_no_extra_semicolon_error() {
     let source = r"var arg\uxxxx";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let ts1127_count = diagnostics.iter().filter(|d| d.code == 1127).count();
@@ -2941,8 +2990,7 @@ fn test_invalid_unicode_escape_in_var_no_extra_semicolon_error() {
 #[test]
 fn test_invalid_unicode_escape_as_variable_name_no_var_decl_cascade() {
     let source = r"var \u0031a;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let ts1127_count = diagnostics.iter().filter(|d| d.code == 1127).count();
@@ -2966,8 +3014,7 @@ fn test_invalid_unicode_escape_as_variable_name_no_var_decl_cascade() {
 #[test]
 fn test_escaped_combining_mark_as_variable_name_reports_ts1127() {
     let source = r"var \u0345 = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     assert!(
@@ -2981,8 +3028,7 @@ fn test_escaped_combining_mark_as_variable_name_reports_ts1127() {
 #[test]
 fn invalid_escaped_private_use_identifier_part_reports_ts1127() {
     let source = r"var _\uD4A5\u7204\uC316\uE59F = local;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let invalid_escape = source.find(r"\uE59F").expect("invalid escape") as u32;
@@ -2997,8 +3043,7 @@ fn invalid_escaped_private_use_identifier_part_reports_ts1127() {
 #[test]
 fn invalid_surrogate_unicode_escapes_in_class_member_emit_ts1127() {
     let source = r"class C { \uD800\uDEA7: string; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let first_escape = source.find(r"\uD800").expect("first escape") as u32;
@@ -3019,18 +3064,61 @@ fn invalid_surrogate_unicode_escapes_in_class_member_emit_ts1127() {
 }
 
 #[test]
+fn invalid_surrogate_unicode_escapes_in_import_alias_emit_ts1127_without_cascade() {
+    let source = r#"import { foo as \uD800\uDEA7 } from "mod";"#;
+    let (parser, _root) = parse_source(source);
+
+    let diagnostics = parser.get_diagnostics();
+    let first_escape = source.find(r"\uD800").expect("first escape") as u32;
+    let second_escape = source.find(r"\uDEA7").expect("second escape") as u32;
+    let actual: Vec<_> = diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.start))
+        .collect();
+
+    assert_eq!(
+        actual,
+        vec![
+            (diagnostic_codes::INVALID_CHARACTER, first_escape),
+            (diagnostic_codes::INVALID_CHARACTER, second_escape),
+        ],
+        "invalid surrogate escapes in import aliases should report scanner-shaped TS1127 diagnostics without parser cascades, got {diagnostics:?}",
+    );
+}
+
+#[test]
+fn es5_import_specifier_identifier_tail_reports_invalid_astral_without_comma_cascade() {
+    let source = r#"import { _𐊧 as \uD800\uDEA7 } from "mod";"#;
+    let (parser, _root) = parse_source_with_language_version(source, ScriptTarget::ES5);
+
+    let diagnostics = parser.get_diagnostics();
+    let raw_astral = source.find('𐊧').expect("raw astral") as u32;
+    let first_escape = source.find(r"\uD800").expect("first escape") as u32;
+    let second_escape = source.find(r"\uDEA7").expect("second escape") as u32;
+    let actual: Vec<_> = diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.start))
+        .collect();
+
+    assert_eq!(
+        actual,
+        vec![
+            (diagnostic_codes::INVALID_CHARACTER, raw_astral),
+            (diagnostic_codes::INVALID_CHARACTER, first_escape),
+            (diagnostic_codes::INVALID_CHARACTER, second_escape),
+        ],
+        "ES5 import specifier invalid identifier tails should report scanner-shaped TS1127 diagnostics without comma recovery cascades, got {diagnostics:?}",
+    );
+}
+
+#[test]
 fn es5_astral_identifier_chars_recover_as_invalid_declaration_tail() {
     let source = "export var _𐊧 = new Foo();";
     let astral_pos = source.find('𐊧').expect("astral identifier char") as u32;
     let equals_pos = source.find('=').expect("equals") as u32;
     let new_pos = source.find("new").expect("new keyword") as u32;
 
-    let mut parser = ParserState::new_with_language_version(
-        "test.ts".to_string(),
-        source.to_string(),
-        ScriptTarget::ES5,
-    );
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_with_language_version(source, ScriptTarget::ES5);
 
     let diagnostics = parser.get_diagnostics();
     assert!(
@@ -3056,12 +3144,7 @@ fn es5_astral_identifier_chars_recover_as_invalid_declaration_tail() {
 #[test]
 fn es2015_astral_identifier_chars_remain_valid_identifier_parts() {
     let source = "export var _𐊧 = new Foo();";
-    let mut parser = ParserState::new_with_language_version(
-        "test.ts".to_string(),
-        source.to_string(),
-        ScriptTarget::ES2015,
-    );
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_with_language_version(source, ScriptTarget::ES2015);
 
     let diagnostics = parser.get_diagnostics();
     assert!(
@@ -3073,6 +3156,357 @@ fn es2015_astral_identifier_chars_remain_valid_identifier_parts() {
 }
 
 #[test]
+fn es2015_braced_astral_escape_remains_valid_identifier_start() {
+    let source = r"export var \u{102A7} = new Foo();";
+    let (parser, _root) = parse_source_with_language_version(source, ScriptTarget::ES2015);
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::INVALID_CHARACTER),
+        "ES2015 braced astral identifier escape should scan as a valid identifier start, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn es5_braced_astral_escape_remains_invalid_identifier_start() {
+    let source = r"export var \u{102A7} = new Foo();";
+    let escape_pos = source.find(r"\u{102A7}").expect("unicode escape") as u32;
+    let (parser, _root) = parse_source_with_language_version(source, ScriptTarget::ES5);
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::INVALID_CHARACTER && d.start == escape_pos),
+        "ES5 braced astral identifier escape should report TS1127 at the escape, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn es5_braced_astral_escape_after_identifier_recovers_inside_variable_list() {
+    let source = r"export var _\u{102A7} = new Foo();";
+    let escape_pos = source.find('\\').expect("unicode escape") as u32;
+    let open_brace_pos = source.find('{').expect("open brace") as u32;
+    let numeric_tail_pos = source.find("A7").expect("numeric literal tail") as u32;
+    let (parser, _root) = parse_source_with_language_version(source, ScriptTarget::ES5);
+
+    let diagnostics = parser.get_diagnostics();
+    let actual: Vec<_> = diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.start))
+        .collect();
+
+    assert_eq!(
+        actual,
+        vec![
+            (diagnostic_codes::INVALID_CHARACTER, escape_pos),
+            (diagnostic_codes::EXPECTED, open_brace_pos),
+            (
+                diagnostic_codes::AN_IDENTIFIER_OR_KEYWORD_CANNOT_IMMEDIATELY_FOLLOW_A_NUMERIC_LITERAL,
+                numeric_tail_pos,
+            ),
+        ],
+        "ES5 escaped astral identifier tail should recover like tsc, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn es5_braced_astral_escape_after_identifier_recovers_across_same_line_trivia() {
+    let source = r"export var _ /*tail*/ \u{102A7} = new Foo();";
+    let escape_pos = source.find('\\').expect("unicode escape") as u32;
+    let open_brace_pos = source.find('{').expect("open brace") as u32;
+    let numeric_tail_pos = source.find("A7").expect("numeric literal tail") as u32;
+    let (parser, _root) = parse_source_with_language_version(source, ScriptTarget::ES5);
+
+    let diagnostics = parser.get_diagnostics();
+    let actual: Vec<_> = diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.start))
+        .collect();
+
+    assert_eq!(
+        actual,
+        vec![
+            (diagnostic_codes::INVALID_CHARACTER, escape_pos),
+            (diagnostic_codes::EXPECTED, open_brace_pos),
+            (
+                diagnostic_codes::AN_IDENTIFIER_OR_KEYWORD_CANNOT_IMMEDIATELY_FOLLOW_A_NUMERIC_LITERAL,
+                numeric_tail_pos,
+            ),
+        ],
+        "same-line trivia before escaped astral debris should recover like tsc, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn es5_braced_astral_escape_after_import_alias_recovers_as_specifier_tail() {
+    let source = r#"import { _x as _\u{102A7} } from "mod";"#;
+    let escape_pos = source.find('\\').expect("unicode escape") as u32;
+    let open_brace_pos = source.find(r"\u{102A7}").expect("unicode escape") as u32 + 2;
+    let numeric_tail_pos = source.find("A7").expect("numeric literal tail") as u32;
+    let close_brace_pos = source.find("} from").expect("specifier close brace") as u32;
+    let from_pos = source.find("from").expect("from keyword") as u32;
+    let (parser, _root) = parse_source_with_language_version(source, ScriptTarget::ES5);
+
+    let diagnostics = parser.get_diagnostics();
+    let actual: Vec<_> = diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.start))
+        .collect();
+
+    assert_eq!(
+        actual,
+        vec![
+            (diagnostic_codes::INVALID_CHARACTER, escape_pos),
+            (diagnostic_codes::EXPECTED, open_brace_pos),
+            (
+                diagnostic_codes::AN_IDENTIFIER_OR_KEYWORD_CANNOT_IMMEDIATELY_FOLLOW_A_NUMERIC_LITERAL,
+                numeric_tail_pos,
+            ),
+            (
+                diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                close_brace_pos,
+            ),
+            (
+                diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                from_pos,
+            ),
+        ],
+        "import alias escaped astral tail should recover like tsc, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn es5_braced_astral_escape_after_export_alias_recovers_as_specifier_tail() {
+    let source = r#"export { _x as _\u{102A7} } from "mod";"#;
+    let escape_pos = source.find('\\').expect("unicode escape") as u32;
+    let open_brace_pos = source.find(r"\u{102A7}").expect("unicode escape") as u32 + 2;
+    let numeric_tail_pos = source.find("A7").expect("numeric literal tail") as u32;
+    let close_brace_pos = source.find("} from").expect("specifier close brace") as u32;
+    let from_pos = source.find("from").expect("from keyword") as u32;
+    let (parser, _root) = parse_source_with_language_version(source, ScriptTarget::ES5);
+
+    let diagnostics = parser.get_diagnostics();
+    let actual: Vec<_> = diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.start))
+        .collect();
+
+    assert_eq!(
+        actual,
+        vec![
+            (diagnostic_codes::INVALID_CHARACTER, escape_pos),
+            (diagnostic_codes::EXPECTED, open_brace_pos),
+            (
+                diagnostic_codes::AN_IDENTIFIER_OR_KEYWORD_CANNOT_IMMEDIATELY_FOLLOW_A_NUMERIC_LITERAL,
+                numeric_tail_pos,
+            ),
+            (
+                diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                close_brace_pos,
+            ),
+            (
+                diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                from_pos,
+            ),
+        ],
+        "export alias escaped astral tail should recover like tsc, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reset_clears_braced_unicode_specifier_tail_recovery_state() {
+    let source = r#"import { _x as _\u{102A7} } from "mod";"#;
+    let (mut parser, _root) = parse_source_with_language_version(source, ScriptTarget::ES5);
+    assert!(
+        parser.current_specifier_recovered_braced_unicode_escape_debris,
+        "sanity check: first parse should exercise braced unicode specifier recovery"
+    );
+
+    parser.reset(
+        "test.ts".to_string(),
+        r#"import { value } from "mod";"#.to_string(),
+    );
+
+    assert!(
+        !parser.current_specifier_recovered_braced_unicode_escape_debris,
+        "reset should clear stale specifier recovery state"
+    );
+}
+
+#[test]
+fn es5_raw_astral_variable_name_reports_declaration_expected_at_type_tail() {
+    let source = "declare var 𐊧: string;";
+    let raw_astral = source.find('𐊧').expect("raw astral") as u32;
+    let colon_pos = source.find(':').expect("colon") as u32;
+    let (parser, _root) = parse_source_with_language_version(source, ScriptTarget::ES5);
+
+    let diagnostics = parser.get_diagnostics();
+    let actual: Vec<_> = diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.start))
+        .collect();
+
+    assert!(
+        actual.contains(&(diagnostic_codes::INVALID_CHARACTER, raw_astral)),
+        "ES5 raw astral declaration name should report TS1127 at the astral character, got {diagnostics:?}"
+    );
+    assert!(
+        actual.contains(&(diagnostic_codes::VARIABLE_DECLARATION_EXPECTED, colon_pos)),
+        "ES5 raw astral declaration recovery should report TS1134 at the type tail, got {diagnostics:?}"
+    );
+    assert!(
+        !actual.contains(&(
+            diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+            colon_pos
+        )),
+        "ES5 raw astral declaration recovery should not reclassify the type tail as TS1128, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn es5_braced_astral_variable_name_reports_missing_comma_before_recovered_identifier() {
+    let source = r"declare var \u{102A7}: string;";
+    let escape_pos = source.find('\\').expect("unicode escape") as u32;
+    let recovered_open_brace = source.find('{').expect("recovered open brace") as u32;
+    let (parser, _root) = parse_source_with_language_version(source, ScriptTarget::ES5);
+
+    let diagnostics = parser.get_diagnostics();
+    let actual: Vec<_> = diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.start))
+        .collect();
+
+    assert!(
+        actual.contains(&(diagnostic_codes::INVALID_CHARACTER, escape_pos)),
+        "ES5 braced astral declaration name should report TS1127 at the escape, got {diagnostics:?}"
+    );
+    assert!(
+        actual.contains(&(diagnostic_codes::EXPECTED, recovered_open_brace)),
+        "ES5 braced astral declaration recovery should report TS1005 at the recovered braced tail, got {diagnostics:?}"
+    );
+    assert!(
+        !actual.contains(&(diagnostic_codes::EXPECTED, escape_pos + 1)),
+        "ES5 braced astral declaration recovery should not emit a duplicate TS1005 before the recovered identifier, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn es5_raw_astral_statement_assignment_reports_statement_expected_at_equals() {
+    let source = "if (true) { 𐊧 = \"hello\"; }";
+    let raw_astral = source.find('𐊧').expect("raw astral") as u32;
+    let equals_pos = source.find('=').expect("equals") as u32;
+    let (parser, _root) = parse_source_with_language_version(source, ScriptTarget::ES5);
+
+    let diagnostics = parser.get_diagnostics();
+    let actual: Vec<_> = diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.start))
+        .collect();
+
+    assert!(
+        actual.contains(&(diagnostic_codes::INVALID_CHARACTER, raw_astral)),
+        "ES5 raw astral statement assignment should report TS1127 at the astral character, got {diagnostics:?}"
+    );
+    assert!(
+        actual.contains(&(
+            diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+            equals_pos
+        )),
+        "ES5 raw astral statement assignment should report TS1128 at the assignment tail, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn es5_braced_astral_statement_assignment_recovers_block_followed_by_equals() {
+    let source = r#"if (true) { \u{102A7} = "hallo"; }"#;
+    let escape_pos = source.find('\\').expect("unicode escape") as u32;
+    let recovered_identifier = escape_pos + 1;
+    let equals_pos = source.find('=').expect("equals") as u32;
+    let (parser, _root) = parse_source_with_language_version(source, ScriptTarget::ES5);
+
+    let diagnostics = parser.get_diagnostics();
+    let actual: Vec<_> = diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.start))
+        .collect();
+
+    assert!(
+        actual.contains(&(diagnostic_codes::INVALID_CHARACTER, escape_pos)),
+        "ES5 braced astral statement assignment should report TS1127 at the escape, got {diagnostics:?}"
+    );
+    assert!(
+        actual.contains(&(
+            diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+            recovered_identifier
+        )),
+        "ES5 braced astral statement assignment should report TS1434 at the recovered identifier tail, got {diagnostics:?}"
+    );
+    assert!(
+        actual.contains(&(
+            diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED_THIS_FOLLOWS_A_BLOCK_OF_STATEMENTS_SO_IF_YOU_I,
+            equals_pos
+        )),
+        "ES5 braced astral statement assignment should recover the braced tail as a block and report TS2809 at `=`, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn es2015_braced_astral_escape_remains_valid_in_class_and_member_access() {
+    let source = r#"
+class Foo {
+    \u{102A7}: string;
+    constructor() {
+        this.\u{102A7} = " world";
+    }
+    methodA() {
+        return this.\u{102A7};
+    }
+}
+export var _\u{102A7} = new Foo().\u{102A7};
+"#;
+    let (parser, _root) = parse_source_with_language_version(source, ScriptTarget::ES2015);
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::INVALID_CHARACTER),
+        "ES2015 braced astral identifier escapes should remain valid across declarations, class members, and member access, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn es5_braced_astral_escape_reports_invalid_character_across_identifier_contexts() {
+    let source = r#"
+class Foo {
+    \u{102A7}: string;
+    constructor() {
+        this.\u{102A7} = " world";
+    }
+}
+export var _\u{102A7} = new Foo().\u{102A7};
+"#;
+    let expected_escape_positions: Vec<_> = source
+        .match_indices(r"\u{102A7}")
+        .map(|(pos, _)| pos as u32)
+        .collect();
+    let (parser, _root) = parse_source_with_language_version(source, ScriptTarget::ES5);
+
+    let diagnostics = parser.get_diagnostics();
+    for escape_pos in expected_escape_positions {
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.code == diagnostic_codes::INVALID_CHARACTER && d.start == escape_pos),
+            "ES5 braced astral identifier escape should report TS1127 at {escape_pos}, got {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
 fn test_class_method_string_names_use_string_literal_nodes() {
     let source = r#"
 class C {
@@ -3080,8 +3514,7 @@ class C {
     "bar"() { }
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_source(source);
     let source_file = parser.get_arena().get_source_file_at(root).unwrap();
     let class_idx = source_file.statements.nodes[0];
     let class_node = parser.get_arena().get(class_idx).unwrap();
@@ -3130,8 +3563,7 @@ function* f() {
     <number> yield 0;
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let ts1109_count = diagnostics.iter().filter(|d| d.code == 1109).count();
@@ -3158,8 +3590,7 @@ function* f() {
 #[test]
 fn test_type_assertion_missing_operand_anchors_at_after_gt_after_conflict_marker() {
     let source = "const x = <div>\n<<<<<<< HEAD";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
     let ts1109: Vec<_> = parser
         .parse_diagnostics
         .iter()
@@ -3186,8 +3617,7 @@ function* f() {
     <number> (yield 0);
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
 
@@ -3208,8 +3638,7 @@ function* f() {
     const ok = 2;
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_source(source);
 
     let source_file = parser.get_arena().get_source_file_at(root).unwrap();
     let function_idx = source_file.statements.nodes[0];
@@ -3261,8 +3690,7 @@ function fn() {
     catch(x) { }
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let ts1005_count = diagnostics.iter().filter(|d| d.code == 1005).count();
@@ -3290,8 +3718,7 @@ function fn() {
     finally { }
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let ts1005_count = diagnostics.iter().filter(|d| d.code == 1005).count();
@@ -3320,8 +3747,7 @@ function fn() {
     catch (x) { }
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let ts1005_count = diagnostics.iter().filter(|d| d.code == 1005).count();
@@ -3341,8 +3767,7 @@ interface Foo {
     ?;
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let ts1131_count = diagnostics.iter().filter(|d| d.code == 1131).count();
@@ -3360,8 +3785,7 @@ type T = {
     !;
 };
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let ts1131_count = diagnostics.iter().filter(|d| d.code == 1131).count();
@@ -3377,8 +3801,7 @@ fn test_postfix_optional_method_signature_recovers_with_semicolon_expected() {
 type T = { x()?: number; };
 interface I { y()?: string; }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let x_question = source.find("x()?").expect("x method") as u32 + 3;
@@ -3438,8 +3861,7 @@ interface I2 extends Foo {
         };
     }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
@@ -3461,14 +3883,101 @@ interface Foo {
     z(): void;
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let ts1131_count = diagnostics.iter().filter(|d| d.code == 1131).count();
     assert_eq!(
         ts1131_count, 0,
         "Expected no TS1131 for valid interface, got {ts1131_count}. Diagnostics: {diagnostics:?}",
+    );
+}
+
+#[test]
+fn test_computed_property_signature_after_array_type_line_break_does_not_emit_ts1131() {
+    let source = r"
+const IGNORE_LIST = 'ignoreList';
+
+interface SourceMap {
+  sources: string[]
+  [IGNORE_LIST]: number[]
+}
+";
+    let (parser, _root) = parse_source(source);
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED),
+        "A line-broken computed property signature should not be parsed as indexed access: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_class_computed_property_after_type_annotation_line_break_uses_asi() {
+    let source = r"
+class C {
+    [e]: number
+    [e2]: number
+}
+";
+    let (parser, root) = parse_source(source);
+
+    let source_file = parser.get_arena().get_source_file_at(root).unwrap();
+    let class_idx = source_file.statements.nodes[0];
+    let class_node = parser.get_arena().get(class_idx).unwrap();
+    let class_data = parser.get_arena().get_class(class_node).unwrap();
+    assert_eq!(
+        class_data.members.nodes.len(),
+        2,
+        "line-broken class computed members should not become one indexed-access type"
+    );
+}
+
+#[test]
+fn test_class_computed_method_after_return_type_line_break_uses_asi() {
+    let source = r#"
+class C {
+    ["foo"](): void
+    ["bar"](): void;
+    ["foo"]() {}
+}
+"#;
+    let (parser, root) = parse_source(source);
+
+    let codes: Vec<_> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED)
+            && !codes.contains(&diagnostic_codes::OR_EXPECTED),
+        "line-broken computed method signatures should remain separate members, got {codes:?}",
+    );
+
+    let source_file = parser.get_arena().get_source_file_at(root).unwrap();
+    let class_idx = source_file.statements.nodes[0];
+    let class_node = parser.get_arena().get(class_idx).unwrap();
+    let class_data = parser.get_arena().get_class(class_node).unwrap();
+    assert_eq!(
+        class_data.members.nodes.len(),
+        3,
+        "computed method signatures should not become indexed-access return types"
+    );
+}
+
+#[test]
+fn test_empty_index_signature_after_type_member_annotation_line_break_uses_asi() {
+    let source = r"
+var v: {
+   a: B
+   [];
+};
+";
+    let (parser, _root) = parse_source(source);
+
+    let codes: Vec<_> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&diagnostic_codes::AN_INDEX_SIGNATURE_MUST_HAVE_EXACTLY_ONE_PARAMETER),
+        "empty bracket member should recover as an index signature, got {codes:?}",
     );
 }
 
@@ -3480,8 +3989,7 @@ interface Foo {
 fn test_import_defer_namespace_parses_clean() {
     // `import defer * as ns from "mod"` is valid — no parse errors
     let source = r#"import defer * as ns from "./a";"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let parse_errors: Vec<_> = parser
         .get_diagnostics()
@@ -3498,8 +4006,7 @@ fn test_import_defer_namespace_parses_clean() {
 fn test_import_defer_as_binding_name() {
     // `import defer from "mod"` — defer is the default import NAME, not a modifier
     let source = r#"import defer from "./a";"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let parse_errors: Vec<_> = parser
         .get_diagnostics()
@@ -3516,8 +4023,7 @@ fn test_import_defer_as_binding_name() {
 fn test_import_dot_defer_call_no_parse_error() {
     // `import.defer("./a")` — valid dynamic defer import, no parse error
     let source = r#"import.defer("./a.js");"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let parse_errors: Vec<_> = parser
         .get_diagnostics()
@@ -3534,8 +4040,7 @@ fn test_import_dot_defer_call_no_parse_error() {
 fn test_import_dot_defer_standalone_emits_ts1005() {
     // `import.defer` without () should emit TS1005 "'(' expected."
     let source = r"const x = import.defer;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let ts1005_count = parser
         .get_diagnostics()
@@ -3552,8 +4057,7 @@ fn test_import_dot_defer_standalone_emits_ts1005() {
 fn test_import_dot_invalid_meta_property_ts17012() {
     // `import.foo` (not in call) should emit TS17012
     let source = r"const x = import.foo;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let ts17012_count = parser
         .get_diagnostics()
@@ -3570,8 +4074,7 @@ fn test_import_dot_invalid_meta_property_ts17012() {
 fn test_import_dot_invalid_meta_property_call_ts18061() {
     // `import.foo()` (in call) should emit TS18061
     let source = r#"import.foo("./a");"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let ts18061_count = parser
         .get_diagnostics()
@@ -3589,8 +4092,7 @@ fn test_import_defer_with_default_sets_deferred_flag() {
     // `import defer foo from "./a"` — defer is modifier, foo is default name
     // Parser should set is_deferred = true
     let source = r#"import defer foo from "./a";"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_source(source);
 
     let arena = parser.get_arena();
     let sf = arena.get_source_file_at(root).unwrap();
@@ -3614,8 +4116,7 @@ fn test_import_defer_from_as_name_not_deferred() {
     // `import defer from "./a"` — defer is the import NAME, not modifier
     // Parser should NOT set is_deferred = true
     let source = r#"import defer from "./a";"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_source(source);
 
     let arena = parser.get_arena();
     let sf = arena.get_source_file_at(root).unwrap();
@@ -3639,8 +4140,7 @@ fn test_import_defer_type_modifier_conflict_anchors_from_at_namespace_token() {
     // not at the `type` keyword (column 14) or with an incorrect `'='
     // expected` from the import-equals lookahead path.
     let source = r#"import defer type * as ns from "./a";"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let ts1005: Vec<_> = diagnostics.iter().filter(|d| d.code == 1005).collect();
@@ -3674,8 +4174,7 @@ fn test_import_defer_from_equals_routes_to_import_declaration() {
     // import-equals (which would emit `'=' expected.` at column 14 plus a
     // trailing `';' expected.`).
     let source = r#"import defer from = require("m");"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let ts1005: Vec<_> = diagnostics.iter().filter(|d| d.code == 1005).collect();
@@ -3704,8 +4203,7 @@ fn test_import_type_from_equals_still_routes_to_import_equals() {
     // narrow `defer` fix must not regress the `type` branch, so the parser
     // should accept this without parser-level recovery diagnostics.
     let source = r#"import type from = require("m");"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let parse_errors: Vec<_> = parser
         .get_diagnostics()
@@ -3721,8 +4219,7 @@ fn test_import_type_from_equals_still_routes_to_import_equals() {
 #[test]
 fn test_regex_named_capturing_groups_do_not_emit_unexpected_paren() {
     let source = r#"const re = /(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})/u;"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
     let diagnostics = parser.get_diagnostics();
     let ts1508: Vec<_> = diagnostics.iter().filter(|d| d.code == 1508).collect();
     assert!(
@@ -3738,8 +4235,7 @@ const a = /\u{-DDDD}/gu;
 const b = /\u{r}\u{n}\u{t}/gu;
 const c = /\u{}/gu;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
     let diagnostics = parser.get_diagnostics();
     let ts1125: Vec<_> = diagnostics.iter().filter(|d| d.code == 1125).collect();
     assert!(
@@ -3756,8 +4252,7 @@ const c = /\u{}/gu;
 fn test_bare_hash_at_top_level_emits_ts1127() {
     // Bare `#` at top level should emit TS1127, not cascading errors
     let source = "# foo";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let ts1127_count = diagnostics.iter().filter(|d| d.code == 1127).count();
@@ -3775,8 +4270,7 @@ class C {
     # name;
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let ts1127_count = diagnostics.iter().filter(|d| d.code == 1127).count();
@@ -3804,8 +4298,7 @@ class C {
     get #value() { return this.#name; }
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let ts1127_count = diagnostics.iter().filter(|d| d.code == 1127).count();
@@ -3823,8 +4316,7 @@ class C {
 fn test_postfix_question_emits_ts17019() {
     // `string?` should emit TS17019, not TS1005 or TS1110
     let source = "let x: string?;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let ts17019_count = diagnostics.iter().filter(|d| d.code == 17019).count();
@@ -3849,8 +4341,7 @@ fn test_postfix_question_emits_ts17019() {
 fn test_prefix_question_emits_ts17020() {
     // `?string` should emit TS17020, not TS1110
     let source = "let x: ?string;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let ts17020_count = diagnostics.iter().filter(|d| d.code == 17020).count();
@@ -3877,8 +4368,7 @@ fn test_prefix_question_simplifies_ts17020_suggestions() {
         ("number", "number | null | undefined"),
     ] {
         let source = format!("let x: ?{input};");
-        let mut parser = ParserState::new(format!("{input}.ts"), source);
-        let _root = parser.parse_source_file();
+        let (parser, _root) = parse_source_named(&format!("{input}.ts"), &source);
 
         let diagnostic = parser
             .get_diagnostics()
@@ -3908,8 +4398,7 @@ function f(x: string?): ?number {
     return null;
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let ts17019_count = diagnostics.iter().filter(|d| d.code == 17019).count();
@@ -3928,8 +4417,7 @@ function f(x: string?): ?number {
 fn test_nullable_type_in_type_predicate() {
     // `x is ?string` should emit TS17020
     let source = "function f(x: any): x is ?string { return true; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let ts17020_count = diagnostics.iter().filter(|d| d.code == 17020).count();
@@ -3946,8 +4434,7 @@ fn test_nullable_type_no_cascade() {
 let a: string? = "hello";
 let b: ?number = 42;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     // Should only have TS17019 and TS17020, no cascade
@@ -3972,8 +4459,7 @@ declare namespace JSX { interface Element { } }
 
 var x = <div></div><div></div>
 ";
-    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_named("test.tsx", source);
 
     let diagnostics = parser.get_diagnostics();
     let ts2657_count = diagnostics.iter().filter(|d| d.code == 2657).count();
@@ -4004,8 +4490,7 @@ import * as React from "react";
 
 let x = <MyComp<Prop> a={10} b="hi" />; // error, no type arguments in js
 "#;
-    let mut parser = ParserState::new("file.jsx".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_named("file.jsx", source);
 
     let diagnostics = parser.get_diagnostics();
     let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
@@ -4027,8 +4512,7 @@ Foo<number>();
 Foo<number>(1);
 Foo<number>``;
 "#;
-    let mut parser = ParserState::new("a.jsx".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_named("a.jsx", source);
 
     let diagnostics = parser.get_diagnostics();
     let ts1109_count = diagnostics.iter().filter(|d| d.code == 1109).count();
@@ -4049,8 +4533,7 @@ fn test_jsx_type_arguments_in_js_with_closing_tag_report_ts17002() {
     let source = r#"
 <Foo<number>></Foo>;
 "#;
-    let mut parser = ParserState::new("a.jsx".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_named("a.jsx", source);
 
     let diagnostics = parser.get_diagnostics();
     let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
@@ -4071,8 +4554,7 @@ fn test_let_array_ambiguity_reports_ts1181_then_statement_recovery() {
 var let: any;
 let[0] = 100;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
@@ -4092,8 +4574,7 @@ for (let of [1,2,3]) {}
 
 for (let in [1,2,3]) {}
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
@@ -4113,8 +4594,7 @@ function f2(a: string): a is !string { return true; }
 const a = 1 as any!;
 const b = 1 as !any;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
@@ -4132,8 +4612,7 @@ fn test_unclosed_jsx_fragment_after_unary_plus_in_tsx_reports_ts17014() {
 const x = "oops";
 const y = + <> x;
 "#;
-    let mut parser = ParserState::new("index.tsx".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_named("index.tsx", source);
 
     let diagnostics = parser.get_diagnostics();
     let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
@@ -4150,8 +4629,7 @@ fn test_js_unclosed_jsx_fragment_after_unary_plus_reports_ts17014() {
 const x = "oops";
 const y = + <> x;
 "#;
-    let mut parser = ParserState::new("index.js".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_named("index.js", source);
 
     let diagnostics = parser.get_diagnostics();
     let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
@@ -4165,8 +4643,7 @@ const y = + <> x;
 #[test]
 fn test_js_unary_tilde_then_malformed_jsx_reports_ts1003() {
     let source = "~< <";
-    let mut parser = ParserState::new("a.js".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_named("a.js", source);
 
     let diagnostics = parser.get_diagnostics();
     let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
@@ -4193,8 +4670,7 @@ fn test_js_unary_plus_then_numeric_jsx_head_reports_ts1003_without_ts1109() {
 const x = "oops";
 const y = + <1234> x;
 "#;
-    let mut parser = ParserState::new("index.js".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_named("index.js", source);
 
     let diagnostics = parser.get_diagnostics();
     let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
@@ -4218,8 +4694,7 @@ const a = + <number> x;
 const b = + <> x;
 const c = + <1234> x;
 "#;
-    let mut parser = ParserState::new("index.tsx".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_named("index.tsx", source);
 
     let diagnostics = parser.get_diagnostics();
     let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
@@ -4249,8 +4724,7 @@ const c = + <1234> x;
 #[test]
 fn test_js_unary_bang_then_braced_jsx_head_reports_ts17008_without_ts1109() {
     let source = "!< {:>";
-    let mut parser = ParserState::new("a.js".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_named("a.js", source);
 
     let diagnostics = parser.get_diagnostics();
     let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
@@ -4282,8 +4756,7 @@ x4.isElement;
 var x5 = <T extends>() => {}</T>;
 x5.isElement;
 "#;
-    let mut parser = ParserState::new("file.tsx".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_named("file.tsx", source);
 
     let diagnostics = parser.get_diagnostics();
     let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
@@ -4328,8 +4801,7 @@ x = <foo>x</foo>, x = <foo/>;
 
 <foo>{<foo><foo>{/foo/.test(x) ? <foo><foo></foo> : <foo><foo></foo>}</foo>}</foo>
 "#;
-    let mut parser = ParserState::new("jsxAndTypeAssertion.tsx".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_named("jsxAndTypeAssertion.tsx", source);
 
     let diagnostics = parser.get_diagnostics();
     let ts1003_count = diagnostics.iter().filter(|d| d.code == 1003).count();
@@ -4371,8 +4843,7 @@ var f: {
     <-
 };
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
@@ -4406,8 +4877,7 @@ declare var React: any;
 
 <>eof
 "#;
-    let mut parser = ParserState::new("file.tsx".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_named("file.tsx", source);
 
     let diagnostics = parser.get_diagnostics();
     let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
@@ -4438,8 +4908,7 @@ fn test_tsx_fragment_errors_actual_conformance_file_matches_expected_codes() {
             panic!("failed to read tsxFragmentErrors conformance fixture {fixture_path}: {err}")
         }
     };
-    let mut parser = ParserState::new("file.tsx".to_string(), source);
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_named("file.tsx", &source);
 
     let diagnostics = parser.get_diagnostics();
     let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
@@ -4472,8 +4941,7 @@ declare var React: any;
 "#
     .to_string();
     let line_map = LineMap::build(&source);
-    let mut parser = ParserState::new("file.tsx".to_string(), source.clone());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_named("file.tsx", &source);
 
     let diagnostics = parser.get_diagnostics();
     let actual: Vec<(u32, u32, u32)> = diagnostics
@@ -4512,8 +4980,7 @@ declare var React: any;
 #[test]
 fn test_trailing_decimal_numeric_literal_recovery_matches_conformance_shape() {
     let source = "1.toString();\nvar test2 = 2.toString();\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
@@ -4565,11 +5032,7 @@ fn test_trailing_decimal_numeric_literal_recovery_matches_conformance_shape() {
 fn test_decorator_type_assertion_reports_brace_expected_and_expression_expected_at_end_of_type_token()
  {
     let source = "@<[[import(obju2c77,\n";
-    let mut parser = ParserState::new(
-        "parseUnmatchedTypeAssertion.ts".to_string(),
-        source.to_string(),
-    );
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_named("parseUnmatchedTypeAssertion.ts", source);
 
     let diagnostics = parser.get_diagnostics();
     let ts1109_positions: Vec<_> = diagnostics
@@ -4626,8 +5089,7 @@ fn test_ts1125_tagged_template_does_not_emit_errors() {
     // tsc does NOT emit TS1125 for tagged templates — only for untagged templates.
     let source =
         r#"const x = tag`\u{hello} ${ 100 } \xtraordinary ${ 200 } wonderful ${ 300 } \uworld`;"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
     let diagnostics = parser.get_diagnostics();
 
     let ts1125_diagnostics: Vec<_> = diagnostics.iter().filter(|d| d.code == 1125).collect();
@@ -4647,8 +5109,7 @@ fn test_ts1125_untagged_template_emits_errors() {
     // Untagged templates with invalid escape sequences DO get TS1125.
     let source =
         r#"const y = `\u{hello} ${ 100 } \xtraordinary ${ 200 } wonderful ${ 300 } \uworld`;"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
     let diagnostics = parser.get_diagnostics();
 
     let ts1125_diagnostics: Vec<_> = diagnostics.iter().filter(|d| d.code == 1125).collect();
@@ -4673,8 +5134,7 @@ fn test_prefix_unary_without_operand_emits_ts1109_after_prior_ts1005() {
     // to swallow the TS1109 because the two positions are within three
     // characters. Verify both diagnostics are now emitted.
     let source = "var a = q~;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let ts1005_count = diagnostics
@@ -4703,8 +5163,7 @@ fn test_prefix_unary_tilde_missing_operand_emits_ts1109_after_initializer() {
     // does not exercise the suppression-bypass, but it pins down the baseline
     // behaviour alongside the prior-error variant above.
     let source = "var b =~;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let ts1109_count = diagnostics
@@ -4742,8 +5201,7 @@ var mul = ~[1, 2, \"abc\"], \"\";  //expect error
 // miss an operand
 var b =~;
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let line_map = LineMap::build(source);
@@ -4781,8 +5239,7 @@ fn test_array_terminated_by_close_paren_emits_comma_expected() {
     // because the array-literal loop broke without first emitting the missing-
     // separator diagnostic that tsc's parseDelimitedList unconditionally emits.
     let source = "a0([1, \"string\", [[\"world\"]]);\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
 
@@ -4811,8 +5268,7 @@ fn test_array_terminated_by_close_brace_emits_comma_expected() {
     // boundary). Same expectation — tsc reports `,' expected` rather than
     // `]' expected`.
     let source = "{ const x = [1, 2 }\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
 
@@ -4831,8 +5287,7 @@ fn test_array_terminated_by_close_brace_emits_comma_expected() {
 fn test_array_terminated_by_close_bracket_keeps_clean_close() {
     // Sanity guard: a normal `[1, 2]` must not gain a spurious comma diagnostic.
     let source = "var a = [1, 2];\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     assert!(
@@ -4847,8 +5302,7 @@ fn test_parameter_list_stray_colon_recovers_through_object_binding_tail() {
     // colon, tsc keeps parsing the following `{ return arg; }` as a malformed
     // object binding parameter, producing the full recovery tail.
     let source = "\n// https://github.com/microsoft/TypeScript/issues/59422\n\nfunction identity<T>(arg: T: T {\n    return arg;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let line_map = LineMap::build(source);
@@ -4916,8 +5370,7 @@ fn test_object_literal_comma_recovery_after_short_distance_colon_error() {
     // dedups only on exact same position; the unexpected-token recovery path in
     // `parse_object_literal` now bypasses the distance gate so it emits.
     let source = "var x = {\n    class C4 {\n    }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let line2_offset = source.find("    class C4").expect("C4 line is in source") as u32;
@@ -4951,8 +5404,7 @@ fn test_regex_hex_escape_with_numeric_separator_no_ts1125() {
     // emits NO TS1125 for `/\xf_f/u` or `/\u_ffff/u`. We previously rejected
     // `_` at every hex-digit slot in the parser-level regex escape validator.
     let source = "/\\xf_f/u\n/\\uff_ff/u\n/\\u_ffff/u\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     assert!(
@@ -4969,8 +5421,7 @@ fn test_regex_hex_escape_keeps_real_hex_digit_validation() {
     // For `/\u\i\c/` the `\u` is followed by `\` (not hex, not `_`), so TS1125
     // must still fire — matching tsc's `regularExpressionAnnexB.ts`.
     let source = "/\\u\\i\\c/\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     assert!(

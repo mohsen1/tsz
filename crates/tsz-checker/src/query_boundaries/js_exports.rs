@@ -15,10 +15,14 @@
 
 use crate::{context::is_js_file_name, state::CheckerState};
 use rustc_hash::FxHashMap;
+use tsz_binder::{SymbolId, symbol_flags};
+use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::{CallableShape, ObjectShape, PropertyInfo, TypeId, Visibility};
 
 pub(crate) fn commonjs_direct_export_supports_named_props(
-    types: &dyn tsz_solver::TypeDatabase,
+    types: &dyn tsz_solver::construction::TypeDatabase,
     direct_export_type: TypeId,
 ) -> bool {
     if matches!(
@@ -235,7 +239,7 @@ impl JsExportSurface {
     pub fn lookup_named_export(
         &self,
         name: &str,
-        types: &dyn tsz_solver::TypeDatabase,
+        types: &dyn tsz_solver::construction::TypeDatabase,
     ) -> Option<TypeId> {
         let name_atom = types.intern_string(name);
         if let Some(prop) = self.named_exports.iter().find(|p| p.name == name_atom) {
@@ -248,7 +252,11 @@ impl JsExportSurface {
     }
 
     /// Check whether this surface has a named export with the given name.
-    pub fn has_named_export(&self, name: &str, types: &dyn tsz_solver::TypeDatabase) -> bool {
+    pub fn has_named_export(
+        &self,
+        name: &str,
+        types: &dyn tsz_solver::construction::TypeDatabase,
+    ) -> bool {
         self.lookup_named_export(name, types).is_some()
     }
 
@@ -535,6 +543,27 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         let surface = self.resolve_js_export_surface_for_module(module_name, source_file_idx)?;
         surface.lookup_named_export(export_name, self.ctx.types)
+    }
+
+    /// Resolve the declaring class symbol for a named CommonJS export.
+    ///
+    /// JSDoc type-position consumers use this provenance when the synthesized
+    /// export surface only exposes a raw callable value for `exports.K = K`,
+    /// but the exported RHS is a class declaration whose instance side is the
+    /// actual annotation type.
+    pub(crate) fn resolve_js_export_named_class_symbol(
+        &self,
+        module_name: &str,
+        export_name: &str,
+        source_file_idx: Option<usize>,
+    ) -> Option<(SymbolId, usize)> {
+        let target_file_idx = source_file_idx
+            .and_then(|file_idx| {
+                self.ctx
+                    .resolve_import_target_from_file(file_idx, module_name)
+            })
+            .or_else(|| self.ctx.resolve_import_target(module_name))?;
+        self.commonjs_named_export_class_symbol_for_file(target_file_idx, export_name)
     }
 
     /// Check whether a CommonJS module has a named export (without computing its type).
@@ -884,12 +913,142 @@ impl<'a> CheckerState<'a> {
 
         Some((ctor_name, member_name))
     }
+
+    fn commonjs_named_export_class_symbol_for_file(
+        &self,
+        target_file_idx: usize,
+        export_name: &str,
+    ) -> Option<(SymbolId, usize)> {
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let target_binder = self.ctx.get_binder_for_file(target_file_idx)?;
+        let source_file = target_arena.source_files.first()?;
+
+        for &stmt_idx in source_file.statements.nodes.iter().rev() {
+            let Some(stmt_node) = target_arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(stmt) = target_arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            let Some(rhs_idx) = Self::commonjs_named_export_assignment_rhs(
+                target_arena,
+                stmt.expression,
+                export_name,
+            ) else {
+                continue;
+            };
+            let Some(rhs_node) = target_arena.get(rhs_idx) else {
+                continue;
+            };
+            if rhs_node.kind != SyntaxKind::Identifier as u16 {
+                continue;
+            }
+            let Some(sym_id) = target_binder.resolve_identifier(target_arena, rhs_idx) else {
+                continue;
+            };
+            if target_binder
+                .get_symbol(sym_id)
+                .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::CLASS))
+            {
+                return Some((sym_id, target_file_idx));
+            }
+        }
+
+        None
+    }
+
+    fn commonjs_named_export_assignment_rhs(
+        arena: &tsz_parser::parser::NodeArena,
+        expr_idx: NodeIndex,
+        export_name: &str,
+    ) -> Option<NodeIndex> {
+        let expr_node = arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = arena.get_binary_expr(expr_node)?;
+        if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+            return None;
+        }
+        Self::commonjs_named_export_lhs_matches(arena, binary.left, export_name)
+            .then_some(binary.right)
+    }
+
+    fn commonjs_named_export_lhs_matches(
+        arena: &tsz_parser::parser::NodeArena,
+        lhs_idx: NodeIndex,
+        export_name: &str,
+    ) -> bool {
+        let Some(lhs_node) = arena.get(lhs_idx) else {
+            return false;
+        };
+        if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && lhs_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return false;
+        }
+        let Some(access) = arena.get_access_expr(lhs_node) else {
+            return false;
+        };
+        if Self::commonjs_static_member_name(arena, access.name_or_argument).as_deref()
+            != Some(export_name)
+        {
+            return false;
+        }
+
+        if arena
+            .get_identifier_at(access.expression)
+            .is_some_and(|ident| ident.escaped_text == "exports")
+        {
+            return true;
+        }
+
+        let Some(base_node) = arena.get(access.expression) else {
+            return false;
+        };
+        if base_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && base_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return false;
+        }
+        let Some(base_access) = arena.get_access_expr(base_node) else {
+            return false;
+        };
+        arena
+            .get_identifier_at(base_access.expression)
+            .is_some_and(|ident| ident.escaped_text == "module")
+            && Self::commonjs_static_member_name(arena, base_access.name_or_argument).as_deref()
+                == Some("exports")
+    }
+
+    fn commonjs_static_member_name(
+        arena: &tsz_parser::parser::NodeArena,
+        idx: NodeIndex,
+    ) -> Option<String> {
+        let node = arena.get(idx)?;
+        match node.kind {
+            k if k == SyntaxKind::Identifier as u16 => arena
+                .get_identifier(node)
+                .map(|ident| ident.escaped_text.to_string()),
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NumericLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                arena.get_literal(node).map(|lit| lit.text.clone())
+            }
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::JsExportSurface;
-    use tsz_solver::{PropertyInfo, TypeId, TypeInterner, Visibility};
+    use tsz_solver::construction::TypeInterner;
+    use tsz_solver::{PropertyInfo, TypeId, Visibility};
 
     fn prop(db: &TypeInterner, name: &str, declaration_order: u32) -> PropertyInfo {
         PropertyInfo {

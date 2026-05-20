@@ -6,6 +6,7 @@ use crate::batch_pool::{BatchOutcome, ProcessPool};
 use crate::cache::{self, load_cache};
 use crate::cli::{Args, RunMode, ShardStrategy};
 use crate::server_pool::{ServerOutcome, ServerPool};
+use crate::test_filter::{is_conformance_source_file, matches_path_filter};
 use crate::test_parser::{
     expand_option_variants, filter_incompatible_module_resolution_variants, parse_test_file,
     should_skip_test,
@@ -334,44 +335,6 @@ fn compare_diagnostics(
             known_failure: None,
         }
     }
-}
-
-const PRODUCTION_SUPPRESSION_DEBT_REASON: &str =
-    "known compiler debt previously hidden by production diagnostic suppression";
-
-// NOTE: Each entry suppresses TS2589/etc. regressions for *failing* tests in
-// the matched paths. When a matching test starts passing, the entry becomes
-// dead code (the `mark_known_conformance_debt` branch only fires on `Fail`).
-// Periodically prune patterns whose only matches now PASS — entries below
-// are the live set as of 2026-05-02.
-const PRODUCTION_SUPPRESSION_DEBT_PATTERNS: &[&str] = &[
-    "recursiveConditionalTypes",
-    "moduleAugmentationDoesNamespaceEnumMergeOfReexport",
-    "jsxNamespaceImplicitImportJSXNamespaceFromConfigPickedOverGlobalOne",
-    "jsxNamespaceImplicitImportJSXNamespaceFromPragmaPickedOverGlobalOne",
-    "instantiationExpressionErrorNoCrash",
-    "styledComponentsInstantiaionLimitNotReached",
-    "intersectionsOfLargeUnions2",
-    "isolatedModulesReExportType",
-    "spellingSuggestionJSXAttribute",
-    "isolatedDeclarationErrorsObjects",
-    "mixinAccessModifiers",
-    "typeFromPropertyAssignment39",
-    "promiseTry",
-];
-
-fn known_conformance_debt_reason(test_key: &str) -> Option<&'static str> {
-    PRODUCTION_SUPPRESSION_DEBT_PATTERNS
-        .iter()
-        .any(|pattern| test_key.contains(pattern))
-        .then_some(PRODUCTION_SUPPRESSION_DEBT_REASON)
-}
-
-fn mark_known_conformance_debt(test_key: &str, mut result: TestResult) -> TestResult {
-    if let TestResult::Fail { known_failure, .. } = &mut result {
-        *known_failure = known_conformance_debt_reason(test_key);
-    }
-    result
 }
 
 fn is_appledouble_file(path: &Path) -> bool {
@@ -1137,37 +1100,15 @@ impl Runner {
                 continue;
             }
 
-            // Check file extension
-            if path
-                .extension()
-                .is_some_and(|ext| ext == "ts" || ext == "tsx" || ext == "js" || ext == "jsx")
-            {
-                let path_str = path.to_string_lossy();
-
-                // Skip .d.ts files (declaration files, not test sources)
-                if path_str.ends_with(".d.ts") || path_str.ends_with(".d.mts") {
-                    continue;
-                }
-
-                // Skip fourslash tests (language service tests with special format)
-                if path_str.contains("/fourslash/") || path_str.contains("\\fourslash\\") {
-                    continue;
-                }
-
-                // Skip APISample tests - they require /.ts/typescript.d.ts which is a
-                // virtual mount in TSC's test harness pointing to built/local/typescript.d.ts
-                if path_str.contains("APISample") || path_str.contains("APILibCheck") {
-                    continue;
-                }
-
-                // Apply filter pattern if specified
-                if let Some(ref filter) = self.args.filter {
-                    if !path_str.contains(filter) {
-                        continue;
-                    }
-                }
-                files.push(path.to_path_buf());
+            if !is_conformance_source_file(path) {
+                continue;
             }
+
+            if !matches_path_filter(path, self.args.filter.as_deref()) {
+                continue;
+            }
+
+            files.push(path.to_path_buf());
         }
 
         // Sort for deterministic order
@@ -1613,14 +1554,11 @@ impl Runner {
                     );
 
                     let options_for_fail = compile_result.options.clone();
-                    let outcome = mark_known_conformance_debt(
-                        &key,
-                        compare_diagnostics(
-                            &compile_result,
-                            &tsc_error_codes,
-                            &tsc_fps,
-                            options_for_fail,
-                        ),
+                    let outcome = compare_diagnostics(
+                        &compile_result,
+                        &tsc_error_codes,
+                        &tsc_fps,
+                        options_for_fail,
                     );
                     Ok((outcome, file_preview.take()))
                 } else {
@@ -1777,14 +1715,11 @@ impl Runner {
 
                     // UTF-16 path historically drops the resolved options from the
                     // failure record — preserve that behavior by passing an empty map.
-                    let outcome = mark_known_conformance_debt(
-                        &key,
-                        compare_diagnostics(
-                            &compile_result,
-                            &tsc_error_codes,
-                            &tsc_fps,
-                            HashMap::new(),
-                        ),
+                    let outcome = compare_diagnostics(
+                        &compile_result,
+                        &tsc_error_codes,
+                        &tsc_fps,
+                        HashMap::new(),
                     );
                     Ok((outcome, file_preview.take()))
                 } else {
@@ -1912,14 +1847,11 @@ impl Runner {
                     };
 
                     let options_for_fail = compile_result.options.clone();
-                    let outcome = mark_known_conformance_debt(
-                        &key,
-                        compare_diagnostics(
-                            &compile_result,
-                            &tsc_error_codes,
-                            &tsc_fps,
-                            options_for_fail,
-                        ),
+                    let outcome = compare_diagnostics(
+                        &compile_result,
+                        &tsc_error_codes,
+                        &tsc_fps,
+                        options_for_fail,
                     );
                     Ok((outcome, file_preview.take()))
                 } else {

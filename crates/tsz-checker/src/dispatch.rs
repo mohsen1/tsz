@@ -7,7 +7,6 @@ use crate::query_boundaries::type_checking_utilities as query_utils;
 use crate::query_boundaries::type_computation::core as type_comp_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -239,6 +238,16 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     .enclosing_class
                     .as_ref()
                     .map(|info| info.class_idx)
+                    .or_else(|| {
+                        (!has_intermediate_function
+                            && !contextual_owner.is_some_and(|owner_idx| {
+                                self.checker.ctx.arena.get(owner_idx).is_some_and(|owner| {
+                                    owner.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                })
+                            }))
+                        .then(|| self.checker.nearest_enclosing_class(idx))
+                        .flatten()
+                    })
                 {
                     // Inside a class but no explicit this type on stack -
                     // return the class instance/constructor type depending on static context.
@@ -286,17 +295,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         .checker
                         .is_this_in_nested_function_without_own_this_binding(idx)
                 {
-                    // `this` in a class or object literal member but enclosing_class
-                    // not yet set. Suppress TS2683 - `this` is contextually typed.
-                    //
-                    // Robustness audit (PR #J, item 10): emit a structured trace
-                    // so the rate of unresolved-`this` ANY fallbacks is visible.
-                    tracing::debug!(
-                        site = "dispatch::this_unresolved_class_or_object_literal_member",
-                        idx = idx.0,
-                        "TypeId::ANY fallback (unresolved enclosing this scope)"
-                    );
-                    TypeId::ANY
+                    self.checker.ctx.recover_any(
+                        idx,
+                        crate::recovery::RecoveryReason::ThisUnresolvedClassOrObjectLiteralMember,
+                    )
                 } else if self.checker.ctx.no_implicit_this()
                     && !self.checker.is_js_file()
                     && !self.checker.ctx.binder.is_external_module()
@@ -482,16 +484,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             .get_class_constructor_type_with_request(idx, &class, request)
                     }
                 } else {
-                    // Return ANY to prevent cascading TS2571 errors.
-                    //
-                    // Robustness audit (PR #J, item 10): emit a structured trace
-                    // so the rate of class-target-resolution ANY fallbacks is visible.
-                    tracing::debug!(
-                        site = "dispatch::class_constructor_target_unresolved",
-                        idx = idx.0,
-                        "TypeId::ANY fallback (cascading-TS2571 suppression)"
-                    );
-                    TypeId::ANY
+                    self.checker.ctx.recover_any(
+                        idx,
+                        crate::recovery::RecoveryReason::ClassConstructorTargetUnresolved,
+                    )
                 }
             }
             // Property access
@@ -796,9 +792,12 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         // `satisfies` expression handler behavior.
                         let satisfies_request =
                             request.read().normal_origin().contextual(satisfies_type);
+                        let prev_in_satisfies_operand = self.checker.ctx.in_satisfies_operand;
+                        self.checker.ctx.in_satisfies_operand = true;
                         let expr_type = self
                             .checker
                             .get_type_of_node_with_request(paren.expression, &satisfies_request);
+                        self.checker.ctx.in_satisfies_operand = prev_in_satisfies_operand;
                         // Ensure types are fully resolved (evaluate applications like
                         // Record<K,V>, Partial<T>, etc.) before assignability checks.
                         self.checker.ensure_relation_input_ready(expr_type);
@@ -875,24 +874,9 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 if let Some(assertion) = self.checker.ctx.arena.get_type_assertion(node) {
                     // Check for const assertion BEFORE type-checking the expression
                     // so we can set the context flag to preserve literal types
-                    let is_const_assertion =
-                        if let Some(type_node) = self.checker.ctx.arena.get(assertion.type_node) {
-                            type_node.kind == tsz_scanner::SyntaxKind::ConstKeyword as u16
-                                || (type_node.kind == syntax_kind_ext::TYPE_REFERENCE
-                                    && self.checker.ctx.arena.get_type_ref(type_node).is_some_and(
-                                        |type_ref| {
-                                            type_ref.type_arguments.is_none()
-                                                && self
-                                                    .checker
-                                                    .ctx
-                                                    .arena
-                                                    .get_identifier_text(type_ref.type_name)
-                                                    .is_some_and(|name| name == "const")
-                                        },
-                                    ))
-                        } else {
-                            false
-                        };
+                    let is_const_assertion = self
+                        .checker
+                        .is_const_assertion_type_node(assertion.type_node);
                     // Set the in_const_assertion flag to preserve literal types in nested expressions
                     let prev_in_const_assertion = self.checker.ctx.in_const_assertion;
                     if is_const_assertion {
@@ -914,7 +898,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             &request.read().normal_origin().contextual_opt(None),
                         );
                         self.checker.ctx.in_const_assertion = prev_in_const_assertion;
-                        crate::query_boundaries::common::apply_const_assertion(
+                        crate::query_boundaries::widening::apply_const_assertion(
                             self.checker.ctx.types,
                             expr_type,
                         )
@@ -980,10 +964,17 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         if preserve_for_satisfies {
                             self.checker.ctx.preserve_literal_types = true;
                         }
+                        let prev_in_satisfies_operand = self.checker.ctx.in_satisfies_operand;
+                        if is_satisfies {
+                            self.checker.ctx.in_satisfies_operand = true;
+                        }
                         // Always type-check the expression for side effects / diagnostics.
                         let expr_type = self
                             .checker
                             .get_type_of_node_with_request(assertion.expression, &request);
+                        if is_satisfies {
+                            self.checker.ctx.in_satisfies_operand = prev_in_satisfies_operand;
+                        }
                         if preserve_for_satisfies {
                             self.checker.ctx.preserve_literal_types = prev_preserve_literals;
                         }
@@ -1055,7 +1046,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             // For unconstrained type parameters (no `extends`), skip —
                             // T could be anything.
                             let (should_check, effective_asserted) = if should_check {
-                                if crate::query_boundaries::common::is_this_type(
+                                if crate::query_boundaries::type_predicates::is_this_type(
                                     self.checker.ctx.types,
                                     asserted_type,
                                 ) {
@@ -1939,9 +1930,13 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             // but they also should not poison checking with TypeId::ERROR.
             k if k == syntax_kind_ext::BLOCK
                 || k == syntax_kind_ext::NAMED_IMPORTS
-                || k == syntax_kind_ext::NAMED_EXPORTS =>
+                || k == syntax_kind_ext::NAMED_EXPORTS
+                || k == syntax_kind_ext::METHOD_SIGNATURE =>
             {
                 TypeId::VOID
+            }
+            k if k == syntax_kind_ext::METHOD_SIGNATURE => {
+                self.checker.get_type_of_interface_member_simple(idx)
             }
             // Default case - unknown node kind is an error
             _ => {

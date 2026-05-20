@@ -926,12 +926,55 @@ impl<'a> Printer<'a> {
         let name_node = self.arena.get(prop.name);
         let is_computed = name_node
             .is_some_and(|n| n.kind == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME);
+        if self.is_tc39_decorated_anonymous_class_expression(prop.initializer) {
+            if is_computed {
+                if let Some(computed) = name_node.and_then(|n| self.arena.get_computed_property(n))
+                {
+                    self.write("[");
+                    let name_expr =
+                        self.emit_tc39_named_class_computed_property_name(computed.expression);
+                    self.write("]");
+                    self.write(": ");
+                    self.emit_with_tc39_class_expression_name(prop.initializer, name_expr, true);
+                    return;
+                }
+            } else if let Some(name) = self.tc39_class_expression_name_from_property_name(prop.name)
+            {
+                self.emit_decl_name(prop.name);
+                self.write(": ");
+                self.emit_with_tc39_class_expression_name(prop.initializer, name, false);
+                return;
+            }
+        }
         if is_computed {
             self.emit(prop.name);
         } else {
             self.emit_decl_name(prop.name);
         }
         self.write(": ");
+        if self.ctx.target_es5
+            && let Some(init_node) = self.arena.get(prop.initializer)
+            && let Some(func) = self.arena.get_function(init_node)
+            && func.is_async
+        {
+            let has_generator_asterisk = func.asterisk_token
+                || crate::transforms::emit_utils::source_header_has_async_generator_asterisk(
+                    self.source_text,
+                    init_node.pos,
+                    self.arena
+                        .get(func.body)
+                        .map_or(init_node.end, |body| body.pos),
+                );
+            if !has_generator_asterisk {
+                self.emit_expression(prop.initializer);
+                return;
+            }
+            let property_name =
+                crate::transforms::emit_utils::identifier_text_or_empty(self.arena, prop.name);
+            let inner_name = (!property_name.is_empty()).then(|| format!("{property_name}_1"));
+            self.emit_async_generator_es5_function_wrapper(func, "", inner_name);
+            return;
+        }
         self.emit_expression(prop.initializer);
     }
 
@@ -943,6 +986,28 @@ impl<'a> Printer<'a> {
             }
             return;
         };
+
+        if self.is_static_block_await_identifier(shorthand.name) {
+            self.emit(shorthand.name);
+            self.write(": ");
+            return;
+        }
+
+        if shorthand.equals_token
+            && self.is_tc39_decorated_anonymous_class_expression(
+                shorthand.object_assignment_initializer,
+            )
+            && let Some(name) = self.tc39_class_expression_name_from_property_name(shorthand.name)
+        {
+            self.emit(shorthand.name);
+            self.write(" = ");
+            self.emit_with_tc39_class_expression_name(
+                shorthand.object_assignment_initializer,
+                name,
+                false,
+            );
+            return;
+        }
 
         // For ES5 target, expand shorthand properties to full form: { x } → { x: x }
         // ES5 doesn't support shorthand property syntax (ES6 feature)
@@ -1011,6 +1076,74 @@ impl<'a> Printer<'a> {
             self.write(" = ");
             self.emit(shorthand.object_assignment_initializer);
         }
+    }
+
+    pub(in crate::emitter) fn is_tc39_decorated_anonymous_class_expression(
+        &self,
+        idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::CLASS_EXPRESSION {
+            return false;
+        }
+        let Some(class) = self.arena.get_class(node) else {
+            return false;
+        };
+        let target_supports_native_decorators = self.ctx.options.target == ScriptTarget::ESNext
+            && self.ctx.options.use_define_for_class_fields;
+        class.name.is_none()
+            && !self.ctx.options.legacy_decorators
+            && !target_supports_native_decorators
+            && !self.collect_class_decorators(&class.modifiers).is_empty()
+    }
+
+    pub(in crate::emitter) fn emit_with_tc39_class_expression_name(
+        &mut self,
+        class_expr: NodeIndex,
+        name: String,
+        is_expression: bool,
+    ) {
+        let previous = self
+            .pending_tc39_class_expression_name
+            .replace((name, is_expression));
+        self.emit(class_expr);
+        self.pending_tc39_class_expression_name = previous;
+    }
+
+    pub(in crate::emitter) fn emit_tc39_named_class_computed_property_name(
+        &mut self,
+        expression: NodeIndex,
+    ) -> String {
+        let temp = self.make_unique_name_hoisted();
+        self.write(&temp);
+        self.write(" = ");
+        self.write_helper("__propKey");
+        self.write("(");
+        self.emit(expression);
+        self.write(")");
+        temp
+    }
+
+    pub(in crate::emitter) fn tc39_class_expression_name_from_property_name(
+        &self,
+        name: NodeIndex,
+    ) -> Option<String> {
+        let name_node = self.arena.get(name)?;
+        if name_node.kind == SyntaxKind::Identifier as u16
+            || name_node.kind == SyntaxKind::PrivateIdentifier as u16
+        {
+            let ident = self.arena.get_identifier(name_node)?;
+            return (!ident.escaped_text.is_empty()).then(|| ident.escaped_text.clone());
+        }
+        if name_node.kind == SyntaxKind::StringLiteral as u16
+            || name_node.kind == SyntaxKind::NumericLiteral as u16
+        {
+            let literal = self.arena.get_literal(name_node)?;
+            return Some(literal.text.clone());
+        }
+        None
     }
 
     fn node_text_contains_node(&self, node_idx: tsz_parser::parser::NodeIndex) -> bool {
@@ -1297,7 +1430,11 @@ impl<'a> Printer<'a> {
 #[cfg(test)]
 mod tests {
     use crate::emitter::Printer;
-    use tsz_parser::ParserState;
+    fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+        let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        (parser, root)
+    }
 
     /// tsc preserves trailing commas in single-line object literals.
     /// `{ a: 1, b: 2, }` must stay as `{ a: 1, b: 2, }`, not `{ a: 1, b: 2 }`.
@@ -1305,8 +1442,7 @@ mod tests {
     fn trailing_comma_preserved_in_single_line_object_literal() {
         let source = "var o = { a: 1, b: 2, };\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena);
         printer.set_source_text(source);
@@ -1324,8 +1460,7 @@ mod tests {
     fn no_trailing_comma_when_source_has_none() {
         let source = "var o = { a: 1, b: 2 };\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena);
         printer.set_source_text(source);
@@ -1343,8 +1478,7 @@ mod tests {
     fn trailing_comma_preserved_in_object_binding_pattern() {
         let source = "var { b1, } = { b1: 1, };\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena);
         printer.set_source_text(source);
@@ -1368,8 +1502,7 @@ mod tests {
     fn trailing_comma_with_inline_comment_detected() {
         let source = "var b = {\n    x: 1, // comment\n};\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena);
         printer.set_source_text(source);
@@ -1388,8 +1521,7 @@ mod tests {
     fn empty_object_literal_with_inner_comment_preserved() {
         let source = "var o = {\n    value: {\n        // keep\n    },\n};\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena);
         printer.set_source_text(source);
@@ -1407,8 +1539,7 @@ mod tests {
     fn block_comment_between_properties_preserved() {
         let source = "var o = {\n    a: 1, /* trailing */\n    b: 2\n};\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena);
         printer.set_source_text(source);

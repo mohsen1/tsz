@@ -2051,3 +2051,177 @@ fn test_ts2532_suppressed_when_ts2454_fires_in_call_receiver() {
          use-before-assigned. Got: {diags:?}"
     );
 }
+
+fn es_decorator_strict_options() -> CheckerOptions {
+    CheckerOptions {
+        strict: true,
+        target: ScriptTarget::ES2022,
+        ..CheckerOptions::default()
+    }
+}
+
+// A minimal ES stage-3 field decorator used across the tests below.
+const DEC_FN: &str =
+    "function dec(_t: undefined, _c: ClassFieldDecoratorContext): undefined { return undefined; }";
+
+#[test]
+fn test_ts2565_es_decorated_field_used_before_assigned_in_constructor() {
+    let source = format!(
+        r#"
+        {DEC_FN}
+        class A {{
+            @dec
+            x: number;
+            constructor() {{
+                this.x = this.x;
+            }}
+        }}
+        class B {{
+            @dec
+            y: number;
+            z: number;
+            constructor() {{
+                let v = this.y;
+                this.y = 1;
+                this.z = v;
+            }}
+        }}
+    "#
+    );
+
+    let ts2565_messages: Vec<_> =
+        full_diagnostics_with_options(&source, es_decorator_strict_options())
+            .into_iter()
+            .filter(|d| d.code == diagnostic_codes::PROPERTY_IS_USED_BEFORE_BEING_ASSIGNED)
+            .map(|d| d.message_text)
+            .collect();
+
+    assert!(
+        ts2565_messages
+            .iter()
+            .any(|m| m.contains("'x' is used before being assigned")),
+        "Expected TS2565 for decorated field 'x', got: {ts2565_messages:?}"
+    );
+    assert!(
+        ts2565_messages
+            .iter()
+            .any(|m| m.contains("'y' is used before being assigned")),
+        "Expected TS2565 for decorated field 'y', got: {ts2565_messages:?}"
+    );
+}
+
+#[test]
+fn test_ts2565_es_decorated_field_with_initializer_no_error() {
+    let source = format!(
+        r#"
+        {DEC_FN}
+        class C {{
+            @dec
+            x: number = 0;
+            constructor() {{
+                let v = this.x;
+                this.x = v + 1;
+            }}
+        }}
+    "#
+    );
+
+    let ts2565_count = full_diagnostics_with_options(&source, es_decorator_strict_options())
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::PROPERTY_IS_USED_BEFORE_BEING_ASSIGNED)
+        .count();
+
+    assert_eq!(
+        ts2565_count, 0,
+        "Decorated field with initializer must not produce TS2565"
+    );
+}
+
+#[test]
+fn test_ts2564_es_decorated_field_no_initializer_no_ts2564() {
+    let source = format!(
+        r#"
+        {DEC_FN}
+        class D {{
+            @dec
+            x: number;
+            constructor() {{
+                this.x = 42;
+            }}
+        }}
+    "#
+    );
+
+    let ts2564_count = diagnostics_with_options(&source, es_decorator_strict_options())
+        .iter()
+        .filter(|d| d.0 == diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR)
+        .count();
+
+    assert_eq!(
+        ts2564_count, 0,
+        "ES-decorated field must not produce TS2564 — decorator may supply initialization"
+    );
+}
+
+#[test]
+fn test_ts2564_computed_unique_symbol_property_no_initializer() {
+    let source = r#"
+declare const s: unique symbol;
+declare namespace N {
+    export const s: unique symbol;
+}
+class C {
+    [s]: number;
+    [N.s]: string;
+}
+"#;
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            strict_property_initialization: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let codes: Vec<_> = diags.iter().map(|(code, _)| *code).collect();
+    assert_eq!(
+        codes,
+        vec![
+            diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
+            diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
+        ],
+        "Expected exactly TS2564 for [s] and [N.s] computed unique symbol properties, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2564_computed_unique_symbol_property_suppressed_by_constructor_assign() {
+    let source = r#"
+declare const s: unique symbol;
+declare namespace N {
+    export const s: unique symbol;
+}
+class C {
+    [s]: number;
+    [N.s]: string;
+    constructor() {
+        this[s] = 42;
+        this[N.s] = "hello";
+    }
+}
+"#;
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            strict_property_initialization: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let codes: Vec<_> = diags.iter().map(|(code, _)| *code).collect();
+    assert_eq!(
+        codes,
+        Vec::<u32>::new(),
+        "Expected no diagnostics when constructor assigns [s] and [N.s], got: {diags:?}"
+    );
+}

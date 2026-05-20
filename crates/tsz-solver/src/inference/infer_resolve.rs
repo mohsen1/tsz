@@ -26,6 +26,44 @@ struct VarianceState<'a> {
 }
 
 impl<'a> InferenceContext<'a> {
+    /// Returns `true` when `type_id` is a bare named `TypeParameter` with no
+    /// `extends` constraint — a name that carries no structural information
+    /// that a covariant inference result could violate.
+    fn is_unconstrained_type_parameter(&self, type_id: TypeId) -> bool {
+        crate::type_queries::named_type_param_info(self.interner, type_id)
+            .is_some_and(|info| info.constraint.is_none())
+    }
+
+    /// Apply the shared "prefer covariant" decision used by both
+    /// `compute_constraint_result` and `fix_current_variables_with`.
+    ///
+    /// The covariant inference wins when it is assignable to some
+    /// contra-candidate (tsc's normal `getInferredType` rule), or when every
+    /// contra-candidate is a bare unconstrained type parameter and the covariant
+    /// inference came from array-element matching (`T[]`). That is the stale leak
+    /// shape from union-contextual overload argument typing, while higher-order
+    /// function return-context inferences can carry real outer generic evidence.
+    fn choose_covariant_or_contra(
+        &self,
+        covariant_result: TypeId,
+        concrete_contra: &[InferenceCandidate],
+        covariant_assignable_to_contra: bool,
+        covariant_is_uninformative: bool,
+        allow_stale_unconstrained_contra_override: bool,
+    ) -> TypeId {
+        if covariant_assignable_to_contra
+            || (allow_stale_unconstrained_contra_override
+                && !covariant_is_uninformative
+                && concrete_contra
+                    .iter()
+                    .all(|c| self.is_unconstrained_type_parameter(c.type_id)))
+        {
+            covariant_result
+        } else {
+            self.resolve_from_contra_candidates(concrete_contra)
+        }
+    }
+
     fn resolve_from_contra_candidates(
         &self,
         contra_candidates: &[crate::inference::infer::InferenceCandidate],
@@ -384,37 +422,32 @@ impl<'a> InferenceContext<'a> {
             });
         }
 
+        if self.vars_with_substituted_candidates.contains(&root)
+            && candidates.iter().any(|candidate| {
+                !crate::type_queries::data::contains_current_infer_placeholder_db(
+                    self.interner,
+                    candidate.type_id,
+                )
+            })
+        {
+            // Candidate substitution can leave the pre-substitution placeholder
+            // candidate in the union table. Drop only call-local placeholders when
+            // concrete candidates exist, then let the normal resolver handle
+            // priority, upper bounds, contra candidates, and occurs checks.
+            candidates.retain(|candidate| {
+                !crate::type_queries::data::contains_current_infer_placeholder_db(
+                    self.interner,
+                    candidate.type_id,
+                )
+            });
+        }
+
         // Check if this is a const type parameter to preserve literal types
         let is_const = self.is_var_const(root);
 
-        // Filter out synthetic inference placeholders from contra-candidates.
-        // Both bare placeholders (`__infer_0`) AND types that contain stale
-        // placeholders from previous inference rounds (e.g., unions like
-        // `__infer_0 | PromiseLike<__infer_0>`) are filtered. These arise when
-        // contextually-typed callback parameters carry forward unresolved
-        // placeholder types from Round 1 into Round 2's constraint collection.
         let mut concrete_contra_candidates: Vec<_> = contra_candidates
             .iter()
-            .filter(|c| {
-                // Check bare placeholder first (fast path)
-                if crate::type_queries::data::is_bare_infer_placeholder_db(self.interner, c.type_id)
-                {
-                    return false;
-                }
-                // Check if the type contains any non-infer type parameters.
-                // If it ONLY contains `__infer_*` placeholders (no real type params),
-                // it's a stale inference artifact and should be filtered.
-                if crate::type_queries::data::contains_infer_placeholder_db(
-                    self.interner,
-                    c.type_id,
-                ) && !crate::type_queries::data::contains_non_infer_type_parameters_db(
-                    self.interner,
-                    c.type_id,
-                ) {
-                    return false;
-                }
-                true
-            })
+            .filter(|c| self.is_concrete_contra_candidate(c.type_id))
             .cloned()
             .collect();
 
@@ -485,11 +518,13 @@ impl<'a> InferenceContext<'a> {
                             self.is_subtype(covariant_result, c.type_id)
                         }
                     });
-                if covariant_assignable_to_contra {
-                    covariant_result
-                } else {
-                    self.resolve_from_contra_candidates(&concrete_contra_candidates)
-                }
+                self.choose_covariant_or_contra(
+                    covariant_result,
+                    &concrete_contra_candidates,
+                    covariant_assignable_to_contra,
+                    covariant_is_uninformative,
+                    candidates.iter().any(|c| c.from_array_element),
+                )
             } else {
                 covariant_result
             }
@@ -632,6 +667,9 @@ impl<'a> InferenceContext<'a> {
         let has_index_signature_candidates = filtered_no_never
             .iter()
             .any(|candidate| candidate.from_index_signature);
+        let has_type_annotation_candidate = filtered_no_never
+            .iter()
+            .any(|candidate| candidate.source_is_type_annotation);
         let resolved = if priority_implies_combination || all_from_index_signatures {
             // Union: used for return type inference, low-priority contexts,
             // index signature inference, and nullable parameter inference
@@ -641,7 +679,13 @@ impl<'a> InferenceContext<'a> {
             // tsc widens literal candidates BEFORE getCommonSupertype (via baseCandidates =
             // sameMap(candidates, getWidenedLiteralType)). This ensures the tournament
             // operates on widened types (number, string) not literals (3, "").
-            let has_non_fresh = filtered_no_never.iter().any(|c| !c.is_fresh_literal);
+            let has_fresh_array_element_candidate = filtered_no_never
+                .iter()
+                .any(|c| c.from_array_element && c.is_fresh_literal);
+            let has_non_fresh = filtered_no_never.iter().any(|c| {
+                !(c.is_fresh_literal
+                    || has_fresh_array_element_candidate && c.type_id.is_any_unknown_or_error())
+            });
             // Mirror tsc's `widenLiteralTypes` gate in `getCovariantInference`:
             // when the type parameter is at top level in the return type AND has
             // not yet been fixed, fresh literal candidates are NOT widened during
@@ -661,6 +705,21 @@ impl<'a> InferenceContext<'a> {
                     }
                 })
                 .collect();
+            let has_non_fresh_object_candidate = widened_candidates
+                .iter()
+                .any(|&ty| self.is_non_fresh_object_candidate(ty));
+            let has_fresh_object_candidate = widened_candidates
+                .iter()
+                .any(|&ty| self.is_fresh_object_literal_candidate(ty));
+            let widened_candidates = if has_non_fresh_object_candidate && has_fresh_object_candidate
+            {
+                widened_candidates
+                    .into_iter()
+                    .filter(|&ty| !self.is_fresh_object_literal_candidate(ty))
+                    .collect()
+            } else {
+                widened_candidates
+            };
             // Match tsc's unionObjectAndArrayLiteralCandidates: before running the
             // common-supertype tournament, union all object and array literal
             // candidates into a single union candidate. This ensures that for
@@ -701,7 +760,13 @@ impl<'a> InferenceContext<'a> {
         // getWidenedLiteralType which only widens fresh literal types. When a
         // non-fresh candidate (e.g., from a type annotation) survives BCT, its
         // literal types should be preserved.
-        let has_non_fresh = filtered_no_never.iter().any(|c| !c.is_fresh_literal);
+        let has_fresh_array_element_candidate = filtered_no_never
+            .iter()
+            .any(|c| c.from_array_element && c.is_fresh_literal);
+        let has_non_fresh = filtered_no_never.iter().any(|c| {
+            !(c.is_fresh_literal
+                || has_fresh_array_element_candidate && c.type_id.is_any_unknown_or_error())
+        });
         let resolved =
             if !preserve_literals && !is_const && !has_non_fresh && !skip_literal_widening {
                 self.widen_resolved_inference(resolved)
@@ -733,18 +798,23 @@ impl<'a> InferenceContext<'a> {
                     // should preserve their literal property types, matching tsc's
                     // RequiresWidening check in getWidenedType().
                     let shape = self.interner.object_shape(shape_id);
-                    if shape.flags.contains(ObjectFlags::FRESH_LITERAL) {
+                    if shape.flags.contains(ObjectFlags::FRESH_LITERAL)
+                        && !has_type_annotation_candidate
+                    {
                         widening::widen_type_for_inference(self.interner, resolved)
                     } else {
                         resolved
                     }
                 }
-                // Arrays and tuples: widen element types unconditionally.
-                // `[true]` inferred as `Array<true>` should widen to `Array<boolean>`.
-                // Unlike objects, arrays don't have a freshness concept that should
-                // prevent widening.
+                // Arrays and tuples: only widen when the candidate is fresh
+                // (not from a type assertion). Mirrors tsc's RequiresWidening
+                // semantics: `as T` produces non-fresh types that must not widen.
                 Some(TypeData::Array(_) | TypeData::Tuple(_)) => {
-                    widening::widen_type_for_inference(self.interner, resolved)
+                    if has_type_annotation_candidate {
+                        resolved
+                    } else {
+                        widening::widen_type_for_inference(self.interner, resolved)
+                    }
                 }
                 _ => resolved,
             }
@@ -995,50 +1065,6 @@ impl<'a> InferenceContext<'a> {
             .filter(|candidate| candidate.priority == best_priority)
             .cloned()
             .collect()
-    }
-
-    /// Match tsc's `unionObjectAndArrayLiteralCandidates`: extract all object
-    /// and array/tuple literal candidates, union them into a single type, and
-    /// return the updated candidate list. Non-literal candidates are kept as-is.
-    fn union_object_and_array_literal_candidates(&self, candidates: &[TypeId]) -> Vec<TypeId> {
-        if candidates.len() <= 1 {
-            return candidates.to_vec();
-        }
-        let mut object_or_array_literals = Vec::new();
-        let mut other_candidates = Vec::new();
-        for &ty in candidates {
-            if self.is_object_or_array_literal_type(ty) {
-                object_or_array_literals.push(ty);
-            } else {
-                other_candidates.push(ty);
-            }
-        }
-        if object_or_array_literals.is_empty() {
-            return candidates.to_vec();
-        }
-        let literals_union = if object_or_array_literals.len() == 1 {
-            object_or_array_literals[0]
-        } else {
-            self.interner.union(object_or_array_literals)
-        };
-        other_candidates.push(literals_union);
-        other_candidates
-    }
-
-    /// Check if a type is an object or array literal type (anonymous object or tuple).
-    fn is_object_or_array_literal_type(&self, type_id: TypeId) -> bool {
-        use crate::types::TypeData;
-        if type_id.is_intrinsic() {
-            return false;
-        }
-        match self.interner.lookup(type_id) {
-            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
-                let shape = self.interner.object_shape(shape_id);
-                shape.symbol.is_none()
-            }
-            Some(TypeData::Tuple(_)) => true,
-            _ => false,
-        }
     }
 
     /// Widen the resolved inference result, matching tsc's `getWidenedLiteralType`.
@@ -1756,17 +1782,10 @@ impl<'a> InferenceContext<'a> {
                     _ => true,
                 });
             }
-            // Filter out only synthetic inference placeholders from contra-candidates.
-            // Real outer type parameters remain meaningful inference evidence.
             let mut concrete_contra_candidates: Vec<_> = info
                 .contra_candidates
                 .iter()
-                .filter(|c| {
-                    !crate::type_queries::data::is_bare_infer_placeholder_db(
-                        self.interner,
-                        c.type_id,
-                    )
-                })
+                .filter(|c| self.is_concrete_contra_candidate(c.type_id))
                 .cloned()
                 .collect();
             // Mirror the priority filter from `compute_constraint_result`: when
@@ -1806,11 +1825,13 @@ impl<'a> InferenceContext<'a> {
                                 self.is_subtype(covariant_result, c.type_id)
                             }
                         });
-                    if covariant_assignable_to_contra {
-                        covariant_result
-                    } else {
-                        self.resolve_from_contra_candidates(&concrete_contra_candidates)
-                    }
+                    self.choose_covariant_or_contra(
+                        covariant_result,
+                        &concrete_contra_candidates,
+                        covariant_assignable_to_contra,
+                        covariant_is_uninformative,
+                        candidates.iter().any(|c| c.from_array_element),
+                    )
                 } else {
                     covariant_result
                 }
@@ -1826,7 +1847,6 @@ impl<'a> InferenceContext<'a> {
                     TypeId::UNKNOWN
                 }
             };
-
             // Check for occurs (recursive type)
             if self.occurs_in(root, result) {
                 // Don't fix variables with occurs - let them be resolved later

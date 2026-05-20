@@ -167,14 +167,20 @@ impl<'a> CheckerState<'a> {
             return declared_type;
         }
 
-        // Mark `any`-declared nodes so `get_type_of_node` won't apply a second
-        // round of flow narrowing.  Double-narrowing corrupts `any` types:
-        // `any` → `string` (typeof), then re-narrowing `string` through an
-        // instanceof guard produces `string & Object` instead of `string`.
-        // Only `any` is affected because its narrowing semantics differ from
-        // other types (instanceof returns `any` unchanged, but narrowing `string`
-        // through instanceof produces an intersection).
-        if declared_type == TypeId::ANY && narrowed_type != declared_type {
+        // Mark cases where reapplying flow narrowing to the narrowed result is
+        // not stable. `any` has special narrowing semantics, and unknown/generic
+        // receivers narrowed by `in` can collapse to `never` if the same
+        // predicate is replayed over `object & Record<K, unknown>`. Keep
+        // concrete declared unions replayable so loop fixed-point rechecks can
+        // observe stabilized back-edge types.
+        let unknown_narrowing_needs_second_pass =
+            declared_type == TypeId::UNKNOWN && self.split_nullish_type(narrowed_type).1.is_some();
+        if (declared_type == TypeId::ANY
+            || (declared_type == TypeId::UNKNOWN && !unknown_narrowing_needs_second_pass)
+            || generic_narrowing_shape)
+            && narrowed_type != declared_type
+            && narrowed_type != TypeId::ERROR
+        {
             self.ctx.flow_narrowed_nodes.insert(idx.0);
         }
 
@@ -495,7 +501,7 @@ impl<'a> CheckerState<'a> {
     /// without strict null checks all types implicitly include `undefined`.
     pub(crate) fn skip_definite_assignment_for_type(&self, declared_type: TypeId) -> bool {
         use tsz_solver::TypeId;
-        use tsz_solver::type_contains_undefined;
+        use tsz_solver::narrowing::type_contains_undefined;
 
         // tsc gates TS2454 on strictNullChecks. Without it, every type implicitly
         // includes undefined/null, so an uninitialized variable is always valid.
@@ -1345,6 +1351,7 @@ impl<'a> CheckerState<'a> {
         .with_flow_cache(&self.ctx.flow_analysis_cache)
         .with_reference_match_cache(&self.ctx.flow_reference_match_cache)
         .with_type_environment(&self.ctx.type_environment)
+        .with_checker_context(&self.ctx)
         .with_destructured_bindings(&self.ctx.destructured_bindings);
 
         // Pre-seed the reference symbol cache when the checker has already
@@ -1395,7 +1402,7 @@ impl<'a> CheckerState<'a> {
         if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
             && let Some(bin) = self.ctx.arena.get_binary_expr(parent_node)
         {
-            return crate::query_boundaries::common::is_compound_assignment_operator(
+            return crate::query_boundaries::operator_wrappers::is_compound_assignment_operator(
                 bin.operator_token,
             ) && bin.left == ident_idx;
         }

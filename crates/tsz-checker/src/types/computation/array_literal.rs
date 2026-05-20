@@ -13,6 +13,28 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{TupleElement, TypeId};
 
 impl<'a> CheckerState<'a> {
+    fn array_element_is_const_assertion(&self, elem_idx: NodeIndex) -> bool {
+        let mut current = elem_idx;
+        while let Some(node) = self.ctx.arena.get(current) {
+            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                && let Some(paren) = self.ctx.arena.get_parenthesized(node)
+            {
+                current = paren.expression;
+                continue;
+            }
+
+            if (node.kind == syntax_kind_ext::AS_EXPRESSION
+                || node.kind == syntax_kind_ext::TYPE_ASSERTION)
+                && let Some(assertion) = self.ctx.arena.get_type_assertion(node)
+            {
+                return self.is_const_assertion_type_node(assertion.type_node);
+            }
+
+            return false;
+        }
+        false
+    }
+
     fn mutable_spread_declared_type_in_const_assertion(
         &mut self,
         expression: NodeIndex,
@@ -89,11 +111,12 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Whether this empty array literal is being used to write into a storage
-    /// slot whose declared type already pins the element shape.
+    /// Whether this empty array literal is in a context whose declared or
+    /// defaulted type already pins the element shape.
     ///
     /// In those contexts (variable initializers with annotations, assignment
-    /// RHS, return statement RHS for an annotated return type, etc.) tsc
+    /// RHS, defaulting expressions, return statement RHS for an annotated
+    /// return type, etc.) tsc
     /// adopts the contextual element type for `[]` rather than the
     /// evolving-array `never[]` base. Adopting the contextual element here
     /// avoids `never[]` poisoning subsequent flow narrowing of the storage
@@ -106,7 +129,7 @@ impl<'a> CheckerState<'a> {
     /// contextual type there is a still-being-inferred type parameter; using
     /// it would prevent the inference engine from binding the parameter to
     /// `never`.
-    fn empty_array_in_storage_assignment_context(&self, idx: NodeIndex) -> bool {
+    fn empty_array_can_adopt_contextual_element_type(&self, idx: NodeIndex) -> bool {
         let Some(parent_idx) = self.ctx.arena.parent_of(idx) else {
             return false;
         };
@@ -127,12 +150,17 @@ impl<'a> CheckerState<'a> {
                     // `||=` and `??=` widen because the RHS is the
                     // "default value" replacing a falsy/nullable LHS, so
                     // adopting the LHS element type matches user intent.
+                    // `params.path || []` also uses the left operand as
+                    // contextual type when no outer contextual type is
+                    // available, so this prevents a fallback `never[]` from
+                    // polluting `Omit<...>["path"] | never[]` unions.
                     binary.right == idx
                         && (binary.operator_token == tsz_scanner::SyntaxKind::EqualsToken as u16
                             || binary.operator_token
                                 == tsz_scanner::SyntaxKind::BarBarEqualsToken as u16
                             || binary.operator_token
-                                == tsz_scanner::SyntaxKind::QuestionQuestionEqualsToken as u16)
+                                == tsz_scanner::SyntaxKind::QuestionQuestionEqualsToken as u16
+                            || binary.operator_token == tsz_scanner::SyntaxKind::BarBarToken as u16)
                 }),
             k if k == syntax_kind_ext::VARIABLE_DECLARATION => self
                 .ctx
@@ -150,6 +178,10 @@ impl<'a> CheckerState<'a> {
     }
 
     fn union_context_for_array_literal_is_ambiguous(&mut self, contextual: TypeId) -> bool {
+        if self.union_context_for_array_literal_prefers_tuple(contextual) {
+            return false;
+        }
+
         let Some(members) =
             crate::query_boundaries::common::union_members(self.ctx.types, contextual)
         else {
@@ -157,6 +189,8 @@ impl<'a> CheckerState<'a> {
         };
 
         let mut applicable_shapes = Vec::new();
+        let mut saw_tuple_applicable = false;
+        let mut saw_non_tuple_applicable = false;
         for member in members {
             // Skip null/undefined/void — these don't contribute to array contextual
             // typing ambiguity. tsc strips these before checking (getNonNullableType).
@@ -170,12 +204,22 @@ impl<'a> CheckerState<'a> {
                 if !applicable_shapes.contains(&applicable) {
                     applicable_shapes.push(applicable);
                 }
+                if crate::query_boundaries::common::is_tuple_type(self.ctx.types, applicable) {
+                    saw_tuple_applicable = true;
+                } else {
+                    saw_non_tuple_applicable = true;
+                }
                 continue;
             }
 
             if let Some(applicable) = self.promise_like_array_context_shape(member) {
                 if !applicable_shapes.contains(&applicable) {
                     applicable_shapes.push(applicable);
+                }
+                if crate::query_boundaries::common::is_tuple_type(self.ctx.types, applicable) {
+                    saw_tuple_applicable = true;
+                } else {
+                    saw_non_tuple_applicable = true;
                 }
                 continue;
             }
@@ -209,6 +253,7 @@ impl<'a> CheckerState<'a> {
                     if !applicable_shapes.contains(&value_type) {
                         applicable_shapes.push(value_type);
                     }
+                    saw_non_tuple_applicable = true;
                     continue;
                 }
             }
@@ -220,31 +265,11 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        applicable_shapes.len() > 1
+        applicable_shapes.len() > 1 && (!saw_tuple_applicable || saw_non_tuple_applicable)
     }
 
     fn union_context_for_array_literal_prefers_tuple(&self, contextual: TypeId) -> bool {
-        let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, contextual)
-        else {
-            return false;
-        };
-
-        let mut saw_tuple = false;
-        for member in members {
-            let Some(applicable) =
-                crate::query_boundaries::common::array_applicable_type(self.ctx.types, member)
-            else {
-                return false;
-            };
-
-            if !crate::query_boundaries::common::is_tuple_type(self.ctx.types, applicable) {
-                return false;
-            }
-            saw_tuple = true;
-        }
-
-        saw_tuple
+        expr_ops::union_context_prefers_tuple_array_literal(self.ctx.types, contextual)
     }
 
     fn sole_array_applicable_union_context(&mut self, contextual: TypeId) -> Option<TypeId> {
@@ -317,6 +342,9 @@ impl<'a> CheckerState<'a> {
         };
 
         if self.ctx.in_const_assertion && self.array_literal_produces_too_large_tuple(idx) {
+            // Clear any flag the static estimator may have set so the solver
+            // flag channel starts clean for the next construct.
+            let _ = self.ctx.types.take_tuple_too_large();
             self.error_at_node(
                 idx,
                 crate::diagnostics::diagnostic_messages::EXPRESSION_PRODUCES_A_TUPLE_TYPE_THAT_IS_TOO_LARGE_TO_REPRESENT,
@@ -346,10 +374,23 @@ impl<'a> CheckerState<'a> {
             // array type is present (e.g., number[] | never[] → number[]).
             // For &&, no subtype reduction is applied, so undefined | never[] stays.
             if let Some(contextual) = contextual_type {
-                let resolved = self.resolve_type_for_property_access(contextual);
-                let resolved = self.resolve_lazy_type(resolved);
-                let resolved =
+                let mut resolved = self.evaluate_contextual_type(contextual);
+                resolved =
                     crate::query_boundaries::common::remove_nullish(self.ctx.types, resolved);
+                resolved = self.evaluate_type_with_env(resolved);
+                resolved = self.resolve_lazy_type(resolved);
+                resolved = self.evaluate_application_type(resolved);
+                if crate::query_boundaries::common::index_access_parts(self.ctx.types, resolved)
+                    .is_some()
+                {
+                    let evaluated = self.evaluate_type_for_assignability(resolved);
+                    if evaluated != TypeId::UNKNOWN {
+                        resolved = evaluated;
+                    }
+                }
+                resolved = self.reduce_literal_index_access_property_types(resolved);
+                resolved = self.resolve_index_access_base_constraint(resolved);
+                resolved = self.resolve_type_for_property_access(resolved);
                 if crate::query_boundaries::common::is_tuple_type(self.ctx.types, resolved) {
                     return factory.tuple(vec![]);
                 }
@@ -369,7 +410,7 @@ impl<'a> CheckerState<'a> {
                 // expando initializer or otherwise wants the evolving-array
                 // base — those cases set `empty_array_literal_prefers_never`.
                 if !self.empty_array_literal_prefers_never(idx)
-                    && self.empty_array_in_storage_assignment_context(idx)
+                    && self.empty_array_can_adopt_contextual_element_type(idx)
                     && let Some(elem) = crate::query_boundaries::common::array_element_type(
                         self.ctx.types,
                         resolved,
@@ -588,13 +629,20 @@ impl<'a> CheckerState<'a> {
         // types should be inferred independently to preserve literal types during
         // generic inference (e.g., `fx<T extends [string, 'a'|'b']>(x: T)` called
         // with `['x', 'a']` should infer `["x", "a"]`, not `[string, string]`).
-        let effective_contextual = if union_array_context_is_ambiguous {
-            None
-        } else if tuple_context_from_constraint {
-            resolved_contextual_type
-        } else {
-            applicable_contextual_type.or(resolved_contextual_type)
-        };
+        //
+        // EXCEPTION: When the contextual union is ALL tuples (force_tuple_for_union_context),
+        // preserve the contextual type even when "ambiguous". Per-position typing
+        // (`get_tuple_element_type_with_count`) unions element types across union members
+        // (e.g. `["a"] | ["b"]` gives position-0 context `"a" | "b"`), which preserves
+        // literal types so `["a"]` correctly checks against `["a"] | ["b"]`.
+        let effective_contextual =
+            if union_array_context_is_ambiguous && !force_tuple_for_union_context {
+                None
+            } else if tuple_context_from_constraint {
+                resolved_contextual_type
+            } else {
+                applicable_contextual_type.or(resolved_contextual_type)
+            };
         let ctx_helper = match effective_contextual {
             Some(resolved) => Some(ContextualTypeContext::with_expected_and_options(
                 self.ctx.types,
@@ -636,6 +684,8 @@ impl<'a> CheckerState<'a> {
         let mut element_nodes = Vec::new();
         let mut tuple_elements = Vec::new();
         let mut preserve_tuple_spread_literals = false;
+        let mut saw_array_element_for_bct = false;
+        let mut all_array_elements_const_asserted = true;
         // Total element count for tuple contextual typing. Elided slots count toward
         // the position of subsequent elements (e.g. `[42,,true]` has length 3 with
         // an undefined slot at index 1), matching tsc's `elementCount = elements.length`.
@@ -656,7 +706,17 @@ impl<'a> CheckerState<'a> {
                 if self.ctx.in_destructuring_target {
                     continue;
                 }
-                let undef_type = TypeId::UNDEFINED;
+                let (hole_type, hole_optional) = if self.ctx.exact_optional_property_types()
+                    && (tuple_context.is_some()
+                        || force_tuple_for_union_context
+                        || force_tuple_for_mapped
+                        || force_tuple_for_constraint_hint
+                        || force_tuple_for_tuple_like)
+                {
+                    (TypeId::NEVER, true)
+                } else {
+                    (TypeId::UNDEFINED, false)
+                };
                 if tuple_context.is_some()
                     || force_tuple_for_union_context
                     || force_tuple_for_mapped
@@ -665,13 +725,15 @@ impl<'a> CheckerState<'a> {
                     || self.ctx.in_const_assertion
                 {
                     tuple_elements.push(TupleElement {
-                        type_id: undef_type,
+                        type_id: hole_type,
                         name: None,
-                        optional: false,
+                        optional: hole_optional,
                         rest: false,
                     });
                 } else {
-                    element_types.push(undef_type);
+                    saw_array_element_for_bct = true;
+                    all_array_elements_const_asserted = false;
+                    element_types.push(hole_type);
                     // Note: we don't add to element_nodes since there is no node
                     // for an elision. Excess property checks are skipped for the slot.
                 }
@@ -679,13 +741,20 @@ impl<'a> CheckerState<'a> {
             }
 
             // Build per-element typing request instead of mutating ctx.contextual_type
-            let elem_request = if union_array_context_is_ambiguous {
+            let elem_request = if union_array_context_is_ambiguous && !force_tuple_for_union_context
+            {
                 // When the contextual union is ambiguous (multiple applicable element types),
                 // clear the contextual type for each element so closures don't inherit
                 // the array's union contextual type and inadvertently get typed parameters.
+                // EXCEPTION: union-of-all-tuples is handled via per-position typing below.
                 crate::context::TypingRequest::NONE
             } else if let Some(ref helper) = ctx_helper {
-                if tuple_context.is_some() {
+                if tuple_context.is_some()
+                    || force_tuple_for_union_context
+                    || force_tuple_for_mapped
+                {
+                    // Per-position contextual typing for tuple, union-of-tuples,
+                    // and homomorphic mapped contexts (binds K to the index literal).
                     match helper.get_tuple_element_type_with_count(index, total_elem_count) {
                         Some(ty) => request.read().contextual(ty),
                         None => crate::context::TypingRequest::NONE,
@@ -704,6 +773,11 @@ impl<'a> CheckerState<'a> {
                                 .and_then(|h| h.get_array_element_type())
                         })
                         .or_else(|| {
+                            effective_contextual.and_then(|contextual| {
+                                self.resolve_array_element_type_from_index_signature(contextual)
+                            })
+                        })
+                        .or_else(|| {
                             // Fallback: when the contextual type is an object with
                             // numeric-string properties (e.g., { "0": (p1: number) => number }),
                             // look up the property by index string. This matches tsc's
@@ -716,7 +790,9 @@ impl<'a> CheckerState<'a> {
                             fallback_unknown_array_element_context.then_some(TypeId::UNKNOWN)
                         });
                     match elem_ctx_type {
-                        Some(ty) => request.read().contextual(ty),
+                        Some(ty) => request.read().contextual(
+                            query_common::no_infer_inner_type(self.ctx.types, ty).unwrap_or(ty),
+                        ),
                         None => crate::context::TypingRequest::NONE,
                     }
                 }
@@ -796,6 +872,8 @@ impl<'a> CheckerState<'a> {
                     } else {
                         // For array context, add element types
                         preserve_tuple_spread_literals = true;
+                        saw_array_element_for_bct = true;
+                        all_array_elements_const_asserted = false;
                         for elem in &elems {
                             if elem.rest
                                 && let Some(rest_elem) =
@@ -835,12 +913,15 @@ impl<'a> CheckerState<'a> {
                         rest: true, // Mark as spread for non-tuple spreads in tuple context
                     });
                 } else {
+                    saw_array_element_for_bct = true;
+                    all_array_elements_const_asserted = false;
                     element_types.push(elem_type);
                 }
                 continue;
             }
 
             // Regular (non-spread) element
+            let elem_is_const_assertion = self.array_element_is_const_assertion(elem_idx);
             let mut elem_type = if self.ctx.in_destructuring_target {
                 self.destructuring_target_type_from_initializer(elem_idx)
             } else {
@@ -853,6 +934,13 @@ impl<'a> CheckerState<'a> {
                 && !self.is_this_in_static_class_member(elem_idx)
             {
                 elem_type = self.ctx.types.this_type();
+            }
+            if !self.ctx.in_destructuring_target
+                && self.ctx.in_const_assertion
+                && let Some(unique_symbol_type) =
+                    self.computed_property_expression_unique_symbol_type(elem_idx)
+            {
+                elem_type = unique_symbol_type;
             }
 
             if !self.ctx.in_destructuring_target
@@ -884,6 +972,8 @@ impl<'a> CheckerState<'a> {
                     rest: false,
                 });
             } else {
+                saw_array_element_for_bct = true;
+                all_array_elements_const_asserted &= elem_is_const_assertion;
                 element_types.push(elem_type);
                 element_nodes.push(elem_idx);
             }
@@ -964,7 +1054,8 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
             let contextual = effective_contextual?;
-            self.resolve_array_element_type_from_union_members(contextual)
+            self.resolve_array_element_type_from_index_signature(contextual)
+                .or_else(|| self.resolve_array_element_type_from_union_members(contextual))
         });
         if let Some(context_element_type) = context_element_type
             && context_element_type != TypeId::ANY
@@ -1062,7 +1153,12 @@ impl<'a> CheckerState<'a> {
         // skip BCT's literal widening by computing the union directly. This preserves
         // literal types like "foo" | "bar" instead of widening to string, enabling
         // correct type parameter inference (e.g., K inferred as "foo" | "bar" not string).
-        let element_type = if self.ctx.preserve_literal_types || preserve_tuple_spread_literals {
+        let preserve_const_asserted_element_literals =
+            saw_array_element_for_bct && all_array_elements_const_asserted;
+        let element_type = if self.ctx.preserve_literal_types
+            || preserve_tuple_spread_literals
+            || preserve_const_asserted_element_literals
+        {
             self.ctx.types.union(element_types.clone())
         } else {
             expr_ops::compute_best_common_type_cached(
@@ -1175,7 +1271,7 @@ impl<'a> CheckerState<'a> {
             let resolved = self.resolve_type_for_property_access(resolved);
 
             // Check if the resolved type has a number index signature (array-like)
-            let resolver = tsz_solver::IndexSignatureResolver::new(self.ctx.types);
+            let resolver = tsz_solver::objects::IndexSignatureResolver::new(self.ctx.types);
             if let Some(elem) = resolver.resolve_number_index(resolved) {
                 element_types.push(elem);
             }
@@ -1189,12 +1285,36 @@ impl<'a> CheckerState<'a> {
             Some(self.ctx.types.union(element_types))
         }
     }
+
+    fn resolve_array_element_type_from_index_signature(
+        &mut self,
+        contextual: TypeId,
+    ) -> Option<TypeId> {
+        if contextual.is_nullable() {
+            return None;
+        }
+
+        if let Some(elem) =
+            crate::query_boundaries::common::array_element_type(self.ctx.types, contextual)
+        {
+            return Some(elem);
+        }
+
+        let resolved = self.resolve_lazy_type(contextual);
+        let resolved = self.evaluate_type_with_env(resolved);
+        let resolved = self.resolve_type_for_property_access(resolved);
+        let resolver = tsz_solver::objects::IndexSignatureResolver::new(self.ctx.types);
+        resolver.resolve_number_index(resolved)
+    }
 }
 
 #[cfg(test)]
 mod array_literal_context_tests {
     use crate::context::CheckerOptions;
-    use crate::test_utils::{check_source, check_source_codes};
+    use crate::test_utils::{
+        check_source, check_source_codes, check_source_with_libs, load_compiled_lib_files,
+    };
+    use tsz_common::common::ModuleKind;
 
     fn check_strict_codes(source: &str) -> Vec<u32> {
         check_source(
@@ -1398,6 +1518,153 @@ t4 = [, , true];
     }
 
     #[test]
+    fn f_bounded_interface_empty_array_contextual_type() {
+        // F-bounded interface: `FileNode extends INode<FileNode>` where `children: T[]`.
+        // Empty array `[]` in object literal should adopt `FileNode[]` contextual type, not `never[]`.
+        let source = r#"
+interface INode<T> {
+    parent: T | null;
+    children: T[];
+}
+interface FileNode extends INode<FileNode> {
+    name: string;
+}
+const root: FileNode = {
+    name: "root",
+    parent: null,
+    children: [],
+};
+"#;
+        let errors = check_source_codes(source);
+        assert!(
+            !errors.contains(&2322),
+            "F-bounded interface empty array should not produce TS2322, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn f_bounded_interface_all_members_in_base() {
+        // Variant: name is declared on base interface, FileNode adds no extra members.
+        let source = r#"
+interface TreeNode<T> {
+    name: string;
+    parent: T | null;
+    children: T[];
+}
+interface FileNode extends TreeNode<FileNode> {}
+const root: FileNode = {
+    name: "root",
+    parent: null,
+    children: [],
+};
+"#;
+        let errors = check_source_codes(source);
+        assert!(
+            !errors.contains(&2322),
+            "F-bounded (all-in-base) empty array should not produce TS2322, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn f_bounded_interface_non_self_reference_adopts_element_type() {
+        // Non-F-bounded baseline: `Wrapper<string>` should type `items: []` as `string[]`.
+        let source = r#"
+interface Wrapper<T> {
+    items: T[];
+}
+interface StringWrapper extends Wrapper<string> {}
+const w: StringWrapper = { items: [] };
+"#;
+        let errors = check_source_codes(source);
+        assert!(
+            !errors.contains(&2322),
+            "Non-F-bounded Wrapper<string> empty array should not produce TS2322, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn f_bounded_direct_self_ref_property_empty_array_contextual_type() {
+        // F-bounded with a *direct* self-referential property (`value: T`, not wrapped in
+        // union/array). This creates a deeper cycle during type construction. The other
+        // property `items: T[]` must still adopt contextual type `DirectNode[]`, not `never[]`.
+        // The bug only manifests with the full compiled Array<T> lib (stripped lib is
+        // simpler and doesn't trigger the cycle). Test with both.
+        let source = r#"
+interface DirectRef<T> { value: T; items: T[]; }
+interface DirectNode extends DirectRef<DirectNode> { name: string; }
+const d: DirectNode = { name: "a", value: {} as DirectNode, items: [] };
+"#;
+        // Test with stripped lib (baseline)
+        let errors = check_source_codes(source);
+        assert!(
+            !errors.contains(&2322),
+            "F-bounded direct-self-ref (stripped lib): items:[] should be DirectNode[], not never[]; got: {errors:?}"
+        );
+        // Test with full compiled lib (where the cycle actually triggers)
+        let full_libs = load_compiled_lib_files(&["lib.es5.d.ts"]);
+        if !full_libs.is_empty() {
+            let errors: Vec<u32> =
+                check_source_with_libs(source, "test.ts", CheckerOptions::default(), &full_libs)
+                    .into_iter()
+                    .map(|d| d.code)
+                    .collect();
+            assert!(
+                !errors.contains(&2322),
+                "F-bounded direct-self-ref (full lib): items:[] should be DirectNode[], not never[]; got: {errors:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn f_bounded_multi_level_heritage_empty_array() {
+        // Multi-level heritage: `Concrete extends Level1<Concrete>` where `Level1<T>` extends
+        // `Level2<T>`. The `list: T[]` property is on Level2. Empty array must adopt
+        // `Concrete[]` contextual type.
+        let source = r#"
+interface Level2<T> { data: T; list: T[]; }
+interface Level1<T> extends Level2<T> { extra: string; }
+interface Concrete extends Level1<Concrete> {}
+const c: Concrete = { extra: "x", data: {} as Concrete, list: [] };
+"#;
+        let errors = check_source_codes(source);
+        assert!(
+            !errors.contains(&2322),
+            "Multi-level F-bounded: list:[] should be Concrete[], not never[]; got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn f_bounded_multiple_arrays_same_type_param() {
+        // Multiple array properties with the same type parameter. Both should adopt the
+        // concrete contextual type, not never[].
+        let source = r#"
+interface MultiArray<T> { first: T[]; second: T[]; ref: T; }
+interface MultiConcrete extends MultiArray<MultiConcrete> {}
+const m: MultiConcrete = { first: [], second: [], ref: {} as MultiConcrete };
+"#;
+        let errors = check_source_codes(source);
+        assert!(
+            !errors.contains(&2322),
+            "Multi-array F-bounded: both arrays should be MultiConcrete[], got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn f_bounded_readonly_array_property() {
+        // Readonly array property in F-bounded interface should also adopt contextual type.
+        let source = r#"
+interface RNode<T> { parent: T | null; readonly children: readonly T[]; }
+interface RFile extends RNode<RFile> { name: string; }
+const rf: RFile = { name: "r", parent: null, children: [] };
+"#;
+        let errors = check_source_codes(source);
+        assert!(
+            !errors.contains(&2322),
+            "F-bounded readonly array: children:[] should not produce TS2322, got: {errors:?}"
+        );
+    }
+
+    #[test]
     fn elided_array_literal_in_array_context_pushes_undefined() {
         // Without a tuple contextual type, an elision still contributes
         // `undefined` to the resulting array element type. tsc widens
@@ -1410,6 +1677,89 @@ const xs: (number | undefined)[] = [1, , 3];
         assert!(
             !errors.contains(&2322),
             "[1, , 3] should be assignable to (number | undefined)[], got: {errors:?}"
+        );
+    }
+
+    // Cross-file F-bounded interface tests: the interface declarations live in a
+    // separate file from the usage, exercising arena-identity-preserving heritage
+    // recovery in `recover_inherited_member_from_heritage`.
+
+    #[test]
+    fn f_bounded_cross_file_inherited_property_access() {
+        let diagnostics = crate::test_utils::check_multi_file(
+            &[
+                (
+                    "lib.ts",
+                    r#"
+export interface INode<T extends INode<T>> {
+    children: T[];
+    depth: number;
+}
+export interface FileNode extends INode<FileNode> {
+    name: string;
+}
+"#,
+                ),
+                (
+                    "main.ts",
+                    r#"
+import { FileNode } from "./lib";
+declare const root: FileNode;
+const kids: FileNode[] = root.children;
+const d: number = root.depth;
+"#,
+                ),
+            ],
+            "main.ts",
+            CheckerOptions {
+                module: ModuleKind::CommonJS,
+                strict: true,
+                strict_null_checks: true,
+                ..Default::default()
+            },
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "Cross-file F-bounded: inherited properties should resolve, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn f_bounded_cross_file_inherited_property_different_type_param_name() {
+        // The fix must not be keyed on the type-parameter name `T`; `K` is equally valid.
+        let diagnostics = crate::test_utils::check_multi_file(
+            &[
+                (
+                    "nodes.ts",
+                    r#"
+export interface IGraph<K extends IGraph<K>> {
+    edges: K[];
+}
+export interface GraphNode extends IGraph<GraphNode> {
+    label: string;
+}
+"#,
+                ),
+                (
+                    "app.ts",
+                    r#"
+import { GraphNode } from "./nodes";
+declare const g: GraphNode;
+const neighbors: GraphNode[] = g.edges;
+"#,
+                ),
+            ],
+            "app.ts",
+            CheckerOptions {
+                module: ModuleKind::CommonJS,
+                strict: true,
+                strict_null_checks: true,
+                ..Default::default()
+            },
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "Cross-file F-bounded (param K): inherited edges should resolve, got: {diagnostics:?}"
         );
     }
 }

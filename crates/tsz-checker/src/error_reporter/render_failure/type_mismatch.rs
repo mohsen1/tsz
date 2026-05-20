@@ -18,6 +18,15 @@ impl<'a> CheckerState<'a> {
         length: u32,
         file_name: String,
     ) -> Diagnostic {
+        let declared_numeric_literal_union_source_display = if depth == 0 {
+            self.direct_diagnostic_source_expression(idx)
+                .or_else(|| self.assignment_source_expression(idx))
+                .and_then(|expr_idx| {
+                    self.declared_numeric_literal_union_alias_source_display(expr_idx, source)
+                })
+        } else {
+            None
+        };
         let mut source_str = if depth == 0 {
             let display = self.format_type_for_diagnostic_role(
                 source,
@@ -32,6 +41,10 @@ impl<'a> CheckerState<'a> {
             // (e.g., `Variants` from a parameter annotation), fall back to the
             // TypeFormatter which correctly displays literal union members.
             // This handles both widening and flow-narrowed type alias display.
+            let display_is_declared_identifier_source =
+                declared_numeric_literal_union_source_display
+                    .as_deref()
+                    .is_some_and(|declared_display| declared_display == display.as_str());
             if crate::query_boundaries::common::union_members(self.ctx.types, source).is_some_and(
                 |members| {
                     !members.is_empty()
@@ -44,6 +57,7 @@ impl<'a> CheckerState<'a> {
                 },
             ) && !crate::query_boundaries::common::is_primitive_type(self.ctx.types, source)
                 && !display.contains(" | ")
+                && !display_is_declared_identifier_source
             {
                 self.format_type_diagnostic(source)
             } else {
@@ -63,13 +77,50 @@ impl<'a> CheckerState<'a> {
             self.format_assignability_type_for_message(target, source)
         };
         if depth == 0 {
+            let source_enum_symbol = self.enum_symbol_from_enumish_type(source);
+            let target_enum_symbol = self.enum_symbol_from_enumish_type(target);
+            if source_enum_symbol.is_some()
+                && target_enum_symbol.is_some()
+                && source_enum_symbol != target_enum_symbol
+            {
+                source_str = self.format_assignability_type_for_message(source, target);
+                target_str = self.format_assignability_type_for_message(target, source);
+            }
+            let source_expr_idx = self
+                .assignment_source_expression(idx)
+                .or_else(|| self.direct_diagnostic_source_expression(idx));
+            let declared_identifier_is_literal_only_alias =
+                source_expr_idx.is_some_and(|expr_idx| {
+                    self.declared_identifier_has_literal_only_alias_source(expr_idx)
+                });
+            if !declared_identifier_is_literal_only_alias
+                && !self.is_object_rest_assignment_target_anchor(idx)
+                && let Some(expr_idx) = source_expr_idx
+                && let Some(display) =
+                    self.declared_identifier_source_display(expr_idx, target, source)
+                && self
+                    .declared_identifier_candidate_preserves_source_surface(&source_str, &display)
+            {
+                source_str = display;
+            }
+            let source_is_direct_type_query_primitive = self
+                .direct_diagnostic_source_expression(idx)
+                .or_else(|| self.assignment_source_expression(idx))
+                .and_then(|expr_idx| {
+                    self.direct_type_query_primitive_source_display(expr_idx, source)
+                })
+                .is_some_and(|display| display == source_str);
             if !crate::error_reporter::assignability::display_is_literal_value(&source_str)
+                && !source_is_direct_type_query_primitive
+                && !crate::query_boundaries::common::is_tuple_type(self.ctx.types, source)
                 && let Some(display) = self.evaluated_literal_alias_source_display(source)
             {
-                source_str = self.canonicalize_assignment_numeric_literal_union_display(display);
+                source_str = self
+                    .canonicalize_assignment_numeric_literal_union_display(source, target, display);
             }
             if let Some(display) = self.evaluated_literal_alias_source_display(target) {
-                target_str = self.canonicalize_assignment_numeric_literal_union_display(display);
+                target_str = self
+                    .canonicalize_assignment_numeric_literal_union_display(target, source, display);
             }
             source_str = self.rewrite_source_display_for_non_literal_target_assignability(
                 source, target, source_str,
@@ -86,12 +137,9 @@ impl<'a> CheckerState<'a> {
                 target_str =
                     self.rewrite_target_display_for_non_literal_assignability(target, target_str);
             }
-
-            if let Some(widened) = self.rewrite_standalone_literal_source_for_keyof_display(
-                &source_str,
-                &target_str,
-                target,
-            ) {
+            if let Some(widened) =
+                self.rewrite_standalone_literal_source_for_keyof_display(source, target)
+            {
                 source_str = widened;
             }
         }
@@ -221,6 +269,11 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 );
             }
+            if let Some(display) =
+                self.checked_js_global_element_access_fallback_target_display(idx)
+            {
+                target_str = display;
+            }
             let message = format_message(
                 diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                 &[&prop_name, &source_str, &target_str],
@@ -248,14 +301,17 @@ impl<'a> CheckerState<'a> {
             // line 91. Falls through to the previous behavior for any other
             // shape so direct Application sources, primitive aliases, etc.
             // continue to format as before.
-            let src_str =
-                if let Some(unfolded) = self.ts2739_alias_of_application_source_display(source) {
-                    self.format_type_diagnostic(unfolded)
-                } else {
-                    let evaluated_source = self.evaluate_type_for_assignability(source);
-                    self.format_type_diagnostic(evaluated_source)
-                };
-            let tgt_str = self.format_type_diagnostic(target);
+            let src_str = if let Some(display) =
+                self.ts2739_alias_of_application_source_display_text(source)
+            {
+                display
+            } else {
+                let evaluated_source = self.evaluate_type_for_assignability(source);
+                self.format_type_diagnostic(evaluated_source)
+            };
+            let tgt_str = self
+                .checked_js_global_element_access_fallback_target_display(idx)
+                .unwrap_or_else(|| self.format_type_diagnostic(target));
             let prop_list: Vec<String> = missing_props
                 .iter()
                 .take(4)
@@ -357,16 +413,27 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        source_str = self.canonicalize_assignment_numeric_literal_union_display(source_str);
+        let source_from_annotation = declared_numeric_literal_union_source_display
+            .as_ref()
+            .map(|display| {
+                source_str = display.clone();
+            })
+            .is_some();
+        if !source_from_annotation {
+            source_str = self
+                .canonicalize_assignment_numeric_literal_union_display(source, target, source_str);
+        }
         if depth == 0 {
             (source_str, target_str) =
                 self.finalize_pair_display_for_diagnostic(source, target, source_str, target_str);
             if !crate::error_reporter::assignability::display_is_literal_value(&source_str)
-                && let Some(unfolded) = self.ts2739_alias_of_application_source_display(source)
+                && let Some(display) = self.nonmissing_ts2739_alias_source_display_text(source)
             {
-                source_str = self.format_type_diagnostic(unfolded);
+                source_str = display;
             }
-            if let Some(unfolded) = self.ts2739_alias_target_display(target, &target_str) {
+            if target_str.trim() != "{}"
+                && let Some(unfolded) = self.ts2739_alias_target_display(target, &target_str)
+            {
                 target_str = self.format_type_diagnostic(unfolded);
             }
             if let Some(display) = self.static_schema_array_structural_display(source, target) {
@@ -378,8 +445,26 @@ impl<'a> CheckerState<'a> {
             if let Some(display) = self.type_query_static_array_structural_display(&source_str) {
                 source_str = display;
             }
+            if let Some((direct_source, direct_target)) =
+                self.direct_type_param_alias_application_pair_display(source, target)
+            {
+                source_str = direct_source;
+                target_str = direct_target;
+            }
+            if let Some((display_source, display_target)) =
+                self.declared_generic_alias_assignment_pair_display(idx, &source_str, &target_str)
+            {
+                source_str = display_source;
+                target_str = display_target;
+            }
+            if !source_from_annotation {
+                source_str = self.canonicalize_assignment_numeric_literal_union_display(
+                    source, target, source_str,
+                );
+            }
+            target_str = self
+                .canonicalize_assignment_numeric_literal_union_display(target, source, target_str);
         }
-
         let base = format_message(
             diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             &[&source_str, &target_str],

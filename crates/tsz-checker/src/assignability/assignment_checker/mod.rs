@@ -10,3 +10,7 @@ mod js_global_fallback;
 #[cfg(test)]
 #[path = "../assignment_checker_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../assignment_checker_lib_identity_tests.rs"]
+mod lib_identity_tests;

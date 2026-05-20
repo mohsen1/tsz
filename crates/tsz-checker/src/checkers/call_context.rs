@@ -11,6 +11,7 @@ use crate::query_boundaries::checkers::call as call_checker;
 use crate::query_boundaries::common;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
+use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
@@ -532,30 +533,42 @@ impl<'a> CheckerState<'a> {
         args: &[NodeIndex],
         contextual_type: Option<TypeId>,
     ) -> bool {
-        let return_type_params: FxHashSet<_> =
-            common::collect_referenced_types(self.ctx.types, shape.return_type)
-                .into_iter()
-                .filter_map(|ty| common::type_param_info(self.ctx.types, ty).map(|info| info.name))
-                .collect();
+        if contextual_type.is_none() {
+            return false;
+        }
+
+        let return_type_params =
+            self.collect_type_param_names_for_context_overlap(shape.return_type);
 
         if return_type_params.is_empty() {
             return false;
         }
 
+        let return_is_bare_type_param = common::type_param_info(self.ctx.types, shape.return_type)
+            .is_some_and(|info| return_type_params.contains(&info.name));
         let has_bare_return_param_argument = shape.params.iter().any(|param| {
             common::type_param_info(self.ctx.types, param.type_id)
                 .is_some_and(|info| return_type_params.contains(&info.name))
         });
-        if has_bare_return_param_argument
+        if !return_is_bare_type_param
+            && has_bare_return_param_argument
             && let Some(contextual_type) = contextual_type
-            && self.contextual_return_type_specializes_wrapped_params(
+        {
+            let specializes = self.contextual_return_type_specializes_wrapped_params(
                 shape.return_type,
                 contextual_type,
                 &return_type_params,
                 &mut FxHashSet::default(),
-            )
-        {
-            return false;
+            );
+            if specializes
+                && !self.wrapped_return_context_has_stable_overlap_arg(
+                    shape,
+                    args,
+                    &return_type_params,
+                )
+            {
+                return false;
+            }
         }
 
         for (i, &arg_idx) in args.iter().enumerate() {
@@ -598,16 +611,98 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let param_type_params = common::collect_referenced_types(self.ctx.types, param_type);
-            if param_type_params.into_iter().any(|ty| {
-                common::type_param_info(self.ctx.types, ty)
-                    .is_some_and(|info| return_type_params.contains(&info.name))
+            if self.ctx.arena.get(arg_idx).is_some_and(|node| {
+                node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                    && self
+                        .ctx
+                        .arena
+                        .get_literal_expr(node)
+                        .is_some_and(|literal| literal.elements.nodes.is_empty())
             }) {
+                continue;
+            }
+
+            let param_type_params = self.collect_type_param_names_for_context_overlap(param_type);
+            if param_type_params
+                .iter()
+                .any(|name| return_type_params.contains(name))
+            {
                 return true;
             }
         }
 
         false
+    }
+
+    fn wrapped_return_context_has_stable_overlap_arg(
+        &mut self,
+        shape: &tsz_solver::FunctionShape,
+        args: &[NodeIndex],
+        return_type_params: &FxHashSet<Atom>,
+    ) -> bool {
+        for (i, &arg_idx) in args.iter().enumerate() {
+            let Some(param_type) = shape.params.get(i).map(|p| p.type_id).or_else(|| {
+                shape
+                    .params
+                    .last()
+                    .and_then(|p| p.rest.then_some(p.type_id))
+            }) else {
+                break;
+            };
+
+            let param_type_params = self.collect_type_param_names_for_context_overlap(param_type);
+            if !param_type_params
+                .iter()
+                .any(|name| return_type_params.contains(name))
+            {
+                continue;
+            }
+
+            if self.argument_needs_contextual_type(arg_idx)
+                || self
+                    .expression_needs_contextual_signature_instantiation(arg_idx, Some(param_type))
+                || self.object_literal_contains_function_member(arg_idx)
+            {
+                continue;
+            }
+
+            return true;
+        }
+
+        false
+    }
+
+    fn collect_type_param_names_for_context_overlap(&mut self, type_id: TypeId) -> FxHashSet<Atom> {
+        let mut names = FxHashSet::default();
+        self.extend_type_param_names(type_id, &mut names);
+
+        let resolved = self.resolve_lazy_type(type_id);
+        if resolved != type_id {
+            self.extend_type_param_names(resolved, &mut names);
+        }
+
+        let evaluated = self.evaluate_type_with_env(type_id);
+        if evaluated != type_id && evaluated != resolved {
+            self.extend_type_param_names(evaluated, &mut names);
+        }
+
+        let evaluated_resolved = self.evaluate_type_with_env(resolved);
+        if evaluated_resolved != type_id
+            && evaluated_resolved != resolved
+            && evaluated_resolved != evaluated
+        {
+            self.extend_type_param_names(evaluated_resolved, &mut names);
+        }
+
+        names
+    }
+
+    fn extend_type_param_names(&self, type_id: TypeId, names: &mut FxHashSet<Atom>) {
+        names.extend(
+            common::collect_referenced_types(self.ctx.types, type_id)
+                .into_iter()
+                .filter_map(|ty| common::type_param_info(self.ctx.types, ty).map(|info| info.name)),
+        );
     }
 
     fn contextual_signature_after_evaluation(
@@ -656,6 +751,89 @@ impl<'a> CheckerState<'a> {
 
         if let Some(info) = common::type_param_info(self.ctx.types, source) {
             return tracked_type_params.contains(&info.name);
+        }
+
+        if self
+            .awaited_application_args_in_type(source)
+            .into_iter()
+            .any(|awaited_arg| {
+                common::collect_referenced_types(self.ctx.types, awaited_arg)
+                    .into_iter()
+                    .any(|referenced| {
+                        common::type_param_info(self.ctx.types, referenced)
+                            .is_some_and(|info| tracked_type_params.contains(&info.name))
+                    })
+            })
+        {
+            return true;
+        }
+
+        let awaited_source = self.evaluate_awaited_application_for_assignability(source);
+        if awaited_source != source {
+            return self.contextual_return_type_specializes_wrapped_params(
+                awaited_source,
+                target,
+                tracked_type_params,
+                visited,
+            );
+        }
+
+        if let Some(inner) = common::unwrap_readonly_or_noinfer(self.ctx.types, source) {
+            return self.contextual_return_type_specializes_wrapped_params(
+                inner,
+                target,
+                tracked_type_params,
+                visited,
+            );
+        }
+        if let Some((base, args)) = common::application_info(self.ctx.types, source)
+            && args.len() == 1
+            && self
+                .return_context_application_base_has_name(base, &["Readonly", "NoInfer", "Awaited"])
+        {
+            return self.contextual_return_type_specializes_wrapped_params(
+                args[0],
+                target,
+                tracked_type_params,
+                visited,
+            );
+        }
+        if let Some((base, args)) = common::application_info(self.ctx.types, source)
+            && args.len() == 1
+            && common::application_info(self.ctx.types, target).is_none()
+            && self.return_context_application_base_has_name(base, &["Promise", "PromiseLike"])
+        {
+            return self.contextual_return_type_specializes_wrapped_params(
+                args[0],
+                target,
+                tracked_type_params,
+                visited,
+            );
+        }
+        let source_evaluated = self.evaluate_type_with_env(source);
+        if source_evaluated != source
+            && let Some((base, args)) = common::application_info(self.ctx.types, source_evaluated)
+            && args.len() == 1
+            && common::application_info(self.ctx.types, target).is_none()
+            && self.return_context_application_base_has_name(base, &["Promise", "PromiseLike"])
+        {
+            return self.contextual_return_type_specializes_wrapped_params(
+                args[0],
+                target,
+                tracked_type_params,
+                visited,
+            );
+        }
+        if source_evaluated != source
+            && let Some(inner) =
+                common::unwrap_readonly_or_noinfer(self.ctx.types, source_evaluated)
+        {
+            return self.contextual_return_type_specializes_wrapped_params(
+                inner,
+                target,
+                tracked_type_params,
+                visited,
+            );
         }
 
         if let (Some((source_base, source_args)), Some((target_base, target_args))) = (
@@ -770,6 +948,25 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    pub(crate) fn return_context_application_base_has_name(
+        &self,
+        base: TypeId,
+        names: &[&str],
+    ) -> bool {
+        self.ctx
+            .resolve_type_to_symbol_id(base)
+            .or_else(|| {
+                common::lazy_def_id(self.ctx.types, base)
+                    .and_then(|def_id| self.ctx.def_to_symbol_id(def_id))
+            })
+            .or_else(|| {
+                common::type_query_symbol(self.ctx.types, base)
+                    .map(|symbol_ref| tsz_binder::SymbolId(symbol_ref.0))
+            })
+            .and_then(|symbol_id| self.ctx.binder.get_symbol(symbol_id))
+            .is_some_and(|symbol| names.contains(&symbol.escaped_name.as_str()))
     }
 
     pub(crate) fn sensitive_callback_placeholder_should_skip_round1_inference(
@@ -1262,6 +1459,94 @@ impl<'a> CheckerState<'a> {
         .is_some_and(|shape| !shape.type_params.is_empty())
     }
 
+    fn contextual_callable_has_parameter_return_feedback(
+        &mut self,
+        shape: &tsz_solver::FunctionShape,
+    ) -> bool {
+        let return_type = shape.return_type;
+        if matches!(return_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
+            || common::contains_infer_types(self.ctx.types, return_type)
+        {
+            return false;
+        }
+
+        let type_param_names = |this: &Self, type_id: TypeId| -> FxHashSet<_> {
+            common::collect_referenced_types(this.ctx.types, type_id)
+                .into_iter()
+                .filter_map(|referenced| {
+                    common::type_param_info(this.ctx.types, referenced).map(|info| info.name)
+                })
+                .collect()
+        };
+
+        let return_params = type_param_names(self, return_type);
+        if return_params.is_empty() {
+            return false;
+        }
+        if shape.params.is_empty() {
+            return true;
+        }
+
+        let param_params: FxHashSet<_> = shape
+            .params
+            .iter()
+            .flat_map(|param| type_param_names(self, param.type_id).into_iter())
+            .collect();
+        return_params.iter().any(|name| param_params.contains(name))
+    }
+
+    pub(crate) fn call_expression_needs_contextual_generic_instantiation(
+        &mut self,
+        idx: NodeIndex,
+        expected_type: Option<TypeId>,
+    ) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::CALL_EXPRESSION
+            && node.kind != syntax_kind_ext::NEW_EXPRESSION
+        {
+            return false;
+        }
+
+        let Some(expected_type) = expected_type else {
+            return false;
+        };
+        if matches!(expected_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
+            || common::contains_infer_types(self.ctx.types, expected_type)
+        {
+            return false;
+        }
+
+        let expected_type = self
+            .contextual_type_option_for_expression(Some(expected_type))
+            .unwrap_or(expected_type);
+        let Some(expected_shape) = self.contextual_signature_after_evaluation(expected_type) else {
+            return false;
+        };
+        if !self.contextual_callable_has_parameter_return_feedback(&expected_shape) {
+            return false;
+        }
+
+        let Some(call) = self.ctx.arena.get_call_expr(node) else {
+            return false;
+        };
+        let arg_count = call
+            .arguments
+            .as_ref()
+            .map(|args| args.nodes.len())
+            .unwrap_or(0);
+        let callee_type = self.get_type_of_node_with_request(call.expression, &TypingRequest::NONE);
+        let callee_type = self.evaluate_application_type(callee_type);
+        let callee_type = self.resolve_lazy_type(callee_type);
+        let callee_type = self.evaluate_contextual_type(callee_type);
+
+        call_checker::get_contextual_signature_for_arity(self.ctx.types, callee_type, arg_count)
+            .or_else(|| call_checker::get_call_signature(self.ctx.types, callee_type, arg_count))
+            .is_some_and(|shape| !shape.type_params.is_empty())
+    }
+
     pub(crate) fn argument_needs_refresh_for_contextual_call(
         &mut self,
         idx: NodeIndex,
@@ -1269,6 +1554,7 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         self.argument_needs_contextual_type(idx)
             || self.expression_needs_contextual_signature_instantiation(idx, expected_type)
+            || self.call_expression_needs_contextual_generic_instantiation(idx, expected_type)
     }
 
     pub(crate) fn instantiate_callable_result_from_request(

@@ -648,8 +648,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
     }
 
-    /// Conservative AST-side check for concrete array/tuple rest element forms
-    /// whose lowered type may still be an application, e.g. `...Array<T>`.
+    /// Returns `true` for variadic (variable-length) array/tuple AST nodes: `T[]`,
+    /// `Array<T>`, `ReadonlyArray<T>`, or a tuple that itself contains a rest element.
+    /// Fixed-length tuple spreads (`...[1, 2]`) return `false`; they inline as individual
+    /// elements and are not subject to the TS1265 "rest after rest" restriction.
     pub(super) fn ast_kind_is_obviously_array_or_tuple(
         arena: &tsz_parser::parser::NodeArena,
         idx: NodeIndex,
@@ -658,7 +660,22 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return false;
         };
         match node.kind {
-            k if k == syntax_kind_ext::ARRAY_TYPE || k == syntax_kind_ext::TUPLE_TYPE => true,
+            k if k == syntax_kind_ext::ARRAY_TYPE => true,
+            k if k == syntax_kind_ext::TUPLE_TYPE => {
+                let Some(tuple_data) = arena.get_tuple_type(node) else {
+                    return false;
+                };
+                tuple_data.elements.nodes.iter().any(|&elem_idx| {
+                    let Some(elem) = arena.get(elem_idx) else {
+                        return false;
+                    };
+                    elem.kind == syntax_kind_ext::REST_TYPE
+                        || (elem.kind == syntax_kind_ext::NAMED_TUPLE_MEMBER
+                            && arena
+                                .get_named_tuple_member(elem)
+                                .is_some_and(|d| d.dot_dot_dot_token))
+                })
+            }
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
                 let Some(type_ref) = arena.get_type_ref(node) else {
                     return false;
@@ -683,12 +700,40 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     }
 
     /// Check if a resolved type is an array or tuple type (concrete, not a type parameter).
-    /// Used by TS1265/TS1266 checks to distinguish concrete rest elements from variadic
-    /// type parameter spreads. Only concrete array/tuple rest elements are subject to
-    /// the "rest after rest" and "optional after rest" restrictions.
     pub(super) fn is_array_or_tuple_type(&self, type_id: tsz_solver::TypeId) -> bool {
         crate::query_boundaries::common::is_array_type(self.ctx.types, type_id)
             || crate::query_boundaries::common::is_tuple_type(self.ctx.types, type_id)
+    }
+
+    /// Returns `true` for arrays and variable-length tuples (tuples with a rest element).
+    /// Fixed-length tuples return `false`. Used by TS1265/TS1266 to decide whether a
+    /// spread counts as a "rest" element for "rest after rest" / "optional after rest".
+    pub(super) fn is_variadic_array_or_tuple(&self, type_id: tsz_solver::TypeId) -> bool {
+        let mut type_id = type_id;
+        while let Some(inner) =
+            crate::query_boundaries::common::unwrap_readonly_or_noinfer(self.ctx.types, type_id)
+        {
+            type_id = inner;
+        }
+
+        crate::query_boundaries::common::is_array_type(self.ctx.types, type_id)
+            || (crate::query_boundaries::common::is_tuple_type(self.ctx.types, type_id)
+                && crate::query_boundaries::common::get_fixed_tuple_length(self.ctx.types, type_id)
+                    .is_none())
+    }
+
+    pub(super) fn fixed_tuple_spread_elements(
+        &self,
+        type_id: tsz_solver::TypeId,
+    ) -> Option<Vec<tsz_solver::TupleElement>> {
+        let mut type_id = type_id;
+        while let Some(inner) =
+            crate::query_boundaries::common::unwrap_readonly_or_noinfer(self.ctx.types, type_id)
+        {
+            type_id = inner;
+        }
+        crate::query_boundaries::common::get_fixed_tuple_length(self.ctx.types, type_id)?;
+        crate::query_boundaries::common::tuple_elements(self.ctx.types, type_id)
     }
 
     /// If `idx` is a direct, unshadowed reference to the lib's `Array` /
@@ -967,4 +1012,59 @@ fn check_binding_pattern_initializers(
         // Recurse into nested binding patterns
         check_binding_pattern_initializers(ctx, elem_name);
     }
+}
+
+/// Returns true when a type annotation syntactically mentions `undefined`.
+///
+/// Exact-optional property declarations need this surface distinction:
+/// `a?: string` has a different declared write surface from
+/// `a?: string | undefined`, even though optional reads may include
+/// `undefined`.
+pub(crate) fn type_node_includes_explicit_undefined(
+    arena: &tsz_parser::parser::NodeArena,
+    idx: NodeIndex,
+) -> bool {
+    let Some(node) = arena.get(idx) else {
+        return false;
+    };
+
+    if node.kind == SyntaxKind::UndefinedKeyword as u16 {
+        return true;
+    }
+
+    if node.kind == syntax_kind_ext::TYPE_REFERENCE
+        && let Some(type_ref) = arena.get_type_ref(node)
+    {
+        let has_type_args = type_ref
+            .type_arguments
+            .as_ref()
+            .is_some_and(|args| !args.nodes.is_empty());
+        if !has_type_args
+            && let Some(name_node) = arena.get(type_ref.type_name)
+            && let Some(ident) = arena.get_identifier(name_node)
+        {
+            return ident.escaped_text.as_str() == "undefined";
+        }
+    }
+
+    if matches!(
+        node.kind,
+        k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE
+    ) && let Some(composite) = arena.get_composite_type(node)
+    {
+        return composite
+            .types
+            .nodes
+            .iter()
+            .copied()
+            .any(|member| type_node_includes_explicit_undefined(arena, member));
+    }
+
+    if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+        && let Some(wrapped) = arena.get_wrapped_type(node)
+    {
+        return type_node_includes_explicit_undefined(arena, wrapped.type_node);
+    }
+
+    false
 }

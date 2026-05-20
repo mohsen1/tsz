@@ -1,9 +1,3 @@
-//! Constructor type operations, type argument application, and base instance
-//! type resolution for `CheckerState`.
-//!
-//! Extracted from `type_resolution/module.rs` to keep files focused and
-//! under the 2 000-line architectural limit.
-
 use crate::query_boundaries::common::call_signatures_for_type;
 use crate::query_boundaries::state::type_resolution as query;
 use crate::state::CheckerState;
@@ -11,8 +5,10 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+use tsz_solver::computation::TypeSubstitution;
 
-#[inline]
+mod callable_type_arguments;
+
 pub(super) const fn should_cache_base_expr_result(
     type_argument_count: usize,
     has_active_type_parameter_scope: bool,
@@ -29,9 +25,6 @@ impl<'a> CheckerState<'a> {
         self.apply_type_arguments_to_constructor_type_inner(ctor_type, type_arguments, false)
     }
 
-    /// Like `apply_type_arguments_to_constructor_type` but strips construct
-    /// signatures when the base class is not generic. This is only correct in
-    /// extends-clause context where `super()` should then emit TS2346.
     pub(crate) fn apply_type_arguments_to_constructor_type_for_extends(
         &mut self,
         ctor_type: TypeId,
@@ -46,6 +39,14 @@ impl<'a> CheckerState<'a> {
         type_args: &[TypeId],
     ) -> TypeId {
         self.apply_type_argument_ids_to_constructor_type_inner(ctor_type, type_args, false, true)
+    }
+
+    pub(crate) fn apply_type_argument_ids_to_constructor_type(
+        &mut self,
+        ctor_type: TypeId,
+        type_args: &[TypeId],
+    ) -> TypeId {
+        self.apply_type_argument_ids_to_constructor_type_inner(ctor_type, type_args, false, false)
     }
 
     fn apply_type_arguments_to_constructor_type_inner(
@@ -149,7 +150,7 @@ impl<'a> CheckerState<'a> {
                             .or(param.constraint)
                             .unwrap_or(TypeId::UNKNOWN)
                     };
-                    let substitution = tsz_solver::TypeSubstitution::from_args(
+                    let substitution = TypeSubstitution::from_args(
                         self.ctx.types,
                         &sig.type_params[..param_index],
                         &args,
@@ -244,7 +245,7 @@ impl<'a> CheckerState<'a> {
                         };
                         // Substitute earlier type params in the default
                         // (e.g., `U = T` → `U = number` when T = number)
-                        let substitution = tsz_solver::TypeSubstitution::from_args(
+                        let substitution = TypeSubstitution::from_args(
                             self.ctx.types,
                             &sig.type_params[..param_index],
                             &args,
@@ -281,200 +282,6 @@ impl<'a> CheckerState<'a> {
         };
         let factory = self.ctx.types.factory();
         factory.callable(new_shape)
-    }
-
-    /// Apply explicit type arguments to a callable type for function calls.
-    ///
-    /// When a function is called with explicit type arguments like `fn<T>(x: T)`,
-    /// calling it as `fn<number>("hello")` should substitute `T` with `number` and
-    /// then check if `"hello"` is assignable to `number`.
-    ///
-    /// This function creates a new callable type with the type parameters substituted,
-    /// so that argument type checking can work correctly.
-    pub(crate) fn apply_type_arguments_to_callable_type(
-        &mut self,
-        callee_type: TypeId,
-        type_arguments: Option<&NodeList>,
-    ) -> TypeId {
-        use tsz_solver::CallableShape;
-
-        let Some(type_arguments) = type_arguments else {
-            return callee_type;
-        };
-
-        if type_arguments.nodes.is_empty() {
-            return callee_type;
-        }
-
-        let mut type_args: Vec<TypeId> = Vec::with_capacity(type_arguments.nodes.len());
-        for &arg_idx in &type_arguments.nodes {
-            self.check_type_node_for_static_member_class_type_param_refs(arg_idx);
-            type_args.push(self.get_type_from_type_node(arg_idx));
-        }
-
-        if type_args.is_empty() {
-            return callee_type;
-        }
-
-        // Resolve Lazy types before classification.
-        let callee_type = {
-            let resolved = self.resolve_lazy_type(callee_type);
-            if resolved != callee_type {
-                resolved
-            } else {
-                callee_type
-            }
-        };
-        let factory = self.ctx.types.factory();
-        match query::classify_for_signatures(self.ctx.types, callee_type) {
-            query::SignatureTypeKind::Callable(shape_id) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-
-                // Find signatures that can accept the supplied explicit type
-                // arguments. Exact arity for instantiation expressions is
-                // checked before this path; ordinary calls may supply a prefix
-                // when remaining type parameters have defaults or can infer.
-                let matching_calls: Vec<tsz_solver::CallSignature> = shape
-                    .call_signatures
-                    .iter()
-                    .filter(|&sig| sig.type_params.len() >= type_args.len())
-                    .cloned()
-                    .collect();
-                let matching_constructs: Vec<tsz_solver::CallSignature> = shape
-                    .construct_signatures
-                    .iter()
-                    .filter(|&sig| sig.type_params.len() >= type_args.len())
-                    .cloned()
-                    .collect();
-
-                if matching_calls.is_empty() && matching_constructs.is_empty() {
-                    return callee_type;
-                }
-
-                // Instantiate each matching signature with the type arguments.
-                // When type arguments are partially supplied (fewer than type params),
-                // fill in defaults that are fully determined (no remaining type param
-                // references after substituting explicit args).  Type parameters whose
-                // defaults still reference other unsupplied params are left for the
-                // solver to infer from call-site arguments.
-                let instantiated_calls: Vec<tsz_solver::CallSignature> = matching_calls
-                    .iter()
-                    .map(|sig| self.instantiate_instantiation_expression_signature(sig, &type_args))
-                    .collect();
-                let instantiated_constructs: Vec<tsz_solver::CallSignature> = matching_constructs
-                    .iter()
-                    .map(|sig| self.instantiate_instantiation_expression_signature(sig, &type_args))
-                    .collect();
-
-                let new_shape = CallableShape {
-                    call_signatures: instantiated_calls,
-                    construct_signatures: instantiated_constructs,
-                    properties: shape.properties.clone(),
-                    string_index: shape.string_index,
-                    number_index: shape.number_index,
-                    symbol: None,
-                    is_abstract: false,
-                };
-                factory.callable(new_shape)
-            }
-            query::SignatureTypeKind::Function(shape_id) => {
-                let shape = self.ctx.types.function_shape(shape_id);
-                if type_args.len() > shape.type_params.len() {
-                    return callee_type;
-                }
-
-                let sig = tsz_solver::CallSignature {
-                    type_params: shape.type_params.clone(),
-                    params: shape.params.clone(),
-                    this_type: None,
-                    return_type: shape.return_type,
-                    type_predicate: None,
-                    is_method: shape.is_method,
-                };
-                let instantiated_call = if type_args.len() < shape.type_params.len() {
-                    if self.all_remaining_defaults_resolved(&sig, &type_args) {
-                        // Defaults fully resolved — apply eagerly.
-                        let mut args = type_args.clone();
-                        for (param_index, param) in
-                            sig.type_params.iter().enumerate().skip(args.len())
-                        {
-                            let fallback = param
-                                .default
-                                .or(param.constraint)
-                                .unwrap_or(TypeId::UNKNOWN);
-                            let substitution = tsz_solver::TypeSubstitution::from_args(
-                                self.ctx.types,
-                                &sig.type_params[..param_index],
-                                &args,
-                            );
-                            args.push(
-                                crate::query_boundaries::common::instantiate_type_preserving_meta(
-                                    self.ctx.types,
-                                    fallback,
-                                    &substitution,
-                                ),
-                            );
-                        }
-                        self.instantiate_signature(&sig, &args)
-                    } else {
-                        self.partially_instantiate_signature(&sig, &type_args)
-                    }
-                } else {
-                    self.instantiate_signature(&sig, &type_args)
-                };
-
-                // Convert single signature to callable
-                let new_shape = CallableShape {
-                    call_signatures: vec![instantiated_call],
-                    construct_signatures: vec![],
-                    properties: vec![],
-                    string_index: None,
-                    number_index: None,
-                    symbol: None,
-                    is_abstract: false,
-                };
-                factory.callable(new_shape)
-            }
-            _ => callee_type,
-        }
-    }
-
-    fn instantiate_instantiation_expression_signature(
-        &mut self,
-        sig: &tsz_solver::CallSignature,
-        type_args: &[TypeId],
-    ) -> tsz_solver::CallSignature {
-        let mut args = type_args.to_vec();
-        if args.len() > sig.type_params.len() {
-            args.truncate(sig.type_params.len());
-        }
-        if args.len() < sig.type_params.len() {
-            if self.all_remaining_defaults_resolved(sig, &args) {
-                for (param_index, param) in sig.type_params.iter().enumerate().skip(args.len()) {
-                    let fallback = param
-                        .default
-                        .or(param.constraint)
-                        .unwrap_or(TypeId::UNKNOWN);
-                    let substitution = tsz_solver::TypeSubstitution::from_args(
-                        self.ctx.types,
-                        &sig.type_params[..param_index],
-                        &args,
-                    );
-                    args.push(
-                        crate::query_boundaries::common::instantiate_type_preserving_meta(
-                            self.ctx.types,
-                            fallback,
-                            &substitution,
-                        ),
-                    );
-                }
-                self.instantiate_signature(sig, &args)
-            } else {
-                self.partially_instantiate_signature(sig, &args)
-            }
-        } else {
-            self.instantiate_signature(sig, &args)
-        }
     }
 
     pub(crate) fn apply_instantiation_expression_type_arguments(
@@ -659,7 +466,7 @@ impl<'a> CheckerState<'a> {
                 None => return true, // No default/constraint → treat as resolved (will be UNKNOWN)
             };
             // Substitute the already-resolved args into the default.
-            let substitution = tsz_solver::TypeSubstitution::from_args(
+            let substitution = TypeSubstitution::from_args(
                 self.ctx.types,
                 &sig.type_params[..param_index],
                 supplied_args,
@@ -1000,7 +807,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn instantiate_base_instance_type_with_args(
+    pub(super) fn instantiate_base_instance_type_with_args(
         &mut self,
         base_instance_type: TypeId,
         base_type_params: &[tsz_solver::TypeParamInfo],
@@ -1028,7 +835,7 @@ impl<'a> CheckerState<'a> {
                     .default
                     .or(param.constraint)
                     .unwrap_or(TypeId::UNKNOWN);
-                let substitution = tsz_solver::TypeSubstitution::from_args(
+                let substitution = TypeSubstitution::from_args(
                     self.ctx.types,
                     &base_type_params[..param_index],
                     &type_args,
@@ -1047,7 +854,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let substitution =
-            tsz_solver::TypeSubstitution::from_args(self.ctx.types, base_type_params, &type_args);
+            TypeSubstitution::from_args(self.ctx.types, base_type_params, &type_args);
         crate::query_boundaries::common::instantiate_type(
             self.ctx.types,
             base_instance_type,
@@ -1060,6 +867,9 @@ impl<'a> CheckerState<'a> {
         expr_idx: NodeIndex,
         type_arguments: Option<&NodeList>,
     ) -> Option<TypeId> {
+        // `TypeId::ERROR` is an internal cycle/fuel sentinel; sanitize at the
+        // boundary so downstream TS2416/TS2417 paths never see it as a
+        // structural sink. See `cache_base_instance_result` and issue #7688.
         let type_argument_count = type_arguments.map_or(0, |args| args.nodes.len());
         let should_cache = should_cache_base_expr_result(
             type_argument_count,
@@ -1077,6 +887,16 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(base_sym_id) = self.resolve_heritage_symbol(expr_idx) {
+            if self.heritage_expression_shadows_nonconstructable_lib_value(expr_idx, base_sym_id) {
+                return self.cache_base_instance_result(expr_idx, should_cache, None);
+            }
+
+            if let Some(array_base) =
+                self.array_base_instance_type_for_heritage(base_sym_id, type_arguments)
+            {
+                return self.cache_base_instance_result(expr_idx, should_cache, Some(array_base));
+            }
+
             if let Some(base_class_idx) = self.get_class_declaration_from_symbol(base_sym_id)
                 && let Some(base_node) = self.ctx.arena.get(base_class_idx)
                 && let Some(base_class) = self.ctx.arena.get_class(base_node)
@@ -1089,20 +909,13 @@ impl<'a> CheckerState<'a> {
                     .unwrap_or_else(|| self.get_class_instance_type(base_class_idx, base_class));
                 let (base_type_params, base_type_param_updates) =
                     self.push_type_parameters(&base_class.type_parameters);
-                let resolved = Some(self.instantiate_base_instance_type_with_args(
+                let instantiated = self.instantiate_base_instance_type_with_args(
                     base_instance_type,
                     &base_type_params,
                     type_arguments,
-                ));
+                );
                 self.pop_type_parameters(base_type_param_updates);
-
-                if should_cache {
-                    self.ctx
-                        .base_instance_expr_cache
-                        .borrow_mut()
-                        .insert(expr_idx, resolved);
-                }
-                return resolved;
+                return self.cache_base_instance_result(expr_idx, should_cache, Some(instantiated));
             }
 
             // Cross-file/lib heritage can resolve the symbol correctly but not the
@@ -1112,19 +925,12 @@ impl<'a> CheckerState<'a> {
             if let Some((base_instance_type, base_type_params)) =
                 self.class_instance_type_with_params_from_symbol(base_sym_id)
             {
-                let resolved = Some(self.instantiate_base_instance_type_with_args(
+                let instantiated = self.instantiate_base_instance_type_with_args(
                     base_instance_type,
                     &base_type_params,
                     type_arguments,
-                ));
-
-                if should_cache {
-                    self.ctx
-                        .base_instance_expr_cache
-                        .borrow_mut()
-                        .insert(expr_idx, resolved);
-                }
-                return resolved;
+                );
+                return self.cache_base_instance_result(expr_idx, should_cache, Some(instantiated));
             }
 
             if self.symbol_has_js_constructor_evidence(base_sym_id) {
@@ -1134,19 +940,25 @@ impl<'a> CheckerState<'a> {
                 if let Some(instance_type) =
                     self.cross_file_js_constructor_instance_type(base_sym_id, ctor_type)
                 {
-                    if should_cache {
-                        self.ctx
-                            .base_instance_expr_cache
-                            .borrow_mut()
-                            .insert(expr_idx, Some(instance_type));
-                    }
-                    return Some(instance_type);
+                    return self.cache_base_instance_result(
+                        expr_idx,
+                        should_cache,
+                        Some(instance_type),
+                    );
                 }
             }
         }
 
+        if self.heritage_call_has_invalid_mixin_constructor_constraint(expr_idx) {
+            return self.cache_base_instance_result(expr_idx, should_cache, None);
+        }
+
         let ctor_type = self.base_constructor_type_from_expression(expr_idx, type_arguments)?;
+        let adds_implicit_any_index = self.constructor_type_explicitly_returns_any(ctor_type);
         let mut resolved = self.instance_type_from_constructor_type(ctor_type);
+        if adds_implicit_any_index && resolved.is_some_and(TypeId::is_any) {
+            resolved = Some(self.implicit_any_index_base_instance_type());
+        }
         if self.ctx.is_js_file()
             && let Some(synthesized) =
                 self.synthesize_js_constructor_instance_type(expr_idx, ctor_type, &[])
@@ -1162,13 +974,47 @@ impl<'a> CheckerState<'a> {
                 None => Some(synthesized),
             };
         }
+        self.cache_base_instance_result(expr_idx, should_cache, resolved)
+    }
+
+    fn constructor_type_explicitly_returns_any(&mut self, ctor_type: TypeId) -> bool {
+        ctor_type != TypeId::ANY
+            && self
+                .instance_type_from_constructor_type(ctor_type)
+                .is_some_and(TypeId::is_any)
+    }
+
+    fn implicit_any_index_base_instance_type(&self) -> TypeId {
+        self.ctx
+            .types
+            .factory()
+            .object_with_index(tsz_solver::ObjectShape {
+                string_index: Some(tsz_solver::IndexSignature {
+                    key_type: TypeId::STRING,
+                    value_type: TypeId::ANY,
+                    readonly: false,
+                    param_name: None,
+                }),
+                ..tsz_solver::ObjectShape::default()
+            })
+    }
+
+    /// Sanitize and cache a base-instance result. Drops `Some(ERROR)` to
+    /// `None` so the boundary rule is enforced as a cache invariant.
+    fn cache_base_instance_result(
+        &self,
+        expr_idx: NodeIndex,
+        should_cache: bool,
+        resolved: Option<TypeId>,
+    ) -> Option<TypeId> {
+        let sanitized = resolved.filter(|&t| t != TypeId::ERROR);
         if should_cache {
             self.ctx
                 .base_instance_expr_cache
                 .borrow_mut()
-                .insert(expr_idx, resolved);
+                .insert(expr_idx, sanitized);
         }
-        resolved
+        sanitized
     }
 
     pub(crate) fn merge_constructor_properties_from_type(
@@ -1209,15 +1055,7 @@ impl<'a> CheckerState<'a> {
         number_index: &mut Option<tsz_solver::IndexSignature>,
         visited: &mut rustc_hash::FxHashSet<TypeId>,
     ) {
-        // Resolve Lazy types so the classifier can see the actual structure.
-        let base_instance_type = {
-            let resolved = self.resolve_lazy_type(base_instance_type);
-            if resolved != base_instance_type {
-                resolved
-            } else {
-                base_instance_type
-            }
-        };
+        let base_instance_type = self.normalize_base_instance_type_for_merge(base_instance_type);
         if !visited.insert(base_instance_type) {
             return;
         }
@@ -1836,9 +1674,22 @@ impl<'a> CheckerState<'a> {
                 if let Some(param_node) = self.ctx.arena.get(param_idx)
                     && let Some(param) = self.ctx.arena.get_parameter(param_node)
                     && param.type_annotation != NodeIndex::NONE
-                    && self.extends_clause_has_constrained_infer_named(param.type_annotation, name)
                 {
-                    return true;
+                    // Rest parameters (...args: infer A) have the annotation as bare
+                    // INFER_TYPE (no REST_TYPE wrapper). The rest position implies an
+                    // implicit `unknown[]` constraint — treat it as constrained.
+                    if param.dot_dot_dot_token
+                        && let Some(annotation_node) = self.ctx.arena.get(param.type_annotation)
+                        && annotation_node.kind == syntax_kind_ext::INFER_TYPE
+                        && let Some(infer_data) = self.ctx.arena.get_infer_type(annotation_node)
+                        && self.infer_type_param_has_name(infer_data, name)
+                    {
+                        return true;
+                    }
+                    if self.extends_clause_has_constrained_infer_named(param.type_annotation, name)
+                    {
+                        return true;
+                    }
                 }
             }
             if func_type.type_annotation.is_some()
@@ -1898,20 +1749,11 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check if a class extends a type parameter and is "transparent" (adds no new instance members).
-    ///
-    /// When a class expression extends a generic type parameter but adds no new instance properties
-    /// or methods (only has a constructor), it should be typed as that type parameter to maintain
-    /// generic compatibility. This is common in simple wrapper patterns.
-    ///
-    /// # Returns
-    /// - `Some(TypeId)` if the class extends a type parameter and has no additional instance members
-    /// - `None` otherwise
+    /// Returns the type parameter a class extends if the class adds no new members at all.
     pub(crate) fn get_extends_type_parameter_if_transparent(
         &mut self,
         class: &tsz_parser::parser::node::ClassData,
     ) -> Option<TypeId> {
-        // Check if class has an extends clause with a type parameter
         let heritage_clauses = class.heritage_clauses.as_ref()?;
 
         let mut extends_type_param = None;
@@ -1919,7 +1761,6 @@ impl<'a> CheckerState<'a> {
             let clause_node = self.ctx.arena.get(clause_idx)?;
             let heritage = self.ctx.arena.get_heritage_clause(clause_node)?;
 
-            // Only process extends clauses
             if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
                 continue;
             }
@@ -1935,10 +1776,8 @@ impl<'a> CheckerState<'a> {
                     type_idx
                 };
 
-            // Get the type of the extends expression
             let base_type = self.get_type_of_node(expr_idx);
 
-            // Check if this is a type parameter
             if query::is_type_parameter_like(self.ctx.types, base_type) {
                 extends_type_param = Some(base_type);
                 break;
@@ -1947,49 +1786,25 @@ impl<'a> CheckerState<'a> {
 
         let base_type_param = extends_type_param?;
 
-        // Check if class adds any new instance members (excluding constructor)
+        // Class is transparent only if it adds no new members at all (no instance, no static).
         for &member_idx in &class.members.nodes {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
                 continue;
             };
 
-            // Skip constructors and static members
             match member_node.kind {
                 k if k == syntax_kind_ext::CONSTRUCTOR => continue,
-                k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
-                    if let Some(prop) = self.ctx.arena.get_property_decl(member_node) {
-                        // Skip static properties
-                        if self.has_static_modifier(&prop.modifiers) {
-                            continue;
-                        }
-                        // Found an instance property - class is not transparent
-                        return None;
-                    }
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION
+                    || k == syntax_kind_ext::METHOD_DECLARATION
+                    || k == syntax_kind_ext::GET_ACCESSOR
+                    || k == syntax_kind_ext::SET_ACCESSOR =>
+                {
+                    return None;
                 }
-                k if k == syntax_kind_ext::METHOD_DECLARATION => {
-                    if let Some(method) = self.ctx.arena.get_method_decl(member_node) {
-                        // Skip static methods
-                        if self.has_static_modifier(&method.modifiers) {
-                            continue;
-                        }
-                        // Found an instance method - class is not transparent
-                        return None;
-                    }
-                }
-                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
-                    if let Some(accessor) = self.ctx.arena.get_accessor(member_node) {
-                        // Skip static accessors
-                        if self.has_static_modifier(&accessor.modifiers) {
-                            continue;
-                        }
-                        // Found an instance accessor - class is not transparent
-                        return None;
-                    }
-                }
-                _ => {
-                    // Other member types - be conservative
-                    continue;
-                }
+                // Index signatures, abstract members, and other node kinds are
+                // conservatively skipped; if they prove non-transparent in practice,
+                // add them to the return-None arm above.
+                _ => continue,
             }
         }
 

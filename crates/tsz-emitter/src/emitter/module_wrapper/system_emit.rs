@@ -1,105 +1,25 @@
 use super::super::Printer;
+use super::system_legacy_class_decorators::split_system_class_static_tail;
 use super::{SystemDependencyAction, SystemDependencyPlan};
-use crate::emitter::ModuleKind;
+use crate::emitter::{JsxEmit, ModuleKind};
 use rustc_hash::FxHashMap;
 use std::collections::{HashMap, HashSet};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
-impl<'a> Printer<'a> {
-    pub(super) fn emit_wrapped_import_helpers(
-        &mut self,
-        source: &tsz_parser::parser::node::SourceFileData,
-    ) {
-        if self.ctx.options.no_emit_helpers || self.ctx.options.import_helpers {
-            return;
-        }
-
-        let mut needs_import_default = false;
-        let mut needs_import_star = false;
-
-        // Check if lowering pass detected dynamic import() calls needing __importStar
-        if self.transforms.helpers_populated() && self.transforms.helpers().import_star {
-            needs_import_star = true;
-        }
-
-        for &stmt_idx in &source.statements.nodes {
-            let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                continue;
-            };
-            if stmt_node.kind != syntax_kind_ext::IMPORT_DECLARATION {
-                continue;
-            }
-            let Some(import_decl) = self.arena.get_import_decl(stmt_node) else {
-                continue;
-            };
-            if !self.import_decl_has_runtime_value(import_decl) {
-                continue;
-            }
-            let Some(clause_node) = self.arena.get(import_decl.import_clause) else {
-                continue;
-            };
-            let Some(clause) = self.arena.get_import_clause(clause_node) else {
-                continue;
-            };
-            if clause.is_type_only {
-                continue;
-            }
-            if !self.ctx.options.verbatim_module_syntax
-                && !self.source_is_js_file
-                && !self.is_jsx_factory_import_clause(clause)
-                && !self.import_has_value_usage_after_node(stmt_node, clause)
-            {
-                continue;
-            }
-            if clause.name.is_some() {
-                needs_import_default = true;
-            }
-            if clause.named_bindings.is_some()
-                && let Some(bindings_node) = self.arena.get(clause.named_bindings)
-                && let Some(named_imports) = self.arena.get_named_imports(bindings_node)
-                && named_imports.name.is_some()
-                && named_imports.elements.nodes.is_empty()
-            {
-                needs_import_star = true;
-            }
-        }
-
-        for &stmt_idx in &source.statements.nodes {
-            let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                continue;
-            };
-            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
-                continue;
-            }
-            let Some(export_decl) = self.arena.get_export_decl(stmt_node) else {
-                continue;
-            };
-            if export_decl.is_type_only || export_decl.module_specifier.is_none() {
-                continue;
-            }
-            if let Some(clause_node) = self.arena.get(export_decl.export_clause)
-                && clause_node.kind != syntax_kind_ext::NAMED_EXPORTS
-            {
-                needs_import_star = true;
-            }
-        }
-
-        if needs_import_star {
-            self.write(crate::transforms::helpers::CREATE_BINDING_HELPER);
-            self.write_line();
-            self.write(crate::transforms::helpers::SET_MODULE_DEFAULT_HELPER);
-            self.write_line();
-            self.write(crate::transforms::helpers::IMPORT_STAR_HELPER);
-            self.write_line();
-        }
-        if needs_import_default {
-            self.write(crate::transforms::helpers::IMPORT_DEFAULT_HELPER);
-            self.write_line();
-        }
+fn push_system_reexport_name(
+    reexported_name_lists: &mut FxHashMap<String, Vec<String>>,
+    local_name: String,
+    export_name: String,
+) {
+    let names = reexported_name_lists.entry(local_name).or_default();
+    if !names.contains(&export_name) {
+        names.push(export_name);
     }
+}
 
+impl<'a> Printer<'a> {
     pub(super) fn emit_system_setters(
         &mut self,
         dependencies: &[String],
@@ -133,6 +53,12 @@ impl<'a> Printer<'a> {
                         self.write(" = ");
                         self.write(dep_var);
                         self.write("_1;");
+                        self.write_line();
+                    }
+                    SystemDependencyAction::ExportStar => {
+                        self.write("exportStar_1(");
+                        self.write(dep_var);
+                        self.write("_1);");
                         self.write_line();
                     }
                     SystemDependencyAction::NamedExports(exports) => {
@@ -176,6 +102,114 @@ impl<'a> Printer<'a> {
         }
         self.decrease_indent();
         self.write("],");
+    }
+
+    pub(super) fn emit_system_export_star_helpers_if_needed(
+        &mut self,
+        source: &tsz_parser::parser::node::SourceFileData,
+        system_plan: &SystemDependencyPlan,
+    ) {
+        let has_export_star = system_plan.actions.values().any(|actions| {
+            actions
+                .iter()
+                .any(|action| matches!(action, SystemDependencyAction::ExportStar))
+        });
+        if !has_export_star {
+            return;
+        }
+
+        let (excluded_names, emit_exclusion_map) =
+            self.collect_system_export_star_excluded_names(source);
+        if emit_exclusion_map {
+            if excluded_names.is_empty() {
+                self.write("var exportedNames_1 = {};");
+                self.write_line();
+            } else {
+                self.write("var exportedNames_1 = {");
+                self.write_line();
+                self.increase_indent();
+                for (idx, export_name) in excluded_names.iter().enumerate() {
+                    self.write("\"");
+                    self.emit_escaped_string(export_name, '"');
+                    self.write("\": true");
+                    if idx + 1 != excluded_names.len() {
+                        self.write(",");
+                    }
+                    self.write_line();
+                }
+                self.decrease_indent();
+                self.write("};");
+                self.write_line();
+            }
+        }
+
+        self.write("function exportStar_1(m) {");
+        self.write_line();
+        self.increase_indent();
+        self.write("var exports = {};");
+        self.write_line();
+        self.write("for (var n in m) {");
+        self.write_line();
+        self.increase_indent();
+        if emit_exclusion_map {
+            self.write(
+                "if (n !== \"default\" && !exportedNames_1.hasOwnProperty(n)) exports[n] = m[n];",
+            );
+        } else {
+            self.write("if (n !== \"default\") exports[n] = m[n];");
+        }
+        self.write_line();
+        self.decrease_indent();
+        self.write("}");
+        self.write_line();
+        self.write("exports_1(exports);");
+        self.write_line();
+        self.decrease_indent();
+        self.write("}");
+        self.write_line();
+    }
+
+    fn collect_system_export_star_excluded_names(
+        &self,
+        source: &tsz_parser::parser::node::SourceFileData,
+    ) -> (Vec<String>, bool) {
+        let type_only_nodes = rustc_hash::FxHashSet::default();
+        let mut names = crate::transforms::module_commonjs::collect_export_names_with_options(
+            self.arena,
+            &source.statements.nodes,
+            self.ctx.options.preserve_const_enums,
+            &type_only_nodes,
+        );
+        let has_explicit_export_name = !names.is_empty();
+        names.retain(|name| name != "default");
+        let needs_empty_map = has_explicit_export_name
+            || self.source_has_system_hoisted_default_function_export(source);
+        (names, needs_empty_map)
+    }
+
+    fn source_has_system_hoisted_default_function_export(
+        &self,
+        source: &tsz_parser::parser::node::SourceFileData,
+    ) -> bool {
+        source.statements.nodes.iter().any(|&stmt_idx| {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                return false;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                return false;
+            }
+            let Some(export_decl) = self.arena.get_export_decl(stmt_node) else {
+                return false;
+            };
+            if !export_decl.is_default_export {
+                return false;
+            }
+            self.arena
+                .get(export_decl.export_clause)
+                .is_some_and(|clause_node| {
+                    clause_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                })
+        })
     }
 
     pub(super) fn register_system_import_substitutions(
@@ -288,6 +322,7 @@ impl<'a> Printer<'a> {
         let prev_module = self.ctx.options.module;
         let prev_auto_detect = self.ctx.auto_detect_module;
         let prev_original = self.ctx.original_module_kind;
+        let prev_jsx_dev_file_name = self.jsx_dev_file_name.clone();
 
         self.ctx.original_module_kind = Some(prev_module);
         self.ctx.options.module = ModuleKind::CommonJS;
@@ -298,12 +333,17 @@ impl<'a> Printer<'a> {
             self.ctx.options.module = prev_module;
             self.ctx.auto_detect_module = prev_auto_detect;
             self.ctx.original_module_kind = prev_original;
+            self.jsx_dev_file_name = prev_jsx_dev_file_name;
             self.in_system_execute_body = false;
             return;
         };
+        if matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev) {
+            self.jsx_dev_file_name = Some(system_jsx_dev_file_name(&source.file_name));
+        }
         self.register_system_import_substitutions(source, dep_vars, system_plan);
 
         let mut reexported_names: FxHashMap<String, String> = FxHashMap::default();
+        let mut reexported_name_lists: FxHashMap<String, Vec<String>> = FxHashMap::default();
         for &stmt_idx in &source.statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
@@ -316,7 +356,10 @@ impl<'a> Printer<'a> {
             {
                 for name in self.collect_variable_names(&var_stmt.declarations) {
                     if !name.is_empty() {
-                        reexported_names.entry(name.clone()).or_insert(name);
+                        reexported_names
+                            .entry(name.clone())
+                            .or_insert_with(|| name.clone());
+                        push_system_reexport_name(&mut reexported_name_lists, name.clone(), name);
                     }
                 }
                 continue;
@@ -338,7 +381,10 @@ impl<'a> Printer<'a> {
             {
                 for name in self.collect_variable_names(&var_stmt.declarations) {
                     if !name.is_empty() {
-                        reexported_names.entry(name.clone()).or_insert(name);
+                        reexported_names
+                            .entry(name.clone())
+                            .or_insert_with(|| name.clone());
+                        push_system_reexport_name(&mut reexported_name_lists, name.clone(), name);
                     }
                 }
                 continue;
@@ -359,12 +405,18 @@ impl<'a> Printer<'a> {
                     .unwrap_or_default();
                     let export_name = self.get_specifier_name_text(spec.name).unwrap_or_default();
                     if !local_name.is_empty() && !export_name.is_empty() {
-                        reexported_names.insert(local_name, export_name);
+                        reexported_names.insert(local_name.clone(), export_name.clone());
+                        push_system_reexport_name(
+                            &mut reexported_name_lists,
+                            local_name,
+                            export_name,
+                        );
                     }
                 }
             }
         }
         self.system_reexported_names = reexported_names;
+        self.system_reexported_name_lists = reexported_name_lists;
         self.system_folded_export_names.clear();
 
         if let Some(first_using_idx) = source.statements.nodes.iter().position(|&stmt_idx| {
@@ -381,6 +433,7 @@ impl<'a> Printer<'a> {
             self.ctx.options.module = prev_module;
             self.ctx.auto_detect_module = prev_auto_detect;
             self.ctx.original_module_kind = prev_original;
+            self.jsx_dev_file_name = prev_jsx_dev_file_name;
             self.in_system_execute_body = false;
             return;
         }
@@ -388,6 +441,17 @@ impl<'a> Printer<'a> {
         let prev_deferred_local_export_bindings = self
             .deferred_local_export_bindings
             .replace(self.system_reexported_names.clone());
+
+        if matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev) {
+            if let Some(file_name_text) = self.jsx_dev_file_name_text() {
+                let assignment = file_name_text
+                    .trim()
+                    .strip_prefix("const ")
+                    .unwrap_or(file_name_text.trim());
+                self.write(assignment);
+                self.write_line();
+            }
+        }
 
         for &stmt_idx in &source.statements.nodes {
             // Skip function declarations that were already hoisted to the outer scope
@@ -466,16 +530,18 @@ impl<'a> Printer<'a> {
                 if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION
                     && let Some(module_decl) = self.arena.get_module(stmt_node)
                 {
+                    if !self.is_instantiated_module(module_decl.body) {
+                        continue;
+                    }
                     let module_name = self.get_identifier_text_idx(module_decl.name);
                     if !module_name.is_empty() {
                         self.declared_namespace_names.insert(module_name.clone());
-                        if let Some(export_name) =
-                            self.system_reexported_names.get(&module_name).cloned()
-                        {
+                        let export_names = self.system_export_names_for_local(&module_name);
+                        if !export_names.is_empty() {
                             self.emit_system_namespace_with_export_fold(
                                 stmt_idx,
                                 &module_name,
-                                &export_name,
+                                export_names,
                             );
                             self.system_folded_export_names.insert(module_name);
                             continue;
@@ -488,13 +554,12 @@ impl<'a> Printer<'a> {
                     let enum_name = self.get_identifier_text_idx(enum_decl.name);
                     if !enum_name.is_empty() {
                         self.declared_namespace_names.insert(enum_name.clone());
-                        if let Some(export_name) =
-                            self.system_reexported_names.get(&enum_name).cloned()
-                        {
+                        let export_names = self.system_export_names_for_local(&enum_name);
+                        if !export_names.is_empty() {
                             self.emit_system_enum_with_export_fold(
                                 stmt_idx,
                                 &enum_name,
-                                &export_name,
+                                export_names,
                             );
                             self.write_line();
                             self.system_folded_export_names.insert(enum_name);
@@ -542,6 +607,7 @@ impl<'a> Printer<'a> {
         self.ctx.options.module = prev_module;
         self.ctx.auto_detect_module = prev_auto_detect;
         self.ctx.original_module_kind = prev_original;
+        self.jsx_dev_file_name = prev_jsx_dev_file_name;
         self.in_system_execute_body = false;
     }
 
@@ -809,7 +875,13 @@ impl<'a> Printer<'a> {
                     .get_class(stmt_node)
                     .and_then(|class| self.get_identifier_text_opt(class.name))
                     .and_then(|name| deferred_named_exports.get(&name).cloned());
-                self.emit_top_level_using_class_assignment(stmt_node, stmt_idx, export_name, false)
+                self.emit_top_level_using_class_assignment(
+                    stmt_node,
+                    stmt_idx,
+                    export_name,
+                    false,
+                    false,
+                )
             }
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                 let export_name = self
@@ -849,6 +921,7 @@ impl<'a> Printer<'a> {
                                 export.export_clause,
                                 Some(export_name),
                                 !export.is_default_export,
+                                false,
                             )
                         } else {
                             false
@@ -965,7 +1038,11 @@ impl<'a> Printer<'a> {
                     self.write(&env_name);
                     self.write(", ");
                     if decl.initializer.is_some() {
-                        self.emit(decl.initializer);
+                        if !self.try_emit_object_literal_es5_inline_computed_expression(
+                            decl.initializer,
+                        ) {
+                            self.emit(decl.initializer);
+                        }
                     } else {
                         self.write("void 0");
                     }
@@ -1218,25 +1295,72 @@ impl<'a> Printer<'a> {
             } else {
                 class_name
             };
+            let legacy_class_decorators = self.collect_class_decorators(&class_decl.modifiers);
+            if self.ctx.options.legacy_decorators
+                && (!legacy_class_decorators.is_empty()
+                    || !self
+                        .collect_constructor_param_decorators(&class_decl.members.nodes)
+                        .is_empty())
+            {
+                let alias_name = self.system_legacy_decorated_class_alias(
+                    export_decl.export_clause,
+                    &gen_name,
+                    &class_decl.members.nodes,
+                );
+                let emitted = self.capture_system_class_assignment(
+                    clause_node,
+                    export_decl.export_clause,
+                    &gen_name,
+                    alias_name.as_deref(),
+                );
+                let (class_part, static_tail) = split_system_class_static_tail(&emitted);
+                self.write(class_part.trim_start().trim_end());
+                if !self.output_ends_with_semicolon() {
+                    self.write(";");
+                }
+                self.write_line();
+                if !static_tail.trim().is_empty() {
+                    self.write(static_tail.trim());
+                    if !self.output_ends_with_semicolon() {
+                        self.write(";");
+                    }
+                    self.write_line();
+                }
+                let assignment = self.capture_system_legacy_class_decorator_assignment(
+                    &gen_name,
+                    &legacy_class_decorators,
+                    &class_decl.members.nodes,
+                    alias_name.as_deref(),
+                );
+                self.write(&assignment);
+                if !self.output_ends_with_semicolon() {
+                    self.write(";");
+                }
+                self.write_line();
+                self.write("exports_1(\"default\", ");
+                self.write(&gen_name);
+                self.write(");");
+                return true;
+            }
             self.write(&gen_name);
             self.write(" = ");
-            // Emit class as anonymous class expression
             self.anonymous_default_export_name = None;
-            self.defer_class_static_blocks = true;
-            self.deferred_class_static_blocks.clear();
-            self.emit_class_es6(clause_node, export_decl.export_clause);
-            self.defer_class_static_blocks = false;
-            let deferred = std::mem::take(&mut self.deferred_class_static_blocks);
+            let deferred = self.emit_system_class_expression_value(
+                clause_node,
+                export_decl.export_clause,
+                true,
+            );
             if !self.output_ends_with_semicolon() {
                 self.write(";");
             }
             self.write_line();
-            self.write("exports_1(\"default\", ");
-            self.write(&gen_name);
-            self.write(");");
+            // tsc emits static block IIFEs before the default export registration.
             if !deferred.is_empty() {
                 self.emit_static_block_iifes(deferred);
             }
+            self.write("exports_1(\"default\", ");
+            self.write(&gen_name);
+            self.write(");");
             return true;
         }
 
@@ -1260,14 +1384,72 @@ impl<'a> Printer<'a> {
             if class_name.is_empty() {
                 return false;
             }
+            let legacy_class_decorators = self.collect_class_decorators(&class_decl.modifiers);
+            let needs_legacy_class_decorate = self.ctx.options.legacy_decorators
+                && (!legacy_class_decorators.is_empty()
+                    || !self
+                        .collect_constructor_param_decorators(&class_decl.members.nodes)
+                        .is_empty());
+            let alias_name = needs_legacy_class_decorate
+                .then(|| {
+                    self.system_legacy_decorated_class_alias(
+                        export_decl.export_clause,
+                        &class_name,
+                        &class_decl.members.nodes,
+                    )
+                })
+                .flatten();
+            if needs_legacy_class_decorate {
+                // Defer static block IIFEs so we can emit exports_1 before them
+                self.defer_class_static_blocks = true;
+                self.deferred_class_static_blocks.clear();
+                let emitted = self.capture_system_class_assignment(
+                    clause_node,
+                    export_decl.export_clause,
+                    &class_name,
+                    alias_name.as_deref(),
+                );
+                self.defer_class_static_blocks = false;
+                let deferred = std::mem::take(&mut self.deferred_class_static_blocks);
+                let (class_part, static_tail) = split_system_class_static_tail(&emitted);
+                self.write(class_part.trim_start().trim_end());
+                if !self.output_ends_with_semicolon() {
+                    self.write(";");
+                }
+                self.write_line();
+                self.write("exports_1(\"");
+                self.write(&class_name);
+                self.write("\", ");
+                self.write(&class_name);
+                self.write(");");
+                if !static_tail.trim().is_empty() {
+                    self.write_line();
+                    self.write(static_tail.trim());
+                    if !self.output_ends_with_semicolon() {
+                        self.write(";");
+                    }
+                }
+                self.write_line();
+                self.emit_system_legacy_class_decorator_export(
+                    &class_name,
+                    &class_name,
+                    &legacy_class_decorators,
+                    &class_decl.members.nodes,
+                    alias_name.as_deref(),
+                );
+                if !deferred.is_empty() {
+                    self.emit_static_block_iifes(deferred);
+                }
+                return true;
+            }
+
             self.write(&class_name);
             self.write(" = ");
-            // Defer static block IIFEs so we can emit exports_1 before them
-            self.defer_class_static_blocks = true;
-            self.deferred_class_static_blocks.clear();
-            self.emit_class_es6(clause_node, export_decl.export_clause);
-            self.defer_class_static_blocks = false;
-            let deferred = std::mem::take(&mut self.deferred_class_static_blocks);
+            let deferred = self.emit_system_class_expression_value(
+                clause_node,
+                export_decl.export_clause,
+                true,
+            );
             if !self.output_ends_with_semicolon() {
                 self.write(";");
             }
@@ -1291,7 +1473,7 @@ impl<'a> Printer<'a> {
                 self.emit_system_enum_with_export_fold(
                     export_decl.export_clause,
                     &enum_name,
-                    &enum_name,
+                    vec![enum_name.clone()],
                 );
                 return true;
             }
@@ -1371,8 +1553,8 @@ impl<'a> Printer<'a> {
     fn emit_system_enum_with_export_fold(
         &mut self,
         enum_idx: NodeIndex,
-        enum_name: &str,
-        export_name: &str,
+        _enum_name: &str,
+        export_names: Vec<String>,
     ) {
         let mut enum_emitter = crate::transforms::EnumES5Emitter::new(self.arena);
         enum_emitter.set_indent_level(self.writer.indent_level());
@@ -1380,32 +1562,40 @@ impl<'a> Printer<'a> {
         if let Some(text) = self.source_text {
             enum_emitter.set_source_text(text);
         }
-        let mut output = enum_emitter.emit_enum(enum_idx);
-        let var_prefix = format!("var {enum_name};\n");
-        if output.starts_with(&var_prefix) {
-            output = output[var_prefix.len()..].to_string();
-        }
-        let from = format!("({enum_name} || ({enum_name} = {{}}))");
-        let to = format!("({enum_name} || (exports_1(\"{export_name}\", {enum_name} = {{}})))");
-        output = output.replacen(&from, &to, 1);
+        enum_emitter.set_emit_var_declaration(false);
+        enum_emitter.set_system_export_folds(export_names.iter().map(String::as_str));
+        let output = enum_emitter.emit_enum(enum_idx);
         self.write(output.trim_end_matches('\n').trim_start());
     }
 
     fn emit_system_namespace_with_export_fold(
         &mut self,
         stmt_idx: NodeIndex,
-        ns_name: &str,
-        export_name: &str,
+        _ns_name: &str,
+        export_names: Vec<String>,
     ) {
-        let start_pos = self.writer.len();
+        let before_len = self.writer.len();
+        let prev_system_fold = self
+            .pending_system_namespace_export_fold
+            .replace(export_names);
         self.emit(stmt_idx);
-        let output = self.writer.get_output()[start_pos..].to_string();
-        self.writer.truncate(start_pos);
-        let from = format!("({ns_name} || ({ns_name} = {{}}))");
-        let to = format!("({ns_name} || (exports_1(\"{export_name}\", {ns_name} = {{}})))");
-        let replaced = output.replacen(&from, &to, 1);
-        self.write(replaced.trim_end_matches('\n'));
-        self.write_line();
+        self.pending_system_namespace_export_fold = prev_system_fold;
+        if self.writer.len() > before_len && !self.writer.is_at_line_start() {
+            self.write_line();
+        }
+    }
+
+    fn system_export_names_for_local(&self, local_name: &str) -> Vec<String> {
+        if let Some(export_names) = self.system_reexported_name_lists.get(local_name)
+            && !export_names.is_empty()
+        {
+            return export_names.clone();
+        }
+        self.system_reexported_names
+            .get(local_name)
+            .cloned()
+            .map(|export_name| vec![export_name])
+            .unwrap_or_default()
     }
 
     pub(super) fn system_module_specifier_text(&self, specifier: NodeIndex) -> Option<String> {
@@ -1435,20 +1625,63 @@ impl<'a> Printer<'a> {
         }
         self.write(&class_name);
         self.write(" = ");
-        self.defer_class_static_blocks = true;
-        self.deferred_class_static_blocks.clear();
-        self.emit_class_es6(node, idx);
-        self.defer_class_static_blocks = false;
-        let deferred = std::mem::take(&mut self.deferred_class_static_blocks);
+        let deferred = self.emit_system_class_expression_value(node, idx, true);
         if !self.output_ends_with_semicolon() {
             self.write(";");
+        }
+        let legacy_class_decorators = self.collect_class_decorators(&class_decl.modifiers);
+        if self.ctx.options.legacy_decorators
+            && (!legacy_class_decorators.is_empty()
+                || !self
+                    .collect_constructor_param_decorators(&class_decl.members.nodes)
+                    .is_empty())
+        {
+            self.write_line();
+            self.emit_legacy_class_decorator_assignment(
+                &class_name,
+                &legacy_class_decorators,
+                false,
+                false,
+                false,
+                None,
+                &class_decl.members.nodes,
+            );
         }
         if !deferred.is_empty() {
             self.emit_static_block_iifes(deferred);
         }
     }
 
-    fn emit_system_variable_initializers(&mut self, node: &tsz_parser::parser::node::Node) {
+    fn emit_system_class_expression_value(
+        &mut self,
+        node: &tsz_parser::parser::node::Node,
+        idx: NodeIndex,
+        defer_es5_static_block_tail: bool,
+    ) -> Vec<(NodeIndex, usize)> {
+        if self.ctx.target_es5 {
+            if defer_es5_static_block_tail {
+                self.defer_class_static_blocks = true;
+                self.deferred_class_static_blocks.clear();
+            }
+            self.emit_class_expression_es5(idx);
+            if defer_es5_static_block_tail {
+                self.defer_class_static_blocks = false;
+                return std::mem::take(&mut self.deferred_class_static_blocks);
+            }
+            return Vec::new();
+        }
+
+        self.defer_class_static_blocks = true;
+        self.deferred_class_static_blocks.clear();
+        self.emit_class_es6(node, idx);
+        self.defer_class_static_blocks = false;
+        std::mem::take(&mut self.deferred_class_static_blocks)
+    }
+
+    pub(in crate::emitter) fn emit_system_variable_initializers(
+        &mut self,
+        node: &tsz_parser::parser::node::Node,
+    ) {
         let Some(var_stmt) = self.arena.get_variable(node) else {
             return;
         };
@@ -1543,6 +1776,9 @@ impl<'a> Printer<'a> {
         if name_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN {
             return false;
         }
+        if is_exported && self.emit_system_object_rest_export_initializer(decl) {
+            return true;
+        }
         let Some(pattern) = self.arena.get_binding_pattern(name_node) else {
             return false;
         };
@@ -1619,374 +1855,17 @@ impl<'a> Printer<'a> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::emitter::{ModuleKind, Printer, PrinterOptions};
-    use tsz_common::ScriptTarget;
-    use tsz_parser::ParserState;
-
-    /// `/// <reference .../>` directives should be stripped from JS output.
-    /// tsc never emits these in JS — they are only preserved in .d.ts files.
-    #[test]
-    fn amd_reference_directive_absolute_path_preserved() {
-        // References with absolute paths (like JSX lib references) should be
-        // emitted before the AMD wrapper, matching tsc behavior.
-        let source = r#"/// <reference path="/.lib/react.d.ts" />
-import * as React from "react";
-export const Foo = () => null;
-"#;
-        let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let options = PrinterOptions {
-            module: ModuleKind::AMD,
-            ..Default::default()
-        };
-        let mut printer = Printer::with_options(&parser.arena, options);
-        printer.set_source_text(source);
-        printer.emit(root);
-        let output = printer.get_output().to_string();
-
-        assert!(
-            output.starts_with("/// <reference path=\"/.lib/react.d.ts\" />"),
-            "Absolute-path reference should be emitted before AMD wrapper.\nOutput:\n{output}"
-        );
-        assert!(
-            output.contains("define("),
-            "Output should still contain the AMD define() call.\nOutput:\n{output}"
-        );
+fn system_jsx_dev_file_name(file_name: &str) -> String {
+    let normalized = file_name.replace('\\', "/");
+    if let Some(src_start) = normalized.find("/.src/") {
+        return normalized[src_start..].to_string();
     }
-
-    /// AMD wrappers should strip relative declaration-file `/// <reference>` directives.
-    #[test]
-    fn amd_reference_directive_relative_dts_path_stripped() {
-        let source = r#"/// <reference path="file1.d.ts" />
-import { x } from "mod";
-export const y = x;
-"#;
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let options = PrinterOptions {
-            module: ModuleKind::AMD,
-            ..Default::default()
-        };
-        let mut printer = Printer::with_options(&parser.arena, options);
-        printer.set_source_text(source);
-        printer.emit(root);
-        let output = printer.get_output().to_string();
-
-        assert!(
-            !output.contains("/// <reference"),
-            "Relative .d.ts reference should be stripped from AMD JS output.\nOutput:\n{output}"
-        );
-        assert!(
-            output.contains("define("),
-            "Output should still contain the AMD define() call.\nOutput:\n{output}"
-        );
+    if let Some(stripped) = normalized.strip_prefix(".src/") {
+        return format!("/.src/{stripped}");
     }
-
-    #[test]
-    fn amd_reference_directive_for_bang_module_preserved() {
-        let declarations = r#"declare module "http" {
-}
-
-declare module 'intern/dojo/node!http' {
-    import http = require('http');
-    export = http;
-}
-"#;
-        let source = r#"/// <reference path="a.d.ts"/>
-
-import * as http from 'intern/dojo/node!http';
-"#;
-        let mut parser = ParserState::new("a.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-        let mut declaration_file = parser.arena.source_files[0].clone();
-        declaration_file.file_name = "a.d.ts".to_string();
-        declaration_file.text = std::sync::Arc::from(declarations);
-        declaration_file.is_declaration_file = true;
-        parser.arena.source_files.push(declaration_file);
-
-        let options = PrinterOptions {
-            module: ModuleKind::AMD,
-            ..Default::default()
-        };
-        let mut printer = Printer::with_options(&parser.arena, options);
-        printer.set_source_text(source);
-        printer.emit(root);
-        let output = printer.get_output().to_string();
-
-        assert!(
-            output.starts_with("/// <reference path=\"a.d.ts\"/>"),
-            "Bang module declaration reference should be emitted before AMD wrapper.\nOutput:\n{output}"
-        );
-        assert!(
-            output.contains("define("),
-            "Output should still contain the AMD define() call.\nOutput:\n{output}"
-        );
-    }
-
-    /// UMD wrappers should also strip `/// <reference>` directives from JS output.
-    #[test]
-    fn umd_reference_directive_stripped_from_output() {
-        let source = r#"/// <reference path="lib.d.ts" />
-import { x } from "mod";
-export const y = x;
-"#;
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let options = PrinterOptions {
-            module: ModuleKind::UMD,
-            ..Default::default()
-        };
-        let mut printer = Printer::with_options(&parser.arena, options);
-        printer.set_source_text(source);
-        printer.emit(root);
-        let output = printer.get_output().to_string();
-
-        assert!(
-            !output.contains("/// <reference"),
-            "Reference directives should be stripped from JS output.\nOutput:\n{output}"
-        );
-        assert!(
-            output.contains("(function (factory)"),
-            "Output should still contain the UMD wrapper.\nOutput:\n{output}"
-        );
-    }
-
-    #[test]
-    fn system_top_level_using_named_export_keeps_legacy_decorator_assignment_export() {
-        let source = "export {};\ndeclare var dec: any;\n@dec\nclass C {}\nexport { C as D };\nusing after = null;\n";
-
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut printer = Printer::with_options(
-            &parser.arena,
-            PrinterOptions {
-                module: ModuleKind::System,
-                legacy_decorators: true,
-                target: ScriptTarget::ES2015,
-                ..Default::default()
-            },
-        );
-        printer.set_source_text(source);
-        printer.emit(root);
-        let output = printer.get_output().to_string();
-
-        assert!(
-            output.contains("exports_1(\"D\", C);"),
-            "System named export should preserve the pre-export before __decorate.\nOutput:\n{output}"
-        );
-        assert!(
-            output.contains("exports_1(\"D\", C = __decorate(["),
-            "System named export should wrap the legacy decorator reassignment directly.\nOutput:\n{output}"
-        );
-        assert!(
-            !output.contains("exports_1(\"D\", C);\n            C = __decorate(["),
-            "System named export should not split the export from the __decorate reassignment.\nOutput:\n{output}"
-        );
-    }
-
-    #[test]
-    fn system_top_level_using_direct_exported_legacy_class_stays_inline() {
-        let source =
-            "export {};\ndeclare var dec: any;\nusing before = null;\n@dec\nexport class C {}\n";
-
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut printer = Printer::with_options(
-            &parser.arena,
-            PrinterOptions {
-                module: ModuleKind::System,
-                legacy_decorators: true,
-                target: ScriptTarget::ES2015,
-                ..Default::default()
-            },
-        );
-        printer.set_source_text(source);
-        printer.emit(root);
-        let output = printer.get_output().to_string();
-
-        assert!(
-            output.contains("exports_1(\"C\", C = class C {"),
-            "System top-level using should keep direct legacy-decorated class exports inline.\nOutput:\n{output}"
-        );
-        assert!(
-            output.contains("exports_1(\"C\", C = __decorate(["),
-            "System top-level using should preserve the exported legacy decorator reassignment.\nOutput:\n{output}"
-        );
-        assert!(
-            !output.contains("});\n                exports_1(\"C\", C);"),
-            "System top-level using should not split direct legacy class exports into a trailing export statement.\nOutput:\n{output}"
-        );
-    }
-
-    #[test]
-    fn system_top_level_using_env_hoists_before_later_nested_var() {
-        let source = "export { y };\nusing z = null;\nif (false) {\n    var y = 1;\n}\n";
-
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut printer = Printer::with_options(
-            &parser.arena,
-            PrinterOptions {
-                module: ModuleKind::System,
-                target: ScriptTarget::ES2022,
-                ..Default::default()
-            },
-        );
-        printer.set_source_text(source);
-        printer.emit(root);
-        let output = printer.get_output().to_string();
-
-        assert!(
-            output.contains("var z, env_1, y;"),
-            "System top-level using should place the disposable environment before later nested var hoists.\nOutput:\n{output}"
-        );
-    }
-
-    #[test]
-    fn system_exported_object_binding_initializer_assigns_and_exports_hoisted_name() {
-        let source = "export let { toString } = 1;\n{\n    let { toFixed } = 1;\n}\n";
-
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut printer = Printer::with_options(
-            &parser.arena,
-            PrinterOptions {
-                module: ModuleKind::System,
-                target: ScriptTarget::ES2015,
-                ..Default::default()
-            },
-        );
-        printer.set_source_text(source);
-        printer.emit(root);
-        let output = printer.get_output().to_string();
-
-        assert!(
-            output.contains("var toString;"),
-            "System wrapper should hoist the exported binding name.\nOutput:\n{output}"
-        );
-        assert!(
-            output.contains("exports_1(\"toString\", toString = 1..toString);"),
-            "System wrapper should export the destructuring assignment value.\nOutput:\n{output}"
-        );
-        assert!(
-            output.contains("let { toFixed } = 1;"),
-            "Nested block-scoped destructuring should remain a declaration.\nOutput:\n{output}"
-        );
-    }
-
-    #[test]
-    fn system_object_binding_initializer_assigns_hoisted_name() {
-        let source = "let { toString } = 1;\n{\n    let { toFixed } = 1;\n}\nexport {};\n";
-
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut printer = Printer::with_options(
-            &parser.arena,
-            PrinterOptions {
-                module: ModuleKind::System,
-                target: ScriptTarget::ES2015,
-                ..Default::default()
-            },
-        );
-        printer.set_source_text(source);
-        printer.emit(root);
-        let output = printer.get_output().to_string();
-
-        assert!(
-            output.contains("var toString;"),
-            "System wrapper should hoist the binding name.\nOutput:\n{output}"
-        );
-        assert!(
-            output.contains("toString = 1..toString;"),
-            "System wrapper should initialize the hoisted binding from the object property.\nOutput:\n{output}"
-        );
-        assert!(
-            !output.contains("exports_1(\"toString\""),
-            "Non-exported binding should not be exported.\nOutput:\n{output}"
-        );
-        assert!(
-            output.contains("let { toFixed } = 1;"),
-            "Nested block-scoped destructuring should remain a declaration.\nOutput:\n{output}"
-        );
-    }
-
-    /// Imports whose only textual references are to a type alias or
-    /// interface of the same name must NOT be retained as runtime imports
-    /// just because their `PascalCase` name appears as the return type of
-    /// an async function under ES5. Mirrors the existing guard in
-    /// `extract_awaiter_promise_constructor`.
-    /// Devin review: <https://github.com/mohsen1/tsz/pull/2314#discussion_r3176824619>
-    #[test]
-    fn amd_es5_type_alias_named_like_import_does_not_force_retention() {
-        // The source declares a type alias `Foo` AND imports a value named `Foo`.
-        // The async function's return type is `Foo`, but `Foo` is a type alias
-        // here, so the import should still be elided (no runtime usage).
-        let source = r#"import { Foo } from "lib";
-type Foo = string;
-async function f(): Foo { return "" as any; }
-"#;
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let options = PrinterOptions {
-            module: ModuleKind::AMD,
-            target: ScriptTarget::ES5,
-            ..Default::default()
-        };
-        let mut printer = Printer::with_options(&parser.arena, options);
-        printer.set_source_text(source);
-        printer.emit(root);
-        let output = printer.get_output().to_string();
-
-        // The AMD dependency list / require call should NOT include "lib"
-        // because the only "use" of `Foo` was as a type position. The buggy
-        // version falsely treated the type alias as a Promise constructor
-        // and kept the import.
-        assert!(
-            !output.contains("\"lib\""),
-            "AMD wrapper should not keep `lib` import when the only use of `Foo` is as a type alias.\nOutput:\n{output}"
-        );
-    }
-
-    /// JSX factory imports must not be elided by the AMD/System helper-emission
-    /// usage check, even when the factory name doesn't textually appear in the
-    /// source (JSX elements reference it implicitly).
-    /// Devin review: <https://github.com/mohsen1/tsz/pull/2295#discussion_r3176647570>
-    #[test]
-    fn amd_jsx_factory_default_import_kept_in_helpers_check() {
-        use crate::emitter::JsxEmit;
-        let source = r#"import React from "react";
-export const Foo = () => <div/>;
-"#;
-        let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let options = PrinterOptions {
-            module: ModuleKind::AMD,
-            jsx: JsxEmit::React,
-            ..Default::default()
-        };
-        let mut printer = Printer::with_options(&parser.arena, options);
-        printer.set_source_text(source);
-        printer.emit(root);
-        let output = printer.get_output().to_string();
-
-        // The default-import factory ("React") has no textual value usage
-        // (only JSX), but because it is a JSX factory we must keep the
-        // __importDefault helper definition emitted in the AMD wrapper.
-        assert!(
-            output.contains("__importDefault"),
-            "AMD wrapper should still emit __importDefault helper for JSX factory `React` even without textual value usage.\nOutput:\n{output}"
-        );
-    }
+    normalized
+        .rsplit('/')
+        .next()
+        .unwrap_or(normalized.as_str())
+        .to_string()
 }

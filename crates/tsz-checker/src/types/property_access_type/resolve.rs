@@ -13,6 +13,8 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+use tsz_solver::computation::TypeResolver;
+use tsz_solver::narrowing::CachedPropertyType;
 
 impl<'a> CheckerState<'a> {
     /// Inner implementation of property access type resolution.
@@ -57,6 +59,18 @@ impl<'a> CheckerState<'a> {
             // Preserve diagnostics on the base expression when member name is missing.
             let _ = self.get_type_of_node(access.expression);
             return TypeId::ERROR;
+        }
+        let optional_property_chain_cache_key =
+            self.optional_property_chain_cache_key(idx, request);
+        if let Some(key) = optional_property_chain_cache_key.as_ref()
+            && let Some(&cached) = self
+                .ctx
+                .narrowing_cache
+                .optional_property_chain_cache
+                .borrow()
+                .get(key)
+        {
+            return cached;
         }
 
         if let Some(type_id) = self.partial_object_literal_initializer_property_type(
@@ -114,6 +128,9 @@ impl<'a> CheckerState<'a> {
                 access.expression,
                 &base_ident.escaped_text,
             )
+            && self
+                .local_current_file_value_symbol_named(&base_ident.escaped_text)
+                .is_none()
         {
             if self.is_heritage_type_only_context(access.expression)
                 || self.is_in_ambient_computed_property_context()
@@ -181,6 +198,9 @@ impl<'a> CheckerState<'a> {
                 access.expression,
                 &base_ident.escaped_text,
             )
+            && self
+                .local_current_file_value_symbol_named(&base_ident.escaped_text)
+                .is_none()
         {
             self.report_wrong_meaning_diagnostic(
                 &base_ident.escaped_text,
@@ -199,6 +219,51 @@ impl<'a> CheckerState<'a> {
             skip_flow_narrowing,
         ) {
             return result;
+        }
+
+        if let Some(base_ident) = self.ctx.arena.get_identifier_at(access.expression)
+            && let Some(prop_ident) = self.ctx.arena.get_identifier(name_node)
+            && self
+                .ctx
+                .import_conflict_names
+                .contains(&base_ident.escaped_text)
+            && let Some(namespace_sym_id) = self
+                .ctx
+                .binder
+                .get_symbols()
+                .find_all_by_name(&base_ident.escaped_text)
+                .iter()
+                .copied()
+                .find(|&candidate_id| {
+                    self.ctx
+                        .binder
+                        .get_symbol(candidate_id)
+                        .is_some_and(|candidate| {
+                            candidate.has_any_flags(symbol_flags::MODULE)
+                                && candidate.declarations.iter().copied().any(|decl_idx| {
+                                    self.ctx.arena.get(decl_idx).is_some_and(|node| {
+                                        node.kind == syntax_kind_ext::MODULE_DECLARATION
+                                    })
+                                })
+                        })
+                })
+        {
+            let namespace_type = self.get_type_of_symbol(namespace_sym_id);
+            match self.resolve_property_access_with_env(namespace_type, &prop_ident.escaped_text) {
+                PropertyAccessResult::Success { type_id, .. }
+                | PropertyAccessResult::PossiblyNullOrUndefined {
+                    property_type: Some(type_id),
+                    ..
+                } => {
+                    return self.finalize_property_access_result(
+                        idx,
+                        type_id,
+                        skip_flow_narrowing,
+                        false,
+                    );
+                }
+                _ => {}
+            }
         }
 
         // Get the type of the object.
@@ -404,6 +469,27 @@ impl<'a> CheckerState<'a> {
         } else {
             object_type
         };
+        if let Some(receiver_ident) = self.ctx.arena.get_identifier_at(access.expression)
+            && let Some(prop_ident) = self.ctx.arena.get_identifier(name_node)
+            && matches!(
+                self.resolve_property_access_with_env(object_type, &prop_ident.escaped_text),
+                PropertyAccessResult::PropertyNotFound { .. } | PropertyAccessResult::IsUnknown
+            )
+            && let Some(value_sym_id) =
+                self.local_current_file_value_symbol_named(&receiver_ident.escaped_text)
+            && let Some(value_symbol) = self.ctx.binder.get_symbol(value_sym_id)
+            && value_symbol.value_declaration.is_some()
+            && let Some(value_node) = self.ctx.arena.get(value_symbol.value_declaration)
+            && let Some(var_decl) = self.ctx.arena.get_variable_declaration(value_node)
+            && var_decl.initializer.is_some()
+            && let Some(literal_type) = self.literal_type_from_initializer(var_decl.initializer)
+            && !matches!(
+                self.resolve_property_access_with_env(literal_type, &prop_ident.escaped_text),
+                PropertyAccessResult::PropertyNotFound { .. } | PropertyAccessResult::IsUnknown
+            )
+        {
+            object_type = literal_type;
+        }
         let (receiver_start, receiver_end) = self
             .ctx
             .arena
@@ -489,6 +575,11 @@ impl<'a> CheckerState<'a> {
             && !self.is_super_expression(access.expression)
         {
             let property_name = &ident.escaped_text;
+            let prop_atom = if ident.atom != tsz_common::interner::Atom::none() {
+                ident.atom
+            } else {
+                self.ctx.types.intern_string(property_name)
+            };
 
             // TOP-LEVEL CACHE: check the dedicated optional_chain_cache first.
             // This is keyed by (object_type_with_nullish, prop_atom) and stores
@@ -497,25 +588,24 @@ impl<'a> CheckerState<'a> {
             // and union2 — eliminating 4+ RefCell borrows and HashMap lookups.
             // Only used when flow narrowing is skipped (skip_result_flow_for_result),
             // which guarantees the result is context-independent.
-            if skip_result_flow_for_result {
-                let oc_atom = if ident.atom != tsz_common::interner::Atom::none() {
-                    ident.atom
-                } else {
-                    self.ctx.types.intern_string(property_name)
-                };
-                if let Some(&cached) = self
+            if skip_result_flow_for_result
+                && let Some(&cached) = self
                     .ctx
                     .narrowing_cache
                     .optional_chain_cache
                     .borrow()
-                    .get(&(object_type, oc_atom))
-                {
-                    return cached;
-                }
+                    .get(&(object_type, prop_atom))
+            {
+                return cached;
             }
 
             let (non_nullish_base, base_nullish) = self.split_nullish_type(object_type);
             let Some(non_nullish_base) = non_nullish_base else {
+                self.error_property_not_exist_at(
+                    property_name,
+                    TypeId::NEVER,
+                    access.name_or_argument,
+                );
                 return TypeId::UNDEFINED;
             };
 
@@ -525,29 +615,22 @@ impl<'a> CheckerState<'a> {
                 .is_none()
             {
                 let resolved_base = self.resolve_type_for_property_access(non_nullish_base);
-                // PERF: Reuse the pre-interned atom from the identifier when available,
-                // avoiding a DashMap lookup in intern_string on every property access.
-                let prop_atom = if ident.atom != tsz_common::interner::Atom::none() {
-                    ident.atom
-                } else {
-                    self.ctx.types.intern_string(property_name)
-                };
+                let resolver_generation = TypeResolver::resolver_generation(&self.ctx);
+                let cache_key = |base, name| (base, resolver_generation, name);
 
-                // property_cache stores Option<TypeId>: Some(id) = resolved type,
-                // None = property not found (fall through for TS2339 diagnostics).
                 let cached_property_type = self
                     .ctx
                     .narrowing_cache
                     .property_cache
                     .borrow()
-                    .get(&(resolved_base, prop_atom))
+                    .get(&cache_key(resolved_base, prop_atom))
                     .copied();
-                if let Some(Some(type_id)) = cached_property_type {
+                if let Some(Some(entry)) = cached_property_type {
                     let mut result_type = self.refine_expando_property_read_type(
                         idx,
                         access.expression,
                         property_name,
-                        type_id,
+                        entry.type_id,
                     );
                     if base_nullish.is_some()
                         && !crate::query_boundaries::common::type_contains_undefined(
@@ -618,11 +701,13 @@ impl<'a> CheckerState<'a> {
                                 property_name,
                                 type_id,
                             );
-                            self.ctx
-                                .narrowing_cache
-                                .property_cache
-                                .borrow_mut()
-                                .insert((resolved_base, prop_atom), Some(refined_type_id));
+                            self.ctx.narrowing_cache.property_cache.borrow_mut().insert(
+                                cache_key(resolved_base, prop_atom),
+                                Some(CachedPropertyType::new(
+                                    refined_type_id,
+                                    from_index_signature,
+                                )),
+                            );
                             let mut result_type =
                                 effective_write_result(refined_type_id, write_type);
                             if base_nullish.is_some()
@@ -633,6 +718,20 @@ impl<'a> CheckerState<'a> {
                             {
                                 result_type = factory.union2(result_type, TypeId::UNDEFINED);
                             }
+                            if skip_result_flow_for_result {
+                                self.ctx
+                                    .narrowing_cache
+                                    .optional_chain_cache
+                                    .borrow_mut()
+                                    .insert((object_type, prop_atom), result_type);
+                            }
+                            if let Some(key) = optional_property_chain_cache_key.as_ref() {
+                                self.ctx
+                                    .narrowing_cache
+                                    .optional_property_chain_cache
+                                    .borrow_mut()
+                                    .insert(key.clone(), result_type);
+                            }
                             return self.finalize_property_access_result(
                                 idx,
                                 result_type,
@@ -642,11 +741,10 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                     PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
-                        self.ctx
-                            .narrowing_cache
-                            .property_cache
-                            .borrow_mut()
-                            .insert((resolved_base, prop_atom), property_type);
+                        self.ctx.narrowing_cache.property_cache.borrow_mut().insert(
+                            cache_key(resolved_base, prop_atom),
+                            property_type.map(CachedPropertyType::explicit),
+                        );
                         let mut result_type = property_type.unwrap_or(TypeId::ERROR);
                         if base_nullish.is_some()
                             && !crate::query_boundaries::common::type_contains_undefined(
@@ -668,7 +766,7 @@ impl<'a> CheckerState<'a> {
                             .narrowing_cache
                             .property_cache
                             .borrow_mut()
-                            .insert((resolved_base, prop_atom), None);
+                            .insert(cache_key(resolved_base, prop_atom), None);
                         // Fall through to full diagnostic path.
                     }
                     PropertyAccessResult::IsUnknown => {
@@ -999,6 +1097,15 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
+        if self.report_declared_intersection_access_on_invalid_receiver(
+            object_type,
+            access.expression,
+            access.name_or_argument,
+            access.name_or_argument,
+        ) {
+            return TypeId::ERROR;
+        }
+
         // Don't report errors for any/error types - check BEFORE accessibility
         // to prevent cascading errors when the object type is already invalid
         if object_type == TypeId::ANY {
@@ -1008,36 +1115,22 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR; // Return ERROR instead of ANY to expose type errors
         }
 
-        // Property access on `never` emits TS2339 and returns `error` type.
+        // Property access on `never` emits TS2339 and returns an any-like
+        // fallback. This preserves tsc's follow-on TS2322 when the failed
+        // access is assigned to `never`.
         // In TypeScript, `never` has no properties — accessing any property is an error.
-        // Returning `error` (not `never`) matches tsc behavior: when a property doesn't
-        // exist, tsc returns `errorType` which suppresses cascading diagnostics (e.g.
-        // TS2322 on `ab.y = 'hello'` when `ab: never`).
-        // Also handle intersections that contain `never` (e.g., when mixin classes have
-        // conflicting private members that reduce the intersection to `never`).
+        // Also handle intersections that contain `never`.
         if object_type == TypeId::NEVER
             || access_query::contains_never_type(self.ctx.types, object_type)
         {
-            if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                let property_name = &ident.escaped_text;
-                // tsc emits TS2339 on property access against `never` even when
-                // the property exists on the un-narrowed declared receiver —
-                // the narrowed type is `never`, the code is unreachable, so the
-                // property genuinely doesn't exist on the value at this point.
-                // The earlier blanket suppression hid the diagnostic for type-
-                // predicate / typeof narrowing chains that exhaust a union to
-                // never (e.g. `instanceofWithStructurallyIdenticalTypes`).
-                let suppress_declared_intersection_access = self
-                    .declared_intersection_receiver_has_property(access.expression, property_name);
-                if !property_name.starts_with('#') && !suppress_declared_intersection_access {
-                    self.error_property_not_exist_at(
-                        property_name,
-                        TypeId::NEVER,
-                        access.name_or_argument,
-                    );
-                }
-            }
-            return TypeId::ERROR;
+            let Some(receiver) = self.declared_intersection_receiver_for_never_access(
+                access.expression,
+                access.name_or_argument,
+                access.name_or_argument,
+            ) else {
+                return TypeId::ANY;
+            };
+            object_type = receiver;
         }
 
         // Enforce private/protected access modifiers when possible.
@@ -1156,6 +1249,30 @@ impl<'a> CheckerState<'a> {
                         );
                     }
                 }
+            }
+
+            if let Some(base_sym_id) = self.resolve_identifier_symbol(access.expression)
+                && let Some(base_symbol) = self.ctx.binder.get_symbol(base_sym_id)
+                && base_symbol.has_any_flags(symbol_flags::ALIAS)
+                && let Some(decl_node) = self.ctx.arena.get(base_symbol.value_declaration)
+                && decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                && let Some(import_decl) = self.ctx.arena.get_import_decl(decl_node)
+                && let Some(module_specifier) =
+                    self.get_require_module_specifier(import_decl.module_specifier)
+                && let Some(surface) = self.resolve_js_export_surface_for_module(
+                    &module_specifier,
+                    Some(self.ctx.current_file_idx),
+                )
+                && surface.has_commonjs_exports
+                && let Some(member_type) =
+                    surface.lookup_named_export(property_name, self.ctx.types)
+            {
+                return self.finalize_property_access_result(
+                    idx,
+                    member_type,
+                    skip_flow_narrowing,
+                    false,
+                );
             }
 
             let enum_instance_like_access = self
@@ -1544,7 +1661,6 @@ impl<'a> CheckerState<'a> {
             if object_type_for_access == TypeId::ERROR {
                 return TypeId::ERROR; // Return ERROR instead of ANY to expose type errors
             }
-
             // In write context (skip_flow_narrowing), skip this shortcut:
             // resolve_namespace_value_member returns the symbol's read type, which
             // doesn't account for divergent getter/setter types. The full property
@@ -1610,6 +1726,23 @@ impl<'a> CheckerState<'a> {
             // primitive types, and other lib-registered types are available.
             let mut result =
                 self.resolve_property_access_with_env(object_type_for_access, property_name);
+            let direct_class_this_receiver = self.is_this_expression(access.expression)
+                && (self.ctx.enclosing_class.is_some()
+                    || self.nearest_enclosing_class(access.expression).is_some())
+                && !self.is_this_in_nested_function_inside_class(idx)
+                && !self.is_this_in_static_class_member(idx);
+            if matches!(result, PropertyAccessResult::PropertyNotFound { .. })
+                && direct_class_this_receiver
+                && let Some(member_type) =
+                    self.direct_this_class_member_declared_type(property_name)
+            {
+                return self.finalize_property_access_result(
+                    idx,
+                    member_type,
+                    skip_flow_narrowing,
+                    false,
+                );
+            }
             // Flow predicate narrowing can produce unions/intersections like
             // `C2 | (C2 & C1)` or `(D1 & C2) | (D1 & C1)`. Looking up properties
             // directly on those unevaluated shells may fall back to a bare `any`.
@@ -1652,6 +1785,7 @@ impl<'a> CheckerState<'a> {
                     write_type,
                     from_index_signature,
                 } => {
+                    let mut used_class_chain_method_type = false;
                     if property_name == "exports"
                         && prop_type == TypeId::ANY
                         && self.is_js_file()
@@ -1663,6 +1797,22 @@ impl<'a> CheckerState<'a> {
                         )
                     {
                         return self.current_file_commonjs_module_exports_namespace_type();
+                    }
+
+                    // Recover inherited methods from the class chain when early
+                    // initializer checking runs before `ctx.enclosing_class` is active.
+                    if direct_class_this_receiver
+                        && self.ctx.enclosing_class.is_none()
+                        && let Some(class_idx) = self.nearest_enclosing_class(access.expression)
+                    {
+                        let summary = self.summarize_class_chain(class_idx);
+                        if summary.member_kind(property_name, false, true)
+                            == Some(ClassMemberKind::MethodLike)
+                            && let Some(member_info) = summary.lookup(property_name, false, true)
+                        {
+                            prop_type = member_info.type_id;
+                            used_class_chain_method_type = true;
+                        }
                     }
 
                     // A bare type-parameter receiver can fall back to `any` here
@@ -1700,29 +1850,28 @@ impl<'a> CheckerState<'a> {
                         return TypeId::ERROR;
                     }
 
-                    let direct_class_this_receiver = self.is_this_expression(access.expression)
-                        && self.ctx.enclosing_class.is_some()
-                        && !self.is_this_in_nested_function_inside_class(idx)
-                        && !self.is_this_in_static_class_member(idx);
-                    if direct_class_this_receiver
-                        && let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
-                            self.ctx.types,
+                    if let Some((recovered_type, recovered_method)) = self
+                        .recover_direct_this_class_chain_member(
+                            direct_class_this_receiver,
+                            used_class_chain_method_type,
+                            access.expression,
+                            property_name,
+                            prop_type,
                             object_type_for_access,
-                        )
-                        && let Some(raw_prop) = shape.properties.iter().find(|prop| {
-                            self.ctx.types.resolve_atom_ref(prop.name).as_ref()
-                                == property_name.as_str()
-                        })
-                        && crate::query_boundaries::common::contains_this_type(
-                            self.ctx.types,
-                            raw_prop.type_id,
+                            original_object_type,
                         )
                     {
-                        prop_type = crate::query_boundaries::common::substitute_this_type(
-                            self.ctx.types,
-                            raw_prop.type_id,
-                            self.ctx.types.this_type(),
-                        );
+                        prop_type = recovered_type;
+                        used_class_chain_method_type = recovered_method;
+                    }
+
+                    if let Some(recovered_type) = self.substitute_direct_this_property_shape_type(
+                        direct_class_this_receiver,
+                        used_class_chain_method_type,
+                        object_type_for_access,
+                        property_name,
+                    ) {
+                        prop_type = recovered_type;
                     }
 
                     // Substitute polymorphic `this` type with the receiver type.
@@ -1760,7 +1909,7 @@ impl<'a> CheckerState<'a> {
                             prop_type,
                             this_substitution_target,
                         );
-                    } else {
+                    } else if !used_class_chain_method_type {
                         // When a method returns `this` on an intersection member,
                         // the solver's object visitor eagerly binds `this` to the
                         // structural (flattened) object — so `contains_this_type`
@@ -1857,6 +2006,16 @@ impl<'a> CheckerState<'a> {
                         );
                         return TypeId::ERROR;
                     }
+                    if self.report_loop_widened_receiver_property_error(
+                        idx,
+                        access,
+                        property_name,
+                        object_type,
+                        prop_type,
+                        skip_flow_narrowing,
+                    ) {
+                        return TypeId::ERROR;
+                    }
                     // When in a write context (assignment target), use the setter
                     // type if the property has divergent getter/setter types.
                     let effective_type = effective_write_result(prop_type, write_type);
@@ -1934,8 +2093,11 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
-                    let resolved_class_access =
-                        self.resolve_class_for_access(access.expression, object_type_for_access);
+                    let (resolved_class_access, current_class_member_initializer_receiver) = self
+                        .resolve_class_access_with_current_member_initializer_recovery(
+                            access.expression,
+                            object_type_for_access,
+                        );
                     let mut class_chain_summary = None;
                     let static_this_member_context = is_this_access
                         && (self
@@ -2056,6 +2218,15 @@ impl<'a> CheckerState<'a> {
                             false,
                         );
                     }
+                    if let Some(result) = self.resolve_mixin_static_member_property_access(
+                        idx,
+                        access.expression,
+                        object_type_for_access,
+                        property_name,
+                        skip_flow_narrowing,
+                    ) {
+                        return result;
+                    }
                     if let Some((class_idx, is_static_access)) = resolved_class_access
                         && !is_static_access
                         && let Some(interface_type) = self
@@ -2068,20 +2239,10 @@ impl<'a> CheckerState<'a> {
                             false,
                         );
                     }
-                    if class_chain_summary.is_none()
-                        && self.property_access_is_current_class_construction_recovery(
-                            access.expression,
-                            object_type_for_access,
-                        )
-                        && let Some((class_idx, _)) = resolved_class_access
-                    {
-                        class_chain_summary = Some(self.summarize_class_chain(class_idx));
-                    }
                     if let Some(member_type) = self.recover_property_from_class_chain_summary(
-                        access.expression,
-                        object_type_for_access,
+                        current_class_member_initializer_receiver,
                         resolved_class_access,
-                        class_chain_summary.as_deref(),
+                        &mut class_chain_summary,
                         property_name,
                     ) {
                         return self.finalize_property_access_result(
@@ -2424,11 +2585,12 @@ impl<'a> CheckerState<'a> {
                     let in_circular_computed_property =
                         self.ctx.checking_computed_property_name.is_some()
                             && !self.ctx.class_instance_resolution_set.is_empty();
-                    let in_current_class_construction = self
-                        .property_access_is_current_class_construction_recovery(
-                            access.expression,
-                            display_object_type,
-                        );
+                    let in_current_class_construction = self.has_recoverable_current_class_member(
+                        current_class_member_initializer_receiver,
+                        resolved_class_access,
+                        &mut class_chain_summary,
+                        property_name,
+                    );
                     if !property_name.starts_with('#')
                         && !accessibility_error_emitted
                         && !self.is_super_expression(access.expression)
@@ -2478,12 +2640,12 @@ impl<'a> CheckerState<'a> {
                             return TypeId::ERROR;
                         }
 
-                        if self.known_declared_receiver_has_property(
+                        if let Some(type_id) = self.declared_receiver_property_type(
                             access.expression,
                             display_object_type,
                             property_name,
                         ) {
-                            return TypeId::ANY;
+                            return type_id;
                         }
 
                         if enum_instance_like_access {
@@ -2621,44 +2783,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Handles import.meta property access.
-    /// Returns Some(type) if this is an import.meta access, None otherwise.
-    fn try_resolve_import_meta_access(
-        &mut self,
-        idx: NodeIndex,
-        expression: NodeIndex,
-        name_or_argument: NodeIndex,
-    ) -> Option<TypeId> {
-        let expr_node = self.ctx.arena.get(expression)?;
-        if expr_node.kind != SyntaxKind::ImportKeyword as u16 {
-            return None;
-        }
-
-        let is_meta = self
-            .ctx
-            .arena
-            .get(name_or_argument)
-            .and_then(|n| self.ctx.arena.get_identifier(n))
-            .is_some_and(|ident| ident.escaped_text == "meta");
-
-        if is_meta {
-            self.check_import_meta_in_cjs(idx);
-            // import.meta resolves to the global `ImportMeta` interface
-            // (declared in lib.es2020.full.d.ts). Returning that type
-            // enables TS2339 on unknown properties (`import.meta.blah`)
-            // and merges `declare global { interface ImportMeta { ... } }`
-            // augmentations through lib-heritage merging.
-            if let Some(import_meta_ty) = self.resolve_lib_type_by_name("ImportMeta") {
-                return Some(import_meta_ty);
-            }
-        }
-        // Fallback (ImportMeta not in lib scope, or non-`meta` meta-property
-        // like `import.metal`): return ANY so downstream access doesn't
-        // cascade misleading TS2339s. A separate grammar check is expected
-        // to emit TS17012 for the invalid meta-property name.
-        Some(TypeId::ANY)
-    }
-
     /// Fast path for enum/namespace member value access (`E.Member` or `Ns.Member`).
     /// Returns Some(type) if this is an enum/namespace member access that can be resolved
     /// directly, None otherwise (fall through to general property-access pipeline).
@@ -2772,6 +2896,23 @@ impl<'a> CheckerState<'a> {
         if !member_has_value_semantics {
             return None;
         }
+        if resolved_flags & symbol_flags::CONST_ENUM != 0
+            && resolved_flags & symbol_flags::VALUE_MODULE != 0
+            && !self
+                .ctx
+                .binder
+                .get_symbol(member_sym_id)
+                .is_some_and(|s| s.has_any_flags(symbol_flags::ENUM_MEMBER))
+        {
+            let display_type = self
+                .ctx
+                .enum_namespace_types
+                .get(&resolved_sym_id)
+                .copied()
+                .unwrap_or(TypeId::ANY);
+            self.error_property_not_exist_at(property_name, display_type, name_or_argument);
+            return Some(TypeId::ERROR);
+        }
 
         // For merged symbols (e.g., namespace + interface), verify that the VALUE
         // part is actually exported. If only the TYPE part is exported, the value
@@ -2883,195 +3024,6 @@ impl<'a> CheckerState<'a> {
         Some(self.finalize_property_access_result(idx, member_type, skip_flow_narrowing, false))
     }
 
-    /// Handles the `PossiblyNullOrUndefined` result from property access resolution.
-    /// Emits appropriate diagnostics (TS18047/18048/18049/18050) and returns the resolved type.
-    #[allow(clippy::too_many_arguments)]
-    fn handle_possibly_null_or_undefined_access(
-        &mut self,
-        idx: NodeIndex,
-        expression: NodeIndex,
-        name_or_argument: NodeIndex,
-        question_dot_token: bool,
-        property_type: Option<TypeId>,
-        cause: TypeId,
-        object_type_for_access: TypeId,
-        property_name: &str,
-        skip_flow_narrowing: bool,
-        receiver_has_daa_error: bool,
-    ) -> TypeId {
-        use crate::query_boundaries::common::PropertyAccessResult;
-
-        let factory = self.ctx.types.factory();
-
-        if receiver_has_daa_error {
-            return self.finalize_property_access_result(
-                idx,
-                property_type.unwrap_or(TypeId::ERROR),
-                skip_flow_narrowing,
-                false,
-            );
-        }
-
-        // Check for optional chaining (?.)
-        if question_dot_token {
-            if self
-                .ctx
-                .compiler_options
-                .no_property_access_from_index_signature
-                && let (Some(non_nullish_base), _) = self.split_nullish_type(object_type_for_access)
-                && let PropertyAccessResult::Success {
-                    from_index_signature,
-                    ..
-                } = self.resolve_property_access_with_env(non_nullish_base, property_name)
-                && from_index_signature
-                && !self.union_has_explicit_property_member(non_nullish_base, property_name)
-            {
-                use crate::diagnostics::diagnostic_codes;
-                self.error_at_node(
-                    name_or_argument,
-                    &format!(
-                        "Property '{property_name}' comes from an index signature, so it must be accessed with ['{property_name}']."
-                    ),
-                    diagnostic_codes::PROPERTY_COMES_FROM_AN_INDEX_SIGNATURE_SO_IT_MUST_BE_ACCESSED_WITH,
-                );
-            }
-            // Suppress error, return (property_type | undefined)
-            let base_type = property_type.unwrap_or(TypeId::UNKNOWN);
-            return factory.union2(base_type, TypeId::UNDEFINED);
-        }
-
-        // Report error based on the cause (TS2531/TS2532/TS2533 or TS18050)
-        use crate::diagnostics::diagnostic_codes;
-
-        // Suppress cascade errors when cause is ERROR/ANY/UNKNOWN
-        if cause == TypeId::ERROR || cause == TypeId::ANY || cause == TypeId::UNKNOWN {
-            return property_type.unwrap_or(TypeId::ERROR);
-        }
-
-        // Check if the type is entirely nullish (no non-nullish part in union)
-        let is_type_nullish =
-            object_type_for_access == TypeId::NULL || object_type_for_access == TypeId::UNDEFINED;
-
-        // For possibly-nullish values in non-strict mode, don't error
-        if !self.ctx.compiler_options.strict_null_checks && !is_type_nullish {
-            return self.finalize_property_access_result(
-                idx,
-                property_type.unwrap_or(TypeId::ERROR),
-                skip_flow_narrowing,
-                false,
-            );
-        }
-
-        // Check if the expression is a literal null/undefined keyword
-        let is_literal_nullish = if let Some(expr_node) = self.ctx.arena.get(expression) {
-            expr_node.kind == SyntaxKind::NullKeyword as u16
-                || (expr_node.kind == SyntaxKind::Identifier as u16
-                    && self
-                        .ctx
-                        .arena
-                        .get_identifier(expr_node)
-                        .is_some_and(|ident| ident.escaped_text == "undefined"))
-        } else {
-            false
-        };
-
-        // When the expression IS a literal null/undefined keyword, emit TS18050
-        if is_literal_nullish {
-            let value_name = if cause == TypeId::NULL {
-                "null"
-            } else if cause == TypeId::UNDEFINED {
-                "undefined"
-            } else {
-                "null | undefined"
-            };
-            self.error_at_node_msg(
-                expression,
-                diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
-                &[value_name],
-            );
-            return self.finalize_property_access_result(
-                idx,
-                property_type.unwrap_or(TypeId::ERROR),
-                skip_flow_narrowing,
-                false,
-            );
-        }
-
-        // Without strictNullChecks, TS18047/TS18048/TS18049 are never emitted
-        if !self.ctx.compiler_options.strict_null_checks {
-            return self.finalize_property_access_result(
-                idx,
-                property_type.unwrap_or(TypeId::ERROR),
-                skip_flow_narrowing,
-                false,
-            );
-        }
-
-        // When TS2454 has already been emitted, suppress TS18047/18048/18049
-        if self.ctx.daa_error_nodes.contains(&expression.0)
-            || self.ctx.daa_error_nodes.contains(&idx.0)
-        {
-            return self.finalize_property_access_result(
-                idx,
-                property_type.unwrap_or(TypeId::ERROR),
-                skip_flow_narrowing,
-                false,
-            );
-        }
-
-        // Named "'this' is possibly 'undefined'." (TS18048) only when `this`
-        // is explicitly typed; implicit `this: undefined` uses TS2532.
-        let name = self.expression_text(expression).or_else(|| {
-            (self.is_this_expression(expression)
-                && (self.enclosing_function_has_explicit_this_parameter(expression)
-                    || self.enclosing_function_has_contextual_this_type(expression)))
-            .then(|| "this".to_string())
-        });
-
-        let (code, message): (u32, String) = if let Some(ref name) = name {
-            if cause == TypeId::NULL {
-                (
-                    diagnostic_codes::IS_POSSIBLY_NULL,
-                    format!("'{name}' is possibly 'null'."),
-                )
-            } else if cause == TypeId::UNDEFINED {
-                (
-                    diagnostic_codes::IS_POSSIBLY_UNDEFINED,
-                    format!("'{name}' is possibly 'undefined'."),
-                )
-            } else {
-                (
-                    diagnostic_codes::IS_POSSIBLY_NULL_OR_UNDEFINED,
-                    format!("'{name}' is possibly 'null' or 'undefined'."),
-                )
-            }
-        } else if cause == TypeId::NULL {
-            (
-                diagnostic_codes::OBJECT_IS_POSSIBLY_NULL,
-                "Object is possibly 'null'.".to_string(),
-            )
-        } else if cause == TypeId::UNDEFINED {
-            (
-                diagnostic_codes::OBJECT_IS_POSSIBLY_UNDEFINED,
-                "Object is possibly 'undefined'.".to_string(),
-            )
-        } else {
-            (
-                diagnostic_codes::OBJECT_IS_POSSIBLY_NULL_OR_UNDEFINED,
-                "Object is possibly 'null' or 'undefined'.".to_string(),
-            )
-        };
-
-        self.error_at_node(expression, &message, code);
-
-        self.finalize_property_access_result(
-            idx,
-            property_type.unwrap_or(TypeId::ERROR),
-            skip_flow_narrowing,
-            false,
-        )
-    }
-
     /// Handles property access on globalThis or Window-like expressions.
     /// Returns Some(type) if this is a globalThis/Window access, None otherwise.
     fn try_resolve_global_this_property_access(
@@ -3126,5 +3078,73 @@ impl<'a> CheckerState<'a> {
         }
 
         Some(self.finalize_property_access_result(idx, property_type, skip_flow_narrowing, false))
+    }
+
+    fn direct_this_class_member_declared_type(&mut self, property_name: &str) -> Option<TypeId> {
+        let member_nodes = self.ctx.enclosing_class.as_ref()?.member_nodes.clone();
+        let factory = self.ctx.types.factory();
+
+        for member_idx in member_nodes {
+            if self.get_member_name(member_idx).as_deref() != Some(property_name) {
+                continue;
+            }
+
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            match member_node.kind {
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
+                        continue;
+                    };
+                    if self.has_static_modifier(&method.modifiers) {
+                        continue;
+                    }
+                    let signature = self.call_signature_from_method(method, member_idx);
+                    let method_type = factory.callable(tsz_solver::CallableShape {
+                        call_signatures: vec![signature],
+                        construct_signatures: Vec::new(),
+                        properties: Vec::new(),
+                        string_index: None,
+                        number_index: None,
+                        symbol: None,
+                        is_abstract: false,
+                    });
+                    return Some(if method.question_token {
+                        factory.union2(method_type, TypeId::UNDEFINED)
+                    } else {
+                        method_type
+                    });
+                }
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                    let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
+                        continue;
+                    };
+                    if self.has_static_modifier(&prop.modifiers) {
+                        continue;
+                    }
+                    if let Some(type_id) =
+                        self.effective_class_property_declared_type(member_idx, prop)
+                    {
+                        return Some(type_id);
+                    }
+                }
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    let Some(accessor) = self.ctx.arena.get_accessor(member_node) else {
+                        continue;
+                    };
+                    if self.has_static_modifier(&accessor.modifiers) {
+                        continue;
+                    }
+                    let accessor_type = self.get_type_of_node(member_idx);
+                    if accessor_type != TypeId::ERROR {
+                        return Some(accessor_type);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        None
     }
 }

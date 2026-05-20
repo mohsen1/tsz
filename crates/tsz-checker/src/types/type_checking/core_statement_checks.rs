@@ -178,6 +178,35 @@ impl<'a> CheckerState<'a> {
             }
             let mut return_type =
                 self.get_type_of_node_with_request(return_data.expression, &request);
+            if let Some(contextual_type) = request.contextual_type
+                && self
+                    .ctx
+                    .arena
+                    .get(return_data.expression)
+                    .is_some_and(|expr_node| expr_node.kind == syntax_kind_ext::NEW_EXPRESSION)
+                && (self
+                    .contextual_application_recovers_unknown_result(return_type, contextual_type)
+                    || self.contextual_application_recovers_type_param_result(
+                        return_type,
+                        contextual_type,
+                    )
+                    || (crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        return_type,
+                    ) && self
+                        .ctx
+                        .arena
+                        .get_call_expr_at(return_data.expression)
+                        .is_some_and(|new_expr| {
+                            self.contextual_application_matches_new_target(
+                                new_expr.expression,
+                                contextual_type,
+                            )
+                        })))
+                && self.is_assignable_to(contextual_type, expected_type)
+            {
+                return_type = contextual_type;
+            }
             self.ctx.preserve_literal_types = prev_preserve_literals;
             if self.ctx.in_async_context() {
                 // Use unwrap_async_return_type_for_body which handles unions
@@ -202,7 +231,7 @@ impl<'a> CheckerState<'a> {
                 let mut raw_return_type = self
                     .get_type_of_node_with_request(return_data.expression, &TypingRequest::NONE);
                 raw_return_type = self.unwrap_async_return_type_for_body(raw_return_type);
-                return_expr_diag_snap.rollback(&mut self.ctx);
+                return_expr_diag_snap.rollback(&mut self.ctx.diagnostic_state());
                 let source_str = self
                     .object_literal_source_type_display(return_data.expression, Some(expected_type))
                     .unwrap_or_else(|| self.format_type_diagnostic_widened(raw_return_type));
@@ -257,8 +286,10 @@ impl<'a> CheckerState<'a> {
         // runtime, so `return a` (where `a` is some unrelated type) is
         // idiomatic and not an error in `--checkJs` mode. Mirrors tsc's
         // `isJavaScriptFile`-gated bypass in `checkReturnStatement`.
-        let skip_assignability =
-            is_in_constructor && (return_data.expression.is_none() || self.is_js_file());
+        let skip_assignability = is_in_constructor
+            && (return_data.expression.is_none() || self.is_js_file())
+            || (return_data.expression.is_none()
+                && self.type_references_unresolved_import(expected_type));
 
         // Track whether assignability check passed — when it fails, the solver's
         // failure reason already emits the appropriate diagnostic (including TS2353
@@ -315,45 +346,96 @@ impl<'a> CheckerState<'a> {
                     );
                 }
                 false
-            } else {
-                if self.return_annotation_is_enumerate_length(stmt_idx) {
-                    self.error_type_not_assignable_generic_at(
-                        TypeId::NUMBER,
-                        expected_type,
-                        fallback_error_node,
-                    );
-                    false
-                } else if self.should_report_primitive_to_generic_indexed_conditional_return(
+            } else if self.should_report_primitive_to_generic_indexed_conditional_return(
+                return_type,
+                expected_type,
+            ) {
+                // tsc anchors this diagnostic at the `return` statement, not
+                // the expression: there is no source-side shape to elaborate
+                // into when the return value is a primitive, so the failure
+                // belongs on the statement keyword.
+                self.error_type_not_assignable_generic_at(
                     return_type,
                     expected_type,
-                ) {
-                    self.error_type_not_assignable_generic_at(
-                        return_type,
-                        expected_type,
-                        source_error_node,
-                    );
-                    false
-                } else {
-                    let ok = self.check_assignable_or_report_at_exact_anchor(
+                    fallback_error_node,
+                );
+                false
+            } else {
+                let contextual_block_function_has_inferred_signature = self
+                    .ctx
+                    .arena
+                    .get(return_data.expression)
+                    .filter(|node| node.is_function_expression_or_arrow())
+                    .and_then(|expr| self.ctx.arena.get_function(expr))
+                    .is_some_and(|func| {
+                        func.type_annotation.is_none()
+                            && func.parameters.nodes.iter().all(|&param_idx| {
+                                self.ctx
+                                    .arena
+                                    .get(param_idx)
+                                    .and_then(|param| self.ctx.arena.get_parameter(param))
+                                    .is_some_and(|param| param.type_annotation.is_none())
+                            })
+                            && self
+                                .ctx
+                                .arena
+                                .get(func.body)
+                                .is_some_and(|body| body.kind == syntax_kind_ext::BLOCK)
+                    });
+                let can_defer_contextual_callable_union =
+                    contextual_block_function_has_inferred_signature
+                        && {
+                            let evaluated_expected = self.evaluate_type_with_env(expected_type);
+                            let mut callable_members =
+                                crate::query_boundaries::assignability::contextual_function_callable_union_members(
+                                    self.ctx.types,
+                                    return_type,
+                                    expected_type,
+                                );
+                            if evaluated_expected != expected_type {
+                                callable_members.extend(
+                                    crate::query_boundaries::assignability::contextual_function_callable_union_members(
+                                        self.ctx.types,
+                                        return_type,
+                                        evaluated_expected,
+                                    ),
+                                );
+                            }
+                            callable_members.into_iter().any(|member| {
+                                let outcome = self.assign_relation_outcome(return_type, member);
+                                outcome.related
+                                    || crate::query_boundaries::assignability::contextual_callable_member_failure_is_generic_parameter_drift(
+                                        self.ctx.types,
+                                        outcome.failure.as_ref(),
+                                    )
+                                    || (outcome.failure.is_none()
+                                        && crate::query_boundaries::assignability::contextual_callable_member_has_unclassified_generic_parameter_drift(
+                                            self.ctx.types,
+                                            return_type,
+                                            member,
+                                        ))
+                            })
+                        };
+                let ok = can_defer_contextual_callable_union
+                    || self.check_assignable_or_report_at_exact_anchor(
                         return_type,
                         expected_type,
                         source_error_node,
                         fallback_error_node,
                     );
-                    if !ok {
-                        // TS2409: In constructors, also emit the constructor-specific diagnostic
-                        // alongside the TS2322 already emitted by check_assignable_or_report.
-                        if is_in_constructor {
-                            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                            self.error_at_node(
+                if !ok {
+                    // TS2409: In constructors, also emit the constructor-specific diagnostic
+                    // alongside the TS2322 already emitted by check_assignable_or_report.
+                    if is_in_constructor {
+                        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                        self.error_at_node(
                             fallback_error_node,
                             diagnostic_messages::RETURN_TYPE_OF_CONSTRUCTOR_SIGNATURE_MUST_BE_ASSIGNABLE_TO_THE_INSTANCE_TYPE_OF,
                             diagnostic_codes::RETURN_TYPE_OF_CONSTRUCTOR_SIGNATURE_MUST_BE_ASSIGNABLE_TO_THE_INSTANCE_TYPE_OF,
                         );
-                        }
                     }
-                    ok
                 }
+                ok
             }
         } else {
             true
@@ -398,21 +480,14 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn return_annotation_is_enumerate_length(&self, stmt_idx: NodeIndex) -> bool {
-        let Some(fn_idx) = self.find_enclosing_function(stmt_idx) else {
-            return false;
-        };
-        let Some(fn_node) = self.ctx.arena.get(fn_idx) else {
-            return false;
-        };
-        let Some(func) = self.ctx.arena.get_function(fn_node) else {
-            return false;
-        };
-        if func.type_annotation.is_none() {
-            return false;
-        }
-        self.node_text(func.type_annotation)
-            .is_some_and(|text| text.contains("Enumerate<") && text.contains("length"))
+    fn type_references_unresolved_import(&self, type_id: TypeId) -> bool {
+        crate::query_boundaries::common::collect_all_types(self.ctx.types, type_id)
+            .into_iter()
+            .any(|ty| {
+                crate::query_boundaries::common::lazy_def_id(self.ctx.types, ty)
+                    .and_then(|def_id| self.ctx.def_to_symbol_id(def_id))
+                    .is_some_and(|sym_id| self.is_unresolved_import_symbol_id(sym_id))
+            })
     }
 
     fn should_report_primitive_to_generic_indexed_conditional_return(
@@ -425,10 +500,6 @@ impl<'a> CheckerState<'a> {
             TypeId::NUMBER | TypeId::STRING | TypeId::BOOLEAN | TypeId::BIGINT | TypeId::SYMBOL
         ) {
             return false;
-        }
-        let target_display = self.format_type_diagnostic(target);
-        if target_display.starts_with("Enumerate<") && target_display.contains("[\"length\"]") {
-            return true;
         }
         let Some((base, args)) =
             crate::query_boundaries::common::application_info(self.ctx.types, target)
@@ -499,8 +570,8 @@ impl<'a> CheckerState<'a> {
     /// - Emits TS1308 if await is used outside async function
     /// - Iteratively checks child expressions for await expressions (no recursion)
     pub(crate) fn check_await_expression(&mut self, expr_idx: NodeIndex) {
-        // Use iterative approach with explicit stack to handle deeply nested expressions
-        // This prevents stack overflow for expressions like `0 + 0 + 0 + ... + 0` (50K+ deep)
+        // Use iterative approach with explicit stack to handle deeply nested expressions.
+        // This prevents stack overflow for expressions like `0 + 0 + 0 + ... + 0` (50K+ deep).
         let mut stack = vec![expr_idx];
 
         while let Some(current_idx) = stack.pop() {
@@ -508,26 +579,11 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // Push child expressions onto stack for iterative processing
+            if Self::await_expression_traversal_boundary(node.kind) {
+                continue;
+            }
+
             match node.kind {
-                syntax_kind_ext::BINARY_EXPRESSION => {
-                    if let Some(bin_expr) = self.ctx.arena.get_binary_expr(node) {
-                        if bin_expr.right.is_some() {
-                            stack.push(bin_expr.right);
-                        }
-                        if bin_expr.left.is_some() {
-                            stack.push(bin_expr.left);
-                        }
-                    }
-                }
-                syntax_kind_ext::PREFIX_UNARY_EXPRESSION
-                | syntax_kind_ext::POSTFIX_UNARY_EXPRESSION => {
-                    if let Some(unary_expr) = self.ctx.arena.get_unary_expr_ex(node)
-                        && unary_expr.expression.is_some()
-                    {
-                        stack.push(unary_expr.expression);
-                    }
-                }
                 syntax_kind_ext::AWAIT_EXPRESSION => {
                     // Validate await expression context.
                     // tsc suppresses these grammar checks when the file has parse errors
@@ -562,47 +618,31 @@ impl<'a> CheckerState<'a> {
                             );
                         }
                     }
-                    if let Some(unary_expr) = self.ctx.arena.get_unary_expr_ex(node)
-                        && unary_expr.expression.is_some()
-                    {
-                        stack.push(unary_expr.expression);
-                    }
-                }
-                syntax_kind_ext::CALL_EXPRESSION => {
-                    if let Some(call_expr) = self.ctx.arena.get_call_expr(node) {
-                        // Check arguments (push in reverse order for correct traversal)
-                        if let Some(ref args) = call_expr.arguments {
-                            for &arg in args.nodes.iter().rev() {
-                                if arg.is_some() {
-                                    stack.push(arg);
-                                }
-                            }
-                        }
-                        if call_expr.expression.is_some() {
-                            stack.push(call_expr.expression);
-                        }
-                    }
-                }
-                syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
-                    if let Some(access_expr) = self.ctx.arena.get_access_expr(node)
-                        && access_expr.expression.is_some()
-                    {
-                        stack.push(access_expr.expression);
-                    }
-                }
-                syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
-                    if let Some(paren_expr) = self.ctx.arena.get_parenthesized(node)
-                        && paren_expr.expression.is_some()
-                    {
-                        stack.push(paren_expr.expression);
-                    }
                 }
                 _ => {
-                    // For other expression types, don't recurse into children
-                    // to avoid infinite recursion or performance issues
+                    for child in self.ctx.arena.get_children(current_idx) {
+                        if child.is_some() {
+                            stack.push(child);
+                        }
+                    }
                 }
             }
         }
+    }
+
+    const fn await_expression_traversal_boundary(kind: u16) -> bool {
+        matches!(
+            kind,
+            syntax_kind_ext::ARROW_FUNCTION
+                | syntax_kind_ext::FUNCTION_EXPRESSION
+                | syntax_kind_ext::FUNCTION_DECLARATION
+                | syntax_kind_ext::CLASS_EXPRESSION
+                | syntax_kind_ext::CLASS_DECLARATION
+                | syntax_kind_ext::METHOD_DECLARATION
+                | syntax_kind_ext::GET_ACCESSOR
+                | syntax_kind_ext::SET_ACCESSOR
+                | syntax_kind_ext::CONSTRUCTOR
+        )
     }
 
     // --- Variable Statement Validation ---
@@ -895,13 +935,27 @@ impl<'a> CheckerState<'a> {
         // parameters (checks constraint), unions, keyof, literals, etc.
         // Index-access constraints like AB[K] are accepted when K is known to be
         // constrained to the object's key space.
-        let is_valid = crate::query_boundaries::common::is_valid_mapped_type_key_type(
-            self.ctx.types,
-            evaluated,
-        ) || crate::query_boundaries::common::is_valid_mapped_type_key_type(
+        let constraint_is_deferred = crate::query_boundaries::common::contains_type_parameters(
             self.ctx.types,
             constraint_type,
+        ) || crate::query_boundaries::common::contains_type_parameters(
+            self.ctx.types,
+            evaluated,
         );
+        let is_valid = if constraint_is_deferred {
+            crate::query_boundaries::common::is_valid_mapped_type_key_type(
+                self.ctx.types,
+                evaluated,
+            ) || crate::query_boundaries::common::is_valid_mapped_type_key_type(
+                self.ctx.types,
+                constraint_type,
+            )
+        } else {
+            let evaluator =
+                crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
+            evaluator.is_valid_computed_property_name_type(evaluated)
+                || evaluator.is_valid_computed_property_name_type(constraint_type)
+        };
         let is_deferred_index_access =
             crate::query_boundaries::common::index_access_types(self.ctx.types, evaluated)
                 .is_some_and(|(object_type, index_type)| {

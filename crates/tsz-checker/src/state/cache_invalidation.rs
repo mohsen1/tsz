@@ -430,6 +430,7 @@ impl<'a> CheckerState<'a> {
 
         // Clear this node's cache
         self.ctx.node_types.remove(&idx.0);
+        self.ctx.flow_narrowed_nodes.remove(&idx.0);
         if !self.ctx.request_node_types.is_empty() {
             self.ctx
                 .request_node_types

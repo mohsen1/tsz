@@ -184,6 +184,15 @@ impl SourceMapGenerator {
     }
 
     /// Generate the source map
+    ///
+    /// # Panics
+    ///
+    /// Panics if any mapping field (`generated_column`, `source_index`,
+    /// `original_line`, `original_column`, or `name_index`) exceeds
+    /// `i32::MAX`. The Source Map v3 VLQ encoding represents segment
+    /// values as 32-bit signed integers; silently saturating an
+    /// overflow would emit a syntactically valid but semantically
+    /// wrong mapping and corrupt the generated map.
     pub fn generate(&mut self) -> SourceMap {
         // Sort mappings by generated position
         self.mappings.sort_by(|a, b| {
@@ -217,6 +226,10 @@ impl SourceMapGenerator {
     }
 
     /// Generate source map as JSON string
+    ///
+    /// # Panics
+    ///
+    /// See [`SourceMapGenerator::generate`] for the overflow invariant.
     #[must_use]
     pub fn generate_json(&mut self) -> String {
         let map = self.generate();
@@ -224,12 +237,20 @@ impl SourceMapGenerator {
     }
 
     /// Alias for `generate_json` (compatibility)
+    ///
+    /// # Panics
+    ///
+    /// See [`SourceMapGenerator::generate`] for the overflow invariant.
     #[must_use]
     pub fn to_json(&mut self) -> String {
         self.generate_json()
     }
 
     /// Generate inline source map comment
+    ///
+    /// # Panics
+    ///
+    /// See [`SourceMapGenerator::generate`] for the overflow invariant.
     pub fn generate_inline(&mut self) -> String {
         let json = self.generate_json();
         let base64 = base64_encode(json.as_bytes());
@@ -237,6 +258,10 @@ impl SourceMapGenerator {
     }
 
     /// Alias for `generate_inline` (compatibility)
+    ///
+    /// # Panics
+    ///
+    /// See [`SourceMapGenerator::generate`] for the overflow invariant.
     #[must_use]
     pub fn to_inline_comment(&mut self) -> String {
         self.generate_inline()
@@ -299,33 +324,42 @@ impl SourceMapGenerator {
         result
     }
 
+    // Source Map v3 VLQ segments encode each field as an i32 delta. A u32
+    // mapping value greater than i32::MAX cannot be represented faithfully,
+    // and silently saturating to i32::MAX would emit a syntactically valid
+    // but semantically wrong mapping. Fail loudly instead, matching the
+    // overflow convention in `add_source` and `add_name`.
     fn encode_segment(&mut self, mapping: &Mapping) -> String {
         // Pre-allocate for typical VLQ segment (4-5 values * ~2 chars each)
         let mut segment = String::with_capacity(16);
 
         // Generated column (relative to previous) - using zero-allocation encode_to
-        let gen_col = i32::try_from(mapping.generated_column).unwrap_or(i32::MAX);
+        let gen_col = i32::try_from(mapping.generated_column)
+            .expect("source map generated_column overflowed i32");
         vlq::encode_to(gen_col - self.prev_generated_column, &mut segment);
         self.prev_generated_column = gen_col;
 
         // Source index (relative)
-        let src_idx = i32::try_from(mapping.source_index).unwrap_or(i32::MAX);
+        let src_idx =
+            i32::try_from(mapping.source_index).expect("source map source_index overflowed i32");
         vlq::encode_to(src_idx - self.prev_source_index, &mut segment);
         self.prev_source_index = src_idx;
 
         // Original line (relative)
-        let orig_line = i32::try_from(mapping.original_line).unwrap_or(i32::MAX);
+        let orig_line =
+            i32::try_from(mapping.original_line).expect("source map original_line overflowed i32");
         vlq::encode_to(orig_line - self.prev_original_line, &mut segment);
         self.prev_original_line = orig_line;
 
         // Original column (relative)
-        let orig_col = i32::try_from(mapping.original_column).unwrap_or(i32::MAX);
+        let orig_col = i32::try_from(mapping.original_column)
+            .expect("source map original_column overflowed i32");
         vlq::encode_to(orig_col - self.prev_original_column, &mut segment);
         self.prev_original_column = orig_col;
 
         // Name index (relative, optional)
         if let Some(name_idx) = mapping.name_index {
-            let name_idx = i32::try_from(name_idx).unwrap_or(i32::MAX);
+            let name_idx = i32::try_from(name_idx).expect("source map name_index overflowed i32");
             vlq::encode_to(name_idx - self.prev_name_index, &mut segment);
             self.prev_name_index = name_idx;
         }

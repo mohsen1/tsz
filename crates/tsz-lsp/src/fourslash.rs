@@ -155,7 +155,7 @@ impl DefinitionResult {
 
     /// Assert there are exactly N definitions.
     pub fn expect_count(&self, n: usize) -> &Self {
-        let count = self.locations.as_ref().map(|l| l.len()).unwrap_or(0);
+        let count = self.locations.as_ref().map_or(0, Vec::len);
         assert_eq!(count, n, "Expected {n} definitions, got {count}");
         self
     }
@@ -232,14 +232,14 @@ impl ReferencesResult {
 
     /// Assert exactly N references.
     pub fn expect_count(&self, n: usize) -> &Self {
-        let count = self.locations.as_ref().map(|l| l.len()).unwrap_or(0);
+        let count = self.locations.as_ref().map_or(0, Vec::len);
         assert_eq!(count, n, "Expected {n} references, got {count}");
         self
     }
 
     /// Assert no references were found.
     pub fn expect_none(&self) {
-        let count = self.locations.as_ref().map(|l| l.len()).unwrap_or(0);
+        let count = self.locations.as_ref().map_or(0, Vec::len);
         assert_eq!(count, 0, "Expected no references, but found {count}");
     }
 }
@@ -698,13 +698,13 @@ impl DocumentHighlightResult {
 
     /// Assert no highlights were found.
     pub fn expect_none(&self) {
-        let count = self.highlights.as_ref().map(|h| h.len()).unwrap_or(0);
+        let count = self.highlights.as_ref().map_or(0, Vec::len);
         assert_eq!(count, 0, "Expected no highlights, but found {count}");
     }
 
     /// Assert exactly N highlights.
     pub fn expect_count(&self, n: usize) -> &Self {
-        let count = self.highlights.as_ref().map(|h| h.len()).unwrap_or(0);
+        let count = self.highlights.as_ref().map_or(0, Vec::len);
         assert_eq!(count, n, "Expected {n} highlights, got {count}");
         self
     }
@@ -823,7 +823,7 @@ impl CodeActionsResult {
 
     /// Assert no code actions.
     pub fn expect_none(&self) {
-        let count = self.actions.as_ref().map(|a| a.len()).unwrap_or(0);
+        let count = self.actions.as_ref().map_or(0, Vec::len);
         assert_eq!(count, 0, "Expected no code actions, but found {count}");
     }
 
@@ -1070,7 +1070,7 @@ impl ImplementationResult {
 
     /// Assert there are exactly N implementations.
     pub fn expect_count(&self, n: usize) -> &Self {
-        let count = self.locations.as_ref().map(|l| l.len()).unwrap_or(0);
+        let count = self.locations.as_ref().map_or(0, Vec::len);
         assert_eq!(count, n, "Expected {n} implementations, got {count}");
         self
     }
@@ -1817,12 +1817,15 @@ impl FourslashTest {
     }
 
     /// Get code actions for a range at a marker.
-    pub fn code_actions(&self, file: &str) -> CodeActionsResult {
+    pub fn code_actions(&mut self, file: &str) -> CodeActionsResult {
         let range = Range {
             start: Position::new(0, 0),
             end: Position::new(u32::MAX, 0),
         };
-        let actions = self.project.get_code_actions(file, range, vec![], None);
+        let diagnostics = self.project.get_diagnostics(file).unwrap_or_default();
+        let actions = self
+            .project
+            .get_code_actions(file, range, diagnostics, None);
         CodeActionsResult { actions }
     }
 
@@ -1952,7 +1955,7 @@ impl FourslashTest {
     }
 
     /// Get code actions at a marker position (with range from marker to end of line).
-    pub fn code_actions_at(&self, marker_name: &str) -> CodeActionsResult {
+    pub fn code_actions_at(&mut self, marker_name: &str) -> CodeActionsResult {
         let m = self.markers.get(marker_name).unwrap_or_else(|| {
             panic!("Marker '{marker_name}' not found");
         });
@@ -1960,7 +1963,10 @@ impl FourslashTest {
             start: Position::new(m.line, m.character),
             end: Position::new(m.line, u32::MAX),
         };
-        let actions = self.project.get_code_actions(&m.file, range, vec![], None);
+        let diagnostics = self.project.get_diagnostics(&m.file).unwrap_or_default();
+        let actions = self
+            .project
+            .get_code_actions(&m.file, range, diagnostics, None);
         CodeActionsResult { actions }
     }
 

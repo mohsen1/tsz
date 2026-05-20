@@ -119,7 +119,7 @@ impl<'a> CheckerState<'a> {
         source_prop_type: TypeId,
         target: TypeId,
         target_prop_type: TypeId,
-    ) -> bool {
+    ) {
         let prop_name_str = self.ctx.types.resolve_atom(prop_name);
         let target_prop_type = self.mapped_object_literal_property_check_type(
             target,
@@ -131,7 +131,7 @@ impl<'a> CheckerState<'a> {
             target_prop_type,
             TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN
         ) {
-            return false;
+            return;
         }
 
         // Function-like source values (arrow / function expression / method
@@ -153,7 +153,7 @@ impl<'a> CheckerState<'a> {
                 )
             })
         {
-            return false;
+            return;
         }
 
         // Defer to the regular property-comparison path unless the target is a
@@ -175,7 +175,7 @@ impl<'a> CheckerState<'a> {
                     })
         };
         if !target_is_simple {
-            return false;
+            return;
         }
 
         // Skip when the source object literal contains *any* computed
@@ -196,7 +196,7 @@ impl<'a> CheckerState<'a> {
                     .is_some_and(|node| node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
             })
         {
-            return false;
+            return;
         }
 
         // Use the caller's already-computed source_prop_type rather than
@@ -209,11 +209,11 @@ impl<'a> CheckerState<'a> {
             source_prop_type,
             TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN
         ) {
-            return false;
+            return;
         }
 
         if self.is_assignable_to(source_prop_type, target_prop_type) {
-            return false;
+            return;
         }
 
         let target_prop_type_for_message =
@@ -226,7 +226,6 @@ impl<'a> CheckerState<'a> {
             target_prop_type_for_message,
             report_idx,
         );
-        true
     }
 
     fn object_literal_property_value_diagnostic_target_type(&mut self, target: TypeId) -> TypeId {
@@ -456,6 +455,31 @@ impl<'a> CheckerState<'a> {
         obj_literal_idx: NodeIndex,
         target: TypeId,
     ) -> bool {
+        self.check_object_literal_named_property_values_against_target_with_gate(
+            obj_literal_idx,
+            target,
+            true,
+        )
+    }
+
+    pub(crate) fn check_object_literal_named_property_values_against_any_target(
+        &mut self,
+        obj_literal_idx: NodeIndex,
+        target: TypeId,
+    ) -> bool {
+        self.check_object_literal_named_property_values_against_target_with_gate(
+            obj_literal_idx,
+            target,
+            false,
+        )
+    }
+
+    fn check_object_literal_named_property_values_against_target_with_gate(
+        &mut self,
+        obj_literal_idx: NodeIndex,
+        target: TypeId,
+        require_mapped_or_partial_target: bool,
+    ) -> bool {
         let Some(obj_node) = self.ctx.arena.get(obj_literal_idx) else {
             return false;
         };
@@ -471,11 +495,19 @@ impl<'a> CheckerState<'a> {
         .into_iter()
         .any(|candidate| self.target_is_mapped_or_mapped_application(candidate));
         let has_partial_annotation = self.partial_annotation_arg_node(obj_literal_idx).is_some();
-        if !target_is_mapped && !has_partial_annotation {
+        if require_mapped_or_partial_target && !target_is_mapped && !has_partial_annotation {
             return false;
         }
 
         let mut emitted = false;
+        let target_display_properties = (target_is_mapped || has_partial_annotation)
+            .then(|| {
+                self.ctx.types.get_display_properties(target).or_else(|| {
+                    let evaluated = self.evaluate_type_for_assignability(target);
+                    self.ctx.types.get_display_properties(evaluated)
+                })
+            })
+            .flatten();
         for &elem_idx in &obj_lit.elements.nodes {
             let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
                 continue;
@@ -493,6 +525,16 @@ impl<'a> CheckerState<'a> {
             let Some(target_prop_type) = target_prop_type else {
                 continue;
             };
+            let prop_name_atom = self.ctx.types.intern_string(&prop_name);
+            let target_prop_type = target_display_properties
+                .as_ref()
+                .and_then(|props| {
+                    props
+                        .iter()
+                        .find(|prop| prop.name == prop_name_atom)
+                        .map(|prop| prop.type_id)
+                })
+                .unwrap_or(target_prop_type);
             let target_prop_type = self.mapped_object_literal_property_check_type(
                 target,
                 prop_name.as_ref(),

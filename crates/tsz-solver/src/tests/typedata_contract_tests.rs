@@ -113,14 +113,14 @@ fn test_direct_typedata_construction_is_quarantined_to_intern() {
         }
     }
 
-    let solver_src_dir = Path::new("src");
+    let solver_src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut source_files = Vec::new();
-    collect_solver_rs_files_recursive(solver_src_dir, &mut source_files);
+    collect_solver_rs_files_recursive(&solver_src_dir, &mut source_files);
 
     let mut violations = Vec::new();
     for path in source_files {
         if path.ends_with("src/intern/mod.rs")
-            || path.ends_with("src/intern/core.rs")
+            || path.ends_with("src/intern/core/mod.rs")
             || path.ancestors().any(|a| a.ends_with("src/intern/core"))
             || path.ends_with("src/intern/intersection.rs")
             || path.ends_with("src/intern/normalize.rs")

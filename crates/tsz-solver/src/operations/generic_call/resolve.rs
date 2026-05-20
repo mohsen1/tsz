@@ -40,6 +40,35 @@ fn with_resolve_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R {
     r
 }
 
+fn is_bare_foreign_type_param(
+    interner: &dyn crate::construction::TypeDatabase,
+    ty: TypeId,
+    local_type_params: &FxHashSet<tsz_common::Atom>,
+    local_placeholders: &[tsz_common::Atom],
+) -> bool {
+    if ty.is_intrinsic() {
+        return false;
+    }
+    match interner.lookup(ty) {
+        Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => {
+            !local_type_params.contains(&info.name) && !local_placeholders.contains(&info.name)
+        }
+        _ => false,
+    }
+}
+
+fn is_substantive_inference_candidate(
+    interner: &dyn crate::construction::TypeDatabase,
+    ty: TypeId,
+    local_type_params: &FxHashSet<tsz_common::Atom>,
+    local_placeholders: &[tsz_common::Atom],
+) -> bool {
+    !ty.is_any_unknown_or_error()
+        && !is_bare_foreign_type_param(interner, ty, local_type_params, local_placeholders)
+        && !crate::visitor::contains_type_parameters(interner, ty)
+        && !crate::type_queries::contains_infer_types_db(interner, ty)
+}
+
 use super::{
     constraint_contains_primitive_constrained_type_param,
     constraint_is_primitive_type_with_resolver, instantiate_call_type, type_implies_literals_deep,
@@ -365,6 +394,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // parallel with type_param_vars.
         let mut type_param_placeholder_atoms: Vec<tsz_common::Atom> =
             Vec::with_capacity(func.type_params.len());
+        let local_type_param_names: FxHashSet<tsz_common::Atom> =
+            func.type_params.iter().map(|tp| tp.name).collect();
 
         self.constraint_pairs.borrow_mut().clear();
         self.constraint_fixed_union_members.borrow_mut().clear();
@@ -381,6 +412,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             FxHashMap::default();
         let mut first_direct_primitive_mismatch: Option<(usize, TypeId, TypeId)> = None;
         let mut placeholder_probe_map: FxHashMap<TypeId, InferenceVar> = FxHashMap::default();
+        let mut deferred_generic_function_arg_indices = FxHashSet::default();
         // Reusable buffer for placeholder names (avoids per-iteration String allocation)
         let mut placeholder_buf = String::with_capacity(24);
 
@@ -509,50 +541,72 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // contextual type is a bare type parameter whose constraint doesn't contain
         // literal types, properties like `false` are widened to `boolean`.
         //
-        // We suppress widening in two cases:
-        // (a) The constraint contains literal types (discriminated union protection)
-        // (b) The type parameter is referenced in another type param's constraint,
+        // We suppress widening in three cases:
+        // (a) The constraint contains literal types (discriminated union protection).
+        // (b) The placeholder is referenced in another type param's constraint,
         //     because widening would cause a mismatch between the widened candidate
         //     and the un-widened contextual type used for callback parameters.
+        // (c) The type parameter has the TS 5.0 `const` modifier and its constraint
+        //     does not allow a mutable array-like target. `const T` preserves the
+        //     literal shape of the argument expression, so the round-1 inference
+        //     seed must be the un-widened argument shape — without this,
+        //     `<const T>(x: T, y: number)` widens `{ a: 1 }` to `{ a: number }`
+        //     before inference and the literal is lost.
         let widenable_placeholders: FxHashSet<TypeId> = var_map
             .keys()
             .filter(|&&placeholder_id| {
-                if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(placeholder_id) {
-                    // (a) Skip if constraint implies literal types
-                    if let Some(constraint) = tp.constraint {
-                        let inst = instantiate_call_type(
-                            self.interner,
-                            constraint,
-                            &substitution,
-                            actual_this_type,
-                        );
-                        if type_implies_literals_deep(self.interner, inst) {
-                            return false;
-                        }
-                    }
-                    // (b) Skip if this placeholder is referenced in another type param's
-                    // constraint (e.g., TContext in TMethods extends Record<..., (ctx: TContext) => ...>)
-                    let is_referenced_in_other_constraints =
-                        func.type_params.iter().any(|other_tp| {
-                            if other_tp.name == tp.name {
-                                return false; // Skip self
-                            }
-                            if let Some(constraint) = other_tp.constraint {
-                                let inst = instantiate_call_type(
-                                    self.interner,
-                                    constraint,
-                                    &substitution,
-                                    actual_this_type,
-                                );
-                                type_references_placeholder(self.interner, inst, placeholder_id)
-                            } else {
-                                false
-                            }
-                        });
-                    !is_referenced_in_other_constraints
-                } else {
-                    false
+                let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(placeholder_id) else {
+                    return false;
+                };
+                // Instantiate the placeholder's own constraint once and share it
+                // between (a) literal-implication and (c) const-mutable-array checks.
+                let inst_constraint = tp.constraint.map(|constraint| {
+                    instantiate_call_type(
+                        self.interner,
+                        constraint,
+                        &substitution,
+                        actual_this_type,
+                    )
+                });
+                // (a)
+                if inst_constraint
+                    .is_some_and(|inst| type_implies_literals_deep(self.interner, inst))
+                {
+                    return false;
                 }
+                // (b)
+                let is_referenced_in_other_constraints = func.type_params.iter().any(|other_tp| {
+                    if other_tp.name == tp.name {
+                        return false;
+                    }
+                    let Some(constraint) = other_tp.constraint else {
+                        return false;
+                    };
+                    let inst = instantiate_call_type(
+                        self.interner,
+                        constraint,
+                        &substitution,
+                        actual_this_type,
+                    );
+                    type_references_placeholder(self.interner, inst, placeholder_id)
+                });
+                if is_referenced_in_other_constraints {
+                    return false;
+                }
+                // (c). An unconstrained `const T` falls through here: no constraint
+                // means no mutable-array-like target, so widening is suppressed —
+                // which matches tsc's behavior of preserving literals for `const T`.
+                if tp.is_const
+                    && !inst_constraint.is_some_and(|inst| {
+                        crate::type_queries::constraint_allows_mutable_array_like(
+                            self.interner,
+                            inst,
+                        )
+                    })
+                {
+                    return false;
+                }
+                true
             })
             .copied()
             .collect();
@@ -855,7 +909,29 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 }
             }
         }
-        if has_context_sensitive_args && !structural_return_subst.is_empty() {
+        let has_structural_return_generic_function_args =
+            arg_types.iter().copied().any(|arg_type| {
+                Self::get_contextual_signature_cached(self.interner, arg_type).is_some_and(
+                    |shape| {
+                        !shape.type_params.is_empty()
+                            && !shape.type_params.iter().any(|tp| {
+                                matches!(
+                                    self.interner.lookup(shape.return_type),
+                                    Some(TypeData::TypeParameter(info)) if info.name == tp.name
+                                )
+                            })
+                    },
+                )
+            });
+        let contextual_type_is_non_generic_function = self.contextual_type.is_some_and(|ctx| {
+            Self::get_contextual_signature_cached(self.interner, ctx)
+                .is_some_and(|shape| shape.type_params.is_empty())
+        });
+        if (has_context_sensitive_args
+            || ((arg_types.len() > 1 || contextual_type_is_non_generic_function)
+                && has_structural_return_generic_function_args))
+            && !structural_return_subst.is_empty()
+        {
             for (&name, &ty) in structural_return_subst.map().iter() {
                 substitution.insert(name, ty);
             }
@@ -882,6 +958,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let rest_tuple_inference =
             self.rest_tuple_inference_target(&instantiated_params, arg_types, &var_map);
         let rest_tuple_start = rest_tuple_inference.as_ref().map(|(start, _, _)| *start);
+        let rest_tuple_target_type = rest_tuple_inference
+            .as_ref()
+            .map(|(_, target_type, _)| *target_type);
         let mut saw_deferred_arg = false;
         // Track whether any deferred (context-sensitive) arg's target type
         // contains the return type bare var's placeholder. If so, Round 2 will
@@ -1182,11 +1261,61 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             } else {
                 contextual_arg_type
             };
+            let source_arg_shape = Self::get_contextual_signature_cached(self.interner, arg_type);
+            let original_arg_is_generic_function_like = source_arg_shape
+                .as_ref()
+                .is_some_and(|shape| !shape.type_params.is_empty());
             let source_for_inference = self.instantiate_generic_function_argument_against_target(
                 source_for_inference,
                 contextual_target_type,
             );
-
+            let arg_inference_priority = if original_arg_is_generic_function_like
+                && self.type_evaluates_to_function(contextual_target_type)
+            {
+                crate::types::InferencePriority::ReturnType
+            } else {
+                crate::types::InferencePriority::NakedTypeVariable
+            };
+            if original_arg_is_generic_function_like
+                && self.function_like_placeholder_appears_in_parameter_position(
+                    contextual_target_type,
+                    &var_map,
+                    &mut placeholder_visited,
+                )
+            {
+                let target_vars = self.collect_placeholder_vars_in_type(
+                    contextual_target_type,
+                    &var_map,
+                    &mut placeholder_probe_map,
+                    &mut placeholder_visited,
+                );
+                let target_var_already_has_direct_candidate = target_vars.iter().any(|var| {
+                    infer_ctx.get_constraints(*var).is_some_and(|constraints| {
+                        constraints
+                            .lower_bounds
+                            .iter()
+                            .any(|bound| !bound.is_any_unknown_or_error())
+                    })
+                });
+                if target_var_already_has_direct_candidate {
+                    deferred_generic_function_arg_indices.insert(i);
+                    saw_deferred_arg = true;
+                    continue;
+                }
+            }
+            if original_arg_is_generic_function_like
+                && let Some(expected) = self.conflicting_contextual_signature_instantiation_type(
+                    arg_type,
+                    contextual_target_type,
+                )
+            {
+                return CallResult::ArgumentTypeMismatch {
+                    index: i,
+                    expected,
+                    actual: arg_type,
+                    fallback_return: TypeId::ERROR,
+                };
+            }
             // For repeated naked type-parameter parameters, tsc keeps the first
             // primitive-family candidate and reports the later conflicting direct
             // argument. A context-sensitive callback in a later parameter can otherwise
@@ -1257,7 +1386,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 &var_map,
                 source_for_inference,
                 contextual_target_type,
-                crate::types::InferencePriority::NakedTypeVariable,
+                arg_inference_priority,
             );
 
             let source_is_function = self.type_evaluates_to_function(source_for_inference);
@@ -1281,7 +1410,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     &var_map,
                     source_for_inference,
                     contextual_target_type,
-                    crate::types::InferencePriority::NakedTypeVariable,
+                    arg_inference_priority,
                 );
             }
 
@@ -1350,10 +1479,31 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 .get(&target_type)
                 .copied()
                 .and_then(|var| infer_ctx.get_constraints(var))
-                .is_some_and(|constraints| !constraints.lower_bounds.is_empty());
+                .is_some_and(|constraints| {
+                    constraints.lower_bounds.iter().copied().any(|bound| {
+                        is_substantive_inference_candidate(
+                            self.interner.as_type_database(),
+                            bound,
+                            &local_type_param_names,
+                            &type_param_placeholder_atoms,
+                        )
+                    })
+                });
             let should_defer_to_other_param =
                 appears_in_other_params && (has_covariant_candidates || saw_deferred_arg);
             if !should_defer_to_other_param {
+                let direct_rest_tuple = self
+                    .interner
+                    .lookup(tuple_type)
+                    .and_then(|data| match data {
+                        TypeData::Tuple(elements_id) => Some(self.interner.tuple_list(elements_id)),
+                        _ => None,
+                    })
+                    .is_some_and(|elements| elements.iter().all(|element| !element.rest));
+                let was_type_annotation = infer_ctx.source_is_type_annotation;
+                if direct_rest_tuple {
+                    infer_ctx.source_is_type_annotation = true;
+                }
                 self.constrain_types(
                     &mut infer_ctx,
                     &var_map,
@@ -1361,6 +1511,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     target_type,
                     crate::types::InferencePriority::NakedTypeVariable,
                 );
+                infer_ctx.source_is_type_annotation = was_type_annotation;
             }
         }
 
@@ -1407,8 +1558,25 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             .zip(type_param_vars.iter())
             .enumerate()
         {
-            if let Some(resolved) = infer_ctx.probe(var) {
-                // This var was fixed in Round 1 — map its placeholder name to the resolved type
+            let resolved = infer_ctx.probe(var);
+            let contextual = structural_return_subst.get(tp.name);
+            let resolved = match (resolved, contextual) {
+                (Some(inferred), Some(contextual))
+                    if !direct_param_vars.contains(&var)
+                        && self.should_use_contextual_return_substitution(
+                            inferred, contextual, &var_map,
+                        ) =>
+                {
+                    Some(contextual)
+                }
+                (None, Some(contextual)) if !direct_param_vars.contains(&var) => Some(contextual),
+                (Some(inferred), _) => Some(inferred),
+                (None, _) => None,
+            };
+
+            if let Some(resolved) = resolved {
+                // This var was fixed in Round 1 or by return context — map its
+                // placeholder name to the resolved type.
                 let placeholder_atom = type_param_placeholder_atoms[i];
                 fixed_subst.insert(placeholder_atom, resolved);
                 // Also map the original type param name, in case target_type references it
@@ -1456,8 +1624,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Now that non-contextual arguments have been processed, we can provide
         // proper contextual types to lambdas based on fixed type variables.
         if saw_deferred_arg {
-            let tracked_round2_type_params: FxHashSet<_> =
-                func.type_params.iter().map(|tp| tp.name).collect();
             let round2_params = if fixed_subst.is_empty() {
                 None
             } else {
@@ -1466,14 +1632,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         .iter()
                         .map(|param| ParamInfo {
                             name: param.name,
-                            type_id: if self.function_like_type_param_appears_in_parameter_position(
-                                param.type_id,
-                                &tracked_round2_type_params,
-                            ) {
-                                param.type_id
-                            } else {
-                                instantiate_type(self.interner, param.type_id, &fixed_subst)
-                            },
+                            type_id: instantiate_type(self.interner, param.type_id, &fixed_subst),
                             optional: param.optional,
                             rest: param.rest,
                         })
@@ -1493,6 +1652,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     continue;
                 }
 
+                let is_deferred_generic_function_arg =
+                    deferred_generic_function_arg_indices.contains(&i);
+
                 let conflict_target = if fixed_subst.is_empty() {
                     target_type
                 } else {
@@ -1509,8 +1671,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     };
                 }
 
-                // Only process contextually sensitive arguments in Round 2
-                if !self.is_contextually_sensitive(arg_type) {
+                // Only process contextually sensitive arguments in Round 2, plus
+                // generic function references that were deferred until direct
+                // argument inference fixed their callback parameter context.
+                if !self.is_contextually_sensitive(arg_type) && !is_deferred_generic_function_arg {
                     continue;
                 }
 
@@ -1520,9 +1684,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     self.type_contains_placeholder(target_type, &var_map, &mut placeholder_visited);
                 let is_rest_param_arg = instantiated_params.last().is_some_and(|param| param.rest)
                     && i >= instantiated_params.len().saturating_sub(1);
-                let round2_target_type = round2_params
-                    .as_ref()
-                    .and_then(|params| self.param_type_for_arg_index(params, i, arg_types.len()));
+                let round2_target_type =
+                    if is_deferred_generic_function_arg && !fixed_subst.is_empty() {
+                        Some(instantiate_type(self.interner, target_type, &fixed_subst))
+                    } else {
+                        round2_params.as_ref().and_then(|params| {
+                            self.param_type_for_arg_index(params, i, arg_types.len())
+                        })
+                    };
 
                 if original_has_placeholders
                     && let Some(direct_target) = self.direct_inference_tracking_target(target_type)
@@ -1552,8 +1721,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         };
                     }
                 } else {
-                    let preserve_callback_parameter_placeholders = self
-                        .function_like_placeholder_appears_in_parameter_position(
+                    let preserve_callback_parameter_placeholders = !is_deferred_generic_function_arg
+                        && self.function_like_placeholder_appears_in_parameter_position(
                             target_type,
                             &var_map,
                             &mut placeholder_visited,
@@ -1577,6 +1746,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             // Mixed case: some placeholders resolved, some remaining.
                             // Use re-instantiated target so resolved params provide
                             // concrete contextual types to callbacks.
+                            candidate
+                        } else if is_deferred_generic_function_arg {
                             candidate
                         } else if is_rest_param_arg {
                             // Rest arguments like `...args: ConstructorParameters<Ctor>`
@@ -1804,6 +1975,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                 &non_constraint_bounds,
                                 infer_ctx.best_common_type(&non_constraint_bounds),
                                 has_usable_contra_candidates,
+                                infer_ctx.has_fresh_array_element_candidate(var),
                             );
                             let upper_bounds_ok = constraints.upper_bounds.iter().all(|upper| {
                                 !matches!(upper, &TypeId::ANY | &TypeId::UNKNOWN | &TypeId::ERROR)
@@ -1851,6 +2023,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                     &lower_bounds,
                                     ty,
                                     has_usable_contra_candidates,
+                                    infer_ctx.has_fresh_array_element_candidate(var),
                                 )
                             } else {
                                 ty
@@ -1860,7 +2033,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                 let concrete_contra: Vec<_> = contra_types
                                     .into_iter()
                                     .filter(|contra| {
-                                        !crate::type_queries::data::is_bare_infer_placeholder_db(
+                                        !crate::type_queries::data::is_bare_current_infer_placeholder_db(
                                             self.interner.as_type_database(),
                                             *contra,
                                         )
@@ -2000,6 +2173,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                     &lower_bounds,
                                     fallback,
                                     has_usable_contra_candidates,
+                                    infer_ctx.has_fresh_array_element_candidate(var),
                                 )
                             } else {
                                 fallback
@@ -2021,12 +2195,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     let infer_subst = if let Some(ref cached) = infer_subst_cache {
                         cached
                     } else {
-                        infer_subst_cache = Some(infer_ctx.get_current_substitution());
+                        let mut subst = infer_ctx.get_current_substitution();
+                        self.remove_unresolved_source_placeholders_from_substitution(&mut subst);
+                        infer_subst_cache = Some(subst);
                         infer_subst_cache
                             .as_ref()
                             .expect("inference substitution cache just initialized")
                     };
-                    self.normalize_inferred_placeholder_type(ty, infer_subst)
+                    self.normalize_inferred_placeholder_type_preserving_source_placeholders(
+                        ty,
+                        infer_subst,
+                    )
                 } else {
                     let constraint_preserves_literals = if let Some(constraint) = tp.constraint {
                         let instantiated_constraint = instantiate_call_type(
@@ -2059,7 +2238,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         // parameter does NOT have a primitive literal-preserving constraint.
                         // tsc preserves literal types when the constraint is a primitive:
                         //   <T extends string>(a: T) => T  -- T="z" preserved
-                        //   <T>(a: T) => T                  -- T="z" widened to string
+                        //   <T>(a: T) => T                  -- handled by the trivial fast path
                         if infer_ctx.all_candidates_are_fresh_literals(var) {
                             if noinfer_param_vars.contains(&var) {
                                 let mut literal_bounds = lower_bounds
@@ -2071,12 +2250,39 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                 if literal_bounds.is_empty() {
                                     ty
                                 } else {
-                                    crate::utils::union_or_single(self.interner, literal_bounds)
+                                    let result = crate::utils::union_or_single(
+                                        self.interner,
+                                        literal_bounds,
+                                    );
+                                    // tsc's BCT widening: array element inference widens
+                                    // fresh literals to their primitive in NoInfer<T>
+                                    // positions. Direct scalar arguments are preserved only
+                                    // when T appears at the return type's top level (`(): T`).
+                                    // Complex return shapes (`(): { v: T }`) use tsc's normal
+                                    // widened inference result.
+                                    let db = self.interner.as_type_database();
+                                    let return_preserves_direct_literal =
+                                        crate::visitor::is_type_parameter_at_top_level(
+                                            db,
+                                            func.return_type,
+                                            tp.name,
+                                        );
+                                    let should_widen = crate::visitor::is_literal_type(db, result)
+                                        && (!return_preserves_direct_literal
+                                            || infer_ctx.all_candidates_from_array_elements(var))
+                                        || crate::visitor::is_union_of_fresh_literals(db, result);
+                                    if should_widen {
+                                        widening::widen_literal_type(db, result)
+                                    } else {
+                                        result
+                                    }
                                 }
                             } else {
-                                crate::widen_literal_type(self.interner.as_type_database(), ty)
+                                widening::widen_literal_type(self.interner.as_type_database(), ty)
                             }
-                        } else if self.inference_type_contains_fresh_object_or_array(ty) {
+                        } else if self.inference_type_contains_fresh_object_or_array(ty)
+                            && !infer_ctx.has_type_annotation_candidates(var)
+                        {
                             crate::operations::widening::widen_type_for_inference(
                                 self.interner.as_type_database(),
                                 ty,
@@ -2112,8 +2318,45 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 TypeId::UNKNOWN
             };
 
+            let has_rest_tuple_evidence = rest_tuple_target_type
+                .and_then(|target_type| var_map.get(&target_type).copied())
+                .is_some_and(|rest_var| rest_var == var);
+            let ty = if has_rest_tuple_evidence
+                && is_bare_foreign_type_param(
+                    self.interner.as_type_database(),
+                    ty,
+                    &local_type_param_names,
+                    &type_param_placeholder_atoms,
+                ) {
+                let concrete_lower_bounds = lower_bounds
+                    .iter()
+                    .copied()
+                    .filter(|&bound| {
+                        is_substantive_inference_candidate(
+                            self.interner.as_type_database(),
+                            bound,
+                            &local_type_param_names,
+                            &type_param_placeholder_atoms,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                match concrete_lower_bounds.as_slice() {
+                    [] => ty,
+                    [single] => *single,
+                    bounds => infer_ctx.best_common_type(bounds),
+                }
+            } else {
+                ty
+            };
             let type_param_name = self.interner.resolve_atom(tp.name);
             let ty = if let Some(contextual_ty) = structural_return_subst.get(tp.name) {
+                let contextual_can_replace_foreign_source = is_bare_foreign_type_param(
+                    self.interner.as_type_database(),
+                    ty,
+                    &local_type_param_names,
+                    &type_param_placeholder_atoms,
+                ) && infer_ctx
+                    .all_candidates_are_return_type(var);
                 // When a type parameter had NO inference candidates at all
                 // (has_constraints=false) and defaulted to `unknown`, AND the type
                 // parameter was referenced in a non-deferred argument position
@@ -2131,7 +2374,47 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // type to enable proper contextual typing of callbacks.
                 let constructor_context_can_fill_unknown =
                     func.is_constructor && structural_return_subst.get(tp.name).is_some();
+                let prefer_contextual_constraint_candidate = if direct_param_vars.contains(&var) {
+                    if let Some(constraint) = tp.constraint {
+                        let constraint_ty_raw = instantiate_call_type(
+                            self.interner,
+                            constraint,
+                            &final_subst,
+                            actual_this_type,
+                        );
+                        let constraint_ty = self.checker.evaluate_type(constraint_ty_raw);
+                        let ty_for_check =
+                            crate::relations::freshness::widen_freshness(self.interner, ty);
+                        let contextual_for_check = crate::relations::freshness::widen_freshness(
+                            self.interner,
+                            contextual_ty,
+                        );
+                        let ty_satisfies_raw = constraint_ty_raw != constraint_ty
+                            && self.satisfies_raw_instantiated_constraint(
+                                ty_for_check,
+                                constraint_ty_raw,
+                            );
+                        let contextual_satisfies_raw = constraint_ty_raw != constraint_ty
+                            && self.satisfies_raw_instantiated_constraint(
+                                contextual_for_check,
+                                constraint_ty_raw,
+                            );
+                        let ty_satisfies_constraint = ty_satisfies_raw
+                            || self.checker.is_assignable_to(ty_for_check, constraint_ty);
+                        let contextual_satisfies_constraint = contextual_satisfies_raw
+                            || self
+                                .checker
+                                .is_assignable_to(contextual_for_check, constraint_ty);
+                        !ty_satisfies_constraint && contextual_satisfies_constraint
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
                 let keep_direct_param_inference = direct_param_vars.contains(&var)
+                    && !contextual_can_replace_foreign_source
+                    && !prefer_contextual_constraint_candidate
                     && ((!has_constraints
                         && ty == TypeId::UNKNOWN
                         && !constructor_context_can_fill_unknown)
@@ -2145,8 +2428,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         ty,
                         &var_map,
                     );
-                    let should_use =
-                        self.should_use_contextual_return_substitution(ty, contextual_ty, &var_map);
+                    let should_use = contextual_can_replace_foreign_source
+                        || self.should_use_contextual_return_substitution(
+                            ty,
+                            contextual_ty,
+                            &var_map,
+                        );
                     // When the variable was NOT inferred from a direct parameter match
                     // (i.e., it was inferred structurally from e.g. callback return types),
                     // allow the contextual return substitution to override even when
@@ -2182,9 +2469,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // we must resolve them using the full inference context substitution.
         // Example: B -> Array(__infer_src_U) where __infer_src_U -> T. We want B -> Array(T).
         {
-            let full_subst = infer_ctx.get_current_substitution();
+            let mut full_subst = infer_ctx.get_current_substitution();
+            self.remove_unresolved_source_placeholders_from_substitution(&mut full_subst);
             let mut resolved_subst = TypeSubstitution::new();
             for (name, ty) in final_subst.map().iter() {
+                let mut placeholder_visited = FxHashSet::default();
+                if structural_return_subst.get(*name) == Some(*ty)
+                    && !self.type_contains_placeholder(*ty, &var_map, &mut placeholder_visited)
+                {
+                    resolved_subst.insert(*name, *ty);
+                    continue;
+                }
                 // Iteratively apply substitution to resolve transitive placeholders.
                 let mut current = *ty;
                 for _ in 0..8 {
@@ -2206,6 +2501,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // This handles cases like `<T extends U, U>` where T's constraint references
         // U, which may not be in final_subst until later iterations.
         let mut constraint_fallback_tp_names: FxHashSet<tsz_common::Atom> = FxHashSet::default();
+        let mut constraint_fallback_display_types: FxHashMap<tsz_common::Atom, TypeId> =
+            FxHashMap::default();
         for (tp, &var) in func.type_params.iter().zip(type_param_vars.iter()) {
             if let Some(constraint) = tp.constraint {
                 let ty = final_subst.get(tp.name).unwrap_or(TypeId::ERROR);
@@ -2246,7 +2543,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let ty_for_check = crate::relations::freshness::widen_freshness(self.interner, ty);
                 let raw_constraint_satisfied = constraint_ty_raw != constraint_ty
                     && self.satisfies_raw_instantiated_constraint(ty_for_check, constraint_ty_raw);
-                if !self.checker.is_assignable_to(ty_for_check, constraint_ty)
+                let constraint_satisfied =
+                    self.arg_satisfies_type_parameter_constraint(ty_for_check, constraint_ty);
+                if !constraint_satisfied
                     && !raw_constraint_satisfied
                     && !self.callable_satisfies_top_rest_any_constraint(ty_for_check, constraint_ty)
                 {
@@ -2310,12 +2609,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // Try to recover using un-widened literal candidates when widening
                     // caused the violation (e.g., "b" widened to string violates keyof O).
                     let un_widened = infer_ctx.get_literal_candidates(var);
-                    let recovered = if !un_widened.is_empty() {
-                        let candidate_type = if un_widened.len() == 1 {
+                    let candidate_type = if !un_widened.is_empty() {
+                        Some(if un_widened.len() == 1 {
                             un_widened[0]
                         } else {
-                            self.interner.union(un_widened)
-                        };
+                            self.interner.union_from_slice(&un_widened)
+                        })
+                    } else {
+                        None
+                    };
+                    let recovered = if let Some(candidate_type) = candidate_type {
                         let candidate_satisfies_raw = constraint_ty_raw != constraint_ty
                             && self.satisfies_raw_instantiated_constraint(
                                 candidate_type,
@@ -2335,11 +2638,76 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     if let Some(recovered_ty) = recovered {
                         final_subst.insert(tp.name, recovered_ty);
                     } else {
+                        if let Some(candidate_type) = candidate_type {
+                            let previous = final_subst.get(tp.name);
+                            final_subst.insert(tp.name, candidate_type);
+                            let display_constraint = instantiate_call_type(
+                                self.interner,
+                                constraint,
+                                &final_subst,
+                                actual_this_type,
+                            );
+                            if let Some(previous) = previous {
+                                final_subst.insert(tp.name, previous);
+                            } else {
+                                final_subst.remove(tp.name);
+                            }
+                            constraint_fallback_display_types.insert(tp.name, display_constraint);
+                        }
                         // Fall back to constraint type so argument checking emits TS2345
                         final_subst.insert(tp.name, constraint_ty);
                         constraint_fallback_tp_names.insert(tp.name);
                     }
                 }
+            }
+        }
+
+        // Circular-inference guard for unconstrained type parameters.
+        //
+        // When an unconstrained T_inner is inferred as a composite type that
+        // structurally CONTAINS a foreign outer-scope placeholder (e.g.
+        // `T_outer & object`), the final argument assignability check becomes
+        // tautological: `T_outer & object <: T_outer & object` trivially passes,
+        // so TS2345 is never emitted even though the expression is unsound.
+        //
+        // tsc detects this and emits TS2345. We match that behaviour by
+        // reverting `final_subst[T_inner.name]` back to the call-local
+        // placeholder TypeId whenever all four conditions hold:
+        //   1. The type parameter has no constraint (unconstrained).
+        //   2. Inference produced usable contra-variance candidates (meaning the
+        //      outer call constrained the parameter; prevents false positives for
+        //      independent generic calls like `identity(value[key])`).
+        //   3. At least one covariant candidate is an IndexAccess type (the
+        //      structural marker of `T[K]` being passed to `T`). Pure outer-T
+        //      forwarding (`T_outer[]` → `T_inner`) never has an IndexAccess
+        //      covariant candidate and must not be reverted.
+        //   4. The inferred type structurally contains a foreign TypeParameter
+        //      (from an outer scope), making the post-substitution check
+        //      tautological.
+        for (tp, &var) in func.type_params.iter().zip(type_param_vars.iter()) {
+            // Condition 1: type parameter is unconstrained.
+            if tp.constraint.is_some() {
+                continue;
+            }
+            let Some(inferred_ty) = final_subst.get(tp.name) else {
+                continue;
+            };
+            // Condition 2: had usable contra candidates during inference.
+            if !infer_ctx.has_usable_contra_candidates(var, self.interner.as_type_database()) {
+                continue;
+            }
+            // Condition 3: at least one covariant candidate is an IndexAccess type.
+            if !infer_ctx.has_index_access_covariant_candidate(var) {
+                continue;
+            }
+            // Condition 4: the inferred type structurally contains a foreign TypeParameter.
+            if !self.type_contains_any_foreign_type_param(inferred_ty, &var_map) {
+                continue;
+            }
+            // Revert to the call-local placeholder so the argument check is
+            // non-tautological and TS2345 can fire.
+            if let Some((&pid, _)) = var_map.iter().find(|(_, v)| **v == var) {
+                final_subst.insert(tp.name, pid);
             }
         }
 
@@ -2470,6 +2838,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             s
         };
         let mut final_arg_subst = infer_ctx.get_current_substitution();
+        self.remove_unresolved_source_placeholders_from_substitution(&mut final_arg_subst);
         for (name, ty) in placeholder_subst.map().iter() {
             final_arg_subst.insert(*name, *ty);
         }
@@ -2479,6 +2848,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             &final_subst,
             actual_this_type,
         );
+        let raw_return_type = self.hoist_source_placeholders_into_return_type(raw_return_type);
         let return_type =
             self.normalize_inferred_placeholder_type(raw_return_type, &final_arg_subst);
         let return_type =
@@ -2755,6 +3125,41 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         return CallResult::Success(return_type);
                     }
 
+                    let expected = self
+                        .param_type_for_arg_index(&func.params, index, final_args.len())
+                        .and_then(|raw| match self.interner.lookup(raw) {
+                            Some(TypeData::TypeParameter(tp)) => {
+                                constraint_fallback_display_types.get(&tp.name).copied()
+                            }
+                            _ => None,
+                        })
+                        .unwrap_or(expected);
+                    if crate::contains_this_type(self.interner, expected)
+                        && let Some(concrete_this) = self
+                            .checker
+                            .type_resolver()
+                            .and_then(|resolver| resolver.resolve_this_type(self.interner))
+                    {
+                        let substituted_expected =
+                            crate::instantiation::instantiate::substitute_this_type(
+                                self.interner,
+                                expected,
+                                concrete_this,
+                            );
+                        let substituted_rest_element =
+                            crate::contextual::rest_argument_element_type(
+                                self.interner,
+                                substituted_expected,
+                            );
+                        if self.checker.is_assignable_to(actual, substituted_expected)
+                            || self
+                                .checker
+                                .is_assignable_to(actual, substituted_rest_element)
+                        {
+                            return CallResult::Success(return_type);
+                        }
+                    }
+
                     CallResult::ArgumentTypeMismatch {
                         index,
                         expected,
@@ -2792,7 +3197,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             {
                 continue;
             }
-            if !self.checker.is_assignable_to(arg_type, constraint)
+            if !self.arg_satisfies_type_parameter_constraint(arg_type, constraint)
                 && !self.is_function_union_compat(arg_type, constraint)
                 && !self.callable_satisfies_top_rest_any_constraint(arg_type, constraint)
             {
@@ -2804,6 +3209,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 };
             }
         }
+
         tracing::debug!("Final check succeeded");
 
         // Instantiate the type predicate if present, so the checker can use it
@@ -2903,6 +3309,53 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         if changed {
             instantiated_rest_param.type_id = self.interner.tuple(elements);
+        }
+    }
+
+    /// Returns `true` when `ty` is or structurally contains a `TypeParameter` that
+    /// does not belong to the current generic call (i.e. is absent from `var_map`).
+    ///
+    /// "Foreign" covers two cases:
+    ///  - A bare `__infer_*` placeholder from an enclosing call scope.
+    ///  - The original, user-named `TypeParameter` (e.g. `T`) from the enclosing
+    ///    function — which appears when `generic_function_shape_for_inference`
+    ///    renames the callee's type params but the argument type still carries
+    ///    the outer scope's unsubstituted `TypeParameter`.
+    ///
+    /// Intrinsic and concrete types (primitives, objects, etc.) are never foreign.
+    /// The caller is responsible for ensuring `has_usable_contra_candidates` is
+    /// true before using this result, to prevent false positives for independent
+    /// generic calls like `identity(value[key])`.
+    fn type_contains_any_foreign_type_param(
+        &self,
+        ty: TypeId,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+    ) -> bool {
+        if ty.is_intrinsic() {
+            return false;
+        }
+        match self.interner.lookup(ty) {
+            // Any TypeParameter not registered in this call's var_map is foreign.
+            Some(TypeData::TypeParameter(_)) => !var_map.contains_key(&ty),
+            Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => self
+                .interner
+                .type_list(list_id)
+                .iter()
+                .any(|&m| self.type_contains_any_foreign_type_param(m, var_map)),
+            Some(TypeData::IndexAccess(obj, idx)) => {
+                self.type_contains_any_foreign_type_param(obj, var_map)
+                    || self.type_contains_any_foreign_type_param(idx, var_map)
+            }
+            Some(TypeData::Array(elem)) => self.type_contains_any_foreign_type_param(elem, var_map),
+            Some(TypeData::Application(app_id)) => {
+                let app = self.interner.type_application(app_id);
+                self.type_contains_any_foreign_type_param(app.base, var_map)
+                    || app
+                        .args
+                        .iter()
+                        .any(|&a| self.type_contains_any_foreign_type_param(a, var_map))
+            }
+            _ => false,
         }
     }
 

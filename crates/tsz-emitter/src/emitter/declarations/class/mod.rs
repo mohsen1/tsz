@@ -1,3 +1,5 @@
+mod constructor_temp_estimation;
+mod constructor_using_region;
 mod decorators;
 mod emit_declaration;
 mod emit_es6;
@@ -16,6 +18,15 @@ pub(in crate::emitter) type StaticFieldInit = (
     Vec<String>,
 );
 pub(in crate::emitter) type AutoAccessorInfo = (NodeIndex, String, Option<NodeIndex>, bool);
+
+pub(in crate::emitter) struct AutoAccessorEmitOptions<'a> {
+    pub static_accessor_alias: Option<&'a str>,
+    pub lower_to_private_fields: bool,
+    pub class_name: &'a str,
+    pub property_end: u32,
+    pub omit_storage_initializer: bool,
+    pub computed_storage_inits: &'a [String],
+}
 
 /// Replace all occurrences of an identifier with a replacement, respecting word boundaries.
 pub(crate) fn replace_identifier(text: &str, name: &str, replacement: &str) -> String {

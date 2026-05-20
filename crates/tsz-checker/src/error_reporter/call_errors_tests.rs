@@ -43,12 +43,45 @@ foo(c);
 }
 
 #[test]
+fn correlated_mapped_handler_call_does_not_report_never_parameter() {
+    let diagnostics = check_source_with_strict_null(
+        r#"
+type TypeMap = {
+    foo: string,
+    bar: number
+};
+
+type Keys = keyof TypeMap;
+type HandlerMap = { [P in Keys]: (x: TypeMap[P]) => void };
+
+declare const handlers: HandlerMap;
+
+type DataEntry<K extends Keys = Keys> = { [P in K]: {
+    type: P,
+    data: TypeMap[P]
+}}[K];
+
+function process<K extends Keys>(data: DataEntry<K>[]) {
+    data.forEach(block => {
+        handlers[block.type](block.data);
+    });
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 2345),
+        "Expected no TS2345 for correlated handler call. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn mapped_parameter_property_mismatch_displays_instantiated_property_slice() {
     let mut parser = tsz_parser::parser::ParserState::new("test.ts".to_string(), String::new());
     let root = parser.parse_source_file();
     let mut binder = tsz_binder::BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let mut checker = crate::state::CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -77,6 +110,44 @@ fn mapped_parameter_property_mismatch_displays_instantiated_property_slice() {
         .expect("expected mapped property display rewrite");
 
     assert_eq!(display, "{ y?: number | undefined; }");
+}
+
+#[test]
+fn generic_call_parameter_display_trims_unmatched_trailing_type_arg_close() {
+    let diagnostics = check_source_with_strict_null(
+        r#"
+declare class StateNode<TContext, in out TEvent extends { type: string }> {
+    _storedEvent: TEvent;
+    _action: ActionObject<TEvent>;
+    _state: StateNode<TContext, any>;
+}
+
+interface ActionObject<TEvent extends { type: string }> {
+    exec: (meta: StateNode<any, TEvent>) => void;
+}
+
+declare function createMachine<TEvent extends { type: string }>(action: ActionObject<TEvent>): StateNode<any, any>;
+declare const qq: ActionObject<{ type: "PLAY"; value: number }>;
+
+createMachine<{ type: "PLAY"; value: number } | { type: "RESET" }>(qq);
+"#,
+    );
+
+    let diag = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == 2345)
+        .expect("expected TS2345");
+
+    assert!(
+        diag.message_text.contains(
+            "parameter of type 'ActionObject<{ type: \"PLAY\"; value: number; } | { type: \"RESET\"; }>'."
+        ),
+        "expected balanced ActionObject target display, got: {diag:?}"
+    );
+    assert!(
+        !diag.message_text.contains("}>>'."),
+        "TS2345 target display must not include an unmatched trailing `>`: {diag:?}"
+    );
 }
 
 #[test]
@@ -357,6 +428,57 @@ export function css<S extends { [K in keyof S]: string }>(styles: S): string {
     assert!(
         !diag.message_text.contains("error"),
         "Callback display should not collapse explicit annotations to `error`, got: {diag:?}"
+    );
+}
+
+#[test]
+fn ts2345_keyof_parameter_display_uses_named_sibling_argument_type() {
+    let source = r#"
+interface Box {
+  first: number;
+  second: number;
+}
+declare const box: Box;
+declare function get<T>(obj: T, key: keyof T): void;
+get(box, "missing");
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .expect("expected TS2345");
+
+    assert!(
+        diag.message_text.contains(
+            "Argument of type '\"missing\"' is not assignable to parameter of type 'keyof Box'."
+        ),
+        "Expected keyof parameter display to use the sibling argument's named type, got: {diag:?}"
+    );
+}
+
+#[test]
+fn ts2345_keyof_parameter_display_is_independent_of_type_parameter_name() {
+    let source = r#"
+interface Settings {
+  host: string;
+  port: number;
+}
+declare const settings: Settings;
+declare function read<Value>(value: Value, key: keyof Value): void;
+read(settings, "missing");
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .expect("expected TS2345");
+
+    assert!(
+        diag.message_text
+            .contains("parameter of type 'keyof Settings'"),
+        "Expected renamed generic parameter path to display 'keyof Settings', got: {diag:?}"
     );
 }
 

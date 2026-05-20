@@ -93,7 +93,7 @@ impl<'a> CheckerState<'a> {
 
     pub(crate) fn suppress_circular_initializer_relation_diagnostics(
         &mut self,
-        snap: &crate::context::speculation::DiagnosticSnapshot,
+        snap: crate::context::speculation::DiagnosticSpeculationSnapshot,
         init_idx: NodeIndex,
     ) {
         let Some(init_node) = self.ctx.arena.get(init_idx) else {
@@ -101,7 +101,7 @@ impl<'a> CheckerState<'a> {
         };
         let init_start = init_node.pos;
         let init_end = init_node.end;
-        self.ctx.rollback_diagnostics_filtered(snap, |diag| {
+        snap.rollback_filtered(&mut self.ctx.diagnostic_state(), |diag| {
             let in_initializer = diag.start >= init_start && diag.start <= init_end;
             let is_downstream_relation_noise =
                 matches!(diag.code, 2322 | 2345 | 2769) && in_initializer;
@@ -651,6 +651,9 @@ impl<'a> CheckerState<'a> {
                 if let Some(sym) = referenced_sym
                     && sym == target_sym
                 {
+                    if self.type_query_targets_value_side_of_merged_alias(sym) {
+                        return None;
+                    }
                     // Found a reference to the target symbol!
                     // If we are in a lazy context AND it's a bare identifier, it's safe.
                     if current_lazy && is_bare_identifier {
@@ -715,5 +718,13 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn type_query_targets_value_side_of_merged_alias(&self, sym_id: SymbolId) -> bool {
+        self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+            symbol.value_declaration.is_some()
+                && symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0
+                && symbol.flags & tsz_binder::symbol_flags::VALUE != 0
+        })
     }
 }

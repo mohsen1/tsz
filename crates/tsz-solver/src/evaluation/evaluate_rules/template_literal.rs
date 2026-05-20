@@ -243,7 +243,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         "extract_literal_strings: converting number to string"
                     );
 
-                    if !(1e-6..1e21).contains(&abs_val) {
+                    if n_val == 0.0 {
+                        vec!["0".to_string()]
+                    } else if !(1e-6..1e21).contains(&abs_val) {
                         // Use scientific notation (Rust adds sign for negative exponents, but not positive)
                         let mut s = format!("{n_val:e}");
                         // Rust outputs "1e-7" for 1e-7 (good) but "1e21" instead of "1e+21" for 1e21

@@ -70,6 +70,7 @@ ROOT_GIT_TSZ_STATUS_CACHED=0
 ROOT_GIT_TSZ_STATUS_OUTPUT=""
 ROOT_GIT_RUNNER_STATUS_CACHED=0
 ROOT_GIT_RUNNER_STATUS_OUTPUT=""
+LAST_BUILT_TSZ_BIN=""
 
 if command -v git &>/dev/null && git -C "$ROOT_DIR" rev-parse --is-inside-work-tree &>/dev/null; then
     ROOT_GIT_AVAILABLE=1
@@ -222,20 +223,31 @@ resolve_tsz_binary() {
 
 rebuild_tsz_binary() {
     log_step "Building tsz binary..."
+    local target_dir="${CARGO_TARGET_DIR:-.target}"
     (
         cd "$ROOT_DIR"
-        CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-.target}" cargo build --release -p tsz-cli --bin tsz
+        CARGO_TARGET_DIR="$target_dir" cargo build --release -p tsz-cli --bin tsz
     )
+    if [[ "$target_dir" = /* ]]; then
+        LAST_BUILT_TSZ_BIN="$target_dir/release/tsz"
+    else
+        LAST_BUILT_TSZ_BIN="$ROOT_DIR/$target_dir/release/tsz"
+    fi
     log_success "tsz binary built"
 }
 
 ensure_tsz_binary() {
     if ! resolve_tsz_binary; then
         rebuild_tsz_binary
-        resolve_tsz_binary || {
-            log_error "Failed to resolve tsz binary after build"
-            exit 1
-        }
+        if [[ -n "$LAST_BUILT_TSZ_BIN" && -x "$LAST_BUILT_TSZ_BIN" ]]; then
+            TSZ_BIN="$LAST_BUILT_TSZ_BIN"
+            export TSZ_BIN
+        else
+            resolve_tsz_binary || {
+                log_error "Failed to resolve tsz binary after build"
+                exit 1
+            }
+        fi
         return 0
     fi
 
@@ -264,11 +276,16 @@ ensure_tsz_binary() {
     if [[ "$stale" -eq 1 ]]; then
         log_info "Detected stale tsz binary; rebuilding"
         rebuild_tsz_binary
-        resolve_tsz_binary || {
-            log_error "Failed to resolve tsz binary after rebuild"
-            exit 1
-        }
-        write_state_head "$state_file" "$ROOT_GIT_HEAD"
+        if [[ -n "$LAST_BUILT_TSZ_BIN" && -x "$LAST_BUILT_TSZ_BIN" ]]; then
+            TSZ_BIN="$LAST_BUILT_TSZ_BIN"
+            export TSZ_BIN
+        else
+            resolve_tsz_binary || {
+                log_error "Failed to resolve tsz binary after rebuild"
+                exit 1
+            }
+        fi
+        write_state_head "$(dirname "$TSZ_BIN")/.tsz_binary_head" "$ROOT_GIT_HEAD"
     fi
 }
 

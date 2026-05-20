@@ -1486,6 +1486,43 @@ fn all_symbol_mappings_empty_store() {
     assert!(mappings.is_empty(), "empty store should return no mappings");
 }
 
+#[test]
+fn all_symbol_mappings_snapshot_reuses_and_invalidates_by_generation() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let mut info_a =
+        DefinitionInfo::type_alias(interner.intern_string("AliasA"), vec![], TypeId::NUMBER);
+    info_a.symbol_id = Some(10);
+    info_a.file_id = Some(0);
+    let def_a = store.register(info_a);
+    store.register_symbol_mapping(10, 0, def_a);
+
+    let first = store.all_symbol_mappings_snapshot();
+    let second = store.all_symbol_mappings_snapshot();
+    assert!(
+        std::sync::Arc::ptr_eq(&first, &second),
+        "unchanged store should reuse the cached snapshot"
+    );
+
+    let mut info_b =
+        DefinitionInfo::interface(interner.intern_string("InterfaceB"), vec![], vec![]);
+    info_b.symbol_id = Some(20);
+    info_b.file_id = Some(0);
+    let def_b = store.register(info_b);
+    store.register_symbol_mapping(20, 0, def_b);
+
+    let third = store.all_symbol_mappings_snapshot();
+    assert!(
+        !std::sync::Arc::ptr_eq(&first, &third),
+        "generation change should rebuild the cached snapshot"
+    );
+
+    let mapping_set: std::collections::HashSet<(u32, DefId)> = third.iter().copied().collect();
+    assert!(mapping_set.contains(&(10, def_a)));
+    assert!(mapping_set.contains(&(20, def_b)));
+}
+
 // =============================================================================
 // from_semantic_defs factory tests
 // =============================================================================

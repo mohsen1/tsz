@@ -1,10 +1,15 @@
 use super::{BinderOptions, BinderState};
 use crate::flow::{FlowNodeId, flow_flags};
 use crate::scopes::ContainerKind;
-use crate::{SymbolTable, symbol_flags};
+use crate::{SymbolId, SymbolTable, symbol_flags};
 use std::sync::Arc;
 use tsz_common::common::ScriptTarget;
-use tsz_parser::parser::ParserState;
+use tsz_parser::parser::{ParserState, node_flags, syntax_kind_ext};
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 #[test]
 fn test_namespace_exports_exclude_non_exported_members() {
@@ -14,8 +19,7 @@ namespace M {
     class B {}
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -46,8 +50,7 @@ namespace M {
     }
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -98,8 +101,7 @@ fn records_import_metadata_for_exported_reexports() {
 export { A, B as C } from './a';
 export type { D as E } from './b';
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -549,8 +551,7 @@ var x = {
 
 export = x;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -719,8 +720,7 @@ let x: number | undefined;
     x = 1;
 })();
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
@@ -751,8 +751,7 @@ let f = function() {
     x = 1;
 };
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
@@ -782,8 +781,7 @@ let x: number | undefined;
     x = 1;
 })();
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
@@ -812,8 +810,7 @@ let x: number | undefined;
     x = 1;
 })();
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
@@ -842,8 +839,7 @@ let x: number | undefined;
     x = 1;
 })();
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
@@ -868,16 +864,14 @@ let x: number | undefined;
 /// Parse source text and bind it, returning the binder state and the parser
 /// (which owns the arena). Using a tuple return so callers can access both.
 fn parse_and_bind(source: &str) -> (BinderState, ParserState) {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
     (binder, parser)
 }
 
 fn parse_and_bind_with_options(source: &str, options: BinderOptions) -> (BinderState, ParserState) {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::with_options(options);
     binder.bind_source_file(parser.get_arena(), root);
     (binder, parser)
@@ -1173,6 +1167,74 @@ var x = 2;
         x_symbol.declarations.len() >= 2,
         "duplicate var should have at least 2 declarations, got {}",
         x_symbol.declarations.len()
+    );
+}
+
+#[test]
+fn duplicate_const_then_var_keeps_earliest_syntactic_value_declaration() {
+    let (binder, parser) = parse_and_bind(
+        r"
+declare const e: string | boolean | undefined;
+declare var e: { a: number };
+",
+    );
+    let arena = parser.get_arena();
+    let e_sym_id = binder.file_locals.get("e").expect("expected e");
+    let e_symbol = binder.symbols.get(e_sym_id).expect("expected e symbol");
+    let value_decl = e_symbol.value_declaration;
+    let parent = arena
+        .get_extended(value_decl)
+        .expect("expected value declaration metadata")
+        .parent;
+    let parent_node = arena
+        .get(parent)
+        .expect("expected variable declaration list");
+
+    assert_eq!(
+        arena
+            .get(value_decl)
+            .expect("expected value declaration")
+            .kind,
+        syntax_kind_ext::VARIABLE_DECLARATION
+    );
+    assert_eq!(parent_node.kind, syntax_kind_ext::VARIABLE_DECLARATION_LIST);
+    assert!(
+        node_flags::is_block_scoped(parent_node.flags as u32),
+        "value declaration should be the source-earlier const, not the hoisted var"
+    );
+}
+
+#[test]
+fn duplicate_var_then_const_keeps_var_as_earliest_syntactic_value_declaration() {
+    let (binder, parser) = parse_and_bind(
+        r"
+declare var e: { a: number };
+declare const e: string | boolean | undefined;
+",
+    );
+    let arena = parser.get_arena();
+    let e_sym_id = binder.file_locals.get("e").expect("expected e");
+    let e_symbol = binder.symbols.get(e_sym_id).expect("expected e symbol");
+    let value_decl = e_symbol.value_declaration;
+    let parent = arena
+        .get_extended(value_decl)
+        .expect("expected value declaration metadata")
+        .parent;
+    let parent_node = arena
+        .get(parent)
+        .expect("expected variable declaration list");
+
+    assert_eq!(
+        arena
+            .get(value_decl)
+            .expect("expected value declaration")
+            .kind,
+        syntax_kind_ext::VARIABLE_DECLARATION
+    );
+    assert_eq!(parent_node.kind, syntax_kind_ext::VARIABLE_DECLARATION_LIST);
+    assert!(
+        !node_flags::is_block_scoped(parent_node.flags as u32),
+        "value declaration should remain the source-earlier var"
     );
 }
 
@@ -3108,6 +3170,310 @@ declare module "mylib" {
     );
 }
 
+// Regression for #6164: a `declare module "<self>"` augmentation must bind its
+// interface declaration to a separate `SymbolId` from the file-scope interface
+// of the same name. Merging the augmentation's declaration node into the
+// file-scope symbol would inject the augmentation members into the local type
+// computed by `compute_interface_type_from_declarations`.
+#[test]
+fn self_module_augmentation_interface_does_not_pollute_file_scope_interface() {
+    let (binder, _parser) = parse_and_bind(
+        r#"
+interface Merged {
+    a: number;
+}
+
+interface Merged {
+    b: string;
+}
+
+declare module "./test" {
+    interface Merged {
+        augmented: boolean;
+    }
+}
+
+export {};
+"#,
+    );
+
+    let file_sym = binder
+        .file_locals
+        .get("Merged")
+        .expect("local `interface Merged` should be visible at file scope");
+    let symbol = binder
+        .get_symbol(file_sym)
+        .expect("file-scope `Merged` symbol exists");
+    assert_eq!(
+        symbol.declarations.len(),
+        2,
+        "file-scope `Merged` should only see its two non-augmentation declarations, got {:?}",
+        symbol.declarations
+    );
+
+    let augmentations = binder
+        .module_augmentations
+        .get("./test")
+        .expect("augmentation entry for ./test should exist");
+    assert!(
+        augmentations.iter().any(|aug| aug.name == "Merged"),
+        "the augmentation table should record the augmentation declaration for ./test"
+    );
+}
+
+// Same-target augmentation interface declarations in separate `declare module
+// "X" { ... }` blocks must merge with each other into one augmentation-local
+// symbol, mirroring tsc's behaviour where two augmentations of `interface
+// Both` accumulate into one merged shape.
+#[test]
+fn module_augmentation_interface_declarations_merge_across_blocks() {
+    let (binder, _parser) = parse_and_bind(
+        r#"
+declare module "./mod" {
+    interface Both { foo: number; }
+}
+
+declare module "./mod" {
+    interface Both { bar: string; }
+}
+
+export {};
+"#,
+    );
+
+    let entries = binder
+        .module_augmentations
+        .get("./mod")
+        .expect("augmentation table should record both blocks");
+    let both_entries: Vec<_> = entries.iter().filter(|aug| aug.name == "Both").collect();
+    assert_eq!(both_entries.len(), 2, "expected two declarations of Both");
+
+    let sym_a = binder
+        .get_node_symbol(both_entries[0].node)
+        .expect("augmentation decl should map to a symbol");
+    let sym_b = binder
+        .get_node_symbol(both_entries[1].node)
+        .expect("augmentation decl should map to a symbol");
+    assert_eq!(
+        sym_a, sym_b,
+        "two augmentation declarations of the same name should share a symbol"
+    );
+
+    let merged = binder
+        .get_symbol(sym_a)
+        .expect("augmentation symbol exists");
+    assert_eq!(
+        merged.declarations.len(),
+        2,
+        "merged augmentation symbol should record both declarations"
+    );
+}
+
+// A `declare module "<self>"` type-alias augmentation must not merge into a
+// pre-existing file-scope type alias of the same name. This is the type-alias
+// mirror of #6164: same architectural rule, different declaration kind.
+#[test]
+fn self_module_augmentation_type_alias_does_not_pollute_file_scope_alias() {
+    let (binder, _parser) = parse_and_bind(
+        r#"
+type MyType = string;
+
+declare module "./test" {
+    type MyType = number;
+}
+
+export {};
+"#,
+    );
+
+    let file_sym = binder
+        .file_locals
+        .get("MyType")
+        .expect("local `type MyType = string` should be visible at file scope");
+    let symbol = binder
+        .get_symbol(file_sym)
+        .expect("file-scope `MyType` symbol exists");
+    assert_eq!(
+        symbol.declarations.len(),
+        1,
+        "file-scope `MyType` should only see its single non-augmentation declaration"
+    );
+
+    let augmentations = binder
+        .module_augmentations
+        .get("./test")
+        .expect("augmentation entry for ./test should exist");
+    assert!(
+        augmentations.iter().any(|aug| aug.name == "MyType"),
+        "the augmentation table should record the augmentation type-alias declaration"
+    );
+}
+
+// =============================================================================
+// MODULE AUGMENTATION SYMBOL ISOLATION TESTS
+// =============================================================================
+
+#[test]
+fn augmentation_interface_does_not_merge_into_file_scope_interface() {
+    let (binder, parser) = parse_and_bind(
+        r#"
+interface Merged {
+    a: number;
+}
+interface Merged {
+    b: string;
+}
+declare module "./test" {
+    interface Merged {
+        augmented: boolean;
+    }
+}
+export {};
+"#,
+    );
+
+    let merged_id = binder
+        .file_locals
+        .get("Merged")
+        .expect("Merged should be in file_locals");
+    let merged_sym = binder.symbols.get(merged_id).expect("symbol exists");
+    assert_eq!(
+        merged_sym.declarations.len(),
+        2,
+        "file-scope Merged must have only its 2 local declarations, not the augmentation's"
+    );
+
+    let aug_id = *binder
+        .module_augmentation_symbols
+        .get(&("./test".to_string(), "Merged".to_string()))
+        .expect("augmentation-only symbol should exist in module_augmentation_symbols");
+    assert_ne!(
+        aug_id, merged_id,
+        "augmentation symbol must be different from file-scope symbol"
+    );
+    let aug_sym = binder
+        .symbols
+        .get(aug_id)
+        .expect("augmentation symbol exists");
+    assert_eq!(
+        aug_sym.declarations.len(),
+        1,
+        "augmentation symbol should have exactly 1 declaration"
+    );
+
+    // The augmentation should be tracked in module_augmentations.
+    let augs = binder
+        .module_augmentations
+        .get("./test")
+        .expect("augmentation should be tracked");
+    assert!(
+        augs.iter().any(|a| a.name == "Merged"),
+        "Merged augmentation should be in module_augmentations"
+    );
+    drop(parser);
+}
+
+#[test]
+fn augmentation_interface_renamed_iteration_var_does_not_merge() {
+    let (binder, parser) = parse_and_bind(
+        r#"
+interface Shape {
+    x: number;
+}
+declare module "./shapes" {
+    interface Shape {
+        extra: string;
+    }
+}
+export {};
+"#,
+    );
+
+    let shape_id = binder
+        .file_locals
+        .get("Shape")
+        .expect("Shape should be in file_locals");
+    let shape_sym = binder.symbols.get(shape_id).expect("symbol exists");
+    assert_eq!(
+        shape_sym.declarations.len(),
+        1,
+        "file-scope Shape must have only 1 declaration"
+    );
+
+    let aug_id = *binder
+        .module_augmentation_symbols
+        .get(&("./shapes".to_string(), "Shape".to_string()))
+        .expect("augmentation-only Shape symbol must exist");
+    assert_ne!(aug_id, shape_id, "augmentation symbol must be separate");
+    drop(parser);
+}
+
+#[test]
+fn augmentation_declarations_across_two_blocks_same_target_merge_with_each_other() {
+    let (binder, parser) = parse_and_bind(
+        r#"
+declare module "./m" {
+    interface Shared {
+        a: number;
+    }
+}
+declare module "./m" {
+    interface Shared {
+        b: string;
+    }
+}
+export {};
+"#,
+    );
+
+    let aug_key = ("./m".to_string(), "Shared".to_string());
+    let aug_sym_id = binder
+        .module_augmentation_symbols
+        .get(&aug_key)
+        .expect("augmentation symbol must exist");
+    let aug_sym = binder
+        .symbols
+        .get(*aug_sym_id)
+        .expect("augmentation symbol exists");
+    assert_eq!(
+        aug_sym.declarations.len(),
+        2,
+        "both augmentation blocks' Shared declarations must merge into one augmentation symbol"
+    );
+    drop(parser);
+}
+
+#[test]
+fn augmentation_type_alias_does_not_merge_into_file_scope_alias() {
+    let (binder, parser) = parse_and_bind(
+        r#"
+type MyType = number;
+declare module "./util" {
+    type MyType = string;
+}
+export {};
+"#,
+    );
+
+    let local_id = binder
+        .file_locals
+        .get("MyType")
+        .expect("MyType should be in file_locals");
+    let local_sym = binder.symbols.get(local_id).expect("symbol exists");
+    assert_eq!(
+        local_sym.declarations.len(),
+        1,
+        "file-scope MyType must have only 1 declaration"
+    );
+
+    let aug_id = *binder
+        .module_augmentation_symbols
+        .get(&("./util".to_string(), "MyType".to_string()))
+        .expect("augmentation-only MyType symbol must exist");
+    assert_ne!(aug_id, local_id, "augmentation symbol must be separate");
+    drop(parser);
+}
+
 // =============================================================================
 // 20. EXPANDO PROPERTIES
 // =============================================================================
@@ -3705,8 +4071,7 @@ interface Foo {
 
 /// Helper: parse + bind a source file and return the binder state.
 fn bind_source(source: &str) -> BinderState {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
     binder
@@ -3859,8 +4224,7 @@ interface Merged { a: string }
 interface Merged { b: number }
 const value = 1;
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena().clone();
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -4161,6 +4525,49 @@ fn merge_lib_contexts_does_not_overwrite_user_semantic_defs() {
 }
 
 #[test]
+fn type_only_export_clone_preserves_lib_provenance() {
+    let lib_source = "interface LibGlobal {}";
+    let mut lib_parser = ParserState::new("lib.d.ts".to_string(), lib_source.to_string());
+    let lib_root = lib_parser.parse_source_file();
+    let mut lib_binder = BinderState::new();
+    lib_binder.bind_source_file(lib_parser.get_arena(), lib_root);
+
+    let lib_ctx = super::LibContext {
+        arena: Arc::new(lib_parser.get_arena().clone()),
+        binder: Arc::new(lib_binder),
+    };
+
+    let user_source = "export type { LibGlobal };";
+    let mut user_parser = ParserState::new("test.ts".to_string(), user_source.to_string());
+    let user_root = user_parser.parse_source_file();
+    let mut main_binder = BinderState::new();
+    main_binder.merge_lib_contexts_into_binder(&[lib_ctx]);
+    main_binder.bind_source_file(user_parser.get_arena(), user_root);
+
+    let export_sym_id = main_binder
+        .file_locals
+        .get("LibGlobal")
+        .expect("expected type-only export clone in file_locals");
+    let export_symbol = main_binder
+        .symbols
+        .get(export_sym_id)
+        .expect("expected type-only export clone symbol");
+
+    assert!(
+        export_symbol.is_type_only,
+        "type-only export clone should remain type-only"
+    );
+    assert!(
+        main_binder.lib_symbol_ids.contains(&export_sym_id),
+        "type-only export clone of a lib global should preserve lib provenance"
+    );
+    assert!(
+        main_binder.symbol_arenas.contains_key(&export_sym_id),
+        "type-only export clone should preserve declaration arena provenance"
+    );
+}
+
+#[test]
 fn semantic_defs_captures_generic_interface() {
     // Generic interfaces should be captured with the same identity
     // regardless of type parameter count. The binder only records
@@ -4321,8 +4728,7 @@ import { foo } from "./utils";
 import bar from "react";
 import "./side-effect";
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -4353,8 +4759,7 @@ export { x } from "./module-a";
 export * from "./module-b";
 export type { T } from "./types";
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -4385,8 +4790,7 @@ fn file_import_sources_import_equals_require() {
     let source = r#"
 import ts = require("typescript");
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -4403,8 +4807,7 @@ import ts = require("typescript");
 #[test]
 fn file_import_sources_reset_clears() {
     let source = r#"import { a } from "./a";"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -4425,8 +4828,7 @@ fn file_import_sources_no_dynamic_imports() {
 const m = import("./dynamic");
 const r = require("./required");
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -5169,8 +5571,7 @@ const myVar = 1;
 #[test]
 fn test_heritage_names_captured_for_class_extends() {
     let source = "class Foo extends Bar {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
@@ -5186,8 +5587,7 @@ fn test_heritage_names_captured_for_class_extends() {
 #[test]
 fn test_heritage_names_captured_for_class_implements() {
     let source = "class Foo implements Iface1, Iface2 {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
@@ -5203,8 +5603,7 @@ fn test_heritage_names_captured_for_class_implements() {
 #[test]
 fn test_heritage_names_captured_for_class_extends_and_implements() {
     let source = "class Foo extends Base implements I1, I2 {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
@@ -5222,8 +5621,7 @@ fn test_heritage_names_captured_for_class_extends_and_implements() {
 #[test]
 fn test_heritage_names_captured_for_interface_extends() {
     let source = "interface Foo extends Bar, Baz {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
@@ -5240,8 +5638,7 @@ fn test_heritage_names_captured_for_interface_extends() {
 #[test]
 fn test_heritage_names_empty_for_no_heritage() {
     let source = "class Plain {} interface Empty {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
@@ -5265,8 +5662,7 @@ fn test_heritage_names_empty_for_no_heritage() {
 #[test]
 fn test_heritage_names_property_access_expression() {
     let source = "class Foo extends ns.Base {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
@@ -5853,8 +6249,7 @@ export interface Movable { move(): void; }
 export type ID = string;
 class Internal {}
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.file_idx = 42;
     binder.bind_source_file(parser.get_arena(), root);
@@ -5897,8 +6292,7 @@ import { foo } from "./utils";
 import * as React from "react";
 export { bar } from "./helpers";
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
@@ -5915,8 +6309,7 @@ fn file_skeleton_captures_heritage_deps() {
 export class Dog extends Animal implements Movable {}
 export interface FastAnimal extends Animal {}
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
@@ -5941,8 +6334,7 @@ import { a } from "./shared";
 import { b } from "./shared";
 export { c } from "./other";
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
@@ -5963,8 +6355,7 @@ fn file_skeleton_has_exports_and_heritage_helpers() {
     let source = r#"
 const x = 1;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
@@ -6008,8 +6399,7 @@ fn file_skeleton_api_fingerprint_changes_on_export_change() {
 #[test]
 fn file_skeleton_api_fingerprint_stable_across_calls() {
     let source = r#"export interface I { x: number; }"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
@@ -6025,8 +6415,7 @@ export class Zebra {}
 export class Alpha {}
 export class Middle {}
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
@@ -6051,8 +6440,7 @@ export interface Map<K, V> {}
 export type Pair<A, B> = [A, B];
 export class List<T> {}
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
@@ -6883,8 +7271,7 @@ fn arena_for_declaration_or_falls_back_when_unmapped() {
     // Fresh binder has no cross-file declaration arenas registered, so the
     // helper should return the fallback arena for any (sym, decl) pair.
     let source = r"const x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -6919,8 +7306,7 @@ fn flow_nodes_arc_share_is_zero_copy() {
             return x + 1;
         }
     ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -7017,8 +7403,7 @@ type Baz = number;
 class Qux {}
 const v = 1;
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -7062,8 +7447,7 @@ fn stable_value_declaration_matches_arena_span() {
 const hello = 42;
 function world() { return 0; }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -7087,8 +7471,7 @@ fn stable_locations_default_file_idx_when_driver_unassigned() {
     // When the driver never calls `set_file_idx`, stable locations retain
     // the `u32::MAX` sentinel (they still carry a usable span).
     let source = r"function foo() {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -7263,6 +7646,37 @@ declare module \"virtual:env\" {
 }
 
 #[test]
+fn binder_resolution_cache_statistics_track_entries_and_clear() {
+    let mut binder = BinderState::new();
+    binder
+        .resolved_export_cache
+        .write()
+        .expect("resolved_export_cache RwLock should not be poisoned")
+        .insert(
+            ("module".to_string(), "value".to_string()),
+            Some(SymbolId(1)),
+        );
+    binder
+        .resolved_identifier_cache
+        .write()
+        .expect("resolved_identifier_cache RwLock should not be poisoned")
+        .insert((42, 7), None);
+
+    let stats = binder.resolution_cache_statistics();
+    assert_eq!(stats.export_cache_entries, 1);
+    assert_eq!(stats.identifier_cache_entries, 1);
+    assert_eq!(stats.total_entries(), 2);
+    assert!(stats.estimated_size_bytes() > 0);
+
+    binder.clear_resolution_caches();
+    assert_eq!(
+        binder.resolution_cache_statistics(),
+        Default::default(),
+        "resolution cache stats should return to zero after clear"
+    );
+}
+
+#[test]
 fn binder_state_round_trips_empty_program() {
     let source = ";";
     let mut parser = ParserState::new("empty.ts".to_string(), source.to_string());
@@ -7277,4 +7691,16 @@ fn binder_state_round_trips_empty_program() {
 
     assert_eq!(restored.symbols.len(), binder.symbols.len());
     assert_eq!(restored.file_locals.len(), binder.file_locals.len());
+}
+
+#[test]
+fn next_persistent_scope_id_reserves_none_sentinel() {
+    assert!(
+        super::core::next_persistent_scope_id((u32::MAX as usize) - 1).is_some(),
+        "largest representable persistent scope id should remain usable"
+    );
+    assert!(
+        super::core::next_persistent_scope_id(u32::MAX as usize).is_none(),
+        "ScopeId::NONE sentinel (u32::MAX) must remain reserved"
+    );
 }

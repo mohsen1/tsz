@@ -5,10 +5,13 @@
 mod batch_pool;
 mod cache;
 mod cli;
+mod compiler_options;
 mod options_convert;
+mod parity;
 mod process_rss;
 mod runner;
 mod server_pool;
+mod test_filter;
 mod test_parser;
 mod text_decode;
 mod tsc_results;

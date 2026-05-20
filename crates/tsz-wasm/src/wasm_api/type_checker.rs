@@ -7,7 +7,8 @@ use wasm_bindgen::prelude::wasm_bindgen;
 
 use tsz::lib_loader::LibFile;
 use tsz::parallel::MergedProgram;
-use tsz_solver::{TypeFormatter, TypeId, TypeInterner};
+use tsz_solver::construction::TypeInterner;
+use tsz_solver::{TypeFormatter, TypeId};
 
 use super::enums::SignatureKind;
 use super::program::TsCompilerOptions;

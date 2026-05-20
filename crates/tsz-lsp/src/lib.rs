@@ -40,6 +40,7 @@ pub mod highlighting;
 pub mod hover;
 pub mod jsdoc;
 pub use tsz_common::position;
+pub mod intrinsic_params;
 pub mod navigation;
 pub mod project;
 pub mod rename;

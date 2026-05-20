@@ -675,11 +675,12 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
                 let name = self.get_member_name_text(sig.name).unwrap_or_default();
-                let prop_type = if sig.type_annotation.is_some() {
+                let base_type = if sig.type_annotation.is_some() {
                     self.get_type_from_type_node(sig.type_annotation)
                 } else {
                     self.get_type_of_node(member_idx)
                 };
+                let prop_type = self.index_sig_optional_type(base_type, sig.question_token);
                 (name, sig.name, prop_type, false)
             } else if member_node.kind == syntax_kind_ext::METHOD_SIGNATURE {
                 let Some(sig) = self.ctx.arena.get_signature(member_node) else {
@@ -699,13 +700,14 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
                 let name = self.get_member_name_text(prop.name).unwrap_or_default();
-                let prop_type = if let Some(declared_type) =
+                let base_type = if let Some(declared_type) =
                     self.effective_class_property_declared_type(member_idx, prop)
                 {
                     declared_type
                 } else {
                     self.get_type_of_node(member_idx)
                 };
+                let prop_type = self.index_sig_optional_type(base_type, prop.question_token);
                 (name, prop.name, prop_type, is_static)
             } else if member_node.kind == syntax_kind_ext::METHOD_DECLARATION {
                 let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
@@ -1216,7 +1218,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let prop_type = prop.type_id;
+            let prop_type = self.index_sig_optional_type(prop.type_id, prop.optional);
             if self.type_contains_error(prop_type) {
                 continue;
             }
@@ -1810,189 +1812,5 @@ impl<'a> CheckerState<'a> {
                     .is_some_and(|ident| ident.escaped_text.as_str() == "Symbol")
                     && !self.is_identifier_reference_to_global_symbol(access.expression)
             })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::test_utils::check_source_diagnostics;
-
-    #[test]
-    fn ts2413_static_index_signature_number_not_assignable_to_string() {
-        let diags = check_source_diagnostics(
-            r#"
-class B {
-    static readonly [s: string]: number;
-    static readonly [s: number]: boolean;
-}
-"#,
-        );
-        let matching: Vec<_> = diags.iter().filter(|d| d.code == 2413).collect();
-        assert_eq!(
-            matching.len(),
-            1,
-            "Expected 1 TS2413 for static index sig mismatch, got: {:?}",
-            diags.iter().map(|d| d.code).collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn ts2413_static_index_signature_compatible_no_error() {
-        let diags = check_source_diagnostics(
-            r#"
-class C {
-    static readonly [s: string]: number;
-    static readonly [s: number]: 42 | 233;
-}
-"#,
-        );
-        let matching: Vec<_> = diags.iter().filter(|d| d.code == 2413).collect();
-        assert_eq!(
-            matching.len(),
-            0,
-            "Expected no TS2413 when number index is subtype of string index, got: {matching:?}"
-        );
-    }
-
-    #[test]
-    fn ts2413_inherited_index_signature_conflict() {
-        let diags = check_source_diagnostics(
-            r#"
-interface A {
-    [x: string]: string;
-}
-interface B {
-    [x: number]: number;
-}
-interface C extends A, B {}
-"#,
-        );
-        let matching: Vec<_> = diags.iter().filter(|d| d.code == 2413).collect();
-        assert!(
-            !matching.is_empty(),
-            "Expected TS2413 for inherited index signature conflict, got: {:?}",
-            diags.iter().map(|d| d.code).collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn ts2413_base_has_both_index_sigs_no_duplicate_at_derived() {
-        // interface A has conflicting own index sigs → TS2413 reported on A.
-        // interface B extends A with no own index sigs → should NOT get another TS2413.
-        let diags = check_source_diagnostics(
-            r#"
-interface A {
-    [n: number]: string;
-    [s: string]: number;
-}
-interface B extends A {}
-"#,
-        );
-        let ts2413: Vec<_> = diags.iter().filter(|d| d.code == 2413).collect();
-        assert_eq!(
-            ts2413.len(),
-            1,
-            "Expected exactly 1 TS2413 (on A), not a duplicate at B's name. Got: {diags:?}"
-        );
-    }
-
-    #[test]
-    fn ts2413_base_has_both_index_sigs_derived_has_own_members() {
-        // Same as above but B has own (non-index) members — the guard must still fire.
-        let diags = check_source_diagnostics(
-            r#"
-interface A {
-    [n: number]: string;
-    [s: string]: number;
-}
-interface B extends A {
-    c: string;
-    3: string;
-    Infinity: string;
-    "-Infinity": string;
-    NaN: string;
-    "-NaN": string;
-    6(): string;
-}
-"#,
-        );
-        let ts2413: Vec<_> = diags.iter().filter(|d| d.code == 2413).collect();
-        assert_eq!(
-            ts2413.len(),
-            1,
-            "Expected exactly 1 TS2413 (on A), not a duplicate at B's name. Got codes: {:?}",
-            diags.iter().map(|d| d.code).collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn ts2411_symbol_index_signature_own_property() {
-        // Symbol-keyed properties must be assignable to symbol index signature type
-        let diags = check_source_diagnostics(
-            r#"
-interface I {
-    [Symbol.iterator]: number;
-    [s: symbol]: string;
-}
-"#,
-        );
-        let matching: Vec<_> = diags.iter().filter(|d| d.code == 2411).collect();
-        assert_eq!(
-            matching.len(),
-            1,
-            "Expected 1 TS2411 for symbol property not assignable to symbol index, got codes: {:?}",
-            diags.iter().map(|d| d.code).collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn ts2411_symbol_index_signature_compatible_no_error() {
-        // Compatible symbol property should NOT produce TS2411
-        let diags = check_source_diagnostics(
-            r#"
-interface I {
-    [Symbol.iterator]: string;
-    [s: symbol]: string;
-}
-"#,
-        );
-        let matching: Vec<_> = diags.iter().filter(|d| d.code == 2411).collect();
-        assert_eq!(
-            matching.len(),
-            0,
-            "Expected no TS2411 when symbol property is assignable to symbol index, got: {matching:?}"
-        );
-    }
-
-    #[test]
-    fn ts2411_synthesized_index_from_computed_entity_names() {
-        // When a class has computed property names with entity expressions (like [s], [n]),
-        // they synthesize implicit index signatures. Other computed members with
-        // non-entity expressions (like [+s]) must be checked against those synthesized
-        // index signatures.
-        let diags = check_source_diagnostics(
-            r#"
-var s: string;
-var n: number;
-var a: any;
-class C {
-    [s]: number;
-    [n] = n;
-    [+s]: typeof s;
-    [0]: number;
-    [a]: number;
-}
-"#,
-        );
-        let matching: Vec<_> = diags.iter().filter(|d| d.code == 2411).collect();
-        assert_eq!(
-            matching.len(),
-            2,
-            "Expected 2 TS2411 for [+s] (string type) against synthesized number and string index (number type), got codes: {:?}",
-            diags
-                .iter()
-                .map(|d| (d.code, &d.message_text))
-                .collect::<Vec<_>>()
-        );
     }
 }

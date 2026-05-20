@@ -5,11 +5,14 @@
 //! This module extends `CheckerState` with utilities for constructor-related
 //! type checking operations.
 
-use crate::query_boundaries::checkers::constructor::{
-    AbstractConstructorAnchor, ConstructorAccessKind, ConstructorReturnMergeKind, InstanceTypeKind,
-    classify_for_constructor_access, classify_for_constructor_return_merge,
-    classify_for_instance_type, construct_return_type_for_display, has_construct_signatures,
-    resolve_abstract_constructor_anchor,
+use crate::query_boundaries::{
+    checkers::constructor::{
+        AbstractConstructorAnchor, ConstructorAccessKind, ConstructorReturnMergeKind,
+        InstanceTypeKind, classify_for_constructor_access, classify_for_constructor_return_merge,
+        classify_for_instance_type, construct_return_type_for_display, has_construct_signatures,
+        resolve_abstract_constructor_anchor,
+    },
+    common,
 };
 use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS, MemberAccessLevel};
 use rustc_hash::FxHashSet;
@@ -18,6 +21,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+use tsz_solver::computation::TypeEnvironment;
 
 // =============================================================================
 // Constructor Type Checking Utilities
@@ -60,6 +64,41 @@ impl<'a> CheckerState<'a> {
         has_construct_signatures(self.ctx.types, type_id)
     }
 
+    /// Classify constructor abstractness for call-argument relation checks.
+    ///
+    /// This keeps symbol-flag and abstract-constructor-set knowledge in the
+    /// checker while letting solver call resolution preserve the raw target
+    /// constructor requirement through generic inference.
+    pub(crate) fn constructor_abstractness_for_assignability(
+        &self,
+        type_id: TypeId,
+    ) -> Option<bool> {
+        if self.is_abstract_ctor(type_id) {
+            return Some(true);
+        }
+
+        if let Some(callable_shape) =
+            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, type_id)
+            && !callable_shape.construct_signatures.is_empty()
+        {
+            return Some(callable_shape.is_abstract);
+        }
+
+        match resolve_abstract_constructor_anchor(self.ctx.types, type_id) {
+            AbstractConstructorAnchor::TypeQuery(_) => None,
+            AbstractConstructorAnchor::CallableType(callable_type) => {
+                if self.is_abstract_ctor(callable_type) {
+                    Some(true)
+                } else {
+                    self.has_construct_sig(callable_type).then_some(false)
+                }
+            }
+            AbstractConstructorAnchor::NotAbstract => {
+                self.has_construct_sig(type_id).then_some(false)
+            }
+        }
+    }
+
     // =========================================================================
     // Mixin Call Return Type Refinement
     // =========================================================================
@@ -72,6 +111,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn refine_mixin_call_return_type(
         &mut self,
         callee_idx: NodeIndex,
+        callee_type: TypeId,
         arg_types: &[TypeId],
         return_type: TypeId,
     ) -> TypeId {
@@ -100,13 +140,22 @@ impl<'a> CheckerState<'a> {
         if matches!(base_arg_type, TypeId::ANY | TypeId::ERROR) {
             return return_type;
         }
+        let type_param_substitution =
+            self.mixin_call_type_parameter_substitution(callee_type, arg_types);
 
         let factory = self.ctx.types.factory();
         let mut refined_return = factory.intersection2(return_type, base_arg_type);
 
         if let Some(mixin_instance_type) =
-            self.mixin_instance_type_from_returned_class(class_expr_idx, base_arg_type)
+            self.mixin_instance_type_from_construct_returns(return_type, base_arg_type)
         {
+            refined_return =
+                self.set_all_construct_return_types(refined_return, mixin_instance_type);
+        } else if let Some(mixin_instance_type) = self.mixin_instance_type_from_returned_class(
+            class_expr_idx,
+            base_arg_type,
+            &type_param_substitution,
+        ) {
             refined_return =
                 self.set_all_construct_return_types(refined_return, mixin_instance_type);
         } else if let Some(intersected_instance) =
@@ -129,18 +178,123 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        if !self.type_contains_abstract_class(base_arg_type) {
+            refined_return = self.clear_constructor_abstract_flag(refined_return);
+        }
+
         refined_return
+    }
+
+    fn mixin_instance_type_from_construct_returns(
+        &mut self,
+        return_type: TypeId,
+        base_arg_type: TypeId,
+    ) -> Option<TypeId> {
+        let signatures = common::construct_signatures_for_type(self.ctx.types, return_type)?;
+        if signatures.is_empty() {
+            return None;
+        }
+
+        let base_instance = self.instance_type_from_constructor_type(base_arg_type);
+        let mut returns = Vec::with_capacity(signatures.len() + 1);
+        for sig in signatures {
+            if !matches!(sig.return_type, TypeId::ANY | TypeId::ERROR)
+                && Some(sig.return_type) != base_instance
+            {
+                returns.push(sig.return_type);
+            }
+        }
+        if returns.is_empty() {
+            return None;
+        }
+        if let Some(base_instance) = base_instance
+            && !matches!(base_instance, TypeId::ANY | TypeId::ERROR)
+            && !returns.contains(&base_instance)
+        {
+            returns.push(base_instance);
+        }
+
+        Some(tsz_solver::utils::intersection_or_single(
+            self.ctx.types,
+            returns,
+        ))
+    }
+
+    fn clear_constructor_abstract_flag(&self, ctor_type: TypeId) -> TypeId {
+        match classify_for_constructor_return_merge(self.ctx.types, ctor_type) {
+            ConstructorReturnMergeKind::Callable(shape_id) => {
+                let shape = self.ctx.types.callable_shape(shape_id);
+                if !shape.is_abstract {
+                    return ctor_type;
+                }
+                let mut new_shape = (*shape).clone();
+                new_shape.is_abstract = false;
+                self.ctx.types.factory().callable(new_shape)
+            }
+            ConstructorReturnMergeKind::Intersection(members) => {
+                let mut updated_members = Vec::with_capacity(members.len());
+                let mut changed = false;
+                for member in members {
+                    let updated = self.clear_constructor_abstract_flag(member);
+                    if updated != member {
+                        changed = true;
+                    }
+                    updated_members.push(updated);
+                }
+                if changed {
+                    self.ctx.types.factory().intersection(updated_members)
+                } else {
+                    ctor_type
+                }
+            }
+            ConstructorReturnMergeKind::Function(_) | ConstructorReturnMergeKind::Other => {
+                ctor_type
+            }
+        }
+    }
+
+    fn mixin_call_type_parameter_substitution(
+        &mut self,
+        callee_type: TypeId,
+        arg_types: &[TypeId],
+    ) -> common::TypeSubstitution {
+        let mut substitution = common::TypeSubstitution::new();
+        let callee_shape =
+            common::function_shape_for_type(self.ctx.types, callee_type).or_else(|| {
+                let evaluated = self.evaluate_type_for_assignability(callee_type);
+                common::function_shape_for_type(self.ctx.types, evaluated)
+            });
+        let Some(callee_shape) = callee_shape else {
+            return substitution;
+        };
+
+        for (param, &arg_type) in callee_shape.params.iter().zip(arg_types.iter()) {
+            let Some(type_param) = common::type_param_info(self.ctx.types, param.type_id) else {
+                continue;
+            };
+            substitution.insert(type_param.name, arg_type);
+        }
+
+        substitution
     }
 
     fn mixin_instance_type_from_returned_class(
         &mut self,
         class_expr_idx: NodeIndex,
         base_arg_type: TypeId,
+        type_param_substitution: &common::TypeSubstitution,
     ) -> Option<TypeId> {
         let class_data = self.ctx.arena.get_class_at(class_expr_idx)?;
-        let returned_instance = self.get_class_instance_type(class_expr_idx, class_data);
+        let mut returned_instance = self.get_class_instance_type(class_expr_idx, class_data);
         if matches!(returned_instance, TypeId::ANY | TypeId::ERROR) {
             return None;
+        }
+        if !type_param_substitution.is_empty() {
+            returned_instance = common::instantiate_type(
+                self.ctx.types,
+                returned_instance,
+                type_param_substitution,
+            );
         }
         let base_instance = self.instance_type_from_constructor_type(base_arg_type)?;
         if matches!(base_instance, TypeId::ANY | TypeId::ERROR) {
@@ -849,7 +1003,7 @@ impl<'a> CheckerState<'a> {
         &self,
         source: TypeId,
         target: TypeId,
-        _env: Option<&tsz_solver::TypeEnvironment>,
+        _env: Option<&TypeEnvironment>,
     ) -> Option<bool> {
         // Helper to check if a TypeId is abstract
         // This handles both TypeQuery types (before resolution) and resolved Callable types
@@ -919,7 +1073,7 @@ impl<'a> CheckerState<'a> {
     fn constructor_access_level(
         &self,
         type_id: TypeId,
-        env: Option<&tsz_solver::TypeEnvironment>,
+        env: Option<&TypeEnvironment>,
         visited: &mut FxHashSet<TypeId>,
     ) -> Option<MemberAccessLevel> {
         if !visited.insert(type_id) {
@@ -932,17 +1086,34 @@ impl<'a> CheckerState<'a> {
         if self.is_protected_ctor(type_id) {
             return Some(MemberAccessLevel::Protected);
         }
+        if let Some(shape) =
+            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, type_id)
+            && let Some(sym_id) = shape.symbol
+            && let Some(access) = self.class_constructor_access_level(sym_id)
+        {
+            return Some(access);
+        }
 
         match classify_for_constructor_access(self.ctx.types, type_id) {
-            ConstructorAccessKind::SymbolRef(symbol) => self
-                .resolve_type_env_symbol(symbol, env)
-                .and_then(|resolved| {
-                    if resolved != type_id {
-                        self.constructor_access_level(resolved, env, visited)
-                    } else {
-                        None
-                    }
-                }),
+            ConstructorAccessKind::SymbolRef(symbol) => {
+                let sym_id = SymbolId(symbol.0);
+                if let Some(access) = self.class_constructor_access_level(sym_id) {
+                    return Some(access);
+                }
+                if let Some(access) =
+                    self.variable_class_expression_constructor_access_level(sym_id)
+                {
+                    return Some(access);
+                }
+                self.resolve_type_env_symbol(symbol, env)
+                    .and_then(|resolved| {
+                        if resolved != type_id {
+                            self.constructor_access_level(resolved, env, visited)
+                        } else {
+                            None
+                        }
+                    })
+            }
             ConstructorAccessKind::Application(app_id) => {
                 let app = self.ctx.types.type_application(app_id);
                 if app.base != type_id {
@@ -955,10 +1126,54 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn variable_class_expression_constructor_access_level(
+        &self,
+        sym_id: SymbolId,
+    ) -> Option<MemberAccessLevel> {
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if !symbol.has_any_flags(
+            symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::BLOCK_SCOPED_VARIABLE,
+        ) {
+            return None;
+        }
+        let decl_node = self.ctx.arena.get(symbol.value_declaration)?;
+        let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        let class_expr_idx = self.class_expression_from_expr(var_decl.initializer)?;
+        self.class_expression_constructor_access_level(class_expr_idx)
+    }
+
+    fn class_expression_constructor_access_level(
+        &self,
+        class_expr_idx: NodeIndex,
+    ) -> Option<MemberAccessLevel> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let class = self.ctx.arena.get_class_at(class_expr_idx)?;
+        for &member_idx in &class.members.nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != syntax_kind_ext::CONSTRUCTOR {
+                continue;
+            }
+            let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
+                continue;
+            };
+            if self.has_private_modifier(&ctor.modifiers) {
+                return Some(MemberAccessLevel::Private);
+            }
+            if self.has_protected_modifier(&ctor.modifiers) {
+                return Some(MemberAccessLevel::Protected);
+            }
+            return None;
+        }
+        None
+    }
+
     fn constructor_access_level_for_type(
         &self,
         type_id: TypeId,
-        env: Option<&tsz_solver::TypeEnvironment>,
+        env: Option<&TypeEnvironment>,
     ) -> Option<MemberAccessLevel> {
         let mut visited = FxHashSet::default();
         self.constructor_access_level(type_id, env, &mut visited)
@@ -968,7 +1183,7 @@ impl<'a> CheckerState<'a> {
         &self,
         source: TypeId,
         target: TypeId,
-        env: Option<&tsz_solver::TypeEnvironment>,
+        env: Option<&TypeEnvironment>,
     ) -> Option<(Option<MemberAccessLevel>, Option<MemberAccessLevel>)> {
         let source_level = self.constructor_access_level_for_type(source, env);
         let target_level = self.constructor_access_level_for_type(target, env);
@@ -989,7 +1204,7 @@ impl<'a> CheckerState<'a> {
         &self,
         source: TypeId,
         target: TypeId,
-        env: Option<&tsz_solver::TypeEnvironment>,
+        env: Option<&TypeEnvironment>,
     ) -> Option<bool> {
         if self
             .constructor_accessibility_mismatch(source, target, env)
@@ -1047,7 +1262,7 @@ impl<'a> CheckerState<'a> {
     fn resolve_type_env_symbol(
         &self,
         symbol: tsz_solver::SymbolRef,
-        env: Option<&tsz_solver::TypeEnvironment>,
+        env: Option<&TypeEnvironment>,
     ) -> Option<TypeId> {
         if let Some(env) = env {
             return env.get(symbol);
@@ -1114,7 +1329,22 @@ impl<'a> CheckerState<'a> {
             declaring_class_sym.or_else(|| self.class_symbol_from_new_expr(new_expr_idx));
         let class_sym = match class_sym {
             Some(sym) => sym,
-            None => return false, // Can't determine class - skip check
+            None => {
+                // No named class symbol — handle the anonymous class expression
+                // case: `new (class { private constructor() {} })()`. The
+                // constructor type already carries the private/protected mark
+                // (see `private_constructor_types.insert` during class-type
+                // construction), so we just need to check whether the `new`
+                // site lives within the class expression body.
+                if let Some(class_expr_idx) = self.class_expression_from_new_expr(new_expr_idx) {
+                    if self.new_expr_within_class_expression_body(new_expr_idx, class_expr_idx) {
+                        return false;
+                    }
+                    self.emit_anonymous_constructor_access_error(new_expr_idx, is_private);
+                    return true;
+                }
+                return false; // Can't determine class - skip check
+            }
         };
 
         // Walk ALL enclosing classes in the scope chain. If ANY enclosing class
@@ -1450,6 +1680,78 @@ impl<'a> CheckerState<'a> {
                 "Constructor of class '{class_name}' is protected and only accessible within the class declaration."
             );
             self.error_at_node(idx, &message, diagnostic_codes::CONSTRUCTOR_OF_CLASS_IS_PROTECTED_AND_ONLY_ACCESSIBLE_WITHIN_THE_CLASS_DECLARATI);
+        }
+    }
+
+    /// Return the class-expression node when `new <receiver>(...)` is targeting
+    /// an anonymous class expression literal (after stripping parentheses).
+    fn class_expression_from_new_expr(
+        &self,
+        new_expr_idx: tsz_parser::parser::NodeIndex,
+    ) -> Option<tsz_parser::parser::NodeIndex> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let call_expr = self.ctx.arena.get_call_expr_at(new_expr_idx)?;
+        let receiver = self.ctx.arena.skip_parenthesized(call_expr.expression);
+        let node = self.ctx.arena.get(receiver)?;
+        if node.kind == syntax_kind_ext::CLASS_EXPRESSION {
+            Some(receiver)
+        } else {
+            None
+        }
+    }
+
+    /// True when `new_expr_idx` lives lexically inside the body of the given
+    /// class-expression node. Mirrors the "same class allowed for private,
+    /// subclass allowed for protected" lookup that named classes already get
+    /// via `find_all_enclosing_classes`.
+    fn new_expr_within_class_expression_body(
+        &self,
+        new_expr_idx: tsz_parser::parser::NodeIndex,
+        class_expr_idx: tsz_parser::parser::NodeIndex,
+    ) -> bool {
+        let mut current = new_expr_idx;
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            if ext.parent.is_none() {
+                return false;
+            }
+            if ext.parent == class_expr_idx {
+                return true;
+            }
+            current = ext.parent;
+        }
+        false
+    }
+
+    /// Emit TS2673 / TS2674 for an anonymous class expression with
+    /// inaccessible constructor. tsc uses the literal display
+    /// `"(Anonymous class)"` in this message.
+    fn emit_anonymous_constructor_access_error(
+        &mut self,
+        idx: tsz_parser::parser::NodeIndex,
+        is_private: bool,
+    ) {
+        use crate::diagnostics::diagnostic_codes;
+
+        let class_name = "(Anonymous class)";
+        if is_private {
+            let message = format!(
+                "Constructor of class '{class_name}' is private and only accessible within the class declaration."
+            );
+            self.error_at_node(
+                idx,
+                &message,
+                diagnostic_codes::CONSTRUCTOR_OF_CLASS_IS_PRIVATE_AND_ONLY_ACCESSIBLE_WITHIN_THE_CLASS_DECLARATION,
+            );
+        } else {
+            let message = format!(
+                "Constructor of class '{class_name}' is protected and only accessible within the class declaration."
+            );
+            self.error_at_node(
+                idx,
+                &message,
+                diagnostic_codes::CONSTRUCTOR_OF_CLASS_IS_PROTECTED_AND_ONLY_ACCESSIBLE_WITHIN_THE_CLASS_DECLARATI,
+            );
         }
     }
 

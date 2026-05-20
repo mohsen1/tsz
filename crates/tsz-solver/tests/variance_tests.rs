@@ -238,6 +238,38 @@ fn test_variance_contravariant_keyof() {
     );
 }
 
+#[test]
+fn test_variance_contravariant_keyof_in_conditional_true_branch() {
+    // interface Contra<T> { foo: T extends string ? keyof T : number }
+    // The keyof in the true branch of the conditional makes T appear in a
+    // contravariant position. tsc's variance probe records this as
+    // CONTRAVARIANT, which lets `Contra<A>` be assignable to `Contra<B>`
+    // when B extends A — the structural rule behind conformance test
+    // `conditionalTypes2.ts` function `f2`.
+    let interner = create_interner();
+    let t_param = intern_type_param(&interner, "T");
+    let keyof_t = interner.keyof(t_param);
+
+    let cond = interner.conditional(ConditionalType {
+        check_type: t_param,
+        extends_type: TypeId::STRING,
+        true_type: keyof_t,
+        false_type: TypeId::NUMBER,
+        is_distributive: true,
+    });
+
+    let foo_atom = interner.intern_string("foo");
+    let obj = interner.object(vec![PropertyInfo::new(foo_atom, cond)]);
+
+    let t_atom = interner.intern_string("T");
+    let variance = compute_variance(&interner, obj, t_atom);
+
+    assert!(
+        variance.is_contravariant(),
+        "`T extends string ? keyof T : number` should make T contravariant, got {variance:?}"
+    );
+}
+
 // =============================================================================
 // Invariant Position Tests
 // =============================================================================

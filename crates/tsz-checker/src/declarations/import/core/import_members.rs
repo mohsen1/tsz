@@ -2,8 +2,8 @@
 
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
+use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_parser::parser::{NodeArena, NodeIndex};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> CheckerState<'a> {
@@ -1417,7 +1417,7 @@ impl<'a> CheckerState<'a> {
         if sym.is_type_only {
             return true;
         }
-        if (sym.flags & PURE_TYPE) != 0 && (sym.flags & VALUE) == 0 {
+        if sym.has_any_flags(PURE_TYPE) && !sym.has_any_flags(VALUE) {
             return true;
         }
         if sym.has_any_flags(symbol_flags::ALIAS) && sym.import_module.is_none() {
@@ -1449,8 +1449,8 @@ impl<'a> CheckerState<'a> {
                     .or_else(|| self.ctx.binder.get_symbol(resolved_sym_id))
                 {
                     return resolved_sym.is_type_only
-                        || ((resolved_sym.flags & PURE_TYPE) != 0
-                            && (resolved_sym.flags & VALUE) == 0);
+                        || (resolved_sym.has_any_flags(PURE_TYPE)
+                            && !resolved_sym.has_any_flags(VALUE));
                 }
             }
         }
@@ -1479,7 +1479,7 @@ impl<'a> CheckerState<'a> {
         if sym.is_type_only {
             return true;
         }
-        if (sym.flags & PURE_TYPE) != 0 && (sym.flags & VALUE) == 0 {
+        if sym.has_any_flags(PURE_TYPE) && !sym.has_any_flags(VALUE) {
             return true;
         }
         if sym.has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
@@ -1744,7 +1744,7 @@ impl<'a> CheckerState<'a> {
                         };
                         // Check if this symbol has a declaration with the import_name
                         let has_matching_name = sym.declarations.iter().any(|&decl_idx| {
-                            self.declaration_name_matches_string(decl_arena, decl_idx, import_name)
+                            Self::declaration_name_matches_string(decl_arena, decl_idx, import_name)
                         });
 
                         if has_matching_name && export_name.as_str() != import_name {
@@ -1771,7 +1771,7 @@ impl<'a> CheckerState<'a> {
                         self.ctx.get_arena_for_file(sym.decl_file_idx)
                     };
                     let has_matching_name = sym.declarations.iter().any(|&decl_idx| {
-                        self.declaration_name_matches_string(decl_arena, decl_idx, import_name)
+                        Self::declaration_name_matches_string(decl_arena, decl_idx, import_name)
                     });
 
                     if has_matching_name && export_name.as_str() != import_name {
@@ -1802,198 +1802,5 @@ impl<'a> CheckerState<'a> {
 
         // Symbol exists locally but is not exported
         Some((true, None))
-    }
-
-    /// Check if a declaration's name matches the expected string.
-    fn declaration_name_matches_string(
-        &self,
-        arena: &NodeArena,
-        decl_idx: NodeIndex,
-        expected_name: &str,
-    ) -> bool {
-        use tsz_parser::parser::syntax_kind_ext;
-
-        let Some(node) = arena.get(decl_idx) else {
-            return false;
-        };
-
-        let name_node_idx = match node.kind {
-            syntax_kind_ext::VARIABLE_DECLARATION => {
-                if let Some(var_decl) = arena.get_variable_declaration(node) {
-                    var_decl.name
-                } else {
-                    return false;
-                }
-            }
-            syntax_kind_ext::FUNCTION_DECLARATION => {
-                if let Some(func) = arena.get_function(node) {
-                    func.name
-                } else {
-                    return false;
-                }
-            }
-            syntax_kind_ext::CLASS_DECLARATION => {
-                if let Some(class) = arena.get_class(node) {
-                    class.name
-                } else {
-                    return false;
-                }
-            }
-            syntax_kind_ext::INTERFACE_DECLARATION => {
-                if let Some(interface) = arena.get_interface(node) {
-                    interface.name
-                } else {
-                    return false;
-                }
-            }
-            syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
-                if let Some(type_alias) = arena.get_type_alias(node) {
-                    type_alias.name
-                } else {
-                    return false;
-                }
-            }
-            syntax_kind_ext::ENUM_DECLARATION => {
-                if let Some(enum_decl) = arena.get_enum(node) {
-                    enum_decl.name
-                } else {
-                    return false;
-                }
-            }
-            _ => return false,
-        };
-
-        let Some(name_node) = arena.get(name_node_idx) else {
-            return false;
-        };
-
-        let Some(ident) = arena.get_identifier(name_node) else {
-            return false;
-        };
-
-        arena.resolve_identifier_text(ident) == expected_name
-    }
-
-    fn local_named_export_alias_for_import(
-        &self,
-        arena: &NodeArena,
-        import_name: &str,
-    ) -> Option<String> {
-        let source_file = arena.source_files.first()?;
-        let mut direct_export = false;
-        let mut renamed_export = None;
-
-        for &stmt_idx in &source_file.statements.nodes {
-            let Some(stmt_node) = arena.get(stmt_idx) else {
-                continue;
-            };
-            if arena
-                .get_declaration_modifiers(stmt_node)
-                .is_some_and(|mods| arena.has_modifier_ref(Some(mods), SyntaxKind::ExportKeyword))
-                && self.declaration_name_matches_string(arena, stmt_idx, import_name)
-            {
-                direct_export = true;
-                continue;
-            }
-            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
-                continue;
-            }
-            let Some(export_decl) = arena.get_export_decl(stmt_node) else {
-                continue;
-            };
-            if export_decl.module_specifier.is_some() || export_decl.export_clause.is_none() {
-                continue;
-            }
-            // Skip type-only export declarations (`export type { ... }`).
-            // These don't create value exports, so they shouldn't trigger TS2460.
-            let decl_is_type_only = export_decl.is_type_only;
-            let Some(clause_node) = arena.get(export_decl.export_clause) else {
-                continue;
-            };
-            if arena.get_named_imports(clause_node).is_none() {
-                if !decl_is_type_only
-                    && self.declaration_name_matches_string(
-                        arena,
-                        export_decl.export_clause,
-                        import_name,
-                    )
-                {
-                    direct_export = true;
-                }
-                continue;
-            }
-            let Some(named_exports) = arena.get_named_imports(clause_node) else {
-                continue;
-            };
-
-            for &spec_idx in &named_exports.elements.nodes {
-                let Some(spec_node) = arena.get(spec_idx) else {
-                    continue;
-                };
-                let Some(specifier) = arena.get_specifier(spec_node) else {
-                    continue;
-                };
-                // Skip type-only specifiers (`export { type X as Y }`).
-                if decl_is_type_only || specifier.is_type_only {
-                    continue;
-                }
-
-                let original_name_idx = if specifier.property_name.is_none() {
-                    specifier.name
-                } else {
-                    specifier.property_name
-                };
-                let exported_name_idx = if specifier.name.is_none() {
-                    original_name_idx
-                } else {
-                    specifier.name
-                };
-
-                let Some(original_name_node) = arena.get(original_name_idx) else {
-                    continue;
-                };
-                let Some(original_ident) = arena.get_identifier(original_name_node) else {
-                    continue;
-                };
-                if arena.resolve_identifier_text(original_ident) != import_name {
-                    continue;
-                }
-
-                let Some(exported_name_node) = arena.get(exported_name_idx) else {
-                    continue;
-                };
-                let Some(exported_ident) = arena.get_identifier(exported_name_node) else {
-                    continue;
-                };
-                let exported_name = arena.resolve_identifier_text(exported_ident);
-
-                if exported_name == import_name {
-                    direct_export = true;
-                } else if renamed_export.is_none() {
-                    renamed_export = Some(exported_name.to_string());
-                }
-            }
-        }
-
-        if direct_export { None } else { renamed_export }
-    }
-
-    fn local_named_export_alias_for_module(
-        &self,
-        module_name: &str,
-        import_name: &str,
-        resolution_mode: Option<crate::context::ResolutionModeOverride>,
-    ) -> Option<String> {
-        let target_idx = if let Some(mode) = resolution_mode {
-            self.ctx.resolve_import_target_from_file_with_mode(
-                self.ctx.current_file_idx,
-                module_name,
-                Some(mode),
-            )
-        } else {
-            self.ctx.resolve_import_target(module_name)
-        }?;
-        let arena = self.ctx.get_arena_for_file(target_idx as u32);
-        self.local_named_export_alias_for_import(arena, import_name)
     }
 }

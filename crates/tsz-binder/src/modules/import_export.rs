@@ -474,7 +474,28 @@ impl BinderState {
                                         .get(orig)
                                         .or_else(|| self.file_locals.get(orig));
 
-                                    if let Some(sym_id) = resolved_sym_id {
+                                    if let Some(mut sym_id) = resolved_sym_id {
+                                        if self.symbols.get(sym_id).is_some_and(|symbol| {
+                                            symbol.has_any_flags(symbol_flags::ALIAS)
+                                        }) && let Some(type_sym_id) = self
+                                            .symbols
+                                            .find_all_by_name(orig)
+                                            .iter()
+                                            .copied()
+                                            .find(|&candidate_id| {
+                                                candidate_id != sym_id
+                                                    && self.symbols.get(candidate_id).is_some_and(
+                                                        |candidate| {
+                                                            candidate.has_any_flags(
+                                                                symbol_flags::TYPE_ALIAS,
+                                                            ) && !candidate
+                                                                .has_any_flags(symbol_flags::VALUE)
+                                                        },
+                                                    )
+                                            })
+                                        {
+                                            sym_id = type_sym_id;
+                                        }
                                         // Mark the original symbol as exported.
                                         //
                                         // For is_type_only: only SET it when this is the
@@ -538,6 +559,26 @@ impl BinderState {
                                                     );
                                                 self.symbols.alloc_from(&src)
                                             };
+                                            if self.lib_symbol_ids.contains(&sym_id) {
+                                                Arc::make_mut(&mut self.lib_symbol_ids)
+                                                    .insert(clone_id);
+                                                if let Some(symbol_arena) =
+                                                    self.symbol_arenas.get(&sym_id).cloned()
+                                                {
+                                                    Arc::make_mut(&mut self.symbol_arenas)
+                                                        .insert(clone_id, symbol_arena);
+                                                }
+                                                if let Some(reverse_remap) = self
+                                                    .lib_symbol_reverse_remap
+                                                    .get(&sym_id)
+                                                    .copied()
+                                                {
+                                                    Arc::make_mut(
+                                                        &mut self.lib_symbol_reverse_remap,
+                                                    )
+                                                    .insert(clone_id, reverse_remap);
+                                                }
+                                            }
                                             if let Some(clone_sym) = self.symbols.get_mut(clone_id)
                                             {
                                                 clone_sym.is_type_only = true;

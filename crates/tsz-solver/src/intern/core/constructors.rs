@@ -648,8 +648,8 @@ impl TypeInterner {
     const fn type_data_rank(data: &TypeData) -> u8 {
         match data {
             TypeData::Intrinsic(_) => 0,
-            TypeData::Literal(LiteralValue::String(_)) => 1,
-            TypeData::Literal(LiteralValue::Number(_)) => 2,
+            TypeData::Literal(LiteralValue::Number(_)) => 1,
+            TypeData::Literal(LiteralValue::String(_)) => 2,
             TypeData::Literal(LiteralValue::BigInt(_)) => 3,
             TypeData::Literal(LiteralValue::Boolean(_)) => 4,
             TypeData::Object(_) => 5,
@@ -806,6 +806,9 @@ impl TypeInterner {
         // e.g., 1 | 2 | number => number
         // e.g., true | boolean => boolean
         self.absorb_literals_into_primitives(&mut flat);
+        // Merge Enum(D, X) | Enum(D, Y) → Enum(D, X | Y) so that split-then-
+        // rejoined enum members (e.g., E1.a | E1.b) display as E1, not E1 | E1.
+        self.merge_same_enum_parts(&mut flat);
         self.absorb_intersections_with_union_constituents(&mut flat);
 
         if flat.is_empty() {
@@ -1122,16 +1125,14 @@ impl TypeInterner {
     /// Intern a readonly array type
     /// Returns a distinct type from mutable arrays to enforce readonly semantics
     pub fn readonly_array(&self, element: TypeId) -> TypeId {
-        let array_type = self.array(element);
-        self.intern(TypeData::ReadonlyType(array_type))
+        self.readonly_type(self.array(element))
     }
 
     /// Intern a tuple type.
     ///
-    /// Normalizes optional element types: for `optional=true` elements, strips
-    /// explicit `undefined` from union types since the optionality already implies
-    /// `| undefined`. This ensures `[1, 2?]` and `[1, (2 | undefined)?]` produce
-    /// the same interned TypeId, matching tsc's behavior.
+    /// Normalizes optional element types: when exact optional properties are
+    /// disabled, strips explicit `undefined` from `optional=true` union types
+    /// since optionality already implies `| undefined`.
     pub fn tuple(&self, elements: Vec<TupleElement>) -> TypeId {
         let elements = self.normalize_optional_tuple_elements(elements);
         let list_id = self.intern_tuple_list(elements);
@@ -1139,11 +1140,14 @@ impl TypeInterner {
     }
 
     /// For optional tuple elements, strip `undefined` from the element type
-    /// since the `optional` flag already implies `| undefined`.
+    /// unless exact optional properties require preserving a present undefined.
     fn normalize_optional_tuple_elements(
         &self,
         mut elements: Vec<TupleElement>,
     ) -> Vec<TupleElement> {
+        if self.exact_optional_property_types() {
+            return elements;
+        }
         for elem in &mut elements {
             if elem.optional && !elem.rest {
                 elem.type_id = self.strip_undefined_from_type(elem.type_id);
@@ -1179,13 +1183,19 @@ impl TypeInterner {
     /// Intern a readonly tuple type
     /// Returns a distinct type from mutable tuples to enforce readonly semantics
     pub fn readonly_tuple(&self, elements: Vec<TupleElement>) -> TypeId {
-        let tuple_type = self.tuple(elements);
-        self.intern(TypeData::ReadonlyType(tuple_type))
+        self.readonly_type(self.tuple(elements))
     }
 
     /// Wrap any type in a `ReadonlyType` marker
-    /// This is used for the `readonly` type operator
+    ///
+    /// Invariant: at most one `ReadonlyType` layer. Callers that compose
+    /// readonly wrapping (e.g. the const-assertion visitor unwrapping and
+    /// re-wrapping after recursing into a Tuple/Array arm) rely on this so
+    /// that subtype/display paths can peel exactly one layer.
     pub fn readonly_type(&self, inner: TypeId) -> TypeId {
+        if matches!(self.lookup(inner), Some(TypeData::ReadonlyType(_))) {
+            return inner;
+        }
         self.intern(TypeData::ReadonlyType(inner))
     }
 
@@ -1409,6 +1419,11 @@ impl TypeInterner {
         self.intern(TypeData::TypeParameter(info))
     }
 
+    /// Allocate a fresh declaration-scoped type parameter.
+    pub fn fresh_type_param(&self, info: TypeParamInfo) -> TypeId {
+        self.intern_fresh(TypeData::TypeParameter(info))
+    }
+
     /// Intern an unresolved type name that should behave like an error type
     /// while preserving its source spelling for diagnostics.
     pub fn unresolved_type_name(&self, name: Atom) -> TypeId {
@@ -1518,6 +1533,12 @@ impl TypeInterner {
 
         // --- Auxiliary caches ---
         size += self.identity_comparable_cache.len()
+            * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<TypeId>() + 1);
+        size += self.contains_this_cache.len()
+            * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<TypeId>() + 1);
+        size += self.contains_infer_cache.len()
+            * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<TypeId>() + 1);
+        size += self.contains_type_query_cache.len()
             * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<TypeId>() + 1);
         // alloc_order is now stored per-shard alongside index_to_key (4 bytes per type)
         size += type_count * 4;

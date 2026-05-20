@@ -19,15 +19,39 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeArena, NodeIndex};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeParamInfo;
+use tsz_solver::computation::TypeResolver;
 use tsz_solver::{TypeId, TypePredicateTarget};
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn resolve_actual_lib_name_to_def_id_for_lowering(
+        &self,
+        type_name: &str,
+    ) -> Option<tsz_solver::DefId> {
+        self.ctx.actual_lib_def_id_for_bare_name(type_name)
+    }
+
     pub(crate) fn lib_name_has_local_augmentation(&self, name: &str) -> bool {
         self.ctx
             .binder
             .global_augmentations
             .get(name)
             .is_some_and(|v| !v.is_empty())
+    }
+
+    fn lib_name_depends_on_builtin_iterator_return(name: &str) -> bool {
+        matches!(
+            name,
+            "Array"
+                | "ArrayIterator"
+                | "Iterator"
+                | "IteratorObject"
+                | "Map"
+                | "MapIterator"
+                | "RegExpStringIterator"
+                | "Set"
+                | "SetIterator"
+                | "StringIterator"
+        )
     }
 
     /// True when callers must skip `shared_lib_type_cache` for `name`:
@@ -38,7 +62,10 @@ impl<'a> CheckerState<'a> {
         // Array is merged across lib.es5/lib.es2015.iterable/etc.; cross-checker
         // shared TypeIds expose property-order races to the type printer
         // (e.g. mappedTypeWithAsClauseAndLateBoundProperty).
-        if name == "Array" {
+        if name == "Array" || name.starts_with("Intl.") {
+            return true;
+        }
+        if Self::lib_name_depends_on_builtin_iterator_return(name) {
             return true;
         }
         self.lib_name_has_local_augmentation(name)
@@ -57,10 +84,9 @@ impl<'a> CheckerState<'a> {
         if name == "Array"
             && self.ctx.share_owner_symbol_type_results
             && !self.lib_name_has_local_augmentation(name)
-            && let Some(ty) = tsz_solver::TypeResolver::get_array_base_type(&self.ctx.types)
+            && let Some(ty) = TypeResolver::get_array_base_type(&self.ctx.types)
         {
-            let params =
-                tsz_solver::TypeResolver::get_array_base_type_params(&self.ctx.types).to_vec();
+            let params = TypeResolver::get_array_base_type_params(&self.ctx.types).to_vec();
             if !params.is_empty() {
                 return (Some(ty), params);
             }
@@ -86,7 +112,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let factory = self.ctx.types.factory();
-        let lib_contexts = &*self.ctx.lib_contexts;
+        let lib_contexts = self.ctx.lib_contexts.clone();
 
         let mut lib_types: Vec<TypeId> = Vec::new();
         let mut first_params: Option<Vec<TypeParamInfo>> = None;
@@ -94,7 +120,7 @@ impl<'a> CheckerState<'a> {
         // Subsequent definitions will have their type params substituted with these.
         let mut canonical_param_type_ids: Vec<TypeId> = Vec::new();
 
-        for lib_ctx in lib_contexts {
+        for lib_ctx in lib_contexts.iter() {
             if let Some(sym_id) = lib_ctx.binder.file_locals.get(name)
                 && let Some(symbol) = lib_ctx.binder.get_symbol(sym_id)
             {
@@ -123,7 +149,7 @@ impl<'a> CheckerState<'a> {
                         node_idx,
                         &decls_with_arenas,
                         fallback_arena,
-                        lib_contexts,
+                        &lib_contexts,
                     )
                     .map(|sym_id| sym_id.0)
                 };
@@ -133,11 +159,12 @@ impl<'a> CheckerState<'a> {
                         node_idx,
                         &decls_with_arenas,
                         fallback_arena,
-                        lib_contexts,
+                        &lib_contexts,
                     )
                 };
                 let name_resolver = |type_name: &str| -> Option<tsz_solver::DefId> {
-                    self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+                    self.resolve_actual_lib_name_to_def_id_for_lowering(type_name)
+                        .or_else(|| self.resolve_entity_name_text_to_def_id_for_lowering(type_name))
                 };
 
                 let lazy_type_params_resolver =
@@ -150,6 +177,7 @@ impl<'a> CheckerState<'a> {
                     &def_id_resolver,
                     &no_value_resolver,
                 )
+                .with_builtin_iterator_return_type(self.builtin_iterator_return_intrinsic_type())
                 .with_lazy_type_params_resolver(&lazy_type_params_resolver)
                 .with_name_def_id_resolver(&name_resolver);
                 let lowering = if self.ctx.all_binders.is_some()
@@ -253,9 +281,14 @@ impl<'a> CheckerState<'a> {
             _ => None,
         };
 
+        if let Some(ty) = lib_type_id {
+            lib_type_id = Some(self.merge_lib_interface_heritage(ty, name));
+        }
+
         // Merge global augmentations (declare global { interface X { ... } }).
-        if let Some(merged) = self.merge_global_augmentations(name, lib_type_id, lib_contexts) {
+        if let Some(merged) = self.merge_global_augmentations(name, lib_type_id, &lib_contexts) {
             lib_type_id = Some(merged);
+            self.register_augmented_lib_body(name, merged);
         }
 
         // Mirror into shared cache when safe (no local augmentations).
@@ -292,6 +325,45 @@ impl<'a> CheckerState<'a> {
     /// - `Some(SymbolId)` - The resolved target symbol
     /// - `None` - If circular reference detected or resolution failed
     pub(crate) fn resolve_alias_symbol(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+        visited_aliases: &mut AliasCycleTracker,
+    ) -> Option<tsz_binder::SymbolId> {
+        if crate::checkers_domain::stack_overflow_tripped() {
+            return None;
+        }
+        if crate::checkers_domain::should_probe_stack()
+            && stacker::remaining_stack().unwrap_or(usize::MAX) < 512 * 1024
+        {
+            crate::checkers_domain::trip_stack_overflow();
+            return None;
+        }
+        stacker::maybe_grow(256 * 1024, 4 * 1024 * 1024, || {
+            self.resolve_alias_symbol_inner(sym_id, visited_aliases)
+        })
+    }
+
+    /// Look up the `export =` target for a require-style consumer of a module,
+    /// preferring an explicit `"export="` binding and falling back to a
+    /// `"module.exports"` binding when the current file's `require`-style
+    /// import of an ESM module under Node20/NodeNext should treat
+    /// `export { X as "module.exports" }` as the CommonJS `module.exports = X`
+    /// value.
+    fn export_equals_target_for_require_consumer(
+        &self,
+        exports: &tsz_binder::SymbolTable,
+        module_specifier: &str,
+    ) -> Option<tsz_binder::SymbolId> {
+        if let Some(target_sym_id) = exports.get("export=") {
+            return Some(target_sym_id);
+        }
+        if self.current_file_uses_module_exports_require_interop(module_specifier) {
+            return exports.get("module.exports");
+        }
+        None
+    }
+
+    fn resolve_alias_symbol_inner(
         &self,
         sym_id: tsz_binder::SymbolId,
         visited_aliases: &mut AliasCycleTracker,
@@ -457,31 +529,33 @@ impl<'a> CheckerState<'a> {
                 return self.resolve_alias_symbol(target_sym_id, visited_aliases);
             }
 
-            // For namespace/require imports (`import X = require("m")`), import_name
-            // is None and the symbol's escaped_name won't match any module export.
-            // Try the module's `export =` value (stored under key "export=").
-            // This handles `declare module "react" { export = __React; }`.
+            // For namespace/require imports (`import X = require("m")` and
+            // `import * as X from "m"`), import_name is `None` or `"*"` and the
+            // symbol's escaped_name won't match any module export. Try the
+            // module's `export =` value (key `"export="`), falling back to
+            // `"module.exports"` for Node20/NodeNext CJS-of-ESM consumers —
+            // see `export_equals_target_for_require_consumer`.
             if symbol.import_name.is_none() {
-                if let Some(exports) = self.ctx.binder.module_exports.get(module_name)
-                    && let Some(target_sym_id) = exports.get("export=")
-                {
+                let lookup = |binder: &tsz_binder::BinderState| {
+                    binder.module_exports.get(module_name).and_then(|exports| {
+                        self.export_equals_target_for_require_consumer(exports, module_name)
+                    })
+                };
+                if let Some(target_sym_id) = lookup(self.ctx.binder) {
                     return self.resolve_alias_symbol(target_sym_id, visited_aliases);
                 }
                 if let Some(all_binders) = &self.ctx.all_binders {
                     if let Some(file_indices) = self.ctx.files_for_module_specifier(module_name) {
                         for &file_idx in file_indices {
                             if let Some(binder) = all_binders.get(file_idx)
-                                && let Some(exports) = binder.module_exports.get(module_name)
-                                && let Some(target_sym_id) = exports.get("export=")
+                                && let Some(target_sym_id) = lookup(binder)
                             {
                                 return self.resolve_alias_symbol(target_sym_id, visited_aliases);
                             }
                         }
                     } else {
                         for binder in all_binders.iter() {
-                            if let Some(exports) = binder.module_exports.get(module_name)
-                                && let Some(target_sym_id) = exports.get("export=")
-                            {
+                            if let Some(target_sym_id) = lookup(binder) {
                                 return self.resolve_alias_symbol(target_sym_id, visited_aliases);
                             }
                         }
@@ -513,7 +587,9 @@ impl<'a> CheckerState<'a> {
                         if let Some(exports) =
                             self.ctx.module_exports_for_module(target_binder, file_name)
                         {
-                            if let Some(export_equals_sym_id) = exports.get("export=") {
+                            if let Some(export_equals_sym_id) =
+                                self.export_equals_target_for_require_consumer(exports, module_name)
+                            {
                                 self.ctx
                                     .register_symbol_file_target(export_equals_sym_id, target_idx);
                                 return Some(export_equals_sym_id);
@@ -540,9 +616,13 @@ impl<'a> CheckerState<'a> {
                                 .register_symbol_file_target(target_sym_id, target_idx);
                             return self.resolve_alias_symbol(target_sym_id, visited_aliases);
                         }
-                        // For require imports, also try "export="
+                        // For require imports, also try "export=" — and the
+                        // Node20/NodeNext CJS-of-ESM `"module.exports"` fallback
+                        // when applicable (see
+                        // `export_equals_target_for_require_consumer`).
                         if symbol.import_name.is_none()
-                            && let Some(target_sym_id) = exports.get("export=")
+                            && let Some(target_sym_id) =
+                                self.export_equals_target_for_require_consumer(exports, module_name)
                         {
                             self.ctx
                                 .register_symbol_file_target(target_sym_id, target_idx);
@@ -808,23 +888,6 @@ impl<'a> CheckerState<'a> {
         } else {
             member_id
         };
-
-        let parent_is_umd_export = self
-            .get_cross_file_symbol(parent_sym_id)
-            .or_else(|| self.ctx.binder.get_symbol(parent_sym_id))
-            .is_some_and(|symbol| symbol.is_umd_export);
-        if parent_is_umd_export
-            && let Some(member_symbol) = self
-                .get_cross_file_symbol(resolved_member_id)
-                .or_else(|| self.ctx.binder.get_symbol(resolved_member_id))
-            && member_symbol.has_any_flags(symbol_flags::CLASS)
-            && member_symbol.value_declaration.is_some()
-        {
-            return Some(self.type_of_value_declaration_for_symbol(
-                resolved_member_id,
-                member_symbol.value_declaration,
-            ));
-        }
 
         self.get_validated_member_type(resolved_member_id, property_name)
             .or_else(|| {
@@ -1939,6 +2002,16 @@ impl<'a> CheckerState<'a> {
                 let paren = self.ctx.arena.get_parenthesized(node)?;
                 self.literal_type_from_initializer(paren.expression)
             }
+            k if k == tsz_parser::parser::syntax_kind_ext::AS_EXPRESSION
+                || k == tsz_parser::parser::syntax_kind_ext::TYPE_ASSERTION =>
+            {
+                let assertion = self.ctx.arena.get_type_assertion(node)?;
+                if self.is_const_assertion_type_node(assertion.type_node) {
+                    self.literal_type_from_initializer(assertion.expression)
+                } else {
+                    None
+                }
+            }
             k if k == tsz_parser::parser::syntax_kind_ext::TEMPLATE_EXPRESSION => {
                 let template = self.ctx.arena.get_template_expr(node)?;
                 // Get the head text (text before the first ${})
@@ -2068,7 +2141,7 @@ impl<'a> CheckerState<'a> {
                     | symbol_flags::CLASS
                     | symbol_flags::ENUM;
 
-                if (symbol.flags & shadowing_flags) == 0 {
+                if !symbol.has_any_flags(shadowing_flags) {
                     return false;
                 }
 
@@ -2404,7 +2477,9 @@ mod tests {
     use crate::state::CheckerState;
     use tsz_binder::BinderState;
     use tsz_parser::parser::NodeArena;
-    use tsz_solver::{QueryDatabase, TypeInterner, TypeParamInfo};
+    use tsz_solver::TypeParamInfo;
+    use tsz_solver::construction::QueryDatabase;
+    use tsz_solver::construction::TypeInterner;
 
     #[test]
     fn shared_array_resolution_reuses_registered_base_and_params() {

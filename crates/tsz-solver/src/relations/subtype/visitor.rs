@@ -9,9 +9,10 @@ use crate::def::resolver::TypeResolver;
 use crate::diagnostics::SubtypeFailureReason;
 use crate::relations::subtype::{SubtypeChecker, SubtypeResult};
 use crate::types::{
-    CallableShapeId, ConditionalTypeId, FunctionShapeId, IntrinsicKind, LiteralValue, MappedTypeId,
-    ObjectFlags, ObjectShape, ObjectShapeId, StringIntrinsicKind, SymbolRef, TupleListId,
-    TypeApplicationId, TypeData, TypeId, TypeListId, TypeParamInfo,
+    CallSignature, CallableShape, CallableShapeId, ConditionalTypeId, FunctionShapeId,
+    IntrinsicKind, LiteralValue, MappedTypeId, ObjectFlags, ObjectShape, ObjectShapeId,
+    StringIntrinsicKind, SymbolRef, TupleListId, TypeApplicationId, TypeData, TypeId, TypeListId,
+    TypeParamInfo,
 };
 use crate::visitor::{
     TypeVisitor, array_element_type, callable_shape_id, enum_components, function_shape_id,
@@ -395,6 +396,72 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                             return SubtypeResult::True;
                         }
                     }
+                }
+            }
+        }
+
+        // Special case: If target is callable, combine call signatures from
+        // function/callable intersection members with properties from object
+        // members. This handles values built with Object.assign:
+        //   ((...) => ...) & { method(): void } <: { (...): R; method(): void }
+        if let Some(t_callable_id) = callable_shape_id(self.checker.interner, self.target) {
+            use crate::objects::{PropertyCollectionResult, collect_properties};
+
+            let mut call_signatures = Vec::new();
+            let mut construct_signatures = Vec::new();
+            for &member in member_list.iter() {
+                if let Some(s_callable_id) = callable_shape_id(self.checker.interner, member) {
+                    let shape = self.checker.interner.callable_shape(s_callable_id);
+                    call_signatures.extend(shape.call_signatures.iter().cloned());
+                    construct_signatures.extend(shape.construct_signatures.iter().cloned());
+                } else if let Some(s_fn_id) = function_shape_id(self.checker.interner, member) {
+                    let function = self.checker.interner.function_shape(s_fn_id);
+                    let signature = CallSignature {
+                        type_params: function.type_params.clone(),
+                        params: function.params.clone(),
+                        this_type: function.this_type,
+                        return_type: function.return_type,
+                        type_predicate: function.type_predicate,
+                        is_method: function.is_method,
+                    };
+                    if function.is_constructor {
+                        construct_signatures.push(signature);
+                    } else {
+                        call_signatures.push(signature);
+                    }
+                }
+            }
+
+            if !call_signatures.is_empty() || !construct_signatures.is_empty() {
+                let (properties, string_index, number_index) = match collect_properties(
+                    self.source,
+                    self.checker.interner,
+                    self.checker.resolver,
+                ) {
+                    PropertyCollectionResult::Any => return SubtypeResult::True,
+                    PropertyCollectionResult::Properties {
+                        properties,
+                        string_index,
+                        number_index,
+                    } => (properties, string_index, number_index),
+                    PropertyCollectionResult::NonObject => (Vec::new(), None, None),
+                };
+                let s_callable = CallableShape {
+                    call_signatures,
+                    construct_signatures,
+                    properties,
+                    string_index,
+                    number_index,
+                    symbol: None,
+                    is_abstract: false,
+                };
+                let t_callable = self.checker.interner.callable_shape(t_callable_id);
+                if self
+                    .checker
+                    .check_callable_subtype(&s_callable, &t_callable)
+                    .is_true()
+                {
+                    return SubtypeResult::True;
                 }
             }
         }
@@ -851,11 +918,19 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                 .checker
                 .index_accesses_have_distinct_type_param_keys(key_type, t_idx)
             {
-                if let Some(tracer) = &mut self.checker.tracer
-                    && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                // Surface tsc's full TS2322 + TS5075 chain via a dedicated
+                // failure reason. Falls back to the generic TypeMismatch
+                // shape when the target key is not a type parameter we
+                // can carry constraint info for.
+                let reason = self
+                    .checker
+                    .index_access_distinct_type_param_keys_failure_reason(key_type, t_idx)
+                    .unwrap_or(SubtypeFailureReason::TypeMismatch {
                         source_type: self.source,
                         target_type: self.target,
-                    })
+                    });
+                if let Some(tracer) = &mut self.checker.tracer
+                    && !tracer.on_mismatch_dyn(reason)
                 {
                     return SubtypeResult::False;
                 }
@@ -1116,7 +1191,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TypeInterner;
+    use crate::construction::TypeInterner;
     use crate::types::{CallSignature, CallableShape, FunctionShape, PropertyInfo};
 
     fn structural_function_interface(interner: &TypeInterner) -> TypeId {
@@ -1162,5 +1237,30 @@ mod tests {
         };
 
         assert_eq!(visitor.visit_callable(shape_id.0), SubtypeResult::True);
+    }
+
+    #[test]
+    fn intersection_function_and_object_satisfies_callable_with_properties() {
+        let interner = TypeInterner::new();
+        let member_name = interner.intern_string("member");
+        let source_function = interner.function(FunctionShape::new(vec![], TypeId::STRING));
+        let source_props = interner.object(vec![PropertyInfo::new(member_name, TypeId::NUMBER)]);
+        let source = interner.intersection2(source_function, source_props);
+        let target = interner.callable(CallableShape {
+            call_signatures: vec![CallSignature::new(vec![], TypeId::STRING)],
+            properties: vec![PropertyInfo::new(member_name, TypeId::NUMBER)],
+            ..Default::default()
+        });
+
+        let mut checker = SubtypeChecker::new(&interner);
+        let mut visitor = SubtypeVisitor {
+            checker: &mut checker,
+            source,
+            target,
+        };
+        let list_id =
+            crate::visitor::intersection_list_id(&interner, source).expect("intersection source");
+
+        assert_eq!(visitor.visit_intersection(list_id.0), SubtypeResult::True);
     }
 }

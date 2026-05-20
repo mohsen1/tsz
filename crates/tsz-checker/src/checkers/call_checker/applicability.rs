@@ -49,6 +49,14 @@ impl<'a> CheckerState<'a> {
 
     pub(super) fn normalized_spread_argument_type(&mut self, expr: NodeIndex) -> TypeId {
         let spread_type = self.get_type_of_node(expr);
+        if crate::query_boundaries::checkers::call::tuple_elements_for_type(
+            self.ctx.types,
+            spread_type,
+        )
+        .is_some()
+        {
+            return spread_type;
+        }
         let spread_type = self.resolve_type_for_property_access(spread_type);
         let spread_type = self.resolve_lazy_type(spread_type);
         let spread_type = self.evaluate_type_with_env(spread_type);

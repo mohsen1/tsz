@@ -321,6 +321,24 @@ impl<'a> CheckerState<'a> {
                 return result;
             }
             if node.kind == syntax_kind_ext::TYPE_OPERATOR {
+                if let Some(op) = self.ctx.arena.get_type_operator(node)
+                    && op.operator == tsz_scanner::SyntaxKind::KeyOfKeyword as u16
+                    && let Some(inner_node) = self.ctx.arena.get(op.type_node)
+                    && inner_node.kind == syntax_kind_ext::TYPE_REFERENCE
+                    && let Some(type_ref) = self.ctx.arena.get_type_ref(inner_node)
+                    && self.find_leftmost_import_call(type_ref.type_name).is_some()
+                {
+                    let imported_operand = {
+                        let mut checker = crate::TypeNodeChecker::new(&mut self.ctx);
+                        checker.import_call_type_reference(type_ref.type_name)
+                    };
+                    if let Some(imported_operand) = imported_operand {
+                        let result = self.get_keyof_type(imported_operand);
+                        self.ctx.node_types.insert(idx.0, result);
+                        return result;
+                    }
+                }
+
                 // Ensure inner type references of keyof/unique/readonly go through
                 // the checker's constraint validation path (TS2344). The lowering
                 // handles TYPE_OPERATOR via lower_type_operator which calls lower_type
@@ -458,6 +476,8 @@ impl<'a> CheckerState<'a> {
         // so that type references to them are not falsely flagged as needing type
         // arguments (e.g., `<A>(x: A) => A` where `A` shadows an outer generic).
         let mut type_param_names = FxHashSet::default();
+        type_param_names.extend(self.ctx.type_parameter_scope.keys().cloned());
+        self.collect_enclosing_type_param_names(root, &mut type_param_names);
         self.collect_type_param_names_from_function_type(root, &mut type_param_names);
 
         let mut stack = vec![root];
@@ -529,6 +549,60 @@ impl<'a> CheckerState<'a> {
                 }
             }
             stack.extend(self.ctx.arena.get_children(idx));
+        }
+    }
+
+    fn collect_enclosing_type_param_names(&self, root: NodeIndex, names: &mut FxHashSet<String>) {
+        let mut parent = self
+            .ctx
+            .arena
+            .get_extended(root)
+            .map_or(NodeIndex::NONE, |info| info.parent);
+
+        while parent.is_some() {
+            let Some(node) = self.ctx.arena.get(parent) else {
+                break;
+            };
+
+            if node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                && let Some(alias) = self.ctx.arena.get_type_alias(node)
+            {
+                self.collect_type_param_names_from_list(&alias.type_parameters, names);
+            } else if node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                && let Some(interface) = self.ctx.arena.get_interface(node)
+            {
+                self.collect_type_param_names_from_list(&interface.type_parameters, names);
+            } else if node.kind == syntax_kind_ext::CLASS_DECLARATION
+                && let Some(class) = self.ctx.arena.get_class(node)
+            {
+                self.collect_type_param_names_from_list(&class.type_parameters, names);
+            }
+
+            parent = self
+                .ctx
+                .arena
+                .get_extended(parent)
+                .map_or(NodeIndex::NONE, |info| info.parent);
+        }
+    }
+
+    fn collect_type_param_names_from_list(
+        &self,
+        type_parameters: &Option<tsz_parser::parser::NodeList>,
+        names: &mut FxHashSet<String>,
+    ) {
+        let Some(type_parameters) = type_parameters else {
+            return;
+        };
+
+        for &tp_idx in &type_parameters.nodes {
+            if let Some(tp_node) = self.ctx.arena.get(tp_idx)
+                && let Some(tp_data) = self.ctx.arena.get_type_parameter(tp_node)
+                && let Some(name_node) = self.ctx.arena.get(tp_data.name)
+                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+            {
+                names.insert(ident.escaped_text.clone());
+            }
         }
     }
 

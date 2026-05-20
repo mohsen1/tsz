@@ -9,7 +9,7 @@ use tsz_checker::module_resolution::build_module_resolution_maps;
 use tsz_checker::state::CheckerState;
 use tsz_common::common::ModuleKind;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
     tsz_checker::test_utils::load_compiled_lib_files(&[
@@ -654,6 +654,96 @@ fn duplicate_symbol_property_in_interface_no_ts2300() {
     );
 }
 
+/// Regression guard for `symbolObserverMismatchingPolyfillsWorkTogether`.
+/// Merged `SymbolConstructor` declarations may refine the same property from
+/// `symbol` to `unique symbol`; the resulting value must remain valid as a
+/// computed property key.
+#[test]
+fn merged_symbol_constructor_unique_symbol_property_is_valid_computed_key() {
+    let lib_files = load_symbol_lib_files_for_test();
+    let diagnostics = tsz_checker::test_utils::check_source_with_libs(
+        r#"
+interface SymbolConstructor {
+    readonly observer: symbol;
+}
+interface SymbolConstructor {
+    readonly observer: unique symbol;
+}
+
+const obj = {
+    [Symbol.observer]: 0
+};
+"#,
+        "test.ts",
+        CheckerOptions::default(),
+        &lib_files,
+    );
+    let codes: Vec<_> = diagnostics.iter().map(|diag| diag.code).collect();
+    let unexpected: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| !matches!(diag.code, 2318 | 2580 | 2552 | 2304))
+        .collect();
+    assert!(
+        unexpected.is_empty(),
+        "Merged SymbolConstructor observer property should match tsc's no-diagnostic behavior, got diagnostics: {unexpected:?}",
+    );
+    assert!(
+        !codes.iter().any(|code| matches!(*code, 1166 | 2300 | 2464)),
+        "Merged SymbolConstructor observer property should be a valid computed key, got codes: {codes:?}",
+    );
+}
+
+#[test]
+fn non_global_symbol_constructor_refinement_still_reports_ts2717() {
+    let plain_diagnostics = verify_errors(
+        r#"
+interface Plain {
+    readonly observer: symbol;
+}
+interface Plain {
+    readonly observer: unique symbol;
+}
+"#,
+        &[(
+            6,
+            14,
+            "Subsequent property declarations must have the same type.",
+        )],
+    );
+    let plain_codes: Vec<_> = plain_diagnostics.iter().map(|diag| diag.code).collect();
+    assert!(
+        plain_codes.contains(
+            &tsz_checker::diagnostics::diagnostic_codes::SUBSEQUENT_PROPERTY_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_PROPERTY_MUST_BE_OF_TYP
+        ),
+        "Plain merged interfaces should still report TS2717 for symbol-to-unique-symbol refinement, got codes: {plain_codes:?}",
+    );
+
+    let namespace_diagnostics = verify_errors(
+        r#"
+namespace Local {
+    interface SymbolConstructor {
+        readonly observer: symbol;
+    }
+    interface SymbolConstructor {
+        readonly observer: unique symbol;
+    }
+}
+"#,
+        &[(
+            7,
+            18,
+            "Subsequent property declarations must have the same type.",
+        )],
+    );
+    let namespace_codes: Vec<_> = namespace_diagnostics.iter().map(|diag| diag.code).collect();
+    assert!(
+        namespace_codes.contains(
+            &tsz_checker::diagnostics::diagnostic_codes::SUBSEQUENT_PROPERTY_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_PROPERTY_MUST_BE_OF_TYP
+        ),
+        "Namespace-local SymbolConstructor should still report TS2717 for symbol-to-unique-symbol refinement, got codes: {namespace_codes:?}",
+    );
+}
+
 /// Test that class extending a namespaced class does NOT produce false TS2506.
 /// The recursion guard in `class_type.rs` should not emit TS2506 — true cycle
 /// detection is handled by dedicated DFS in `class_inheritance.rs`.
@@ -1023,5 +1113,229 @@ fn export_default_interface_plus_type_identifier_both_get_ts2528() {
             .iter()
             .map(|d| (d.code, &d.message_text))
             .collect::<Vec<_>>()
+    );
+}
+
+fn check_for_ts2300_multi_file(files: &[(&str, &str)], entry_file: &str) -> Vec<String> {
+    tsz_checker::test_utils::check_multi_file(
+        files,
+        entry_file,
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
+    )
+    .into_iter()
+    .filter(|d| d.code == 2300)
+    .map(|d| d.message_text)
+    .collect()
+}
+
+#[test]
+fn import_type_alias_plus_module_augmentation_no_ts2300() {
+    let source_ts = r#"export interface User {
+    name: string;
+}
+"#;
+    let test_ts = r#"import type { User } from "./source";
+declare module "./source" {
+    interface User {
+        age: number;
+    }
+}
+"#;
+
+    let ts2300 =
+        check_for_ts2300_multi_file(&[("source.ts", source_ts), ("test.ts", test_ts)], "test.ts");
+    assert!(
+        ts2300.is_empty(),
+        "`import type {{User}}` + module augmentation should NOT produce TS2300, got: {ts2300:?}"
+    );
+}
+
+#[test]
+fn import_value_alias_plus_module_augmentation_no_ts2300() {
+    let source_ts = r#"export interface User {
+    name: string;
+}
+"#;
+    let test_ts = r#"import { User } from "./source";
+declare module "./source" {
+    interface User {
+        age: number;
+    }
+}
+"#;
+
+    let ts2300 =
+        check_for_ts2300_multi_file(&[("source.ts", source_ts), ("test.ts", test_ts)], "test.ts");
+    assert!(
+        ts2300.is_empty(),
+        "`import {{User}}` + module augmentation should NOT produce TS2300, got: {ts2300:?}"
+    );
+}
+
+#[test]
+fn import_alias_module_augmentation_different_name_no_ts2300() {
+    let source_ts = r#"export interface Item {
+    id: number;
+}
+"#;
+    let test_ts = r#"import type { Item } from "./source";
+declare module "./source" {
+    interface Item {
+        label: string;
+    }
+}
+"#;
+
+    let ts2300 =
+        check_for_ts2300_multi_file(&[("source.ts", source_ts), ("test.ts", test_ts)], "test.ts");
+    assert!(
+        ts2300.is_empty(),
+        "Renamed interface (Item) + module augmentation should NOT produce TS2300, got: {ts2300:?}"
+    );
+}
+
+#[test]
+fn import_alias_plus_augmentation_function_no_ts2300() {
+    let source_ts = "export function greet(name: string): void {}\n";
+    let test_ts = r#"import { greet } from "./source";
+declare module "./source" {
+    function greet(name: string, greeting: string): void;
+}
+"#;
+
+    let ts2300 =
+        check_for_ts2300_multi_file(&[("source.ts", source_ts), ("test.ts", test_ts)], "test.ts");
+    assert!(
+        ts2300.is_empty(),
+        "`import {{greet}}` + augmentation function overload should NOT produce TS2300, got: {ts2300:?}"
+    );
+}
+
+#[test]
+fn multiple_imports_and_augmentations_no_ts2300() {
+    let source_ts = r#"export interface Alpha {
+    x: number;
+}
+export interface Beta {
+    y: string;
+}
+"#;
+    let test_ts = r#"import type { Alpha, Beta } from "./source";
+declare module "./source" {
+    interface Alpha {
+        extra: boolean;
+    }
+    interface Beta {
+        extra2: boolean;
+    }
+}
+"#;
+
+    let ts2300 =
+        check_for_ts2300_multi_file(&[("source.ts", source_ts), ("test.ts", test_ts)], "test.ts");
+    assert!(
+        ts2300.is_empty(),
+        "Multiple imports + augmentations should NOT produce TS2300, got: {ts2300:?}"
+    );
+}
+
+#[test]
+fn reexport_specifier_plus_module_augmentation_no_ts2300() {
+    let source_ts = r#"export interface User {
+    id: number;
+}
+"#;
+    let test_ts = r#"export { User as MyUser } from "./source";
+declare module "./source" {
+    interface User {
+        name: string;
+    }
+}
+"#;
+
+    let ts2300 =
+        check_for_ts2300_multi_file(&[("source.ts", source_ts), ("test.ts", test_ts)], "test.ts");
+    assert!(
+        ts2300.is_empty(),
+        "`export {{User as MyUser}}` + module augmentation should NOT produce TS2300, got: {ts2300:?}"
+    );
+}
+
+#[test]
+fn reexport_specifier_different_name_plus_module_augmentation_no_ts2300() {
+    let source_ts = r#"export interface Widget {
+    id: number;
+}
+"#;
+    let test_ts = r#"export { Widget as PublicWidget } from "./source";
+declare module "./source" {
+    interface Widget {
+        label: string;
+    }
+}
+"#;
+
+    let ts2300 =
+        check_for_ts2300_multi_file(&[("source.ts", source_ts), ("test.ts", test_ts)], "test.ts");
+    assert!(
+        ts2300.is_empty(),
+        "`export {{Widget as PublicWidget}}` + module augmentation should NOT produce TS2300, got: {ts2300:?}"
+    );
+}
+
+#[test]
+fn reexport_class_plus_interface_module_augmentation_no_ts2300() {
+    let source_ts = r#"export class C {
+    x = 1;
+}
+"#;
+    let test_ts = r#"export { C as PublicC } from "./source";
+declare module "./source" {
+    interface C {
+        y: number;
+    }
+}
+"#;
+
+    let ts2300 =
+        check_for_ts2300_multi_file(&[("source.ts", source_ts), ("test.ts", test_ts)], "test.ts");
+    assert!(
+        ts2300.is_empty(),
+        "`export {{C as PublicC}}` + interface augmentation should NOT produce TS2300, got: {ts2300:?}"
+    );
+}
+
+#[test]
+fn reexport_type_alias_plus_interface_module_augmentation_ts2300() {
+    let source_ts = "export type C = { x: number };\n";
+    let test_ts = r#"export { C as PublicC } from "./source";
+declare module "./source" {
+    interface C {
+        y: number;
+    }
+}
+"#;
+
+    let ts2300 =
+        check_for_ts2300_multi_file(&[("source.ts", source_ts), ("test.ts", test_ts)], "test.ts");
+    assert!(
+        !ts2300.is_empty(),
+        "`export {{C as PublicC}}` + interface augmentation of a type alias should produce TS2300"
+    );
+}
+
+#[test]
+fn same_file_merging_interfaces_no_ts2300() {
+    let diags = verify_errors(
+        "interface Config { port: number; }\ninterface Config { host: string; }",
+        &[],
+    );
+    let ts2300 = diags.iter().filter(|d| d.code == 2300).count();
+    assert_eq!(
+        ts2300, 0,
+        "Two separate interface declarations merge — no TS2300 expected"
     );
 }

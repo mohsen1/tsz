@@ -71,7 +71,6 @@ eacher((...args) => {
 }
 
 #[test]
-#[ignore = "TODO: anchor logic changes affect error placement - needs refinement"]
 fn test_contextual_readonly_rest_tuple_diagnostic_preserves_callable_literals() {
     let source = r#"
 declare function eacher(fn: (...args: readonly [1, '1'] | readonly [2, '2']) => any): void;
@@ -95,5 +94,21 @@ eacher((a, b) => {
     assert!(
         ts2322.message_text.contains("not assignable to type '1'"),
         "Expected assignability error for narrower literal type, got {ts2322:?}"
+    );
+}
+
+#[test]
+fn distributive_conditional_tuple_union_preserves_literal_assignment() {
+    let source = r#"
+type Pair<T> = T extends any ? [T, T] : never;
+type P = Pair<"a" | "b">;
+const p: P = ["a", "a"];
+p;
+"#;
+
+    let diagnostics = check_default(source);
+    assert!(
+        diagnostics.is_empty(),
+        "expected tuple literal to assign to distributive conditional union, got: {diagnostics:#?}"
     );
 }

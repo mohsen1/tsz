@@ -14,6 +14,10 @@ use tsz_common::diagnostics::diagnostic_codes;
 use tsz_common::interner::Atom;
 use tsz_scanner::SyntaxKind;
 
+/// Missing-class-body recovery at a stray `.` leaves both the abandoned class
+/// close and its outer container close visible as statement-level stray braces.
+const CLASS_DOT_RECOVERY_STRAY_CLOSE_BRACE_COUNT: u8 = 2;
+
 impl ParserState {
     fn report_missing_close_paren_after_body_recovery(&mut self) {
         let snapshot = self.scanner.save_state();
@@ -91,10 +95,20 @@ impl ParserState {
         let mut for_header_paren_depth = 0u32;
         let mut reported_for_await_expression = false;
         let mut reported_for_body_property = false;
+        let mut pending_const_binding_name_colon = false;
+        let mut pending_const_binding_semicolon_comma = false;
+        let mut pending_for_binding_name_colon = false;
+        let mut pending_for_of_comma = false;
+        let mut pending_for_expression_comma = false;
+        let mut reported_for_expression_start_comma = false;
+        let mut pending_member_tail_comma = false;
+        let mut pending_statement_semicolon_comma = false;
+        let mut last_close_brace_pos = None;
 
         while !self.is_token(SyntaxKind::EndOfFileToken) {
             if saw_for_keyword {
                 if self.is_token(SyntaxKind::AwaitKeyword) {
+                    self.parse_error_at_current_token("':' expected.", diagnostic_codes::EXPECTED);
                     saw_for_keyword = false;
                     saw_for_await = true;
                     self.next_token();
@@ -129,6 +143,13 @@ impl ParserState {
                         for_header_paren_depth += 1;
                     }
                     SyntaxKind::CloseParenToken => {
+                        if for_header_paren_depth == 1 && pending_for_expression_comma {
+                            self.parse_error_at_current_token(
+                                "',' expected.",
+                                diagnostic_codes::EXPECTED,
+                            );
+                            pending_for_expression_comma = false;
+                        }
                         for_header_paren_depth = for_header_paren_depth.saturating_sub(1);
                     }
                     SyntaxKind::OpenBraceToken
@@ -140,6 +161,43 @@ impl ParserState {
                         );
                         reported_for_body_property = true;
                         pending_for_await_header = false;
+                    }
+                    token
+                        if token == SyntaxKind::ConstKeyword
+                            || (token == SyntaxKind::Identifier
+                                && self.scanner.get_token_value_ref() == "const") =>
+                    {
+                        pending_for_binding_name_colon = true;
+                    }
+                    token
+                        if pending_for_binding_name_colon
+                            && (token == SyntaxKind::Identifier
+                                || token == SyntaxKind::InKeyword
+                                || token == SyntaxKind::OutKeyword) =>
+                    {
+                        self.parse_error_at_current_token(
+                            "':' expected.",
+                            diagnostic_codes::EXPECTED,
+                        );
+                        pending_for_binding_name_colon = false;
+                        pending_for_of_comma = true;
+                    }
+                    SyntaxKind::OfKeyword if pending_for_of_comma => {
+                        self.parse_error_at_current_token(
+                            "',' expected.",
+                            diagnostic_codes::EXPECTED,
+                        );
+                        pending_for_of_comma = false;
+                        pending_for_expression_comma = true;
+                    }
+                    SyntaxKind::Identifier
+                        if pending_for_expression_comma && !reported_for_expression_start_comma =>
+                    {
+                        self.parse_error_at_current_token(
+                            "',' expected.",
+                            diagnostic_codes::EXPECTED,
+                        );
+                        reported_for_expression_start_comma = true;
                     }
                     _ => {}
                 }
@@ -156,11 +214,59 @@ impl ParserState {
                 SyntaxKind::ForKeyword => {
                     saw_for_keyword = true;
                 }
+                token
+                    if !pending_for_await_header
+                        && (token == SyntaxKind::ConstKeyword
+                            || (token == SyntaxKind::Identifier
+                                && self.scanner.get_token_value_ref() == "const")) =>
+                {
+                    pending_const_binding_name_colon = true;
+                }
+                token
+                    if pending_const_binding_name_colon
+                        && (token == SyntaxKind::Identifier
+                            || token == SyntaxKind::InKeyword
+                            || token == SyntaxKind::OutKeyword) =>
+                {
+                    self.parse_error_at_current_token("':' expected.", diagnostic_codes::EXPECTED);
+                    pending_const_binding_name_colon = false;
+                    pending_const_binding_semicolon_comma = true;
+                }
+                _ if pending_const_binding_name_colon => {
+                    pending_const_binding_name_colon = false;
+                }
+                SyntaxKind::SemicolonToken if pending_const_binding_semicolon_comma => {
+                    self.parse_error_at_current_token("',' expected.", diagnostic_codes::EXPECTED);
+                    pending_const_binding_semicolon_comma = false;
+                }
+                SyntaxKind::DotToken => {
+                    self.parse_error_at_current_token("',' expected.", diagnostic_codes::EXPECTED);
+                    pending_member_tail_comma = true;
+                }
+                SyntaxKind::OpenParenToken if pending_member_tail_comma => {
+                    pending_statement_semicolon_comma = true;
+                    pending_member_tail_comma = false;
+                }
+                SyntaxKind::SemicolonToken if pending_statement_semicolon_comma => {
+                    self.parse_error_at_current_token("',' expected.", diagnostic_codes::EXPECTED);
+                    pending_statement_semicolon_comma = false;
+                }
+                SyntaxKind::CloseBraceToken => {
+                    last_close_brace_pos = Some(self.token_pos());
+                }
                 _ => {}
             }
 
             self.next_token();
         }
+
+        let expression_recovery_pos = last_close_brace_pos.unwrap_or_else(|| self.token_pos());
+        self.parse_error_at(
+            expression_recovery_pos,
+            0,
+            diagnostic_messages::EXPRESSION_EXPECTED,
+            diagnostic_codes::EXPRESSION_EXPECTED,
+        );
 
         self.scanner.restore_state(snapshot);
         self.current_token = saved_token;
@@ -459,6 +565,13 @@ impl ParserState {
                         // `...public rest: T` is invalid, but tsc recovers as if
                         // a comma separated the malformed rest parameter from
                         // `rest`. Keep parsing so JS emit preserves both names.
+                        continue;
+                    }
+                    if self.is_parameter_start() {
+                        // General missing-comma recovery. For example,
+                        // `constructor(public @dec p: number)` is invalid, but
+                        // tsc preserves the recovered `public, p` parameter list
+                        // and the parameter decorator on `p`.
                         continue;
                     }
                     if self.is_token(SyntaxKind::OpenBraceToken)
@@ -1127,12 +1240,20 @@ impl ParserState {
                     .is_token(SyntaxKind::LessThanToken)
                     .then(|| self.parse_type_parameters());
                 let heritage_clauses = self.parse_heritage_clauses();
-                self.parse_expected(SyntaxKind::OpenBraceToken);
-                let class_saved_flags = self.context_flags;
-                self.context_flags |= CONTEXT_FLAG_IN_CLASS;
-                let members = self.parse_class_members();
-                self.context_flags = class_saved_flags;
-                self.parse_expected(SyntaxKind::CloseBraceToken);
+                let has_open_brace = self.parse_expected(SyntaxKind::OpenBraceToken);
+                let members = if !has_open_brace && self.is_token(SyntaxKind::DotToken) {
+                    self.next_token();
+                    self.non_block_close_brace_statement_errors_remaining =
+                        CLASS_DOT_RECOVERY_STRAY_CLOSE_BRACE_COUNT;
+                    self.make_node_list(Vec::new())
+                } else {
+                    let class_saved_flags = self.context_flags;
+                    self.context_flags |= CONTEXT_FLAG_IN_CLASS;
+                    let members = self.parse_class_members();
+                    self.context_flags = class_saved_flags;
+                    self.parse_expected(SyntaxKind::CloseBraceToken);
+                    members
+                };
                 (type_parameters, heritage_clauses, members)
             };
 
@@ -1192,12 +1313,20 @@ impl ParserState {
                     .is_token(SyntaxKind::LessThanToken)
                     .then(|| self.parse_type_parameters());
                 let heritage_clauses = self.parse_heritage_clauses();
-                self.parse_expected(SyntaxKind::OpenBraceToken);
-                let class_saved_flags = self.context_flags;
-                self.context_flags |= CONTEXT_FLAG_IN_CLASS;
-                let members = self.parse_class_members();
-                self.context_flags = class_saved_flags;
-                self.parse_expected(SyntaxKind::CloseBraceToken);
+                let has_open_brace = self.parse_expected(SyntaxKind::OpenBraceToken);
+                let members = if !has_open_brace && self.is_token(SyntaxKind::DotToken) {
+                    self.next_token();
+                    self.non_block_close_brace_statement_errors_remaining =
+                        CLASS_DOT_RECOVERY_STRAY_CLOSE_BRACE_COUNT;
+                    self.make_node_list(Vec::new())
+                } else {
+                    let class_saved_flags = self.context_flags;
+                    self.context_flags |= CONTEXT_FLAG_IN_CLASS;
+                    let members = self.parse_class_members();
+                    self.context_flags = class_saved_flags;
+                    self.parse_expected(SyntaxKind::CloseBraceToken);
+                    members
+                };
                 (type_parameters, heritage_clauses, members)
             };
 

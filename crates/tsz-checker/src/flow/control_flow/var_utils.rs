@@ -708,7 +708,7 @@ impl<'a> FlowAnalyzer<'a> {
         if node_data.kind == syntax_kind_ext::BINARY_EXPRESSION
             && let Some(bin) = self.arena.get_binary_expr(node_data)
         {
-            return crate::query_boundaries::common::is_compound_assignment_operator(
+            return crate::query_boundaries::operator_wrappers::is_compound_assignment_operator(
                 bin.operator_token,
             );
         }
@@ -943,7 +943,11 @@ impl<'a> FlowAnalyzer<'a> {
             return None;
         }
         if var_decl.type_annotation.is_some() {
-            node_types.get(&var_decl.type_annotation.0).copied()
+            node_types
+                .get(&var_decl.type_annotation.0)
+                .copied()
+                .or_else(|| node_types.get(&assignment_node.0).copied())
+                .or_else(|| node_types.get(&var_decl.name.0).copied())
         } else {
             node_types
                 .get(&assignment_node.0)
@@ -1060,7 +1064,9 @@ impl<'a> FlowAnalyzer<'a> {
         let Some(bin) = self.arena.get_binary_expr(node_data) else {
             return false;
         };
-        crate::query_boundaries::common::is_logical_compound_assignment_operator(bin.operator_token)
+        crate::query_boundaries::operator_wrappers::is_logical_compound_assignment_operator(
+            bin.operator_token,
+        )
     }
 
     /// Check if a node is a binding pattern (array or object destructuring pattern)

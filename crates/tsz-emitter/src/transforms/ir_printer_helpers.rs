@@ -65,6 +65,11 @@ impl<'a> IRPrinter<'a> {
     ) {
         // Check if any params have defaults
         let has_defaults = params.iter().any(|p| p.default_value.is_some());
+        let (new_target_capture, body) = body
+            .split_first()
+            .filter(|(node, _)| matches!(node, IRNode::NewTargetCapture { .. }))
+            .map_or((None, body), |(capture, rest)| (Some(capture), rest));
+        let has_new_target_capture = new_target_capture.is_some();
 
         // Check if the body was single-line in the source
         let is_body_source_single_line = self.is_body_source_single_line(body_source_range);
@@ -75,7 +80,7 @@ impl<'a> IRPrinter<'a> {
         // TSC preserves multiline formatting from source but uses single-line for generated code.
         // Exception: IIFE constructors (force_multiline_empty_body) always need multiline.
         let has_rest = self.target_es5 && params.iter().any(|p| p.rest);
-        if !has_defaults && !has_rest && body.is_empty() {
+        if !has_defaults && !has_rest && !has_new_target_capture && body.is_empty() {
             let use_single_line = !force_multiline_empty_body
                 && (is_body_source_single_line || body_source_range.is_none());
             if use_single_line {
@@ -93,6 +98,7 @@ impl<'a> IRPrinter<'a> {
         // unless caller forced multiline style (used for class constructors in ES5 class IIFEs).
         if !has_defaults
             && !has_rest
+            && !has_new_target_capture
             && body.len() == 1
             && is_body_source_single_line
             && !force_multiline_empty_body
@@ -107,6 +113,12 @@ impl<'a> IRPrinter<'a> {
         self.write("{");
         self.write_line();
         self.increase_indent();
+
+        if let Some(capture) = new_target_capture {
+            self.write_indent();
+            self.emit_node(capture);
+            self.write_line();
+        }
 
         // Emit default parameter checks: if (param === void 0) { param = default; }
         for param in params {
@@ -387,7 +399,11 @@ impl<'a> IRPrinter<'a> {
     }
 
     pub(super) fn write_indent(&mut self) {
-        for _ in 0..self.indent_level {
+        self.write_indent_level(self.indent_level);
+    }
+
+    pub(super) fn write_indent_level(&mut self, level: u32) {
+        for _ in 0..level {
             self.output.push_str(self.indent_str);
         }
     }
@@ -525,7 +541,8 @@ impl<'a> IRPrinter<'a> {
             match node.kind {
                 k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => return true,
                 k if k == syntax_kind_ext::TYPE_ASSERTION
-                    || k == syntax_kind_ext::AS_EXPRESSION =>
+                    || k == syntax_kind_ext::AS_EXPRESSION
+                    || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
                 {
                     if let Some(ta) = arena.get_type_assertion(node) {
                         idx = ta.expression;
@@ -533,7 +550,76 @@ impl<'a> IRPrinter<'a> {
                         return false;
                     }
                 }
+                k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+                {
+                    return Self::erased_object_literal_access_chain_needs_parens(arena, idx);
+                }
+                k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                    return Self::erased_object_literal_access_chain_needs_parens(arena, idx);
+                }
                 k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => return false,
+                _ => return false,
+            }
+        }
+    }
+
+    fn erased_object_literal_access_chain_needs_parens(arena: &NodeArena, idx: NodeIndex) -> bool {
+        let Some(node) = arena.get(idx) else {
+            return false;
+        };
+        match node.kind {
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+            {
+                arena.get_access_expr(node).is_some_and(|access| {
+                    Self::erased_object_literal_access_chain_needs_parens(arena, access.expression)
+                })
+            }
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                arena.get_call_expr(node).is_some_and(|call| {
+                    Self::erased_object_literal_access_chain_needs_parens(arena, call.expression)
+                })
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                arena.get_parenthesized(node).is_some_and(|paren| {
+                    Self::erased_object_literal_access_chain_needs_parens(arena, paren.expression)
+                })
+            }
+            k if k == syntax_kind_ext::TYPE_ASSERTION
+                || k == syntax_kind_ext::AS_EXPRESSION
+                || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+            {
+                Self::type_assertion_wraps_object_literal(arena, idx)
+            }
+            _ => false,
+        }
+    }
+
+    fn type_assertion_wraps_object_literal(arena: &NodeArena, mut idx: NodeIndex) -> bool {
+        loop {
+            let Some(node) = arena.get(idx) else {
+                return false;
+            };
+            match node.kind {
+                k if k == syntax_kind_ext::TYPE_ASSERTION
+                    || k == syntax_kind_ext::AS_EXPRESSION
+                    || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+                {
+                    if let Some(ta) = arena.get_type_assertion(node) {
+                        idx = ta.expression;
+                    } else {
+                        return false;
+                    }
+                }
+                k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                    if let Some(paren) = arena.get_parenthesized(node) {
+                        idx = paren.expression;
+                    } else {
+                        return false;
+                    }
+                }
+                k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => return true,
                 _ => return false,
             }
         }

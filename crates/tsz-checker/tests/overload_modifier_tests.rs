@@ -1,4 +1,4 @@
-//! Tests for overload modifier agreement: TS2383, TS2385, TS2386.
+//! Tests for overload modifier agreement: TS2383, TS2385, TS2386, TS2394.
 
 use crate::test_utils::check_source_code_messages as get_diagnostics;
 
@@ -96,4 +96,150 @@ class C {
 }
 "#;
     assert!(has_error(source, 2386));
+}
+
+// TS2394: overload signature must be compatible with implementation signature
+
+#[test]
+fn ts2394_type_predicate_overload_with_boolean_impl_no_error() {
+    let source = r#"
+function check(x: unknown): x is string;
+function check(x: unknown, kind: string): x is number;
+function check(x: unknown, kind?: string): boolean {
+    if (kind === "number") return typeof x === "number";
+    return typeof x === "string";
+}
+"#;
+    assert!(!has_error(source, 2394));
+}
+
+#[test]
+fn ts2394_asserts_predicate_overload_no_error() {
+    let source = r#"
+function assert(x: unknown): asserts x is string;
+function assert(x: unknown, msg?: string): asserts x is string {
+    if (typeof x !== "string") throw new Error(msg ?? "not a string");
+}
+"#;
+    assert!(!has_error(source, 2394));
+}
+
+#[test]
+fn ts2394_constructor_rest_overload_accepts_broader_impl_first_param() {
+    let source = r#"
+class RestConstruct {
+  values: number[];
+
+  constructor(...values: number[]);
+  constructor(first: string, ...rest: number[]);
+  constructor(firstOrNum: string | number, ...rest: number[]) {
+    if (typeof firstOrNum === 'string') {
+      this.values = rest;
+    } else {
+      this.values = [firstOrNum, ...rest];
+    }
+  }
+}
+
+const rc1 = new RestConstruct(1, 2, 3);
+const rc2 = new RestConstruct('label', 1, 2, 3);
+"#;
+    assert!(!has_error(source, 2394));
+}
+
+#[test]
+fn ts2394_incompatible_param_types_still_errors() {
+    let source = r#"
+function bad(x: string): boolean;
+function bad(x: number): boolean {
+    return true;
+}
+"#;
+    assert!(has_error(source, 2394));
+}
+
+#[test]
+fn ts2394_type_predicate_overloads_with_predicate_impl_no_error() {
+    // #6177: type predicate overloads compatible with broader predicate implementation
+    let source = r#"
+function unionOverload(x: string | number): x is string;
+function unionOverload(x: object): x is object & { id: number };
+function unionOverload(x: unknown): x is unknown {
+    return typeof x === "string";
+}
+"#;
+    assert!(!has_error(source, 2394));
+}
+
+#[test]
+fn ts2394_type_predicate_overloads_narrowing_variety() {
+    // All overload predicates compatible with broader implementation predicate.
+    let source = r#"
+function check(val: string): val is string;
+function check(val: number): val is number;
+function check(val: unknown): val is unknown {
+    return true;
+}
+"#;
+    assert!(!has_error(source, 2394));
+}
+
+// TS2394: callback parameter contravariance in overload-implementation checking.
+// Inline structural types: class-type resolution isn't needed to exercise contravariance.
+
+#[test]
+fn ts2394_callback_narrower_in_overload_than_impl_errors() {
+    let source = r#"
+function handle(cb: (x: { kind: string; bark(): void }) => void): void;
+function handle(cb: (x: { kind: string }) => void): void {}
+"#;
+    assert!(has_error(source, 2394));
+}
+
+#[test]
+fn ts2394_callback_narrower_in_overload_different_names_errors() {
+    // Different property names — proves no hardcoding on specific identifiers.
+    let source = r#"
+function process(fn: (v: { id: number; name: string }) => void): void;
+function process(fn: (v: { id: number }) => void): void {}
+"#;
+    assert!(has_error(source, 2394));
+}
+
+#[test]
+fn ts2394_callback_wider_in_overload_than_impl_no_error() {
+    let source = r#"
+function handle(cb: (x: { kind: string }) => void): void;
+function handle(cb: (x: { kind: string; bark(): void }) => void): void {}
+"#;
+    assert!(!has_error(source, 2394));
+}
+
+#[test]
+fn ts2394_callback_same_type_no_error() {
+    let source = r#"
+function on(cb: (e: { ts: number }) => void): void;
+function on(cb: (e: { ts: number }) => void): void {}
+"#;
+    assert!(!has_error(source, 2394));
+}
+
+#[test]
+fn ts2394_multiple_overloads_one_incompatible_callback_errors() {
+    let source = r#"
+function listen(kind: "any", cb: (e: { ts: number }) => void): void;
+function listen(kind: "click", cb: (e: { ts: number; x: number }) => void): void;
+function listen(kind: string, cb: (e: { ts: number }) => void): void {}
+"#;
+    assert!(has_error(source, 2394));
+}
+
+#[test]
+fn ts2394_multiple_overloads_all_compatible_callbacks_no_error() {
+    let source = r#"
+function listen(kind: "any", cb: (e: { ts: number }) => void): void;
+function listen(kind: "click", cb: (e: { ts: number }) => void): void;
+function listen(kind: string, cb: (e: { ts: number }) => void): void {}
+"#;
+    assert!(!has_error(source, 2394));
 }

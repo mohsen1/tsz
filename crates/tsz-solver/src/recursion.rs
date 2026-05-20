@@ -267,6 +267,9 @@ pub struct RecursionGuard<K: Hash + Eq + Copy> {
     max_iterations: u32,
     max_visiting: u32,
     exceeded: bool,
+    /// Sticky flag set when the iteration (relation-count) budget is exhausted.
+    /// Distinct from `exceeded` which also covers depth overflow.
+    iteration_exceeded: bool,
 }
 
 impl<K: Hash + Eq + Copy> RecursionGuard<K> {
@@ -282,6 +285,7 @@ impl<K: Hash + Eq + Copy> RecursionGuard<K> {
             max_iterations,
             max_visiting: 10_000,
             exceeded: false,
+            iteration_exceeded: false,
         }
     }
 
@@ -316,6 +320,7 @@ impl<K: Hash + Eq + Copy> RecursionGuard<K> {
 
         if self.iterations > self.max_iterations {
             self.exceeded = true;
+            self.iteration_exceeded = true;
             return RecursionResult::IterationExceeded;
         }
         if self.depth >= self.max_depth {
@@ -459,6 +464,15 @@ impl<K: Hash + Eq + Copy> RecursionGuard<K> {
         self.exceeded
     }
 
+    /// Whether the iteration (relation-count) budget was exhausted.
+    ///
+    /// Maps to TS2859 "Excessive complexity comparing types". Sticky until
+    /// [`reset()`](Self::reset) is called.
+    #[inline]
+    pub const fn iteration_exceeded(&self) -> bool {
+        self.iteration_exceeded
+    }
+
     /// Manually mark the guard as exceeded.
     ///
     /// Useful when an external condition (e.g. distribution size limit) means
@@ -466,6 +480,21 @@ impl<K: Hash + Eq + Copy> RecursionGuard<K> {
     #[inline]
     pub const fn mark_exceeded(&mut self) {
         self.exceeded = true;
+    }
+
+    /// Clear the depth-`exceeded` flag while preserving `visiting` / `depth` /
+    /// `iterations` and the `iteration_exceeded` flag.
+    ///
+    /// Punches a deliberate hole in the sticky-`exceeded` contract: callers
+    /// that treat a particular depth bailout as non-fatal use this so sibling
+    /// evaluations at shallower depth can proceed. Reserve for that narrow
+    /// purpose — a misuse will silently mask a real exceedance.
+    ///
+    /// Does **not** clear `iteration_exceeded` — iteration budget exhaustion is
+    /// always fatal and must not be silently suppressed.
+    #[inline]
+    pub(crate) const fn clear_exceeded(&mut self) {
+        self.exceeded = false;
     }
 
     // -----------------------------------------------------------------------
@@ -480,6 +509,7 @@ impl<K: Hash + Eq + Copy> RecursionGuard<K> {
         self.depth = 0;
         self.iterations = 0;
         self.exceeded = false;
+        self.iteration_exceeded = false;
     }
 }
 

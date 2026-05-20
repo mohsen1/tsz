@@ -1,7 +1,7 @@
 use super::config::{
-    JsxEmit, ModuleResolutionKind, default_lib_name_for_target, load_tsconfig, parse_tsconfig,
-    resolve_compiler_options, resolve_default_lib_files_from_dir, resolve_lib_files_from_dir,
-    resolve_lib_files_from_dir_with_options,
+    JsxEmit, ModuleResolutionKind, default_lib_name_for_target, default_module_kind_for_target,
+    load_tsconfig, parse_tsconfig, resolve_compiler_options, resolve_default_lib_files_from_dir,
+    resolve_lib_files_from_dir, resolve_lib_files_from_dir_with_options,
 };
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -10,6 +10,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tsz::emitter::{ModuleKind, ScriptTarget};
 
 static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+fn option_len<T>(values: Option<&[T]>) -> Option<usize> {
+    values.map(<[_]>::len)
+}
 
 struct TempDir {
     path: PathBuf,
@@ -169,7 +173,10 @@ fn resolve_compiler_options_defaults() {
     let resolved = resolve_compiler_options(None).expect("defaults should resolve");
 
     assert_eq!(resolved.printer.target, ScriptTarget::ES2024);
-    assert_eq!(resolved.printer.module, ModuleKind::None);
+    assert_eq!(
+        resolved.printer.module,
+        default_module_kind_for_target(resolved.printer.target, false)
+    );
     assert!(resolved.jsx.is_none());
     assert!(!resolved.lib_files.is_empty());
     assert!(resolved.lib_is_default);
@@ -296,7 +303,7 @@ fn resolve_compiler_options_allows_paths_without_base_url() {
     let resolved = resolve_compiler_options(config.compiler_options.as_ref())
         .expect("paths without baseUrl should resolve to non-fatal config");
     assert!(resolved.base_url.is_none());
-    assert_eq!(resolved.paths.as_ref().map(|v| v.len()), Some(1));
+    assert_eq!(option_len(resolved.paths.as_deref()), Some(1));
 }
 
 #[test]
@@ -464,6 +471,41 @@ fn resolve_lib_files_from_dir_follows_transitive_references_by_default() {
     assert!(
         names.iter().any(|name| name == "lib.es5.d.ts"),
         "expected transitive es5 from es2015: {names:?}"
+    );
+}
+
+#[test]
+fn resolve_lib_files_from_dir_esnext_includes_disposable_reference() {
+    let temp = TempDir::new().expect("temp dir");
+    write_file(
+        &temp.path,
+        "lib.esnext.d.ts",
+        "/// <reference lib=\"esnext.disposable\" />\n",
+    );
+    write_file(
+        &temp.path,
+        "lib.esnext.disposable.d.ts",
+        "interface SymbolConstructor { readonly dispose: unique symbol; readonly asyncDispose: unique symbol; }\n",
+    );
+
+    let resolved = resolve_lib_files_from_dir(&["esnext".to_string()], &temp.path)
+        .expect("explicit esnext lib resolution should follow disposable references");
+    let names: Vec<String> = resolved
+        .iter()
+        .map(|p| {
+            p.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("")
+                .to_string()
+        })
+        .collect();
+
+    assert_eq!(names.first().map(|s| s.as_str()), Some("lib.esnext.d.ts"));
+    assert!(
+        names
+            .iter()
+            .any(|name| name == "lib.esnext.disposable.d.ts"),
+        "--lib esnext must include esnext.disposable transitively: {names:?}"
     );
 }
 

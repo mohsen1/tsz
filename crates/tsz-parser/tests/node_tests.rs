@@ -1,4 +1,5 @@
 use super::*;
+use crate::parser::test_fixture::parse_source;
 use crate::{ParserState, syntax_kind_ext};
 use std::mem::size_of;
 use tsz_common::interner::Atom;
@@ -259,8 +260,7 @@ fn test_parent_mapping() {
 #[test]
 fn test_reserved_function_name_does_not_swallow_following_interface_declaration() {
     let source = "function function() { }\ninterface void { }\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_source(source);
     let arena = parser.get_arena();
 
     let source_file = arena

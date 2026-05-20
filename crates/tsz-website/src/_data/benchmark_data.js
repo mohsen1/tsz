@@ -2,11 +2,96 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { marked } from "marked";
+import {
+  COMPILE_CANARY_PROJECT_ROWS,
+  COMPATIBILITY_CORPUS_ROWS,
+  PROJECT_ROWS_BY_NAME,
+  REQUIRED_PROJECT_ROWS,
+} from "../../../../scripts/bench/project-rows.mjs";
+import { subsystemForCode } from "../../../../scripts/ci/diagnostic-subsystems.mjs";
+import { fmt } from "./loc.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..", "..", "..");
 
-function fmt(n) {
-  return Number(n).toLocaleString("en-US");
+function formatUtcTimestamp(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+
+function formatMemory(bytes) {
+  const value = Number(bytes);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return `${(value / (1024 ** 3)).toFixed(1)} GiB RAM`;
+}
+
+function measurementProfileSummary(data) {
+  const profile = data?.measurement_profile;
+  if (!profile || typeof profile !== "object") return null;
+
+  const mode = String(profile.mode || "").trim();
+  if (!mode) return null;
+
+  const pgo = profile.profile_guided_optimization || {};
+  if (mode === "release-pgo" && pgo.optimized) {
+    const parts = ["tsz release-pgo"];
+    if (Number.isFinite(Number(pgo.training_input_count))) {
+      parts.push(`${Number(pgo.training_input_count)} PGO training inputs`);
+    }
+    if (pgo.profile_fingerprint) {
+      parts.push(`profile ${String(pgo.profile_fingerprint).slice(0, 12)}`);
+    }
+    if (pgo.profile_data_source === "cache") {
+      parts.push("cached profile data");
+    }
+    if (pgo.training_metadata_available === false) {
+      parts.push("training metadata unavailable");
+    }
+    return parts.join(", ");
+  }
+
+  if (mode === "release-untrained") return "tsz release build without PGO";
+  if (mode === "quick-untrained") return "quick-mode tsz build without PGO";
+  if (mode === "tsz-override") return "caller-provided tsz binary";
+  return `tsz ${mode}`;
+}
+
+function runnerEnvironmentSummary(data) {
+  const parts = [];
+  const generatedAt = formatUtcTimestamp(data?.generated_at);
+  if (generatedAt) parts.push(`Generated ${generatedAt}`);
+  const sourceCommit = normalizedCommit(data?.source_commit);
+  if (sourceCommit) parts.push(`sha ${sourceCommit.slice(0, 12)}`);
+  const measurement = measurementProfileSummary(data);
+  if (measurement) parts.push(measurement);
+
+  const env = data?.runner_environment;
+  if (!env || typeof env !== "object") {
+    return parts.join(" · ");
+  }
+
+  const platform = [env.platform, env.arch].filter(Boolean).join("/");
+  if (platform) parts.push(platform);
+  if (env.cpu_count) {
+    const cpuModel = env.cpu_model ? ` ${env.cpu_model}` : "";
+    parts.push(`${env.cpu_count} CPU${env.cpu_count === 1 ? "" : "s"}${cpuModel}`);
+  }
+  const memory = formatMemory(env.total_memory_bytes);
+  if (memory) parts.push(memory);
+  if (env.github_actions?.runner_os || env.github_actions?.runner_arch) {
+    const runner = [
+      env.github_actions.runner_os,
+      env.github_actions.runner_arch,
+    ].filter(Boolean).join("/");
+    parts.push(`GitHub Actions ${runner}`);
+  } else if (env.ci) {
+    parts.push("CI runner");
+  }
+  if (env.cloud_build?.machine_type) {
+    parts.push(`Cloud Build ${env.cloud_build.machine_type}`);
+  }
+
+  return parts.join(" · ");
 }
 
 function formatDurationMs(value, fractionDigits = 0) {
@@ -16,6 +101,23 @@ function formatDurationMs(value, fractionDigits = 0) {
     return `${(ms / 1000).toLocaleString("en-US", { maximumFractionDigits: 1 })}s`;
   }
   return `${ms.toFixed(fractionDigits)}ms`;
+}
+
+function finiteNumber(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function formatFilesReached(value) {
+  const count = finiteNumber(value);
+  return count === null ? null : `${fmt(count)} files`;
+}
+
+function formatPeakMemoryMiB(value) {
+  const bytes = finiteNumber(value);
+  if (bytes === null || bytes <= 0) return null;
+  return `${(bytes / (1024 * 1024)).toLocaleString("en-US", { maximumFractionDigits: 0 })} MiB peak`;
 }
 
 function durationLabelFitsBar(label, widthPx) {
@@ -55,6 +157,25 @@ function hasTiming(value) {
   return Number.isFinite(time) && time > 0;
 }
 
+function isProjectBenchmark(row) {
+  return Boolean(row?.name && PROJECT_ROWS_BY_NAME[row.name]);
+}
+
+function hasGreenProjectCompatibility(row) {
+  if (!isProjectBenchmark(row)) return true;
+
+  const compatibility = row?.compatibility;
+  if (!compatibility || typeof compatibility !== "object") return false;
+
+  const state = String(compatibility.state || "").toLowerCase();
+  const exitClass = String(compatibility.exit_class || "").toLowerCase();
+  const diagnosticStatus = String(compatibility.diagnostic_status || "").toLowerCase();
+  return state === "green"
+    && exitClass === "exit success"
+    && (!diagnosticStatus || diagnosticStatus === "none")
+    && hasCompleteCompatibilityMetadata(compatibility);
+}
+
 function fastestTiming(row) {
   const timings = [row?.tsz_ms, row?.tsgo_ms].map(Number).filter((time) => Number.isFinite(time) && time > 0);
   return timings.length ? Math.min(...timings) : Infinity;
@@ -81,12 +202,19 @@ function compareByTszSpeedup(a, b) {
   return String(a?.name || "").localeCompare(String(b?.name || ""));
 }
 
+function hasSuccessfulTimingPair(row) {
+  return !row?.status
+    && row?.winner !== "error"
+    && hasTiming(row?.tsz_ms)
+    && hasTiming(row?.tsgo_ms);
+}
+
 function hasSuccessfulTiming(row) {
-  return !row?.status && row?.winner !== "error" && hasTiming(row?.tsz_ms) && hasTiming(row?.tsgo_ms);
+  return hasSuccessfulTimingPair(row);
 }
 
 function isFailedBenchmark(row) {
-  if (!row || hasSuccessfulTiming(row)) return false;
+  if (!row || hasSuccessfulTimingPair(row)) return false;
   return Boolean(row.status) || row.winner === "error" || hasTiming(row.tsz_ms) || hasTiming(row.tsgo_ms);
 }
 
@@ -94,27 +222,323 @@ function statusLabel(row) {
   return String(row?.status || "timing unavailable");
 }
 
-const TINY_BENCHMARK_MAX_LINES = 200;
+function firstPresent(...values) {
+  for (const value of values) {
+    if (value !== undefined && value !== null && value !== "") return value;
+  }
+  return null;
+}
 
-const EXPECTED_PROJECT_BENCHMARKS = [
-  "large-ts-repo",
-  "utility-types-project",
-  "ts-toolbelt-project",
-  "ts-essentials-project",
-  "nextjs",
-  "nextjs-fresh-app",
-  "vite-vanilla-ts-app",
-  "rxjs-project",
-  "type-fest-project",
-  "zod-project",
-  "kysely-project",
+
+function diagnosticSubsystemsFromDeltas(deltas) {
+  const groups = new Map();
+  for (const line of deltas) {
+    const codes = [...String(line || "").matchAll(/\bTS\d{4,5}\b/g)].map((match) => match[0]);
+    const lineCodes = codes.length ? codes : ["uncoded"];
+    for (const code of lineCodes) {
+      const subsystem = code === "uncoded" ? "uncoded diagnostic" : subsystemForCode(code);
+      if (!groups.has(subsystem)) {
+        groups.set(subsystem, { subsystem, codes: [], count: 0, examples: [] });
+      }
+      const group = groups.get(subsystem);
+      group.count += 1;
+      if (code !== "uncoded" && !group.codes.includes(code) && group.codes.length < 8) {
+        group.codes.push(code);
+      }
+      if (group.examples.length < 3) {
+        group.examples.push(String(line || ""));
+      }
+    }
+  }
+  return [...groups.values()];
+}
+
+function normalizedDiagnosticSubsystems(compatibility) {
+  const existing = Array.isArray(compatibility?.diagnostic_subsystems)
+    ? compatibility.diagnostic_subsystems
+    : [];
+  if (existing.length) {
+    return existing
+      .map((group) => ({
+        subsystem: String(group?.subsystem || "unclassified diagnostic"),
+        codes: Array.isArray(group?.codes) ? group.codes.map(String).filter(Boolean).slice(0, 8) : [],
+        count: Number.isFinite(Number(group?.count)) ? Number(group.count) : 0,
+        examples: Array.isArray(group?.examples) ? group.examples.map(String).filter(Boolean).slice(0, 3) : [],
+      }))
+      .filter((group) => group.count > 0 || group.codes.length || group.examples.length)
+      .slice(0, 8);
+  }
+  const deltas = Array.isArray(compatibility?.diagnostic_deltas)
+    ? compatibility.diagnostic_deltas
+    : compatibility?.diagnostic_deltas
+      ? [compatibility.diagnostic_deltas]
+      : [];
+  return diagnosticSubsystemsFromDeltas(deltas).slice(0, 8);
+}
+
+function diagnosticCodesFromDeltas(deltas) {
+  const codes = [];
+  const seen = new Set();
+  for (const line of deltas) {
+    for (const match of String(line || "").matchAll(/\bTS\d{4,5}\b/g)) {
+      const code = match[0];
+      if (seen.has(code)) continue;
+      seen.add(code);
+      codes.push(code);
+      if (codes.length >= 8) return codes;
+    }
+  }
+  return codes;
+}
+
+function normalizedKnownBlockers(compatibility, diagnosticSubsystems, fallbackBlockers = []) {
+  const existing = Array.isArray(compatibility?.known_blockers) ? compatibility.known_blockers : [];
+  if (existing.length) {
+    return existing.map(String).filter(Boolean).slice(0, 8);
+  }
+
+  const blockers = [];
+  const add = (blocker) => {
+    if (blocker && !blockers.includes(blocker) && blockers.length < 8) blockers.push(blocker);
+  };
+  const exitClass = String(compatibility?.exit_class || "");
+  const phase = String(compatibility?.phase || "");
+
+  if (exitClass === "timeout") add("timeout during project check");
+  if (exitClass === "oom") add("OOM or killed during project check");
+  if (exitClass === "crash") add("compiler crash during project check");
+  if (exitClass === "fixture invalid") add("reference fixture invalid");
+  if (exitClass === "runner error") add("benchmark runner error");
+  if (exitClass === "tsz unavailable") add("tsz unavailable in benchmark runner");
+  if (exitClass === "oracle unavailable") add("tsc oracle unavailable");
+  if (phase && phase !== "check") add(`${phase} phase blocker`);
+
+  for (const group of diagnosticSubsystems) {
+    add(String(group?.subsystem || ""));
+  }
+
+  const deltas = Array.isArray(compatibility?.diagnostic_deltas)
+    ? compatibility.diagnostic_deltas
+    : compatibility?.diagnostic_deltas
+      ? [compatibility.diagnostic_deltas]
+      : [];
+  if (!blockers.length && diagnosticCodesFromDeltas(deltas).length) {
+    add("unclassified diagnostic mismatch");
+  }
+  for (const blocker of fallbackBlockers) {
+    add(blocker);
+  }
+
+  return blockers;
+}
+
+function normalizedLastSuccessfulPhase(compatibility) {
+  if (compatibility?.last_successful_phase !== undefined && compatibility.last_successful_phase !== "") {
+    return compatibility.last_successful_phase;
+  }
+  if (compatibility?.exit_class === "exit success" && compatibility?.diagnostic_status === "none") return "check";
+  return null;
+}
+
+const COMPATIBILITY_METADATA_FIELDS = [
+  ["generated_at", "artifact generated at"],
+  ["source_commit", "source commit"],
+  ["workflow_name", "workflow name"],
+  ["workflow_run_id", "workflow run id"],
+  ["workflow_run_url", "workflow run URL"],
+  ["workflow_run_attempt", "workflow run attempt"],
+  ["run_status", "run status"],
+  ["state", "state"],
+  ["exit_class", "exit class"],
+  ["first_failure_class", "first failure class"],
+  ["owner_track", "owner track"],
+  ["phase", "phase"],
+  ["last_successful_phase", "last successful phase"],
+  ["diagnostic_status", "diagnostic status"],
+  ["diagnostic_deltas", "diagnostic deltas"],
+  ["diagnostic_subsystems", "diagnostic subsystems"],
+  ["known_blockers", "known blockers"],
+  ["reduced_repro_path", "reduced repro path"],
+  ["repro", "repro metadata"],
+  ["exit_codes", "exit codes"],
+  ["files_reached", "files reached"],
+  ["files_reached_reason", "files reached reason"],
+  ["peak_memory_bytes", "peak memory"],
+  ["peak_memory_bytes_reason", "peak memory reason"],
+  ["fixture_sources", "fixture sources"],
+  ["emit_status", "emit status"],
+  ["dts_status", "dts status"],
 ];
+
+const COMPATIBILITY_FRESHNESS_FIELDS = new Set([
+  "generated_at",
+  "source_commit",
+  "workflow_name",
+  "workflow_run_id",
+  "workflow_run_url",
+  "workflow_run_attempt",
+  "run_status",
+]);
+
+function hasArtifactField(artifact, field) {
+  return Object.prototype.hasOwnProperty.call(artifact || {}, field);
+}
+
+function missingCompatibilityMetadata(row, artifact) {
+  const compatibility = row?.compatibility;
+  if (!compatibility || typeof compatibility !== "object") return ["compatibility artifact"];
+  const missing = COMPATIBILITY_METADATA_FIELDS
+    .filter(([field]) => (
+      !Object.prototype.hasOwnProperty.call(compatibility, field) &&
+      !(COMPATIBILITY_FRESHNESS_FIELDS.has(field) && hasArtifactField(artifact, field))
+    ))
+    .map(([, label]) => label);
+  if (
+    Object.prototype.hasOwnProperty.call(compatibility, "fixture_sources") &&
+    !hasCompleteFixtureSources(compatibility)
+  ) {
+    missing.push("fixture sources missing/malformed/unpinned");
+  }
+  return missing;
+}
+
+function hasCompleteCompatibilityMetadata(compatibility) {
+  if (!compatibility || typeof compatibility !== "object") return false;
+  return COMPATIBILITY_METADATA_FIELDS.every(([field]) => (
+    Object.prototype.hasOwnProperty.call(compatibility, field)
+  )) && (
+    !Object.prototype.hasOwnProperty.call(compatibility, "fixture_sources") ||
+    hasCompleteFixtureSources(compatibility)
+  );
+}
+
+function hasCompleteFixtureSources(compatibility) {
+  const sources = Array.isArray(compatibility?.fixture_sources)
+    ? compatibility.fixture_sources
+    : [];
+  return sources.length > 0 && sources.every((source) => (
+    String(source?.name || "").trim() &&
+    String(source?.repository || "").trim() &&
+    String(source?.ref || "").trim()
+  ));
+}
+
+let currentCheckoutCommitCache;
+
+function currentCheckoutCommit() {
+  if (currentCheckoutCommitCache !== undefined) return currentCheckoutCommitCache;
+  try {
+    currentCheckoutCommitCache = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: ROOT,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim() || null;
+  } catch {
+    currentCheckoutCommitCache = null;
+  }
+  return currentCheckoutCommitCache;
+}
+
+function normalizedCommit(value) {
+  const commit = String(value || "").trim().toLowerCase();
+  return /^[0-9a-f]{7,40}$/.test(commit) ? commit : null;
+}
+
+function commitsMatch(left, right) {
+  const a = normalizedCommit(left);
+  const b = normalizedCommit(right);
+  if (!a || !b) return true;
+  return a.startsWith(b) || b.startsWith(a);
+}
+
+function shortCommit(value) {
+  const commit = String(value || "").trim();
+  return commit && commit !== "local" ? commit.slice(0, 12) : commit;
+}
+
+function artifactMetadataFor(row, artifact) {
+  const compatibility = row?.compatibility || {};
+  const get = (field) => {
+    if (Object.prototype.hasOwnProperty.call(compatibility, field)) return compatibility[field];
+    if (Object.prototype.hasOwnProperty.call(artifact || {}, field)) return artifact[field];
+    return null;
+  };
+  return {
+    generatedAt: formatUtcTimestamp(get("generated_at")),
+    sourceCommit: get("source_commit"),
+    workflowName: get("workflow_name"),
+    workflowRunId: get("workflow_run_id"),
+    workflowRunUrl: get("workflow_run_url"),
+    workflowRunAttempt: get("workflow_run_attempt"),
+    runStatus: get("run_status"),
+    latestCompletedBenchmarkRunId: get("latest_completed_benchmark_run_id"),
+    latestCompletedBenchmarkGeneratedAt: formatUtcTimestamp(get("latest_completed_benchmark_generated_at")),
+  };
+}
+
+function artifactFreshnessWarnings(metadata) {
+  const warnings = [];
+  const currentCommit = currentCheckoutCommit();
+  if (
+    metadata.sourceCommit &&
+    metadata.sourceCommit !== "local" &&
+    currentCommit &&
+    !commitsMatch(metadata.sourceCommit, currentCommit)
+  ) {
+    warnings.push(`source older than checkout ${shortCommit(currentCommit)}`);
+  }
+
+  if (
+    metadata.latestCompletedBenchmarkRunId &&
+    metadata.workflowRunId &&
+    String(metadata.latestCompletedBenchmarkRunId) !== String(metadata.workflowRunId)
+  ) {
+    warnings.push(`older than latest completed bench run ${metadata.latestCompletedBenchmarkRunId}`);
+  }
+
+  if (
+    metadata.latestCompletedBenchmarkGeneratedAt &&
+    metadata.generatedAt &&
+    new Date(metadata.latestCompletedBenchmarkGeneratedAt).getTime() > new Date(metadata.generatedAt).getTime()
+  ) {
+    warnings.push(`older than ${metadata.latestCompletedBenchmarkGeneratedAt} bench artifact`);
+  }
+
+  const runStatus = String(metadata.runStatus || "").toLowerCase();
+  if (runStatus && !["completed", "manually merged", "local"].includes(runStatus)) {
+    warnings.push(`run status: ${metadata.runStatus}`);
+  }
+  return warnings;
+}
+
+function normalizedFixtureSources(compatibility) {
+  const sources = Array.isArray(compatibility?.fixture_sources)
+    ? compatibility.fixture_sources
+    : [];
+  const seen = new Set();
+  return sources
+    .map((source) => ({
+      name: String(source?.name || "").trim(),
+      repository: String(source?.repository || "").trim(),
+      ref: String(source?.ref || "").trim(),
+    }))
+    .filter((source) => source.name && source.repository && source.ref)
+    .filter((source) => {
+      const key = `${source.name}\0${source.repository}\0${source.ref || ""}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 4);
+}
+
+const TINY_BENCHMARK_MAX_LINES = 200;
 
 function withExpectedProjectRows(results) {
   const rows = Array.isArray(results) ? results.slice() : [];
   const existingNames = new Set(rows.map((row) => row?.name).filter(Boolean));
 
-  for (const name of EXPECTED_PROJECT_BENCHMARKS) {
+  for (const name of REQUIRED_PROJECT_ROWS) {
     if (existingNames.has(name)) continue;
     rows.push({
       name,
@@ -130,7 +554,165 @@ function withExpectedProjectRows(results) {
     });
   }
 
+  for (const name of COMPILE_CANARY_PROJECT_ROWS) {
+    if (existingNames.has(name)) continue;
+    rows.push({
+      name,
+      lines: 0,
+      kb: 0,
+      tsz_ms: null,
+      tsgo_ms: null,
+      tsz_lps: null,
+      tsgo_lps: null,
+      winner: "error",
+      ratio: 0,
+      status: "compile canary tracked in CI; not timed by vs-tsgo benchmarks",
+    });
+  }
+
   return rows;
+}
+
+function compatibilityState(row) {
+  const compatibility = row?.compatibility || {};
+  const diagnosticStatus = String(compatibility.diagnostic_status || "").toLowerCase();
+  const recordedState = String(compatibility.state || "").toLowerCase();
+  if (!Object.keys(compatibility).length) {
+    return {
+      className: "gray",
+      stateLabel: "Gray",
+      exitClass: "missing or incomplete artifact",
+      phase: "artifact",
+      diagnosticDeltas: "not available",
+    };
+  }
+  if (recordedState === "gray") {
+    return {
+      className: "gray",
+      stateLabel: "Gray",
+      exitClass: firstPresent(compatibility.exit_class, "missing or incomplete artifact"),
+      phase: firstPresent(compatibility.phase, "artifact"),
+      diagnosticDeltas: firstPresent(compatibility.diagnostic_deltas, "not available"),
+    };
+  }
+  const compatibilityGreen = (
+    recordedState === "green" ||
+    String(compatibility.exit_class || "").toLowerCase() === "exit success"
+  ) && diagnosticStatus === "none";
+  if (compatibilityGreen && hasCompleteCompatibilityMetadata(compatibility)) {
+    return {
+      className: "green",
+      stateLabel: "Green",
+      exitClass: firstPresent(compatibility.exit_class, "exit success"),
+      phase: firstPresent(compatibility.phase, "check"),
+      diagnosticDeltas: firstPresent(compatibility.diagnostic_deltas, "none recorded"),
+    };
+  }
+
+  if (hasSuccessfulTimingPair(row) && hasGreenProjectCompatibility(row)) {
+    if (diagnosticStatus && diagnosticStatus !== "none") {
+      return {
+        className: "yellow",
+        stateLabel: "Yellow",
+        exitClass: firstPresent(compatibility.exit_class, "diagnostic mismatch"),
+        phase: firstPresent(compatibility.phase, "check"),
+        diagnosticDeltas: firstPresent(compatibility.diagnostic_deltas, "not captured by latest artifact"),
+      };
+    }
+    return {
+      className: "green",
+      stateLabel: "Green",
+      exitClass: firstPresent(compatibility.exit_class, "exit success"),
+      phase: firstPresent(compatibility.phase, "check"),
+      diagnosticDeltas: firstPresent(compatibility.diagnostic_deltas, "none recorded"),
+    };
+  }
+
+  const status = String(row?.status || "").toLowerCase();
+  if (!row || status.includes("not recorded") || status.includes("fixture") || status.includes("tsc fixture")) {
+    return {
+      className: "gray",
+      stateLabel: "Gray",
+      exitClass: firstPresent(
+        compatibility.exit_class,
+        status.includes("tsc fixture") ? "fixture invalid" : "missing or incomplete artifact",
+      ),
+      phase: firstPresent(compatibility.phase, status.includes("fixture") ? "fixture setup" : "artifact"),
+      diagnosticDeltas: firstPresent(compatibility.diagnostic_deltas, "not available"),
+    };
+  }
+
+  if (status.includes("diagnostic mismatch") || diagnosticStatus.includes("diagnostic mismatch")) {
+    return {
+      className: "yellow",
+      stateLabel: "Yellow",
+      exitClass: firstPresent(compatibility.exit_class, "diagnostic mismatch"),
+      phase: firstPresent(compatibility.phase, "check"),
+      diagnosticDeltas: firstPresent(compatibility.diagnostic_deltas, "not captured by latest artifact"),
+    };
+  }
+
+  return {
+    className: "red",
+    stateLabel: "Red",
+    exitClass: firstPresent(compatibility.exit_class, status.includes("timeout") ? "timeout" : "nonzero exit"),
+    phase: firstPresent(compatibility.phase, "check"),
+    diagnosticDeltas: firstPresent(compatibility.diagnostic_deltas, "not captured by latest artifact"),
+  };
+}
+
+function compatibilityRowFor(definition, allResults, artifact) {
+  const row = allResults.find((candidate) => candidate?.name === definition.name);
+  const artifactFamily = firstPresent(row?.compatibility?.semantic_owner_family, row?.compatibility?.owner_family);
+  const ownerFamily = artifactFamily || definition.family;
+  const compatibility = row?.compatibility || {};
+  const diagnosticSubsystems = normalizedDiagnosticSubsystems(compatibility);
+  const missingMetadata = missingCompatibilityMetadata(row, artifact);
+  const artifactMetadata = artifactMetadataFor(row, artifact);
+  const state = compatibilityState(row);
+  const fallbackBlockers = state.className === "green"
+    ? []
+    : [
+        row?.status ? String(row.status) : "",
+        ownerFamily ? `owner family: ${ownerFamily}` : "",
+      ];
+  return {
+    ...definition,
+    family: ownerFamily,
+    ...state,
+    row,
+    lines: row?.lines || 0,
+    filesReached: compatibility.files_reached ?? null,
+    filesReachedReason: compatibility.files_reached_reason ?? null,
+    firstFailureClass: compatibility.first_failure_class || null,
+    ownerTrack: firstPresent(compatibility.owner_track, definition.owner),
+    reducedReproPath: compatibility.reduced_repro_path || null,
+    lastSuccessfulPhase: normalizedLastSuccessfulPhase(compatibility),
+    peakMemoryBytes: compatibility.peak_memory_bytes ?? null,
+    peakMemoryBytesReason: compatibility.peak_memory_bytes_reason ?? null,
+    emitStatus: compatibility.emit_status || "not in scope (noEmit project check)",
+    dtsStatus: compatibility.dts_status || "not in scope (noEmit project check)",
+    knownBlockers: normalizedKnownBlockers(compatibility, diagnosticSubsystems, fallbackBlockers),
+    exitCodes: compatibility.exit_codes && typeof compatibility.exit_codes === "object"
+      ? {
+          tsc: Array.isArray(compatibility.exit_codes.tsc) ? compatibility.exit_codes.tsc.slice(0, 8) : [],
+          tsz: Array.isArray(compatibility.exit_codes.tsz) ? compatibility.exit_codes.tsz.slice(0, 8) : [],
+          tsgo: Array.isArray(compatibility.exit_codes.tsgo) ? compatibility.exit_codes.tsgo.slice(0, 8) : [],
+        }
+      : { tsc: [], tsz: [], tsgo: [] },
+    diagnosticCodes: Array.isArray(compatibility.diagnostic_codes) ? compatibility.diagnostic_codes.slice(0, 8) : [],
+    diagnosticSubsystems,
+    primarySubsystem: compatibility.primary_subsystem || diagnosticSubsystems[0]?.subsystem || null,
+    fixtureSources: normalizedFixtureSources(compatibility),
+    reductionCandidates: Array.isArray(compatibility.reduction_candidates)
+      ? compatibility.reduction_candidates.slice(0, 5)
+      : [],
+    artifactMetadata,
+    freshnessWarnings: artifactFreshnessWarnings(artifactMetadata),
+    missingMetadata,
+    status: row?.status || "not recorded in latest benchmark artifact",
+    url: benchmarkUrl({ name: definition.name }),
+  };
 }
 
 const PROJECT_README_PATHS = {
@@ -145,6 +727,7 @@ const PROJECT_README_PATHS = {
   "utility-types-project": [".target-bench/external/utility-types/README.md"],
   "ts-toolbelt-project": [".target-bench/external/ts-toolbelt/README.md"],
   "ts-essentials-project": [".target-bench/external/ts-essentials/README.md"],
+  "type-challenges-solutions-project": [".target/project-compile-guard/type-challenges-solutions/README.md"],
 };
 
 const PROJECT_README_URLS = {
@@ -154,6 +737,7 @@ const PROJECT_README_URLS = {
   "utility-types-project": "https://raw.githubusercontent.com/piotrwitek/utility-types/2ee1f6ecb241651ab22390fee7ee5349942efda2/README.md",
   "ts-toolbelt-project": "https://raw.githubusercontent.com/millsp/ts-toolbelt/b8a49285e3ed3a7d8bb8e0b433389eac46a5f140/README.md",
   "ts-essentials-project": "https://raw.githubusercontent.com/ts-essentials/ts-essentials/5abe8700b42068048bd3c368e0531b6defe56558/README.md",
+  "type-challenges-solutions-project": "https://raw.githubusercontent.com/ghaiklor/type-challenges-solutions/91a6d2986650475f29eeb3bd18ebd025128aa07e/README.md",
 };
 
 const NEXTJS_FRESH_APP_README = `# Fresh Next.js app benchmark
@@ -188,6 +772,18 @@ const REMOTE_FIXTURE_REFS = {
   "ts-essentials": "5abe8700b42068048bd3c368e0531b6defe56558",
 };
 
+const TYPESCRIPT_VERSIONS_PATH = path.join(ROOT, "scripts/conformance/typescript-versions.json");
+
+function currentTypeScriptRef() {
+  const versions = readJsonIfExists(TYPESCRIPT_VERSIONS_PATH);
+  return versions?.current || "050880ce59e30b356b686bd3144efe24f875ebc8";
+}
+
+const TYPESCRIPT_FIXTURE_DIRS = [
+  "tests/cases/compiler",
+  "tests/cases/conformance",
+];
+
 const remoteSourceCache = new Map();
 
 function escapeHtml(str) {
@@ -210,6 +806,14 @@ function readJsonIfExists(p) {
   }
 }
 
+let _benchReadinessStatus;
+function loadBenchReadinessStatus() {
+  if (_benchReadinessStatus === undefined) {
+    _benchReadinessStatus = readJsonIfExists(path.join(ROOT, "artifacts", "bench-readiness-status.json")) ?? null;
+  }
+  return _benchReadinessStatus;
+}
+
 function sanitizeLegacyBenchmarkData(data) {
   if (data?.validation?.hyperfine_exit_codes_required === true) {
     return data;
@@ -224,16 +828,23 @@ function sanitizeLegacyBenchmarkData(data) {
 }
 
 function loadBenchmarks() {
+  const overrideArtifact = process.env.TSZ_WEBSITE_BENCHMARK_ARTIFACT;
+  if (overrideArtifact) {
+    const data = readJsonIfExists(overrideArtifact);
+    if (data?.results) return sanitizeLegacyBenchmarkData(data);
+  }
+
   const artifactsDir = path.join(ROOT, "artifacts");
   const ciLatest = [
     "bench-vs-tsgo-github-latest.json",
     "bench-vs-tsgo-gcs-latest.json",
+    "bench-results.json",
   ].map((file) => path.join(artifactsDir, file));
   const artifactFiles = (() => {
     try {
       const localArtifacts = fs.readdirSync(artifactsDir)
         .filter((file) => file.startsWith("bench-vs-tsgo-") && file.endsWith(".json"))
-        .filter((file) => !["bench-vs-tsgo-github-latest.json", "bench-vs-tsgo-gcs-latest.json"].includes(file))
+        .filter((file) => !["bench-vs-tsgo-github-latest.json", "bench-vs-tsgo-gcs-latest.json", "bench-results.json"].includes(file))
         .sort()
         .reverse()
         .map((file) => path.join(artifactsDir, file));
@@ -260,17 +871,20 @@ function isTinyBenchmark(lines) {
 }
 
 function categoryFor(name, lines) {
-  if (name === "large-ts-repo") return "Projects: large-ts-repo";
-  if (name === "nextjs") return "Projects: next.js";
-  if (name === "nextjs-fresh-app") return "Projects: fresh Next.js app";
-  if (name === "vite-vanilla-ts-app") return "Projects: fresh Vite app";
-  if (name === "rxjs-project") return "Projects: rxjs";
-  if (name === "type-fest-project") return "Projects: type-fest";
-  if (name === "zod-project") return "Projects: zod";
-  if (name === "kysely-project") return "Projects: kysely";
-  if (name === "utility-types-project") return "Projects: utility-types";
-  if (name === "ts-toolbelt-project") return "Projects: ts-toolbelt";
-  if (name === "ts-essentials-project") return "Projects: ts-essentials";
+  if (name === "large-ts-repo" || name === "nextjs") return "Projects: large repositories";
+  if (name === "nextjs-fresh-app" || name === "vite-vanilla-ts-app") return "Projects: generated apps";
+  if (
+    name === "rxjs-project" ||
+    name === "type-fest-project" ||
+    name === "utility-types-project" ||
+    name === "ts-essentials-project" ||
+    name === "ts-toolbelt-project" ||
+    name === "zod-project" ||
+    name === "kysely-project" ||
+    name === "type-challenges-solutions-project"
+  ) {
+    return "Projects: external libraries";
+  }
   if (name.startsWith("utility-types/")) return "Single file: utility-types";
   if (name.startsWith("ts-toolbelt/")) return "Single file: ts-toolbelt";
   if (name.startsWith("ts-essentials/")) return "Single file: ts-essentials";
@@ -313,58 +927,17 @@ function libraryNameForCategory(category) {
 
 function categoryMeta(category) {
   return {
-    "Projects: large-ts-repo": {
-      title: "large-ts-repo",
-      repo: "https://github.com/mohsen1/large-ts-repo",
-      repoLabel: "mohsen1/large-ts-repo",
+    "Projects: large repositories": {
+      title: "Large repositories",
+      description: "Full repository type-checks that stress project graph setup, residency, and cross-file analysis.",
     },
-    "Projects: next.js": {
-      title: "next.js",
-      repo: "https://github.com/vercel/next.js",
-      repoLabel: "vercel/next.js",
+    "Projects: generated apps": {
+      title: "Generated apps",
+      description: "Programmatically created app projects with framework defaults and common TypeScript dependencies.",
     },
-    "Projects: fresh Next.js app": {
-      title: "Fresh Next.js app",
-    },
-    "Projects: fresh Vite app": {
-      title: "Fresh Vite app",
-      repo: "https://github.com/vitejs/vite",
-      repoLabel: "vitejs/vite",
-    },
-    "Projects: rxjs": {
-      title: "RxJS",
-      repo: "https://github.com/ReactiveX/rxjs",
-      repoLabel: "ReactiveX/rxjs",
-    },
-    "Projects: type-fest": {
-      title: "type-fest",
-      repo: "https://github.com/sindresorhus/type-fest",
-      repoLabel: "sindresorhus/type-fest",
-    },
-    "Projects: zod": {
-      title: "Zod",
-      repo: "https://github.com/colinhacks/zod",
-      repoLabel: "colinhacks/zod",
-    },
-    "Projects: kysely": {
-      title: "Kysely",
-      repo: "https://github.com/kysely-org/kysely",
-      repoLabel: "kysely-org/kysely",
-    },
-    "Projects: utility-types": {
-      title: "utility-types",
-      repo: "https://github.com/piotrwitek/utility-types",
-      repoLabel: "piotrwitek/utility-types",
-    },
-    "Projects: ts-toolbelt": {
-      title: "ts-toolbelt",
-      repo: "https://github.com/millsp/ts-toolbelt",
-      repoLabel: "millsp/ts-toolbelt",
-    },
-    "Projects: ts-essentials": {
-      title: "ts-essentials",
-      repo: "https://github.com/ts-essentials/ts-essentials",
-      repoLabel: "ts-essentials/ts-essentials",
+    "Projects: external libraries": {
+      title: "External libraries",
+      description: "Pinned real-world libraries and type-heavy repositories checked as project-mode fixtures.",
     },
     "Single file: utility-types": {
       title: "utility-types files",
@@ -413,6 +986,7 @@ function displayName(name) {
   if (name === "nextjs-fresh-app") return "Fresh Next.js app";
   if (name === "vite-vanilla-ts-app") return "Fresh Vite app";
   if (name === "kysely-project") return "Kysely project";
+  if (name === "type-challenges-solutions-project") return "type-challenges solutions project";
 
   const cleaned = String(name || "")
     .replace(/^utility-types\//, "")
@@ -428,6 +1002,25 @@ function displayName(name) {
     .replace(/_/g, " ")
     .replace(/-/g, " ");
   return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+}
+
+function isTypeScriptFixtureName(name) {
+  return String(name || "").endsWith(".ts") && !String(name || "").includes("/");
+}
+
+function displayBaseName(name) {
+  return displayName(name)
+    .replace(/\s+Speed Reasonable$/i, "")
+    .replace(/\s+Not Too Large$/i, "")
+    .trim();
+}
+
+function benchmarkTitle(row, category) {
+  const name = String(row?.name || "");
+  if (isProjectCategory(category)) return displayName(name);
+  if (isExternalLibraryCategory(category)) return `${libraryNameForCategory(category)} file: ${displayBaseName(name)}`;
+  if (isTypeScriptFixtureName(name)) return displayBaseName(name);
+  return displayName(name);
 }
 
 function benchmarkSlug(name) {
@@ -452,6 +1045,30 @@ function benchmarkKind(category) {
 
 function benchmarkFocus(row, category) {
   const name = String(row.name || "");
+  if (name === "conditionalTypeDiscriminatingLargeUnionRegularTypeFetchingSpeedReasonable.ts") {
+    return "Official TypeScript compiler fixture that stresses conditional type discrimination across a large union without falling off a performance cliff.";
+  }
+  if (name === "manyConstExports.ts") {
+    return "Official TypeScript compiler fixture that stresses binder/export-table setup for many constant exports.";
+  }
+  if (name === "binderBinaryExpressionStress.ts" || name === "binderBinaryExpressionStressJs.ts") {
+    return "Official TypeScript compiler fixture that stresses binder traversal over a very large binary-expression tree.";
+  }
+  if (name === "binaryArithmeticControlFlowGraphNotTooLarge.ts") {
+    return "Official TypeScript compiler fixture that keeps arithmetic control-flow graph construction bounded.";
+  }
+  if (name === "enumLiteralsSubtypeReduction.ts") {
+    return "Official TypeScript compiler fixture that exercises enum literal subtype reduction and related assignability checks.";
+  }
+  if (name === "controlFlowArrays.ts") {
+    return "Official TypeScript compiler fixture for array-sensitive control-flow analysis.";
+  }
+  if (/privacy/i.test(name)) {
+    return "Official TypeScript compiler fixture for declaration privacy checks on public APIs.";
+  }
+  if (name === "typedArrays.ts") {
+    return "Generated fixture that type-checks typed-array constructor and from() overload surfaces.";
+  }
   if (isProjectCategory(category)) {
     return "Full project type-check throughput, including module graph setup and cross-file type analysis.";
   }
@@ -834,7 +1451,116 @@ function generatedMappedComplexSource(count) {
   return lines.join("\n").trimEnd();
 }
 
+function generatedTypedArraysSource() {
+  return `// Typed array benchmark fixture used by bench-vs-tsgo.sh.
+// Keep this strict/explicit so all compilers can parse and type-check it.
+
+function createTypedArrayInstancesFromLength(length: number) {
+    const typedArrays = [];
+    typedArrays[0] = new Int8Array(length);
+    typedArrays[1] = new Uint8Array(length);
+    typedArrays[2] = new Int16Array(length);
+    typedArrays[3] = new Uint16Array(length);
+    typedArrays[4] = new Int32Array(length);
+    typedArrays[5] = new Uint32Array(length);
+    typedArrays[6] = new Float32Array(length);
+    typedArrays[7] = new Float64Array(length);
+    typedArrays[8] = new Uint8ClampedArray(length);
+    return typedArrays;
+}
+
+function createTypedArrayInstancesFromArrayLike(obj: ArrayLike<number>) {
+    const typedArrays = [];
+    typedArrays[0] = new Int8Array(obj);
+    typedArrays[1] = new Uint8Array(obj);
+    typedArrays[2] = new Int16Array(obj);
+    typedArrays[3] = new Uint16Array(obj);
+    typedArrays[4] = new Int32Array(obj);
+    typedArrays[5] = new Uint32Array(obj);
+    typedArrays[6] = new Float32Array(obj);
+    typedArrays[7] = new Float64Array(obj);
+    typedArrays[8] = new Uint8ClampedArray(obj);
+    return typedArrays;
+}
+
+function createTypedArraysFromMapFn(
+    obj: ArrayLike<number>,
+    mapFn: (n: number, v: number) => number
+) {
+    const typedArrays = [];
+    typedArrays[0] = Int8Array.from(obj, mapFn);
+    typedArrays[1] = Uint8Array.from(obj, mapFn);
+    typedArrays[2] = Int16Array.from(obj, mapFn);
+    typedArrays[3] = Uint16Array.from(obj, mapFn);
+    typedArrays[4] = Int32Array.from(obj, mapFn);
+    typedArrays[5] = Uint32Array.from(obj, mapFn);
+    typedArrays[6] = Float32Array.from(obj, mapFn);
+    typedArrays[7] = Float64Array.from(obj, mapFn);
+    typedArrays[8] = Uint8ClampedArray.from(obj, mapFn);
+    return typedArrays;
+}
+
+const values: number[] = [1, 2, 3, 4];
+const mapped = createTypedArraysFromMapFn(values, (n, i) => n + i);
+const fromLength = createTypedArrayInstancesFromLength(128);
+const fromArrayLike = createTypedArrayInstancesFromArrayLike(values);
+const sampleCount = mapped.length + fromLength.length + fromArrayLike.length;`;
+}
+
+function generatedInferStressSource(count) {
+  const maxFunctions = Math.min(count, 30);
+  const lines = [
+    "// Infer keyword stress test",
+    "// Tests inference variable resolution in conditional types",
+    "",
+    "type UnwrapPromise<T> = T extends Promise<infer U> ? U : T;",
+    "type UnwrapArray<T> = T extends (infer U)[] ? U : T;",
+    "type MyParameters<T> = T extends (...args: infer P) => any ? P : never;",
+    "type MyReturnType<T> = T extends (...args: any[]) => infer R ? R : never;",
+    "",
+    "type FirstAndRest<T> = T extends [infer First, ...infer Rest] ? { first: First; rest: Rest } : never;",
+    "",
+    "type DeepUnwrap<T> =",
+    "    T extends Promise<infer U> ? DeepUnwrap<U> :",
+    "    T extends (infer V)[] ? DeepUnwrap<V>[] :",
+    "    T;",
+    "",
+    "type ExtractPrefix<T> = T extends `${infer P}_${string}` ? P : never;",
+    "type ExtractIfString<T> = T extends infer U extends string ? U : never;",
+    "",
+  ];
+
+  for (let i = 0; i < maxFunctions; i += 1) {
+    lines.push(`declare function func${i}(`);
+    for (let j = 0; j <= i; j += 1) {
+      lines.push(`    arg${j}: string${j === i ? "" : ","}`);
+    }
+    lines.push("): number;", "", `type Params${i} = MyParameters<typeof func${i}>;`, `type Return${i} = MyReturnType<typeof func${i}>;`, "");
+  }
+
+  lines.push(
+    "type ComplexInfer<T> = T extends {",
+    "    data: infer D;",
+    "    nested: { value: infer V }[]",
+    "} ? { data: D; values: V[] } : never;",
+    "",
+    "interface TestData {",
+    "    data: string;",
+    "    nested: { value: number }[];",
+    "}",
+    "",
+    "type Inferred = ComplexInfer<TestData>;",
+    "",
+    `declare const params: Params${maxFunctions - 1};`,
+    "declare const inferred: Inferred;",
+  );
+
+  return lines.join("\n").trimEnd();
+}
+
 function generatedBenchmarkSource(name) {
+  if (String(name || "") === "typedArrays.ts") return generatedTypedArraysSource();
+
   const unionCount = countFromName(name, /^(\d+)\s+union members$/i);
   if (unionCount) return generatedUnionSource(unionCount);
 
@@ -879,6 +1605,9 @@ function generatedBenchmarkSource(name) {
 
   const mappedComplexCount = countFromName(name, /^Mapped complex template keys=(\d+)$/i);
   if (mappedComplexCount) return generatedMappedComplexSource(mappedComplexCount);
+
+  const inferStressCount = countFromName(name, /^Infer stress N=(\d+)$/i);
+  if (inferStressCount) return generatedInferStressSource(inferStressCount);
 
   return null;
 }
@@ -956,10 +1685,7 @@ function readFixtureSource(name) {
   const fixtureName = String(name || "");
   if (!fixtureName.endsWith(".ts") || fixtureName.includes("/")) return null;
 
-  const candidates = [
-    path.join(ROOT, "TypeScript/tests/cases/compiler", fixtureName),
-    path.join(ROOT, "TypeScript/tests/cases/conformance", fixtureName),
-  ];
+  const candidates = TYPESCRIPT_FIXTURE_DIRS.map((dir) => path.join(ROOT, "TypeScript", dir, fixtureName));
 
   for (const candidate of candidates) {
     try {
@@ -967,6 +1693,12 @@ function readFixtureSource(name) {
     } catch {
       // Keep looking in the next known TypeScript fixture location.
     }
+  }
+
+  const ref = currentTypeScriptRef();
+  for (const dir of TYPESCRIPT_FIXTURE_DIRS) {
+    const remote = readRemoteText(`https://raw.githubusercontent.com/microsoft/TypeScript/${ref}/${dir}/${fixtureName}`);
+    if (remote) return remote;
   }
 
   return null;
@@ -1041,6 +1773,17 @@ function sourceFilesForBenchmark(row, category) {
 
   const name = String(row.name || "fixture.ts");
   const fixtureName = name.endsWith(".ts") ? name : `${name}.ts`;
+  const artifactSource = typeof row?.source?.content === "string" && row.source.content
+    ? row.source.content.trimEnd()
+    : null;
+  if (artifactSource) {
+    return [{
+      name: row.source.path || fixtureName,
+      language: "typescript",
+      source: artifactSource,
+    }];
+  }
+
   const externalSource = isExternalLibraryCategory(category)
     ? readExternalFixtureSource(fixtureName)
     : null;
@@ -1134,12 +1877,12 @@ function decorateRow(row, category, options = {}) {
     ...row,
     category,
     category_slug: categorySlug(category),
-    display_name: displayName(row.name || ""),
+    display_name: benchmarkTitle(row, category),
     slug: benchmarkSlug(row.name),
     url: benchmarkUrl(row),
     kind: benchmarkKind(category),
     focus,
-    detail_focus: isExternalLibraryCategory(category) ? "" : focus,
+    detail_focus: focus,
     snippet: sourceFiles[0]?.source || snippetForBenchmark(row, category),
     source_files: sourceFiles,
     readme,
@@ -1179,17 +1922,9 @@ function buildGroupedBenchmarks(data) {
   const failedResults = allResults.filter((row) => isFailedBenchmark(row) && !successfulNames.has(row.name));
 
   const order = [
-    "Projects: large-ts-repo",
-    "Projects: utility-types",
-    "Projects: ts-toolbelt",
-    "Projects: ts-essentials",
-    "Projects: next.js",
-    "Projects: fresh Next.js app",
-    "Projects: fresh Vite app",
-    "Projects: rxjs",
-    "Projects: type-fest",
-    "Projects: zod",
-    "Projects: kysely",
+    "Projects: external libraries",
+    "Projects: generated apps",
+    "Projects: large repositories",
     "Single file: utility-types",
     "Single file: ts-toolbelt",
     "Single file: ts-essentials",
@@ -1300,6 +2035,10 @@ function generateCharts(data, mode = "projects") {
   );
 
   let html = "";
+  if (mode === "projects" && visibleCategories.length === 0) {
+    html += `<div class="bench-placeholder">No successful project benchmark timing pairs are available in this artifact yet. Project rows below are still tracked for compile readiness.</div>\n`;
+  }
+
   for (const category of visibleCategories) {
     const entries = entriesForCategory(category);
     const slug = categorySlug(category);
@@ -1317,7 +2056,9 @@ function generateCharts(data, mode = "projects") {
       }
       return (String(a.name || "") > String(b.name || "") ? 1 : -1);
     });
-    const desc = isProject ? "" : categoryDescription(category);
+    const desc = category === "Projects: generated apps" || !isProject
+      ? categoryDescription(category)
+      : "";
     const repoLink = meta.repo
       ? ` <a class="bench-category-repo" href="${meta.repo}" target="_blank" rel="noopener noreferrer">${escapeHtml(meta.repoLabel || meta.repo)}</a>`
       : "";
@@ -1364,42 +2105,23 @@ function generateCharts(data, mode = "projects") {
   }
 
   if (visibleFailedResults.length > 0) {
-    const failedTitle = mode === "projects" ? "Projects without complete timing" : "Incomplete timings";
+    const failedTitle = mode === "projects" ? "Compile canaries and incomplete project timings" : "Incomplete timings";
     const failedDescription = mode === "projects"
-      ? "Project runs recorded by CI without a full tsz and tsgo timing pair."
+      ? "Rows that are tracked for compile readiness but are not part of the timed vs-tsgo chart yet."
       : "Rows recorded by CI without a full tsz and tsgo timing pair.";
     html += `<section class="bench-category bench-failures">
   <h3 class="bench-category-title" id="failures">${escapeHtml(failedTitle)}</h3>
   <p class="bench-category-desc">${escapeHtml(failedDescription)}</p>
-  <div class="bench-chart">\n`;
+  <ul class="bench-failure-list">\n`;
     for (const r of visibleFailedResults) {
       const category = categoryFor(r.name || "", r.lines);
       const decorated = decorateRow(r, category);
-      const tszWidth = hasTiming(r.tsz_ms) ? (r.tsz_ms / chartMaxMs) * barMaxWidth : 0;
-      const tsgoWidth = hasTiming(r.tsgo_ms) ? (r.tsgo_ms / chartMaxMs) * barMaxWidth : 0;
-      const metaParts = [decorated.kind, `${fmt(r.lines || 0)} lines`, `${fmt(r.kb || 0)} KB`];
-      html += `  <div class="bench-row bench-row-error">
-    <div class="bench-name"><a href="${decorated.url}">${escapeHtml(displayName(r.name))}</a></div>
-    <div class="bench-meta">${escapeHtml(metaParts.join(" · "))}</div>
-    <p class="bench-focus bench-failure-status">${escapeHtml(statusLabel(r))}</p>
-    <div class="bench-bars">
-      <div class="bench-bar-row">
-        <span class="bench-bar-label">tsz</span>
-        ${hasTiming(r.tsz_ms)
-          ? renderBenchmarkBar("tsz", tszWidth, formatDurationMs(r.tsz_ms))
-          : `<span class="bench-bar-status">failed</span>`}
-      </div>
-      <div class="bench-bar-row">
-        <span class="bench-bar-label">tsgo</span>
-        ${hasTiming(r.tsgo_ms)
-          ? renderBenchmarkBar("tsgo", tsgoWidth, formatDurationMs(r.tsgo_ms))
-          : `<span class="bench-bar-status">n/a</span>`}
-      </div>
-    </div>
-    <a class="bench-detail-link" href="${decorated.url}">View details</a>
-  </div>\n`;
+      html += `  <li>
+    <a href="${decorated.url}">${escapeHtml(displayName(r.name))}</a>
+    <span>${escapeHtml(statusLabel(r))}</span>
+  </li>\n`;
     }
-    html += `  </div>
+    html += `  </ul>
  </section>\n`;
   }
 
@@ -1412,4 +2134,260 @@ export function getBenchmarkCharts() {
 
 export function getBenchmarkMicroCharts() {
   return generateCharts(loadBenchmarks(), "micro");
+}
+
+export function getBenchmarkEnvironmentSummary() {
+  const summary = runnerEnvironmentSummary(loadBenchmarks());
+  if (!summary) return "";
+  return `<p class="bench-runner-meta">${escapeHtml(summary)}</p>`;
+}
+
+export function getProjectCompatibilityDashboard() {
+  const data = loadBenchmarks();
+  const allResults = withExpectedProjectRows(data?.results);
+  const rows = COMPATIBILITY_CORPUS_ROWS.map((definition) => compatibilityRowFor(definition, allResults, data));
+
+  const counts = rows.reduce((acc, row) => {
+    acc[row.className] = (acc[row.className] || 0) + 1;
+    return acc;
+  }, {});
+  const summary = [
+    `${counts.green || 0} green`,
+    `${counts.yellow || 0} yellow`,
+    `${counts.red || 0} red`,
+    `${counts.gray || 0} gray`,
+  ].join(" · ");
+
+  const detailLabel = (row) => {
+    if (row.className === "green") return "passes";
+    if (row.exitClass === "missing or incomplete artifact") return "missing artifact";
+    return row.exitClass;
+  };
+
+  const diagnosticDeltas = (row) => {
+    const deltas = Array.isArray(row.diagnosticDeltas)
+      ? row.diagnosticDeltas
+      : row.diagnosticDeltas
+        ? [row.diagnosticDeltas]
+        : [];
+    return deltas.filter(Boolean).slice(0, 20);
+  };
+
+  const measurementParts = (row) => {
+    const parts = [];
+    const filesReached = formatFilesReached(row.filesReached);
+    const peakMemory = formatPeakMemoryMiB(row.peakMemoryBytes);
+    if (filesReached) {
+      parts.push(filesReached);
+    } else if (row.filesReachedReason) {
+      parts.push(`files reached: n/a (${row.filesReachedReason})`);
+    }
+    if (peakMemory) {
+      parts.push(peakMemory);
+    } else if (row.peakMemoryBytesReason) {
+      parts.push(`peak RSS: n/a (${row.peakMemoryBytesReason})`);
+    }
+    return parts;
+  };
+
+  const exitCodeParts = (row) => {
+    const codes = row.exitCodes || {};
+    return ["tsc", "tsz", "tsgo"]
+      .map((compiler) => {
+        const values = Array.isArray(codes[compiler]) ? codes[compiler].filter((value) => Number.isInteger(Number(value))) : [];
+        return values.length ? `${compiler} exit ${values.join("|")}` : "";
+      })
+      .filter(Boolean);
+  };
+
+  const fixtureSourceParts = (row) => {
+    const sources = Array.isArray(row.fixtureSources) ? row.fixtureSources : [];
+    return sources.map((source) => {
+      return `source: ${source.name} @ ${source.ref}`;
+    });
+  };
+
+  const numericSortValue = (value) => {
+    const number = finiteNumber(value);
+    return number === null ? "" : String(number);
+  };
+
+  const sortableHeader = (key, label, type = "text") =>
+    `<button type="button" class="compat-sort-button" data-compat-sort="${key}" data-sort-type="${type}" aria-label="Sort project compatibility by ${escapeHtml(label)}">${escapeHtml(label)}</button>`;
+
+  const sortScript = `<script>
+(() => {
+  for (const table of document.querySelectorAll("[data-compat-sortable]")) {
+    const tbody = table.tBodies[0];
+    if (!tbody) continue;
+    const buttons = Array.from(table.querySelectorAll("[data-compat-sort]"));
+    for (const button of buttons) {
+      button.addEventListener("click", () => {
+        const key = button.dataset.compatSort;
+        const type = button.dataset.sortType || "text";
+        const direction = button.dataset.direction === "asc" ? "desc" : "asc";
+        for (const candidate of buttons) {
+          candidate.dataset.direction = "";
+          candidate.removeAttribute("aria-sort");
+        }
+        button.dataset.direction = direction;
+        button.setAttribute("aria-sort", direction === "asc" ? "ascending" : "descending");
+        const rows = Array.from(tbody.rows);
+        rows.sort((left, right) => {
+          const leftCell = left.querySelector(\`[data-sort-key="\${key}"]\`);
+          const rightCell = right.querySelector(\`[data-sort-key="\${key}"]\`);
+          const leftRaw = leftCell?.dataset.sortValue ?? "";
+          const rightRaw = rightCell?.dataset.sortValue ?? "";
+          let comparison = 0;
+          if (type === "number") {
+            const leftNumber = Number(leftRaw);
+            const rightNumber = Number(rightRaw);
+            const leftMissing = leftRaw === "" || !Number.isFinite(leftNumber);
+            const rightMissing = rightRaw === "" || !Number.isFinite(rightNumber);
+            if (leftMissing || rightMissing) {
+              comparison = leftMissing === rightMissing ? 0 : leftMissing ? 1 : -1;
+            } else {
+              comparison = leftNumber - rightNumber;
+            }
+          } else {
+            comparison = leftRaw.localeCompare(rightRaw, undefined, { sensitivity: "base", numeric: true });
+          }
+          if (comparison === 0) {
+            comparison = (left.dataset.project || "").localeCompare(right.dataset.project || "", undefined, { sensitivity: "base" });
+          }
+          return direction === "asc" ? comparison : -comparison;
+        });
+        for (const row of rows) tbody.append(row);
+      });
+    }
+  }
+})();
+</script>`;
+
+  const artifactFreshnessParts = (row) => {
+    const metadata = row.artifactMetadata || {};
+    const parts = [];
+    if (metadata.generatedAt) parts.push(`artifact generated: ${metadata.generatedAt}`);
+    if (metadata.sourceCommit) parts.push(`commit: ${shortCommit(metadata.sourceCommit)}`);
+    if (metadata.workflowRunId) {
+      const runLabel = metadata.workflowRunAttempt
+        ? `${metadata.workflowRunId} attempt ${metadata.workflowRunAttempt}`
+        : metadata.workflowRunId;
+      parts.push(`run: ${runLabel}${metadata.runStatus ? ` (${metadata.runStatus})` : ""}`);
+    } else if (metadata.runStatus) {
+      parts.push(`run: ${metadata.runStatus}`);
+    }
+    const warnings = Array.isArray(row.freshnessWarnings) ? row.freshnessWarnings : [];
+    for (const warning of warnings.slice(0, 3)) {
+      parts.push(`freshness warning: ${warning}`);
+    }
+    return parts;
+  };
+
+  const renderRowDetails = (row) => {
+    const deltas = diagnosticDeltas(row);
+    const diagnosticCodes = Array.isArray(row.diagnosticCodes) ? row.diagnosticCodes.filter(Boolean).slice(0, 8) : [];
+    const diagnosticSubsystems = Array.isArray(row.diagnosticSubsystems)
+      ? row.diagnosticSubsystems.filter((group) => group?.subsystem).slice(0, 8)
+      : [];
+    const reductionCandidates = Array.isArray(row.reductionCandidates)
+      ? row.reductionCandidates.filter(Boolean).slice(0, 5)
+      : [];
+    const knownBlockers = Array.isArray(row.knownBlockers)
+      ? row.knownBlockers.filter(Boolean).slice(0, 8)
+      : [];
+    const parts = [
+      `phase: ${row.phase || "unknown"}`,
+      row.lastSuccessfulPhase ? `last successful: ${row.lastSuccessfulPhase}` : "",
+      row.missingMetadata?.length
+        ? `artifact missing: ${
+            row.missingMetadata.slice(0, 4).join(", ")
+          }${row.missingMetadata.length > 4 ? "..." : ""}`
+        : "artifact: complete",
+      ...artifactFreshnessParts(row),
+      row.firstFailureClass ? `failure: ${row.firstFailureClass}` : "",
+      row.ownerTrack ? `owner track: ${row.ownerTrack}` : "",
+      row.reducedReproPath ? `repro: ${row.reducedReproPath}` : "",
+      `owner: ${row.family || "not classified"}`,
+      row.primarySubsystem ? `subsystem: ${row.primarySubsystem}` : "",
+      row.emitStatus ? `emit: ${row.emitStatus}` : "",
+      row.dtsStatus ? `dts: ${row.dtsStatus}` : "",
+      ...measurementParts(row),
+      ...fixtureSourceParts(row),
+      ...exitCodeParts(row),
+    ].filter(Boolean);
+    const blockerHtml = row.className === "green" || !knownBlockers.length
+      ? ""
+      : `<div class="compat-blockers">
+          ${knownBlockers.map((blocker) => `<span>${escapeHtml(blocker)}</span>`).join("")}
+        </div>`;
+    const queueHtml = row.className === "green" || (!diagnosticCodes.length && !reductionCandidates.length)
+      ? ""
+      : `<div class="compat-queue">
+          <span>${escapeHtml(`queue: ${diagnosticCodes.length ? diagnosticCodes.join(", ") : "unclassified diagnostic"}`)}</span>
+          ${reductionCandidates.map((candidate) => `<code>${escapeHtml(candidate)}</code>`).join("")}
+        </div>`;
+    const subsystemHtml = row.className === "green" || !diagnosticSubsystems.length
+      ? ""
+      : `<div class="compat-subsystems">
+          ${diagnosticSubsystems.map((group) => {
+            const codes = Array.isArray(group.codes) && group.codes.length ? ` (${group.codes.join(", ")})` : "";
+            const count = Number.isFinite(Number(group.count)) && Number(group.count) > 1 ? ` x${Number(group.count)}` : "";
+            return `<span>${escapeHtml(`${group.subsystem}${codes}${count}`)}</span>`;
+          }).join("")}
+        </div>`;
+    const deltaHtml = row.className === "green"
+      ? ""
+      : `<div class="compat-deltas">${deltas.length
+          ? deltas.map((delta) => `<code>${escapeHtml(delta)}</code>`).join("")
+          : `<span>${escapeHtml("diagnostic delta not captured")}</span>`}
+        </div>`;
+    return `<div class="compat-meta">${parts.map((part) => `<span>${escapeHtml(part)}</span>`).join("")}</div>${blockerHtml}${subsystemHtml}${queueHtml}${deltaHtml}`;
+  };
+
+  const readiness = loadBenchReadinessStatus();
+  let artifactBanner = "";
+  if (readiness?.artifact_absent) {
+    artifactBanner = `<p class="bench-readiness-warning">⚠️ No recent benchmark artifact — compatibility data shown from repository snapshot and may be stale.</p>`;
+  } else if (readiness?.missing > 0) {
+    artifactBanner = `<p class="bench-readiness-warning">⚠️ Benchmark artifact is missing ${readiness.missing} required row(s); shown data may be incomplete.</p>`;
+  }
+
+  return `<section class="compat-dashboard">
+  <h2>Compatibility</h2>
+  ${artifactBanner}
+  <div class="compat-summary">${escapeHtml(summary)}</div>
+  <div class="compat-table-wrap">
+    <table class="compat-table" data-compat-sortable>
+      <thead>
+        <tr>
+          <th scope="col">${sortableHeader("project", "Project")}</th>
+          <th scope="col">${sortableHeader("state", "State")}</th>
+          <th scope="col">${sortableHeader("exit", "Exit class")}</th>
+          <th scope="col">${sortableHeader("phase", "Phase")}</th>
+          <th scope="col">${sortableHeader("files", "Files", "number")}</th>
+          <th scope="col">${sortableHeader("peak", "Peak RSS", "number")}</th>
+          <th scope="col">Details</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map((row) => `<tr class="compat-item" data-project="${escapeHtml(row.label)}">
+          <td class="compat-project" data-sort-key="project" data-sort-value="${escapeHtml(row.label)}"><a href="${row.url}">${escapeHtml(row.label)}</a></td>
+          <td data-sort-key="state" data-sort-value="${escapeHtml(row.className)}"><span class="compat-state ${row.className}">${escapeHtml(row.className)}</span></td>
+          <td data-sort-key="exit" data-sort-value="${escapeHtml(row.exitClass || "")}"><span class="compat-detail">${escapeHtml(row.exitClass || "unknown")}</span></td>
+          <td data-sort-key="phase" data-sort-value="${escapeHtml(row.phase || "")}"><span class="compat-detail">${escapeHtml(row.phase || "unknown")}</span></td>
+          <td data-sort-key="files" data-sort-value="${numericSortValue(row.filesReached)}">${escapeHtml(formatFilesReached(row.filesReached) || "—")}</td>
+          <td data-sort-key="peak" data-sort-value="${numericSortValue(row.peakMemoryBytes)}">${escapeHtml(formatPeakMemoryMiB(row.peakMemoryBytes) || "—")}</td>
+          <td>
+            <div class="compat-row-main">
+              <span class="compat-detail">${escapeHtml(detailLabel(row))}</span>
+            </div>
+            ${renderRowDetails(row)}
+          </td>
+        </tr>`).join("\n")}
+      </tbody>
+    </table>
+  </div>
+  ${sortScript}
+</section>`;
 }

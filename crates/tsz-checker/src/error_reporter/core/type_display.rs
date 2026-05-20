@@ -1156,48 +1156,6 @@ impl<'a> CheckerState<'a> {
         ty
     }
 
-    /// For TS2353 diagnostics on union targets, strip non-object members (primitives,
-    /// undefined, null, void, never, etc.) so the displayed type matches tsc.
-    /// For example, `IProps | number` becomes `IProps`, and
-    /// `{ testBool?: boolean | undefined; } | undefined` becomes `{ testBool?: boolean | undefined; }`.
-    pub(in crate::error_reporter) fn strip_non_object_union_members_for_excess_display(
-        &self,
-        ty: TypeId,
-    ) -> TypeId {
-        // Evaluate for structural analysis but preserve original members for display.
-        // NoInfer<T> wrappers and type aliases are stripped by evaluation, but the
-        // display should preserve them (tsc shows `NoInfer<{x: string}>` not `{x: string}`).
-        let evaluated = crate::query_boundaries::common::evaluate_type(self.ctx.types, ty);
-        let original_members = query::union_members(self.ctx.types, ty);
-        if let Some(members) = query::union_members(self.ctx.types, evaluated) {
-            let object_like: Vec<_> = members
-                .iter()
-                .enumerate()
-                .filter(|(_, member)| {
-                    let evaluated =
-                        crate::query_boundaries::common::evaluate_type(self.ctx.types, **member);
-                    !crate::query_boundaries::common::is_primitive_type(self.ctx.types, evaluated)
-                        && !self.is_generic_excess_union_member(**member, evaluated)
-                })
-                .map(|(i, member)| {
-                    // Use original (pre-evaluation) member if available for display
-                    original_members
-                        .as_ref()
-                        .and_then(|orig| orig.get(i).copied())
-                        .unwrap_or(*member)
-                })
-                .collect();
-            // Only strip if we actually removed something and have at least one member left
-            if !object_like.is_empty() && object_like.len() < members.len() {
-                if object_like.len() == 1 {
-                    return object_like[0];
-                }
-                return tsz_solver::utils::union_or_single(self.ctx.types, object_like);
-            }
-        }
-        ty
-    }
-
     fn split_wildcard_object_for_excess_display(&mut self, ty: TypeId) -> Option<String> {
         let ty = self
             .materialize_finite_mapped_type_for_display(ty)
@@ -1321,6 +1279,10 @@ impl<'a> CheckerState<'a> {
         // single remaining intersection can use the specialized object display path.
         let ty = self.strip_non_object_union_members_for_excess_display(ty);
 
+        if let Some(display) = self.format_object_before_callable_union_for_excess_display(ty) {
+            return display;
+        }
+
         if let Some(display) = self.format_intersection_union_for_excess_display(ty) {
             return display;
         }
@@ -1437,7 +1399,10 @@ impl<'a> CheckerState<'a> {
         // Normalize `{prop: type}` to `{ prop: type; }` — tsc always adds
         // spaces inside braces and trailing semicolons for inline object types.
         // Handle both standalone `{...}` and intersection parts `& {...}`.
-        formatted = Self::normalize_annotation_literal_property_display_text(&formatted);
+        formatted = Self::normalize_single_quoted_string_literal_types(&formatted);
+        if !self.ctx.compiler_options.exact_optional_property_types {
+            formatted = Self::add_undefined_to_optional_object_property_display(&formatted);
+        }
         formatted = Self::normalize_inline_object_braces(&formatted);
         // Prefer Array<T> shorthand conversion in annotation text, but preserve
         // generic constraint surface syntax (`<T extends Array<U>>`) where tsc
@@ -1558,6 +1523,10 @@ impl<'a> CheckerState<'a> {
                         depth -= 1;
                     }
                     j += 1;
+                }
+                if depth > 0 {
+                    result.extend(chars[i..].iter());
+                    break;
                 }
                 // j now points past the closing '}'
                 let inner_start = i + 1;
@@ -1716,23 +1685,14 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut parts = Vec::new();
-        if let Some(idx) = &shape.string_index {
+        for idx in shape.string_index.iter().chain(shape.number_index.iter()) {
             let key_name = idx
                 .param_name
                 .map(|a| self.ctx.types.resolve_atom_ref(a).to_string())
                 .unwrap_or_else(|| "x".to_string());
+            let key_kind = self.format_type(idx.key_type);
             parts.push(format!(
-                "[{key_name}: string]: {}",
-                self.format_type(idx.value_type)
-            ));
-        }
-        if let Some(idx) = &shape.number_index {
-            let key_name = idx
-                .param_name
-                .map(|a| self.ctx.types.resolve_atom_ref(a).to_string())
-                .unwrap_or_else(|| "x".to_string());
-            parts.push(format!(
-                "[{key_name}: number]: {}",
+                "[{key_name}: {key_kind}]: {}",
                 self.format_type(idx.value_type)
             ));
         }

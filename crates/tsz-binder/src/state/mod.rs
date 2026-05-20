@@ -13,6 +13,7 @@ use crate::modules::resolution_debug::ModuleResolutionDebugger;
 use crate::{FlowNodeArena, FlowNodeId, Scope, ScopeId, SymbolArena, SymbolId, SymbolTable};
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
+use std::mem::size_of;
 use std::sync::Arc;
 use std::sync::RwLock;
 use tsz_common::common::ScriptTarget;
@@ -78,6 +79,30 @@ impl<T> std::ops::Deref for CloneableRwLock<T> {
 type ExportCacheStorage = CloneableRwLock<ExportCache>;
 type IdentifierCacheStorage = CloneableRwLock<IdentifierCache>;
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BinderResolutionCacheStatistics {
+    pub export_cache_entries: usize,
+    pub identifier_cache_entries: usize,
+}
+
+impl BinderResolutionCacheStatistics {
+    #[must_use]
+    pub const fn total_entries(&self) -> usize {
+        self.export_cache_entries + self.identifier_cache_entries
+    }
+
+    #[must_use]
+    pub const fn estimated_size_bytes(&self) -> usize {
+        const BUCKET_OVERHEAD: usize = 8;
+        let export_entry =
+            BUCKET_OVERHEAD + (2 * size_of::<String>()) + size_of::<Option<SymbolId>>();
+        let identifier_entry =
+            BUCKET_OVERHEAD + size_of::<(usize, u32)>() + size_of::<Option<SymbolId>>();
+        (self.export_cache_entries * export_entry)
+            + (self.identifier_cache_entries * identifier_entry)
+    }
+}
+
 /// Bitflags tracking which language features are used in a source file.
 ///
 /// Populated by the binder during its AST walk (zero-cost at check time).
@@ -125,8 +150,7 @@ pub struct BinderOptions {
 }
 
 /// Lib file context for global type resolution.
-/// This mirrors the definition in `checker::context` to avoid circular dependencies.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct LibContext {
     /// The AST arena for this lib file.
     pub arena: Arc<NodeArena>,
@@ -362,7 +386,7 @@ pub struct BinderState {
     ///
     /// `Arc`-wrapped so per-file binders constructed by the CLI driver
     /// share via `Arc::clone` instead of deep-cloning. Mutated only during
-    /// binding (in `binding/declaration.rs`) and read-only post-bind.
+    /// binding (in `modules/binding.rs`) and read-only post-bind.
     pub switch_clause_to_switch: Arc<FxHashMap<u32, NodeIndex>>,
     /// Hoisted var declarations
     pub(crate) hoisted_vars: Vec<(String, NodeIndex)>,
@@ -438,6 +462,21 @@ pub struct BinderState {
     /// `Arc::make_mut` (zero-cost when refcount=1, which is always during binding).
     pub augmentation_target_modules: Arc<FxHashMap<SymbolId, String>>,
 
+    /// Per-file registry of symbols created for declarations inside `declare module "X"
+    /// { ... }` augmentation blocks, keyed by `(module_specifier, name)`.
+    ///
+    /// Two augmentation declarations of the same name targeting the same module — even
+    /// across separate `declare module` blocks in the same file — must merge with each
+    /// other. They must never merge with a *non*-augmentation declaration of the same
+    /// name at file scope (see issue #6164: tsc treats the augmentation symbol table as
+    /// independent from the augmenting file's locals).
+    ///
+    /// This registry preserves both invariants: within a single file's binding, each
+    /// `(module_spec, name)` key maps to one augmentation-local `SymbolId` that
+    /// successive augmentation declarations append to.  The registry is consulted only
+    /// during binding and is not propagated to checker-side state.
+    pub(crate) module_augmentation_symbols: rustc_hash::FxHashMap<(String, String), SymbolId>,
+
     /// Lib binders for automatic lib symbol resolution.
     /// When `get_symbol()` doesn't find a symbol locally, it checks these lib binders.
     pub lib_binders: Arc<Vec<Arc<Self>>>,
@@ -469,6 +508,19 @@ pub struct BinderState {
     /// `Arc::make_mut`, which is free when refcount=1 (the case during a
     /// single file's binding before the bound state is shared).
     pub lib_symbol_reverse_remap: Arc<FxHashMap<SymbolId, (usize, SymbolId)>>,
+
+    /// Lib TYPE symbols that were blocked from `file_locals` by a local VALUE-only declaration.
+    ///
+    /// TypeScript's value and type namespaces are separate: a `declare const Foo: unique symbol`
+    /// lives only in the value namespace and must not shadow `Foo<T>` in type position.
+    /// During lib merge (Phase 3), when a lib symbol with TYPE flags (e.g., `TYPE_ALIAS Readonly`)
+    /// would be blocked from `file_locals` because a local VALUE-only symbol (e.g.,
+    /// `BLOCK_SCOPED_VARIABLE Readonly`) already occupies the slot, the lib TYPE symbol
+    /// is recorded here so the checker's type-position resolver can find it as a fallback.
+    ///
+    /// Keyed by name; value is the remapped lib `SymbolId`. Only populated when the local
+    /// symbol has VALUE flags but no TYPE flags (pure value declaration).
+    pub lib_type_namespace: Arc<FxHashMap<String, SymbolId>>,
 
     /// Module exports: maps file names to their exported symbols for cross-file module resolution
     /// This enables resolving imports like `import { X } from './file'` where './file' is another file
@@ -937,6 +989,27 @@ impl BinderState {
             .write()
             .expect("not poisoned")
             .clear();
+    }
+
+    /// Return entry counts for regenerable binder resolution caches.
+    ///
+    /// # Panics
+    ///
+    /// Panics if either resolution cache lock is poisoned.
+    #[must_use]
+    pub fn resolution_cache_statistics(&self) -> BinderResolutionCacheStatistics {
+        BinderResolutionCacheStatistics {
+            export_cache_entries: self
+                .resolved_export_cache
+                .read()
+                .expect("resolved_export_cache RwLock poisoned")
+                .len(),
+            identifier_cache_entries: self
+                .resolved_identifier_cache
+                .read()
+                .expect("resolved_identifier_cache RwLock poisoned")
+                .len(),
+        }
     }
 }
 

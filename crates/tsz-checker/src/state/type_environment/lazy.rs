@@ -1,16 +1,18 @@
 //! Lazy type resolution and type environment population.
 
 use crate::query_boundaries::common::{
-    collect_lazy_def_ids, collect_type_queries, contains_lazy_or_recursive, lazy_def_id,
+    collect_type_queries, contains_lazy_or_recursive, enum_def_id, get_type_query_symbol_ref,
+    lazy_def_id,
 };
 use crate::query_boundaries::state::type_environment as query;
+use crate::query_boundaries::type_defaults::fill_application_defaults;
+use crate::query_boundaries::type_predicates::contains_conditional_with_application_extends;
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_solver::TypeId;
+use tsz_solver::computation::TypeResolver;
 
-use crate::query_boundaries::state::type_environment::{
-    collect_enum_def_ids, collect_referenced_types,
-};
+use crate::query_boundaries::state::type_environment::for_each_direct_referenced_type;
 
 // Thread-local depth counter for `ensure_application_symbols_resolved` nesting.
 //
@@ -150,7 +152,7 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
-        if use_cache && let Some(&cached) = self.ctx.env_eval_cache.borrow().get(&type_id) {
+        if use_cache && let Some(cached) = self.ctx.lookup_env_eval_cache(type_id) {
             if cached.depth_exceeded {
                 self.ctx.depth_exceeded.set(true);
             }
@@ -202,23 +204,15 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut depth_exceeded = false;
+        let first_pass_silent_bailed;
         let result = {
             // First pass: evaluate with TypeEnvironment resolver.
             let env = self.ctx.type_env.borrow();
-            // PERF: Only collect seed entries when cache is non-empty.
-            // The collect is necessary because env_eval_cache's RefCell borrow
-            // must not overlap with evaluate_type_with_cache. Checking is_empty()
-            // first avoids an unnecessary Vec allocation when the cache is cold.
+            // PERF: Only collect seed entries when cache is non-empty. The
+            // helper returns an owned Vec so no RefCell borrow overlaps
+            // evaluate_type_with_cache.
             let seed_iter = if use_cache {
-                let cache = self.ctx.env_eval_cache.borrow();
-                if cache.is_empty() {
-                    Vec::new()
-                } else {
-                    cache
-                        .iter()
-                        .map(|(&k, v)| (k, v.result))
-                        .collect::<Vec<_>>()
-                }
+                self.ctx.env_eval_cache_seed_entries()
             } else {
                 Vec::new()
             };
@@ -235,6 +229,7 @@ impl<'a> CheckerState<'a> {
                 depth_exceeded = true;
                 self.ctx.depth_exceeded.set(true);
             }
+            first_pass_silent_bailed = eval_result.silent_depth_bailed;
             // Persist intermediate evaluation results to the shared cache.
             // Skip entries whose result contains unbound `infer` types or type queries.
             if use_cache {
@@ -248,35 +243,51 @@ impl<'a> CheckerState<'a> {
         // contains unresolved IndexAccess or Mapped types, retry with the full
         // CheckerContext resolver which can resolve Lazy(DefId) on the fly via
         // get_type_of_symbol.
-        let needs_resolver_pass = query::index_access_types(self.ctx.types, result).is_some()
-            || query::mapped_type_id(self.ctx.types, result).is_some()
-            || (contains_lazy_or_recursive(self.ctx.types, result)
-                && (crate::query_boundaries::common::string_intrinsic_components(
+        //
+        // If the first pass silently bailed on structural depth AND made no
+        // progress on the root (`result == type_id`), running the same walk with
+        // a more powerful resolver hits the same structural protection limit at
+        // the same shape — it burns roughly the same time without producing a
+        // better answer. Recursive `ts-toolbelt` patterns like `ComputeDeep<A,
+        // Seen>` and `_Invert<O>` reach this condition; before this gate the
+        // redundant pass dominated their type-check time. The second pass still
+        // runs when first-pass progress was made (`result != type_id`), since
+        // the more powerful resolver may then lower sub-terms further.
+        let first_pass_made_no_progress = first_pass_silent_bailed && result == type_id;
+        let needs_resolver_pass = !first_pass_made_no_progress
+            && (query::index_access_types(self.ctx.types, result).is_some()
+                || query::mapped_type_id(self.ctx.types, result).is_some()
+                || (contains_lazy_or_recursive(self.ctx.types, result)
+                    && (crate::query_boundaries::common::string_intrinsic_components(
+                        self.ctx.types,
+                        result,
+                    )
+                    .is_some()
+                        || crate::query_boundaries::common::is_template_literal_type(
+                            self.ctx.types,
+                            result,
+                        )))
+                // When the first pass leaves an
+                // `Application(UnresolvedTypeName(...), args)` residue from
+                // cross-file lowering, retry with `CheckerContext` as the
+                // resolver. CheckerContext can walk the merged binder graph
+                // via `resolve_unresolved_type_name`, recover the alias's
+                // `DefId`, and let the application expand normally.
+                || crate::query_boundaries::spread::contains_unresolved_application(
                     self.ctx.types,
                     result,
                 )
-                .is_some()
-                    || crate::query_boundaries::common::is_template_literal_type(
-                        self.ctx.types,
-                        result,
-                    )))
-            // When the first pass leaves an
-            // `Application(UnresolvedTypeName(...), args)` residue from
-            // cross-file lowering, retry with `CheckerContext` as the
-            // resolver. CheckerContext can walk the merged binder graph
-            // via `resolve_unresolved_type_name`, recover the alias's
-            // `DefId`, and let the application expand normally.
-            || crate::query_boundaries::spread::contains_unresolved_application(
-                self.ctx.types,
-                result,
-            );
+                // `result != type_id` guards against re-running the second pass
+                // when the first pass deferred a generic conditional unchanged
+                // (type params present); we only retry when the first pass
+                // actually produced a different type containing deferred
+                // conditionals whose extends-type is still an Application
+                // (e.g. Pick/Readonly not yet expandable by TypeEnvironment).
+                || (result != type_id
+                    && contains_conditional_with_application_extends(self.ctx.types, result)));
         let final_result = if needs_resolver_pass {
             let seed_iter = if use_cache {
-                let cache = self.ctx.env_eval_cache.borrow();
-                cache
-                    .iter()
-                    .map(|(&k, v)| (k, v.result))
-                    .collect::<Vec<_>>()
+                self.ctx.env_eval_cache_seed_entries()
             } else {
                 Vec::new()
             };
@@ -312,13 +323,8 @@ impl<'a> CheckerState<'a> {
             && !contains_infer_types_db(self.ctx.types, final_result)
             && !contains_type_query_db(self.ctx.types, final_result)
         {
-            self.ctx.env_eval_cache.borrow_mut().insert(
-                type_id,
-                crate::context::EnvEvalCacheEntry {
-                    result: final_result,
-                    depth_exceeded,
-                },
-            );
+            self.ctx
+                .cache_env_eval_result(type_id, final_result, depth_exceeded);
         }
 
         // Restore the this_type to avoid leaking class context into other checks.
@@ -337,51 +343,13 @@ impl<'a> CheckerState<'a> {
     /// - Entries containing type query references
     /// - Union→Application entries (incomplete evaluation artifacts)
     fn persist_eval_cache_entries(&self, entries: Vec<(TypeId, TypeId)>) {
-        use crate::query_boundaries::common::is_union_type;
-        use crate::query_boundaries::state::type_environment::{
-            contains_infer_types_db, contains_type_query_db, is_application_type,
-        };
-
-        // Declaration files like react16.d.ts generate very large volumes of
-        // transient evaluator entries. Persisting every intermediate entry
-        // forces an expensive recursive `contains_infer_types_db` scan that can
-        // cost more than the cache helps. Keep the top-level env-eval cache, but
-        // skip bulk persistence for ambient declaration graphs.
-        if self.ctx.is_declaration_file() {
-            return;
-        }
-
-        let mut cache = self.ctx.env_eval_cache.borrow_mut();
-        for (k, v) in entries {
-            if k != v
-                && !k.is_intrinsic()
-                && !crate::query_boundaries::common::contains_this_type(self.ctx.types, k)
-                && !crate::query_boundaries::common::contains_this_type(self.ctx.types, v)
-                && !contains_infer_types_db(self.ctx.types, v)
-                && !contains_type_query_db(self.ctx.types, v)
-            {
-                // Guard against union→non-union cache poisoning: when the
-                // evaluator maps a union type to a non-union Application,
-                // this indicates a failed or incomplete evaluation (e.g.,
-                // an Application whose DefId wasn't yet resolved in the
-                // TypeEnvironment). Caching such entries causes downstream
-                // assignability checks to fail because union member checking
-                // is bypassed.
-                if is_union_type(self.ctx.types, k)
-                    && !is_union_type(self.ctx.types, v)
-                    && is_application_type(self.ctx.types, v)
-                {
-                    continue;
-                }
-                cache.entry(k).or_insert(crate::context::EnvEvalCacheEntry {
-                    result: v,
-                    depth_exceeded: false,
-                });
-            }
-        }
+        self.ctx.persist_env_eval_cache_entries(entries);
     }
 
     /// Evaluate a type with symbol resolution (Lazy types resolved to their concrete types).
+    ///
+    /// Wrapped with `stacker::maybe_grow()` to prevent stack overflow when resolving
+    /// long Lazy alias chains (e.g., a chain of re-exported type aliases across modules).
     pub(crate) fn evaluate_type_with_resolution(&mut self, type_id: TypeId) -> TypeId {
         // Cycle guard: evaluate_type_with_resolution → prune_impossible_object_union_members_with_env
         // → object_member_has_impossible_required_property_with_env → evaluate_type_with_resolution
@@ -391,7 +359,9 @@ impl<'a> CheckerState<'a> {
         if !self.ctx.type_resolution_visiting.insert(type_id) {
             return type_id;
         }
-        let result = self.evaluate_type_with_resolution_inner(type_id);
+        let result = stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
+            self.evaluate_type_with_resolution_inner(type_id)
+        });
         self.ctx.type_resolution_visiting.remove(&type_id);
         result
     }
@@ -798,11 +768,33 @@ impl<'a> CheckerState<'a> {
             query::classify_for_property_access_resolution(self.ctx.types, type_id);
         let result = match classification {
             query::PropertyAccessResolutionKind::Lazy(def_id) => {
+                // A bare reference to a generic type whose parameters all have
+                // defaults is still an instantiation in type position. Property
+                // access must see the instantiated body, not the raw alias body,
+                // or nested member signatures can leak unsubstituted parameters
+                // (for example `Chainable<Config = {}>["option"]` retaining
+                // `keyof Config` in its conditional key parameter).
+                if let Some(type_params) = self.ctx.get_def_type_params(def_id)
+                    && !type_params.is_empty()
+                    && type_params.iter().all(|p| p.default.is_some())
+                    && let Some(default_args) =
+                        fill_application_defaults(self.ctx.types, &[], &type_params)
+                {
+                    let app = self.ctx.types.application(type_id, default_args);
+                    let evaluated = self.evaluate_application_type(app);
+                    if evaluated != type_id && evaluated != app {
+                        let resolved =
+                            self.resolve_type_for_property_access_inner(evaluated, visited);
+                        self.ctx.leave_recursion();
+                        return resolved;
+                    }
+                }
+
                 // First consult the type environment. Cross-file interface and
                 // alias references commonly register their structural body there
                 // even when the current binder cannot re-compute the symbol.
                 let env_resolved = if let Ok(env) = self.ctx.type_env.try_borrow() {
-                    tsz_solver::TypeResolver::resolve_lazy(&*env, def_id, self.ctx.types)
+                    TypeResolver::resolve_lazy(&*env, def_id, self.ctx.types)
                 } else {
                     None
                 };
@@ -1063,8 +1055,7 @@ impl<'a> CheckerState<'a> {
             // resolve to the instance type, we must check type_env first.
             {
                 let env = self.ctx.type_env.borrow();
-                if let Some(resolved) =
-                    tsz_solver::TypeResolver::resolve_lazy(&*env, def_id, self.ctx.types)
+                if let Some(resolved) = TypeResolver::resolve_lazy(&*env, def_id, self.ctx.types)
                     && resolved != type_id
                 {
                     drop(env);
@@ -1154,7 +1145,7 @@ impl<'a> CheckerState<'a> {
                     // the type_env as a side effect.
                     let env = self.ctx.type_env.borrow();
                     if let Some(resolved) =
-                        tsz_solver::TypeResolver::resolve_lazy(&*env, def_id, self.ctx.types)
+                        TypeResolver::resolve_lazy(&*env, def_id, self.ctx.types)
                         && resolved != type_id
                     {
                         drop(env);
@@ -1313,6 +1304,30 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Insert `type_id` for `def_id` into both type environments, carrying type params
+    /// when present. Safe to call during recursive resolution; failed borrows are logged.
+    fn try_insert_def_in_type_env(&mut self, def_id: tsz_solver::DefId, type_id: TypeId) {
+        // insert_def_with_params with empty params is equivalent to insert_def, so we
+        // unify both paths and avoid a conditional.
+        let params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
+        match self.ctx.type_env.try_borrow_mut() {
+            Ok(mut env) => env.insert_def_with_params(def_id, type_id, params.clone()),
+            Err(e) => tracing::warn!(
+                target_env = "type_env",
+                error = ?e,
+                "try_insert_def_in_type_env: borrow failed; insert skipped"
+            ),
+        }
+        match self.ctx.type_environment.try_borrow_mut() {
+            Ok(mut env) => env.insert_def_with_params(def_id, type_id, params),
+            Err(e) => tracing::warn!(
+                target_env = "type_environment",
+                error = ?e,
+                "try_insert_def_in_type_env: borrow failed; insert skipped"
+            ),
+        }
+    }
+
     /// Resolve a `DefId` to a concrete type and insert a `DefId` mapping into the type environment.
     ///
     /// Returns the resolved type when a symbol bridge exists; returns `None` when the `DefId`
@@ -1321,6 +1336,20 @@ impl<'a> CheckerState<'a> {
         &mut self,
         def_id: tsz_solver::DefId,
     ) -> Option<TypeId> {
+        let lib_name = self.ctx.definition_store.get(def_id).and_then(|info| {
+            (info.file_id == Some(u32::MAX)).then(|| self.ctx.types.resolve_atom(info.name))
+        });
+        if let Some(name) = lib_name
+            && Self::in_cross_arena_interface_delegation()
+            && self.ctx.has_lib_loaded()
+        {
+            if let Some(resolved) = self.resolve_lib_type_by_name(&name) {
+                self.try_insert_def_in_type_env(def_id, resolved);
+                return Some(resolved);
+            }
+            return Some(self.ctx.types.lazy(def_id));
+        }
+
         let (sym_id, owner_file_idx) = self.ctx.def_symbol_identity(def_id)?;
         if let Some(file_idx) = owner_file_idx
             && file_idx != self.ctx.current_file_idx
@@ -1351,19 +1380,26 @@ impl<'a> CheckerState<'a> {
             self.get_type_of_symbol(sym_id)
         };
 
-        if resolved != TypeId::ERROR
-            && resolved != TypeId::ANY
-            && let Ok(mut env) = self.ctx.type_env.try_borrow_mut()
-        {
-            // Insert the type params alongside the def type so that
-            // Application evaluation via TypeEnvironment can instantiate
-            // generic types correctly, even for DefIds created in different
-            // checker contexts (e.g., PromiseLike mapped multiple times).
-            if let Some(params) = self.ctx.get_def_type_params(def_id) {
-                env.insert_def_with_params(def_id, resolved, params);
-            } else {
-                env.insert_def(def_id, resolved);
+        // If `get_type_of_symbol` returned the Lazy placeholder for this same def_id
+        // (cycle-break), inserting it into `type_env` would shadow the DefinitionStore
+        // fallback and cause the `resolved == type_id` guard in the caller to short-circuit.
+        // Prefer the concrete body from DefinitionStore when it is already available.
+        if lazy_def_id(self.ctx.types, resolved) == Some(def_id) {
+            if let Some(body) = self.ctx.definition_store.get_body(def_id)
+                && body != resolved
+                && body != TypeId::ERROR
+                && body != TypeId::ANY
+            {
+                self.try_insert_def_in_type_env(def_id, body);
+                return Some(body);
             }
+            return Some(resolved);
+        }
+
+        if resolved != TypeId::ERROR && resolved != TypeId::ANY {
+            // Carry type params so Application evaluation via TypeEnvironment can
+            // instantiate generic types correctly across checker contexts.
+            self.try_insert_def_in_type_env(def_id, resolved);
         }
         Some(resolved)
     }
@@ -1380,6 +1416,8 @@ impl<'a> CheckerState<'a> {
         let mut worklist: Vec<TypeId> = vec![type_id];
         let mut seen_types: rustc_hash::FxHashSet<TypeId> = rustc_hash::FxHashSet::default();
         let mut seen_def_ids: rustc_hash::FxHashSet<tsz_solver::DefId> =
+            rustc_hash::FxHashSet::default();
+        let mut seen_type_queries: rustc_hash::FxHashSet<tsz_solver::SymbolRef> =
             rustc_hash::FxHashSet::default();
         let mut resolved_types: rustc_hash::FxHashSet<TypeId> = rustc_hash::FxHashSet::default();
 
@@ -1406,11 +1444,11 @@ impl<'a> CheckerState<'a> {
 
             resolved_types.insert(current);
 
-            for next in collect_referenced_types(self.ctx.types, current) {
+            for_each_direct_referenced_type(self.ctx.types, current, |next| {
                 worklist.push(next);
-            }
+            });
 
-            for def_id in collect_lazy_def_ids(self.ctx.types, current) {
+            if let Some(def_id) = lazy_def_id(self.ctx.types, current) {
                 if !seen_def_ids.insert(def_id) {
                     continue;
                 }
@@ -1434,9 +1472,7 @@ impl<'a> CheckerState<'a> {
                         fully_resolved = false;
                     }
                 }
-            }
-
-            for def_id in collect_enum_def_ids(self.ctx.types, current) {
+            } else if let Some(def_id) = enum_def_id(self.ctx.types, current) {
                 if !seen_def_ids.insert(def_id) {
                     continue;
                 }
@@ -1444,6 +1480,10 @@ impl<'a> CheckerState<'a> {
                 // Consume fuel for enum resolution too
                 APP_SYMBOL_RESOLUTION_FUEL.set(APP_SYMBOL_RESOLUTION_FUEL.get() + 1);
                 increment_global_resolution_fuel();
+                if global_resolution_fuel_exhausted() {
+                    fully_resolved = false;
+                    break;
+                }
 
                 match self.resolve_enum_def_for_type_env(def_id) {
                     Some((inserted, resolved)) => {
@@ -1456,9 +1496,11 @@ impl<'a> CheckerState<'a> {
                         fully_resolved = false;
                     }
                 }
-            }
+            } else if let Some(symbol_ref) = get_type_query_symbol_ref(self.ctx.types, current) {
+                if !seen_type_queries.insert(symbol_ref) {
+                    continue;
+                }
 
-            for symbol_ref in collect_type_queries(self.ctx.types, current) {
                 let sym_id = SymbolId(symbol_ref.0);
                 let symbol = self.ctx.binder.get_symbol(sym_id);
                 if symbol.is_none() {
@@ -1481,18 +1523,20 @@ impl<'a> CheckerState<'a> {
                 // Consume fuel for type query resolution
                 APP_SYMBOL_RESOLUTION_FUEL.set(APP_SYMBOL_RESOLUTION_FUEL.get() + 1);
                 increment_global_resolution_fuel();
+                if global_resolution_fuel_exhausted() {
+                    fully_resolved = false;
+                    break;
+                }
 
-                // TypeQuery (`typeof X`) resolves to the VALUE type (constructor
-                // for classes), not the type-reference type (instance for classes).
-                // Using `get_type_of_symbol` returns the constructor/value type,
-                // while `type_reference_symbol_type` returns the instance type for
-                // classes — which would incorrectly overwrite the constructor type
-                // already in the TypeEnvironment.
-                let is_class = symbol.is_some_and(|s| s.has_any_flags(symbol_flags::CLASS));
-                let resolved = if is_class {
-                    self.get_type_of_symbol(sym_id)
+                let resolved = if symbol.as_ref().is_some_and(|s| {
+                    s.has_any_flags(symbol_flags::TYPE_ALIAS | symbol_flags::VARIABLE)
+                }) {
+                    let value_decl = symbol
+                        .map(|s| s.value_declaration)
+                        .unwrap_or(tsz_parser::NodeIndex::NONE);
+                    self.type_of_value_declaration_for_symbol(sym_id, value_decl)
                 } else {
-                    self.type_reference_symbol_type(sym_id)
+                    self.get_type_of_symbol(sym_id)
                 };
                 let inserted = self.insert_type_env_symbol(sym_id, resolved);
                 fully_resolved &= inserted;

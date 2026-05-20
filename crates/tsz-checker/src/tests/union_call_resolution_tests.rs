@@ -7,8 +7,6 @@
 //! emitted TS2684 instead of TS2349 when no compatible signature pair existed.
 //! tsc routes the `no-compat` case through TS2349 unconditionally, like the
 //! `==1` branch already did. This test file locks the fixed behavior.
-//!
-//! See `docs/plan/claims/fix-solver-union-multi-overload-no-compat-emits-ts2349.md`.
 
 use crate::test_utils::check_source_diagnostics;
 
@@ -136,5 +134,34 @@ test2(
                 )
         }),
         "Expected TS2345 for nested union callback rest tuple argument, got: {diags:?}"
+    );
+}
+
+#[test]
+fn correlated_index_access_argument_satisfies_union_callee_param_union() {
+    let diags = check_source_diagnostics(
+        r#"
+type TypeMap = {
+    foo: string,
+    bar: number
+};
+
+type Keys = keyof TypeMap;
+type HandlerMap = { [P in Keys]: (x: TypeMap[P]) => void };
+declare const handlers: HandlerMap;
+type DataEntry<K extends Keys = Keys> = { [P in K]: {
+    type: P,
+    data: TypeMap[P]
+}}[K];
+
+function process<K extends Keys>(block: DataEntry<K>) {
+    handlers[block.type](block.data);
+}
+"#,
+    );
+
+    assert!(
+        !diags.iter().any(|d| d.code == 2345),
+        "Expected no TS2345 for correlated indexed-access union call, got: {diags:?}"
     );
 }

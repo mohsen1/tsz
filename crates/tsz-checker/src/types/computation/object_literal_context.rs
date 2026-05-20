@@ -19,6 +19,7 @@ use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
+use tsz_solver::computation::{ContextualTypeContext, TypeSubstitution};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ContextualPropertyPresence {
@@ -1203,7 +1204,7 @@ impl<'a> CheckerState<'a> {
         if self.is_assignable_to(key_type, constraint_resolved)
             || self.is_assignable_to(key_type, constraint_evaluated)
         {
-            let mut substitution = tsz_solver::TypeSubstitution::new();
+            let mut substitution = TypeSubstitution::new();
             substitution.insert(mapped.type_param.name, key_type);
             let instantiated = crate::query_boundaries::common::instantiate_type(
                 self.ctx.types,
@@ -1218,7 +1219,7 @@ impl<'a> CheckerState<'a> {
         if numeric_key.is_some()
             && crate::query_boundaries::common::contains_type_parameters(self.ctx.types, constraint)
         {
-            let mut substitution = tsz_solver::TypeSubstitution::new();
+            let mut substitution = TypeSubstitution::new();
             substitution.insert(mapped.type_param.name, key_type);
             let instantiated = crate::query_boundaries::common::instantiate_type(
                 self.ctx.types,
@@ -1318,9 +1319,8 @@ impl<'a> CheckerState<'a> {
         current: TypeId,
         candidate: TypeId,
     ) -> Option<TypeId> {
-        let current_ctx = tsz_solver::ContextualTypeContext::with_expected(self.ctx.types, current);
-        let candidate_ctx =
-            tsz_solver::ContextualTypeContext::with_expected(self.ctx.types, candidate);
+        let current_ctx = ContextualTypeContext::with_expected(self.ctx.types, current);
+        let candidate_ctx = ContextualTypeContext::with_expected(self.ctx.types, candidate);
 
         let mut prefer_current = false;
         let mut prefer_candidate = false;
@@ -1430,11 +1430,19 @@ impl<'a> CheckerState<'a> {
                 };
                 present_property_names.push(name.clone());
                 // Get the literal type of the initializer without full type computation.
-                let unit_lit =
-                    self.literal_type_from_initializer(prop.initializer)
-                        .filter(|&lit_type| {
-                            crate::query_boundaries::common::is_unit_type(self.ctx.types, lit_type)
-                        });
+                let unit_lit = self
+                    .literal_type_from_initializer(prop.initializer)
+                    .or_else(|| {
+                        let initializer_type = self.get_type_of_node(prop.initializer);
+                        crate::query_boundaries::common::is_unit_type(
+                            self.ctx.types,
+                            initializer_type,
+                        )
+                        .then_some(initializer_type)
+                    })
+                    .filter(|&lit_type| {
+                        crate::query_boundaries::common::is_unit_type(self.ctx.types, lit_type)
+                    });
                 if let Some(lit_type) = unit_lit {
                     unit_discriminants.push((name, lit_type));
                 } else {

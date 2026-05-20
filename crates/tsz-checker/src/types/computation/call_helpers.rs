@@ -664,6 +664,11 @@ impl<'a> CheckerState<'a> {
             }
             if var_decl.initializer.is_some() {
                 let mut init_type = self.get_type_of_node(var_decl.initializer);
+                if self.is_const_variable_declaration(decl_idx)
+                    && self.is_bare_object_literal_expression(var_decl.initializer)
+                {
+                    init_type = self.widen_mutable_object_literal_property_types(init_type);
+                }
                 if self.ctx.is_js_file()
                     && let Some(root_name) = root_name.as_deref()
                 {
@@ -747,11 +752,19 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        if let Some(cached) =
+            self.ctx
+                .lib_delegation_cache
+                .declaration_node_type(target_arena, decl_idx, 1)
+        {
+            return cached;
+        }
+
         if !Self::enter_cross_arena_delegation() {
             return TypeId::ERROR;
         }
 
-        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
         let delegate_file_name = target_arena
             .source_files
             .first()
@@ -761,6 +774,10 @@ impl<'a> CheckerState<'a> {
             .ctx
             .get_binder_for_arena(target_arena)
             .unwrap_or(self.ctx.binder);
+
+        // No cache fast-path on this delegate; every entry is a miss.
+        tsz_common::perf_counters::record_delegate_cross_arena_miss();
+        let _delegate_depth_guard = tsz_common::perf_counters::enter_delegate();
 
         let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
             target_arena,
@@ -780,9 +797,39 @@ impl<'a> CheckerState<'a> {
             .ctx
             .symbol_resolution_depth
             .set(self.ctx.symbol_resolution_depth.get());
-        let result = checker.type_of_value_declaration_with_mode(decl_idx, true);
+        // The child checker inherits the parent's caches for performance, but
+        // raw SymbolIds are local to each file binder. Clear entries for symbols
+        // owned by the delegate binder so a parent cache entry for an unrelated
+        // same-numbered symbol (for example lib `Readonly`) cannot poison a
+        // target-file annotation like `type FooFactory = Readonly<...>`.
+        checker.ctx.symbol_types.remove(&sym_id);
+        checker.ctx.symbol_instance_types.remove(&sym_id);
+        for &owned_sym_id in delegate_binder.node_symbols.values() {
+            checker.ctx.symbol_types.remove(&owned_sym_id);
+            checker.ctx.symbol_instance_types.remove(&owned_sym_id);
+        }
+        for (_, &owned_sym_id) in delegate_binder.file_locals.iter() {
+            checker.ctx.symbol_types.remove(&owned_sym_id);
+            checker.ctx.symbol_instance_types.remove(&owned_sym_id);
+        }
+        let mut result = checker.type_of_value_declaration_with_mode(decl_idx, true);
+        if result.is_unknown_or_error()
+            && let Some(node) = target_arena.get(decl_idx)
+            && let Some(var_decl) = target_arena.get_variable_declaration(node)
+            && var_decl.initializer.is_some()
+        {
+            result = checker.get_type_of_node(var_decl.initializer);
+        }
         let _ = sym_id;
         Self::leave_cross_arena_delegation();
+        if !matches!(result, TypeId::ERROR | TypeId::UNKNOWN) {
+            self.ctx.lib_delegation_cache.insert_declaration_node_type(
+                target_arena,
+                decl_idx,
+                1,
+                result,
+            );
+        }
         result
     }
 
@@ -890,6 +937,14 @@ impl<'a> CheckerState<'a> {
             return cached_type;
         }
 
+        if let Some(cached) = self.ctx.lib_delegation_cache.declaration_node_type(
+            decl_arena.as_ref(),
+            decl_idx,
+            if apply_module_augmentations { 1 } else { 2 },
+        ) {
+            return cached;
+        }
+
         // Guard against deep cross-arena recursion (shared with all delegation points)
         if !Self::enter_cross_arena_delegation() {
             return TypeId::ERROR;
@@ -908,6 +963,9 @@ impl<'a> CheckerState<'a> {
             .ctx
             .get_binder_for_arena(decl_arena.as_ref())
             .unwrap_or(self.ctx.binder);
+        // No cache fast-path on this delegate; every entry is a miss.
+        tsz_common::perf_counters::record_delegate_cross_arena_miss();
+        let _delegate_depth_guard = tsz_common::perf_counters::enter_delegate();
         let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
             decl_arena.as_ref(),
             delegate_binder,
@@ -954,6 +1012,20 @@ impl<'a> CheckerState<'a> {
         // for the full explanation: node_symbols collisions across arenas cause cache poisoning.
 
         Self::leave_cross_arena_delegation();
+        let cacheable_result = result != TypeId::ERROR
+            && (result != TypeId::UNKNOWN
+                || decl_arena
+                    .source_files
+                    .first()
+                    .is_some_and(|source_file| source_file.is_declaration_file));
+        if cacheable_result {
+            self.ctx.lib_delegation_cache.insert_declaration_node_type(
+                decl_arena.as_ref(),
+                decl_idx,
+                if apply_module_augmentations { 1 } else { 2 },
+                result,
+            );
+        }
         result
     }
 
@@ -1008,39 +1080,56 @@ impl<'a> CheckerState<'a> {
             let decl_type = if std::ptr::eq(decl_arena, self.ctx.arena) {
                 self.get_type_of_node(decl_idx)
             } else {
-                if !Self::enter_cross_arena_delegation() {
-                    continue;
-                }
-
-                let delegate_file_name = decl_arena
-                    .source_files
-                    .first()
-                    .map(|sf| sf.file_name.clone())
-                    .unwrap_or_else(|| self.ctx.file_name.clone());
                 let delegate_file_idx = self.ctx.get_file_idx_for_arena(decl_arena);
-
-                let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
-                    decl_arena,
-                    self.ctx.binder,
-                    self.ctx.types,
-                    delegate_file_name,
-                    self.ctx.compiler_options.clone(),
-                    self,
-                    tsz_common::perf_counters::CheckerCreationReason::CallHelpers,
-                ));
-                checker.ctx.copy_cross_file_state_from(&self.ctx);
-                checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
-                checker.ctx.current_file_idx =
-                    delegate_file_idx.unwrap_or(self.ctx.current_file_idx);
-                checker.ctx.symbol_resolution_set = self.ctx.symbol_resolution_set.clone();
-                checker.ctx.symbol_resolution_stack = self.ctx.symbol_resolution_stack.clone();
-                checker
+                if let Some(cached) = self
                     .ctx
-                    .symbol_resolution_depth
-                    .set(self.ctx.symbol_resolution_depth.get());
-                let result = checker.get_type_of_node(decl_idx);
-                Self::leave_cross_arena_delegation();
-                result
+                    .lib_delegation_cache
+                    .declaration_node_type(decl_arena, decl_idx, 0)
+                {
+                    cached
+                } else {
+                    if !Self::enter_cross_arena_delegation() {
+                        continue;
+                    }
+
+                    let delegate_file_name = decl_arena
+                        .source_files
+                        .first()
+                        .map(|sf| sf.file_name.clone())
+                        .unwrap_or_else(|| self.ctx.file_name.clone());
+
+                    // No cache fast-path on this delegate; every entry is a miss.
+                    tsz_common::perf_counters::record_delegate_cross_arena_miss();
+                    let _delegate_depth_guard = tsz_common::perf_counters::enter_delegate();
+
+                    let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
+                        decl_arena,
+                        self.ctx.binder,
+                        self.ctx.types,
+                        delegate_file_name,
+                        self.ctx.compiler_options.clone(),
+                        self,
+                        tsz_common::perf_counters::CheckerCreationReason::CallHelpers,
+                    ));
+                    checker.ctx.copy_cross_file_state_from(&self.ctx);
+                    checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+                    checker.ctx.current_file_idx =
+                        delegate_file_idx.unwrap_or(self.ctx.current_file_idx);
+                    checker.ctx.symbol_resolution_set = self.ctx.symbol_resolution_set.clone();
+                    checker.ctx.symbol_resolution_stack = self.ctx.symbol_resolution_stack.clone();
+                    checker
+                        .ctx
+                        .symbol_resolution_depth
+                        .set(self.ctx.symbol_resolution_depth.get());
+                    let result = checker.get_type_of_node(decl_idx);
+                    Self::leave_cross_arena_delegation();
+                    if !matches!(result, TypeId::ERROR | TypeId::UNKNOWN) {
+                        self.ctx
+                            .lib_delegation_cache
+                            .insert_declaration_node_type(decl_arena, decl_idx, 0, result);
+                    }
+                    result
+                }
             };
 
             if matches!(decl_type, TypeId::ERROR | TypeId::UNKNOWN) {
@@ -1113,7 +1202,7 @@ impl<'a> CheckerState<'a> {
         {
             let value_flags_except_module =
                 tsz_binder::symbol_flags::VALUE & !tsz_binder::symbol_flags::VALUE_MODULE;
-            if (symbol.flags & value_flags_except_module) != 0 && !symbol.is_type_only {
+            if symbol.has_any_flags(value_flags_except_module) && !symbol.is_type_only {
                 // Prefer the merged binder's own value declarations when available.
                 // Driver-mode checking rebuilds checker-facing lib binders, so
                 // direct SymbolIds from those fresh binders are not stable inputs
@@ -1761,5 +1850,29 @@ impl<'a> CheckerState<'a> {
         type_param_names
             .iter()
             .any(|&name| common::contains_type_parameter_named(self.ctx.types, type_id, name))
+    }
+
+    /// Check if a type is an intersection containing an Application of a conditional
+    /// type alias (like Extract, Exclude, `NonNullable`). These types arise from type
+    /// predicate narrowing and should not be treated as constructor types.
+    pub(crate) fn is_intersection_with_conditional_application(&self, type_id: TypeId) -> bool {
+        let Some(members) = common::intersection_members(self.ctx.types, type_id) else {
+            return false;
+        };
+
+        members.iter().any(|&member| {
+            let Some(app_id) = common::application_id(self.ctx.types, member) else {
+                return false;
+            };
+            let app = self.ctx.types.type_application(app_id);
+            let Some(def_id) = common::lazy_def_id(self.ctx.types, app.base) else {
+                return false;
+            };
+
+            self.ctx
+                .def_to_symbol_id(def_id)
+                .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS))
+        })
     }
 }

@@ -6,6 +6,12 @@
 // =============================================================================
 
 use crate::module_resolution_tests::check_with_module_sources;
+use crate::parser::ParserState;
+fn parse_test_source(source: &str) -> (crate::parser::ParserState, crate::parser::NodeIndex) {
+    let mut parser = crate::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 #[test]
 fn test_es6_import_default_binding_followed_with_named_import1() {
@@ -25,7 +31,6 @@ export const b = 1;
 
 /// Focus on TS1005 (token expected) and TS1109 (expression expected) error codes.
 use crate::checker::diagnostics::diagnostic_codes;
-use crate::parser::ParserState;
 
 /// Test that throw with line break reports TS1142 (Line break not permitted here)
 #[test]
@@ -36,8 +41,7 @@ function f() {
     new Error("test");
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
 
     let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
 
@@ -55,8 +59,7 @@ function f() {
     throw new Error("test");
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
 
     let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
 
@@ -75,8 +78,7 @@ function f() {
     x + y;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
 
     // ASI applies - return is a complete statement
     // The "x + y" becomes a separate (unreachable) statement
@@ -90,8 +92,7 @@ fn test_asi_postfix_increment_line_break() {
 let x = 5
 x++;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
 
     // Should parse as two statements: let x = 5; x++;
     assert!(!parser.arena.is_empty(), "Should parse successfully");
@@ -104,8 +105,7 @@ fn test_asi_prefix_increment_after_line_break() {
 let a = 5
 let b = ++a;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
 
     // Should parse as: let a = 5; let b = ++a;
     assert!(!parser.arena.is_empty(), "Should parse successfully");
@@ -120,8 +120,7 @@ function* g() {
     x + y;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
 
     // ASI applies - yield without expression is valid
     assert!(!parser.arena.is_empty(), "Should parse successfully");
@@ -136,8 +135,7 @@ outer: while (true) {
     outer;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
 
     // ASI applies - break; outer; (two statements)
     assert!(!parser.arena.is_empty(), "Should parse successfully");
@@ -149,8 +147,7 @@ fn test_asi_arrow_function_concise_body() {
     let source = r#"
 let f = x => x * 2;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
 
     // Should parse arrow function correctly
     assert!(!parser.arena.is_empty(), "Should parse successfully");
@@ -162,8 +159,7 @@ fn test_asi_arrow_function_object_literal() {
     let source = r#"
 let f = x => ({ x: 1 });
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
 
     // Should parse with parentheses
     assert!(!parser.arena.is_empty(), "Should parse successfully");
@@ -177,8 +173,7 @@ function f() {
     return 42
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
 
     // ASI applies at EOF before }
     assert!(!parser.arena.is_empty(), "Should parse successfully");
@@ -218,8 +213,7 @@ fn test_asi_comprehensive_edge_cases() {
     ];
 
     for (i, (source, should_have_errors, description)) in test_cases.iter().enumerate() {
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        parser.parse_source_file();
+        let (parser, _root) = parse_test_source(source);
 
         let has_errors = !parser.get_diagnostics().is_empty();
 
@@ -244,8 +238,7 @@ fn test_asi_ts1005_token_expected_patterns() {
     ];
 
     for (i, (source, should_have_errors, description)) in test_cases.iter().enumerate() {
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        parser.parse_source_file();
+        let (parser, _root) = parse_test_source(source);
 
         let diagnostics = parser.get_diagnostics();
         let has_errors = !diagnostics.is_empty();
@@ -650,8 +643,7 @@ namespace Foo {
     let y = 2;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let has_duplicate_identifier = diagnostics

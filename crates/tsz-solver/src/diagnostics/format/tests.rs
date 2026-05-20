@@ -1,10 +1,32 @@
 use super::*;
-use crate::TypeInterner;
 use crate::caches::db::QueryDatabase;
+use crate::construction::TypeInterner;
 use crate::types::{
     CallSignature, CallableShape, FunctionShape, MappedModifier, MappedType, ParamInfo,
     PropertyInfo, StringIntrinsicKind, TemplateSpan, TypeParamInfo,
 };
+
+#[test]
+fn type_formatter_cache_statistics_account_for_atom_cache_entries_and_size() {
+    let db = TypeInterner::new();
+    let atom = db.intern_string("cachedName");
+    let mut fmt = TypeFormatter::new(&db);
+
+    let empty_stats = fmt.cache_statistics();
+    assert_eq!(empty_stats.atom_cache_entries, 0);
+    assert!(empty_stats.estimated_size_bytes > 0);
+
+    assert_eq!(&*fmt.atom(atom), "cachedName");
+    let populated_stats = fmt.cache_statistics();
+    assert_eq!(populated_stats.atom_cache_entries, 1);
+    assert!(populated_stats.estimated_size_bytes >= empty_stats.estimated_size_bytes);
+
+    assert_eq!(&*fmt.atom(atom), "cachedName");
+    assert_eq!(
+        fmt.cache_statistics().atom_cache_entries,
+        populated_stats.atom_cache_entries
+    );
+}
 
 #[test]
 fn union_null_at_end() {
@@ -481,6 +503,84 @@ fn format_union_named_construct_callable_without_parentheses() {
 }
 
 #[test]
+fn format_union_of_intersections_factors_common_type_parameter() {
+    let db = TypeInterner::new();
+    let t = db.type_param(TypeParamInfo {
+        name: db.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let two = db.literal_number(2.0);
+    let one = db.literal_number(1.0);
+    let zero = db.literal_number(0.0);
+
+    let union = db.union(vec![
+        db.intersection2(t, zero),
+        db.intersection2(t, one),
+        db.intersection2(t, two),
+    ]);
+    let mut fmt = TypeFormatter::new(&db);
+
+    assert_eq!(fmt.format(union), "T & (0 | 2 | 1)");
+}
+
+#[test]
+fn format_union_of_intersections_display_order_independent_of_alloc_order() {
+    // Regression: the previous code round-tripped through `interner.union()`,
+    // which re-sorts by alloc-order and discards the numeric display sort.
+    // When `one` is interned before `two` (lower alloc-order), that round-trip
+    // would produce `0 | 1 | 2` instead of the correct `0 | 2 | 1`.
+    // The sibling test `format_union_of_intersections_factors_common_type_parameter`
+    // happened to pass even with the bug because it interned `two` before `one`.
+    let db = TypeInterner::new();
+    let k = db.type_param(TypeParamInfo {
+        name: db.intern_string("K"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let one = db.literal_number(1.0); // interned first → lower alloc-order than two
+    let two = db.literal_number(2.0);
+    let zero = db.literal_number(0.0);
+
+    let union = db.union(vec![
+        db.intersection2(k, zero),
+        db.intersection2(k, two),
+        db.intersection2(k, one),
+    ]);
+    let mut fmt = TypeFormatter::new(&db);
+    assert_eq!(fmt.format(union), "K & (0 | 2 | 1)");
+}
+
+#[test]
+fn format_union_of_intersections_does_not_factor_different_common_parts() {
+    let db = TypeInterner::new();
+    let t = db.type_param(TypeParamInfo {
+        name: db.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let u = db.type_param(TypeParamInfo {
+        name: db.intern_string("U"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    let union = db.union(vec![
+        db.intersection2(t, db.literal_number(0.0)),
+        db.intersection2(u, db.literal_number(1.0)),
+    ]);
+    let mut fmt = TypeFormatter::new(&db);
+    let rendered = fmt.format(union);
+
+    assert!(rendered.contains("(T & 0)"), "got: {rendered}");
+    assert!(rendered.contains("(U & 1)"), "got: {rendered}");
+}
+
+#[test]
 fn format_large_union_truncation() {
     let db = TypeInterner::new();
     let mut fmt = TypeFormatter::new(&db);
@@ -578,6 +678,52 @@ fn format_intersection_preserves_anonymous_objects() {
     assert!(
         result.contains("a: null") && result.contains("b: string"),
         "Intersection display should contain both members' properties, got: {result}"
+    );
+}
+
+#[test]
+fn format_intersection_drops_redundant_index_signature_member() {
+    let db = TypeInterner::new();
+
+    let index_sig = crate::types::IndexSignature {
+        key_type: TypeId::NUMBER,
+        value_type: TypeId::STRING,
+        readonly: true,
+        param_name: None,
+    };
+    let with_props = db.object_with_index(crate::types::ObjectShape {
+        properties: vec![
+            PropertyInfo::new(db.intern_string("a"), TypeId::NUMBER),
+            PropertyInfo::new(db.intern_string("b"), TypeId::NUMBER),
+        ],
+        string_index: None,
+        number_index: Some(index_sig),
+        symbol: None,
+        flags: Default::default(),
+    });
+    let index_only = db.object_with_index(crate::types::ObjectShape {
+        properties: vec![],
+        string_index: None,
+        number_index: Some(index_sig),
+        symbol: None,
+        flags: Default::default(),
+    });
+
+    let intersection = db.intersection2(with_props, index_only);
+    let mut fmt = TypeFormatter::new(&db);
+    let result = fmt.format(intersection);
+
+    assert!(
+        result.contains("readonly [x: number]: string"),
+        "Expected retained index signature, got: {result}"
+    );
+    assert!(
+        result.contains("a: number") && result.contains("b: number"),
+        "Expected named properties to remain, got: {result}"
+    );
+    assert!(
+        !result.contains(" & "),
+        "Expected redundant index-only member to be removed, got: {result}"
     );
 }
 
@@ -928,6 +1074,39 @@ fn format_object_with_readonly_string_index_signature() {
 }
 
 #[test]
+fn format_object_with_symbol_index_signature() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+
+    // Symbol index signatures are stored in the string_index field with key_type == SYMBOL.
+    // The printer must display `symbol` (not `string`) as the key type.
+    for param_name in [None, Some("key"), Some("sym")] {
+        let shape = crate::types::ObjectShape {
+            properties: vec![],
+            string_index: Some(crate::types::IndexSignature {
+                key_type: TypeId::SYMBOL,
+                value_type: TypeId::STRING,
+                readonly: false,
+                param_name: param_name.map(|n| db.intern_string(n)),
+            }),
+            number_index: None,
+            symbol: None,
+            flags: Default::default(),
+        };
+        let obj = db.object_with_index(shape);
+        let result = fmt.format(obj);
+        assert!(
+            result.contains("]: string") && result.contains(": symbol]"),
+            "Expected symbol index signature display (param={param_name:?}), got: {result}"
+        );
+        assert!(
+            !result.contains(": string]"),
+            "Must not display 'string' as the index key type for a symbol index sig (param={param_name:?}), got: {result}"
+        );
+    }
+}
+
+#[test]
 fn format_object_with_index_many_properties_truncated() {
     let db = TypeInterner::new();
     let mut fmt = TypeFormatter::new(&db);
@@ -1013,6 +1192,140 @@ fn format_object_with_index_prefers_symbol_tail_over_later_string_member() {
     assert!(
         !result.contains("flat: number"),
         "Expected later string members to be omitted when a symbol tail is preserved, got: {result}"
+    );
+}
+
+#[test]
+fn format_object_with_symbol_index_signature_renders_symbol_key_type() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+
+    // { [key: symbol]: string } — symbol-indexed type.
+    // The `key_type` field stores TypeId::SYMBOL; the formatter must use it
+    // rather than hardcoding "string" based on the storage slot name.
+    let shape = crate::types::ObjectShape {
+        properties: vec![],
+        string_index: Some(crate::types::IndexSignature {
+            key_type: TypeId::SYMBOL,
+            value_type: TypeId::STRING,
+            readonly: false,
+            param_name: Some(db.intern_string("key")),
+        }),
+        number_index: None,
+        symbol: None,
+        flags: Default::default(),
+    };
+    let obj = db.object_with_index(shape);
+    let result = fmt.format(obj);
+    assert!(
+        result.contains("[key: symbol]: string"),
+        "Expected symbol index signature to render as '[key: symbol]: ...', got: {result}"
+    );
+    assert!(
+        !result.contains("[key: string]"),
+        "Must not render symbol index as '[key: string]', got: {result}"
+    );
+}
+
+#[test]
+fn format_array_like_object_with_index_expands_to_locale_string_overload_display() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+    let method = db.function(FunctionShape::new(vec![], TypeId::STRING));
+    let includes = db.function(FunctionShape::new(
+        vec![ParamInfo {
+            name: Some(db.intern_string("searchElement")),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        TypeId::BOOLEAN,
+    ));
+    let mut unscopables =
+        PropertyInfo::new(db.intern_string("[Symbol.unscopables]"), TypeId::OBJECT);
+    unscopables.readonly = true;
+
+    let shape = crate::types::ObjectShape {
+        properties: vec![
+            PropertyInfo::new(db.intern_string("toString"), method),
+            PropertyInfo::new(db.intern_string("toLocaleString"), method),
+            PropertyInfo::new(db.intern_string("includes"), includes),
+            unscopables,
+        ],
+        string_index: None,
+        number_index: Some(crate::types::IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::NUMBER,
+            readonly: true,
+            param_name: None,
+        }),
+        symbol: None,
+        flags: Default::default(),
+    };
+    let obj = db.object_with_index(shape);
+    let result = fmt.format(obj);
+
+    assert!(
+        result.contains("toLocaleString: { (): string; (locales: string | string[], options?: (NumberFormatOptions & DateTimeFormatOptions) | undefined): string; }"),
+        "Expected Array toLocaleString overload display, got: {result}"
+    );
+}
+
+#[test]
+fn format_array_like_object_without_symbol_tail_preserves_array_display_shape() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+    let method = db.function(FunctionShape::new(vec![], TypeId::STRING));
+    let includes = db.function(FunctionShape::new(
+        vec![ParamInfo {
+            name: Some(db.intern_string("searchElement")),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        TypeId::BOOLEAN,
+    ));
+
+    let mut properties = vec![
+        PropertyInfo::new(db.intern_string("toString"), method),
+        PropertyInfo::new(db.intern_string("toLocaleString"), method),
+        PropertyInfo::new(db.intern_string("includes"), includes),
+    ];
+    properties.extend(
+        (1..=27).map(|idx| PropertyInfo::new(db.intern_string(&format!("p{idx}")), TypeId::NUMBER)),
+    );
+    properties.push(PropertyInfo::new(db.intern_string("reduceRight"), method));
+
+    let shape = crate::types::ObjectShape {
+        properties,
+        string_index: None,
+        number_index: Some(crate::types::IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: None,
+        }),
+        symbol: None,
+        flags: Default::default(),
+    };
+    let obj = db.object_with_index(shape);
+    let result = fmt.format(obj);
+
+    assert!(
+        result.contains("toLocaleString: { (): string; (locales: string | string[], options?: (NumberFormatOptions & DateTimeFormatOptions) | undefined): string; }"),
+        "Expected Array toLocaleString overload display, got: {result}"
+    );
+    assert!(
+        result.contains("... 30 more ..."),
+        "Expected tsc-style omitted count for array-like display, got: {result}"
+    );
+    assert!(
+        result.contains("readonly [Symbol.unscopables]: { ...; }"),
+        "Expected synthetic array symbol tail for truncated mapped-array display, got: {result}"
+    );
+    assert!(
+        !result.contains("reduceRight:"),
+        "Expected later string members to remain omitted behind the symbol tail, got: {result}"
     );
 }
 
@@ -1476,7 +1789,68 @@ fn format_tuple_optional_element() {
         },
     ]);
     let result = fmt.format(tuple);
-    assert_eq!(result, "[string, number?]");
+    assert_eq!(result, "[string, (number | undefined)?]");
+}
+
+#[test]
+fn format_tuple_named_optional_element() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+
+    let tuple = db.tuple(vec![crate::types::TupleElement {
+        type_id: TypeId::STRING,
+        name: Some(db.intern_string("name")),
+        optional: true,
+        rest: false,
+    }]);
+    let result = fmt.format(tuple);
+    assert_eq!(result, "[name?: string | undefined]");
+}
+
+#[test]
+fn format_tuple_optional_elements_preserve_surface_in_exact_optional_mode() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db).with_exact_optional_property_types(true);
+
+    let tuple = db.tuple(vec![
+        crate::types::TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: true,
+            rest: false,
+        },
+        crate::types::TupleElement {
+            type_id: TypeId::NUMBER,
+            name: Some(db.intern_string("count")),
+            optional: true,
+            rest: false,
+        },
+    ]);
+    let result = fmt.format(tuple);
+    assert_eq!(result, "[string?, count?: number]");
+}
+
+#[test]
+fn format_tuple_optional_absorbing_types_keep_suffix_form() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+
+    let tuple = db.tuple(vec![
+        crate::types::TupleElement {
+            type_id: TypeId::ANY,
+            name: None,
+            optional: true,
+            rest: false,
+        },
+        crate::types::TupleElement {
+            type_id: TypeId::UNKNOWN,
+            name: Some(db.intern_string("value")),
+            optional: true,
+            rest: false,
+        },
+    ]);
+    let result = fmt.format(tuple);
+    assert_eq!(result, "[any?, value?: unknown]");
 }
 
 #[test]
@@ -2510,6 +2884,39 @@ fn skip_application_alias_names_suppresses_nested_application_display_alias() {
 }
 
 #[test]
+fn skip_application_display_alias_chase_keeps_selected_application_name() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+    let type_param = |name: &str| TypeParamInfo {
+        name: db.intern_string(name),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let objectish_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("Objectish"),
+        vec![type_param("T")],
+        TypeId::UNKNOWN,
+    ));
+    let indirect_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("IndirectArrayish"),
+        vec![type_param("U")],
+        TypeId::UNKNOWN,
+    ));
+    let objectish_app = db.application(db.lazy(objectish_def), vec![TypeId::ANY]);
+    let indirect_app = db.application(db.lazy(indirect_def), vec![TypeId::ANY]);
+    db.store_display_alias(objectish_app, indirect_app);
+
+    let mut default_fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(default_fmt.format(objectish_app), "IndirectArrayish<any>");
+
+    let mut selected_app_fmt = TypeFormatter::new(&db)
+        .with_def_store(&def_store)
+        .with_skip_application_display_alias_chase();
+    assert_eq!(selected_app_fmt.format(objectish_app), "Objectish<any>");
+}
+
+#[test]
 fn concrete_display_alias_can_name_preexisting_structural_type() {
     let db = TypeInterner::new();
     let evaluated = db.object(vec![PropertyInfo::new(
@@ -2549,6 +2956,36 @@ fn preferred_application_display_alias_can_name_preexisting_structural_type() {
         Some(app),
         "Explicitly preferred application aliases should preserve nominal generic display"
     );
+}
+
+#[test]
+fn application_display_alias_can_name_intermediate_application() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+    let type_param = |name: &str| TypeParamInfo {
+        name: db.intern_string(name),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let inner_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("Inner"),
+        vec![type_param("T")],
+        TypeId::UNKNOWN,
+    ));
+    let outer_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("Outer"),
+        vec![type_param("T")],
+        TypeId::UNKNOWN,
+    ));
+    let one = db.literal_number(1.0);
+    let inner_app = db.application(db.lazy(inner_def), vec![one]);
+    let outer_app = db.application(db.lazy(outer_def), vec![one]);
+
+    db.store_display_alias_preferring_application(inner_app, outer_app);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(fmt.format(inner_app), "Outer<1>");
 }
 
 /// The empty object shape `{}` is a universally-shared interning target, but
@@ -4011,6 +4448,24 @@ fn store_union_origin_preserves_source_order_for_number_literal_union() {
 
     let mut fmt = TypeFormatter::new(&db);
     assert_eq!(fmt.format(union_id), "0 | 1 | 2");
+}
+
+#[test]
+fn formatter_can_ignore_union_origin_for_canonical_number_literal_display() {
+    let db = TypeInterner::new();
+
+    let two = db.literal_number(2.0);
+    let one = db.literal_number(1.0);
+    let zero = db.literal_number(0.0);
+    let origin = vec![zero, one, two];
+    let union_id = db.union(origin.clone());
+    db.store_union_origin(union_id, origin);
+
+    let mut source_order = TypeFormatter::new(&db);
+    assert_eq!(source_order.format(union_id), "0 | 1 | 2");
+
+    let mut canonical_order = TypeFormatter::new(&db).with_ignore_union_origins();
+    assert_eq!(canonical_order.format(union_id), "0 | 2 | 1");
 }
 
 // Negative case: a number-literal-only union whose canonical order already

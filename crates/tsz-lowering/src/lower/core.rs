@@ -15,12 +15,12 @@ use tsz_parser::parser::base::NodeIndex;
 use tsz_parser::parser::node::{IndexSignatureData, NodeArena, SignatureData, TypeAliasData};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::def::DefId;
 use tsz_solver::types::{
-    CallSignature, CallableShape, FunctionShape, IndexSignature, ObjectShape, ParamInfo,
-    PropertyInfo, TupleElement, TypeId, TypeParamInfo, TypePredicate, Visibility,
+    CallSignature, CallableShape, FunctionShape, IndexSignature, ObjectFlags, ObjectShape,
+    ParamInfo, PropertyInfo, TupleElement, TypeId, TypeParamInfo, TypePredicate, Visibility,
 };
-use tsz_solver::{QueryDatabase, TypeDatabase};
 
 /// Maximum number of type lowering operations to prevent infinite loops
 pub const MAX_LOWERING_OPERATIONS: u32 = 100_000;
@@ -30,6 +30,7 @@ pub(super) type TypeIdResolver<'a> = dyn Fn(&str) -> Option<DefId> + 'a;
 pub(super) type LazyTypeParamsResolver<'a> = dyn Fn(DefId) -> Option<Vec<TypeParamInfo>> + 'a;
 pub(super) type TypeParamScopeStack = RefCell<Vec<Vec<(Atom, TypeId)>>>;
 pub(super) type TypeofParamScopeStack = RefCell<Vec<Vec<(Atom, TypeId)>>>;
+pub type LoweredInterfaceMemberTypes = (Vec<TypeParamInfo>, Vec<(NodeIndex, TypeId)>);
 
 /// Type lowering context.
 /// Converts AST type nodes into interned `TypeIds`.
@@ -57,9 +58,25 @@ pub struct TypeLowering<'a> {
     /// expressions (e.g., `[k]` where k is a unique symbol) to property name atoms.
     /// Used when the lowering can't determine the name from AST alone.
     pub(super) computed_name_resolver: Option<&'a NodeIndexResolver<'a, Atom>>,
+    /// Arena-aware variant of `computed_name_resolver`. When set, receives
+    /// `(expr_idx, arena_ptr)` so the resolver can distinguish the same `NodeIndex`
+    /// value from different arenas (cross-arena merged-interface lowering).
+    /// Takes precedence over `computed_name_resolver` when both are set.
+    pub(super) computed_name_resolver_with_arena:
+        Option<&'a dyn Fn(NodeIndex, *const NodeArena) -> Option<Atom>>,
+    /// Optional metadata resolver for computed property expressions whose resolved
+    /// property name came from a symbol-valued computed name.
+    pub(super) computed_symbol_name_resolver: Option<&'a dyn Fn(NodeIndex) -> bool>,
+    /// Arena-aware variant of `computed_symbol_name_resolver`. Takes precedence
+    /// over `computed_symbol_name_resolver` when both are set.
+    pub(super) computed_symbol_name_resolver_with_arena:
+        Option<&'a dyn Fn(NodeIndex, *const NodeArena) -> bool>,
     /// Optional resolver for lazy type parameter metadata. This is used when
     /// a lowered lazy reference omits type arguments but all parameters have defaults.
     pub(super) lazy_type_params_resolver: Option<&'a LazyTypeParamsResolver<'a>>,
+    /// Optional compiler-controlled intrinsic replacement for the lib-only
+    /// `BuiltinIteratorReturn` alias.
+    pub(super) builtin_iterator_return_type: Option<TypeId>,
     /// When true, prefer identifier-text `DefId` resolution over raw NodeIndex-based
     /// resolution. This is needed for cross-arena lowering where the same `NodeIndex`
     /// may refer to different identifiers in different arenas.
@@ -80,6 +97,14 @@ pub struct TypeLowering<'a> {
     /// This enables flow-sensitive narrowing for `typeof expr` in type positions
     /// (e.g., inside type alias bodies where flow narrowing has already been computed).
     pub(super) type_query_override: Option<&'a NodeIndexResolver<'a, TypeId>>,
+    /// Optional import type resolver — resolves `TYPE_REFERENCE` nodes whose `type_name`
+    /// is or starts with an `import()` `CALL_EXPRESSION` to a pre-computed `TypeId`.
+    ///
+    /// `TypeLowering` cannot perform module resolution; the checker pre-resolves import
+    /// type references and supplies them through this callback. The argument is the full
+    /// `type_name` `NodeIndex` (either the `CALL_EXPRESSION` itself or the `QUALIFIED_NAME`
+    /// rooted in it). Returns `Some` when pre-resolved, `None` to fall through to `ERROR`.
+    pub(super) import_type_resolver: Option<&'a NodeIndexResolver<'a, TypeId>>,
     /// Operation counter to prevent infinite loops
     pub(super) operations: Rc<RefCell<u32>>,
     /// Whether the operation limit has been exceeded
@@ -94,7 +119,18 @@ pub(super) struct InterfaceParts {
     pub(super) call_signatures: Vec<CallSignature>,
     pub(super) construct_signatures: Vec<CallSignature>,
     pub(super) string_index: Option<IndexSignature>,
+    /// Additional string-keyed index signatures whose key type differs from
+    /// `string_index.key_type`. Merged into `string_index` via key-type union
+    /// in `finish_interface_parts`, where the type interner is available.
+    pub(super) extra_string_indices: Vec<IndexSignature>,
     pub(super) number_index: Option<IndexSignature>,
+    /// True when at least one member has a computed property name that could not
+    /// be resolved to a literal string/symbol key (e.g. `[sym]` where `sym` has
+    /// type `symbol` rather than a unique-symbol type).  The resulting object
+    /// type must carry `ObjectFlags::HAS_LATE_BOUND_MEMBERS` so that indexed
+    /// access via a `symbol`-typed key correctly returns `any` instead of
+    /// `undefined`.
+    pub(super) has_late_bound_members: bool,
     /// Base `declaration_order` for the current declaration pass.
     current_pass_base: u32,
     /// Counter within the current declaration pass.
@@ -115,6 +151,9 @@ pub(super) struct MethodOverloads {
     pub(super) signatures: Vec<CallSignature>,
     pub(super) optional: bool,
     pub(super) readonly: bool,
+    pub(super) is_symbol_named: bool,
+    pub(super) is_string_named: bool,
+    pub(super) single_quoted_name: bool,
     /// Declaration order of the first occurrence of this method, for diagnostic ordering.
     pub(super) declaration_order: u32,
 }
@@ -130,7 +169,9 @@ impl InterfaceParts {
             call_signatures: Vec::new(),
             construct_signatures: Vec::new(),
             string_index: None,
+            extra_string_indices: Vec::new(),
             number_index: None,
+            has_late_bound_members: false,
             current_pass_base: 0,
             pass_local_counter: 0,
             declaration_orders: rustc_hash::FxHashMap::default(),
@@ -223,6 +264,9 @@ impl InterfaceParts {
         signature: CallSignature,
         optional: bool,
         readonly: bool,
+        is_symbol_named: bool,
+        is_string_named: bool,
+        single_quoted_name: bool,
     ) {
         use indexmap::map::Entry;
 
@@ -234,6 +278,9 @@ impl InterfaceParts {
                     signatures: vec![signature],
                     optional,
                     readonly,
+                    is_symbol_named,
+                    is_string_named,
+                    single_quoted_name,
                     declaration_order: next_order,
                 }));
             }
@@ -242,6 +289,9 @@ impl InterfaceParts {
                     methods.signatures.push(signature);
                     methods.optional |= optional;
                     methods.readonly &= readonly;
+                    methods.is_symbol_named |= is_symbol_named;
+                    methods.is_string_named |= is_string_named;
+                    methods.single_quoted_name |= single_quoted_name;
                 }
                 PropertyMerge::Property(prop) => {
                     let order = prop.declaration_order;
@@ -268,19 +318,31 @@ impl InterfaceParts {
     }
 
     pub(super) fn merge_index_signature(&mut self, index: IndexSignature) {
-        let target = if index.key_type == TypeId::NUMBER {
-            &mut self.number_index
-        } else {
-            &mut self.string_index
-        };
+        if index.key_type == TypeId::NUMBER {
+            if let Some(existing) = self.number_index.as_mut() {
+                if existing.value_type != index.value_type || existing.readonly != index.readonly {
+                    existing.value_type = TypeId::ERROR;
+                    existing.readonly = false;
+                }
+            } else {
+                self.number_index = Some(index);
+            }
+            return;
+        }
 
-        if let Some(existing) = target.as_mut() {
-            if existing.value_type != index.value_type || existing.readonly != index.readonly {
-                existing.value_type = TypeId::ERROR;
-                existing.readonly = false;
+        if let Some(existing) = self.string_index.as_mut() {
+            if existing.key_type == index.key_type {
+                if existing.value_type != index.value_type || existing.readonly != index.readonly {
+                    existing.value_type = TypeId::ERROR;
+                    existing.readonly = false;
+                }
+            } else {
+                // Distinct pattern: defer key-type union to finish_interface_parts
+                // where the type interner is available.
+                self.extra_string_indices.push(index);
             }
         } else {
-            *target = Some(index);
+            self.string_index = Some(index);
         }
     }
 }
@@ -318,7 +380,11 @@ impl<'a> TypeLowering<'a> {
             def_id_resolver: resolvers.def_id_resolver,
             value_resolver: resolvers.value_resolver,
             computed_name_resolver: None,
+            computed_name_resolver_with_arena: None,
+            computed_symbol_name_resolver: None,
+            computed_symbol_name_resolver_with_arena: None,
             lazy_type_params_resolver: None,
+            builtin_iterator_return_type: None,
             prefer_name_def_id_resolution: false,
             preferred_self_name: None,
             preferred_self_def_id: None,
@@ -329,6 +395,7 @@ impl<'a> TypeLowering<'a> {
             operations: Rc::new(RefCell::new(0)),
             limit_exceeded: Rc::new(RefCell::new(false)),
             type_query_override: None,
+            import_type_resolver: None,
         }
     }
 
@@ -429,13 +496,18 @@ impl<'a> TypeLowering<'a> {
             def_id_resolver: self.def_id_resolver,
             value_resolver: self.value_resolver,
             computed_name_resolver: self.computed_name_resolver,
+            computed_name_resolver_with_arena: self.computed_name_resolver_with_arena,
+            computed_symbol_name_resolver: self.computed_symbol_name_resolver,
+            computed_symbol_name_resolver_with_arena: self.computed_symbol_name_resolver_with_arena,
             lazy_type_params_resolver: self.lazy_type_params_resolver,
+            builtin_iterator_return_type: self.builtin_iterator_return_type,
             prefer_name_def_id_resolution: self.prefer_name_def_id_resolution,
             preferred_self_name: self.preferred_self_name.clone(),
             preferred_self_def_id: self.preferred_self_def_id,
             name_def_id_resolver: self.name_def_id_resolver,
             strict_null_checks: self.strict_null_checks,
             type_query_override: self.type_query_override,
+            import_type_resolver: self.import_type_resolver,
             // Rc::clone() shares the underlying Rc instead of copying data
             type_param_scopes: Rc::clone(&self.type_param_scopes),
             typeof_param_scopes: Rc::clone(&self.typeof_param_scopes),
@@ -688,6 +760,38 @@ impl<'a> TypeLowering<'a> {
         self
     }
 
+    /// Arena-aware computed property name resolver. Receives `(expr_idx,
+    /// arena_ptr)` where `arena_ptr` is the currently-active declaration
+    /// arena. Use this instead of `with_computed_name_resolver` when
+    /// processing cross-arena merged interfaces, where the same `NodeIndex`
+    /// value can refer to different nodes in different arenas.
+    pub fn with_computed_name_resolver_with_arena(
+        mut self,
+        resolver: &'a dyn Fn(NodeIndex, *const NodeArena) -> Option<Atom>,
+    ) -> Self {
+        self.computed_name_resolver_with_arena = Some(resolver);
+        self
+    }
+
+    /// Set metadata for computed property names that are symbol-valued.
+    pub fn with_computed_symbol_name_resolver(
+        mut self,
+        resolver: &'a dyn Fn(NodeIndex) -> bool,
+    ) -> Self {
+        self.computed_symbol_name_resolver = Some(resolver);
+        self
+    }
+
+    /// Arena-aware variant of `with_computed_symbol_name_resolver`. Receives
+    /// `(expr_idx, arena_ptr)` alongside the node index.
+    pub fn with_computed_symbol_name_resolver_with_arena(
+        mut self,
+        resolver: &'a dyn Fn(NodeIndex, *const NodeArena) -> bool,
+    ) -> Self {
+        self.computed_symbol_name_resolver_with_arena = Some(resolver);
+        self
+    }
+
     /// Set the lazy type parameter resolver for applying omitted defaulted type arguments
     /// when lowering lazy references from interface members.
     pub fn with_lazy_type_params_resolver(
@@ -695,6 +799,14 @@ impl<'a> TypeLowering<'a> {
         resolver: &'a dyn Fn(DefId) -> Option<Vec<TypeParamInfo>>,
     ) -> Self {
         self.lazy_type_params_resolver = Some(resolver);
+        self
+    }
+
+    /// Replace lib `BuiltinIteratorReturn` references while lowering in
+    /// checker-controlled lib/source-file direct paths. Normal user lowering
+    /// leaves this unset so a user alias with the same name can still shadow it.
+    pub const fn with_builtin_iterator_return_type(mut self, ty: TypeId) -> Self {
+        self.builtin_iterator_return_type = Some(ty);
         self
     }
 
@@ -727,6 +839,20 @@ impl<'a> TypeLowering<'a> {
         resolver: &'a dyn Fn(NodeIndex) -> Option<TypeId>,
     ) -> Self {
         self.type_query_override = Some(resolver);
+        self
+    }
+
+    /// Attach an import-type resolver so that `TYPE_REFERENCE` nodes whose `type_name`
+    /// is or starts with an `import()` call can be resolved during lowering.
+    ///
+    /// The checker pre-resolves such references (which require module resolution) and
+    /// supplies this callback. Without it, `import("./x").Foo` in type position
+    /// (e.g. the extends clause of a conditional type) would lower to `TypeId::ERROR`.
+    pub fn with_import_type_resolver(
+        mut self,
+        resolver: &'a NodeIndexResolver<'a, TypeId>,
+    ) -> Self {
+        self.import_type_resolver = Some(resolver);
         self
     }
 
@@ -1072,7 +1198,7 @@ impl<'a> TypeLowering<'a> {
             // member list so the printer can render `0 | 1 | 2` in source
             // order even when the canonical sort uses non-deterministic
             // alloc-order for non-zero number literals.
-            let result = self.interner.union(members.clone());
+            let result = self.interner.union_literal_reduce(members.clone());
             self.interner.store_union_origin(result, members);
             result
         } else {
@@ -1213,7 +1339,7 @@ impl<'a> TypeLowering<'a> {
         (params, result)
     }
 
-    pub(super) fn collect_type_parameters(&self, list: &NodeList) -> Vec<TypeParamInfo> {
+    pub fn collect_type_parameters(&self, list: &NodeList) -> Vec<TypeParamInfo> {
         let mut param_names = Vec::with_capacity(list.nodes.len());
         for &idx in &list.nodes {
             let Some(node) = self.arena.get(idx) else {
@@ -1353,7 +1479,7 @@ impl<'a> TypeLowering<'a> {
                 && type_id != TypeId::ANY
                 && type_id != TypeId::UNKNOWN
                 && type_id != TypeId::ERROR
-                && !tsz_solver::type_contains_undefined(self.interner, type_id)
+                && !tsz_solver::narrowing::type_contains_undefined(self.interner, type_id)
             {
                 self.interner.union2(type_id, TypeId::UNDEFINED)
             } else {
@@ -1474,6 +1600,7 @@ impl<'a> TypeLowering<'a> {
             let mut construct_signatures = Vec::new();
             let mut string_index = None;
             let mut number_index = None;
+            let mut has_late_bound_members = false;
 
             for &idx in &data.members.nodes {
                 let Some(member) = self.arena.get(idx) else {
@@ -1490,6 +1617,10 @@ impl<'a> TypeLowering<'a> {
                         }
                         k if k == syntax_kind_ext::METHOD_SIGNATURE => {
                             if let Some(name) = self.lower_signature_name(sig.name) {
+                                let is_symbol_named =
+                                    self.lower_signature_name_is_symbol_named(sig.name);
+                                let (is_string_named, single_quoted_name) =
+                                    self.arena.string_property_name_flags(sig.name);
                                 let type_id = self.lower_method_signature(sig);
                                 properties.push(PropertyInfo {
                                     name,
@@ -1505,15 +1636,19 @@ impl<'a> TypeLowering<'a> {
                                     visibility: Visibility::Public,
                                     parent_id: None,
                                     declaration_order: 0,
-                                    is_string_named: false,
-                                    is_symbol_named: false,
-                                    single_quoted_name: false,
+                                    is_string_named,
+                                    is_symbol_named,
+                                    single_quoted_name,
                                 });
+                            } else if self.is_unresolved_computed_property_name(sig.name) {
+                                has_late_bound_members = true;
                             }
                         }
                         _ => {
                             if let Some(prop) = self.lower_type_element(idx) {
                                 properties.push(prop);
+                            } else if self.is_unresolved_computed_property_name(sig.name) {
+                                has_late_bound_members = true;
                             }
                         }
                     }
@@ -1537,6 +1672,9 @@ impl<'a> TypeLowering<'a> {
                     && let Some(accessor) = self.arena.get_accessor(member)
                     && let Some(name) = self.lower_signature_name(accessor.name)
                 {
+                    let is_symbol_named = self.lower_signature_name_is_symbol_named(accessor.name);
+                    let (is_string_named, single_quoted_name) =
+                        self.arena.string_property_name_flags(accessor.name);
                     let is_getter = member.kind == syntax_kind_ext::GET_ACCESSOR;
                     if is_getter {
                         let getter_type = self.lower_type(accessor.type_annotation);
@@ -1554,9 +1692,9 @@ impl<'a> TypeLowering<'a> {
                                 visibility: Visibility::Public,
                                 parent_id: None,
                                 declaration_order: 0,
-                                is_string_named: false,
-                                is_symbol_named: false,
-                                single_quoted_name: false,
+                                is_string_named,
+                                is_symbol_named,
+                                single_quoted_name,
                             });
                         }
                     } else {
@@ -1584,12 +1722,17 @@ impl<'a> TypeLowering<'a> {
                                 visibility: Visibility::Public,
                                 parent_id: None,
                                 declaration_order: 0,
-                                is_string_named: false,
-                                is_symbol_named: false,
-                                single_quoted_name: false,
+                                is_string_named,
+                                is_symbol_named,
+                                single_quoted_name,
                             });
                         }
                     }
+                } else if member.is_accessor()
+                    && let Some(accessor) = self.arena.get_accessor(member)
+                    && self.is_unresolved_computed_property_name(accessor.name)
+                {
+                    has_late_bound_members = true;
                 }
             }
 
@@ -1605,6 +1748,12 @@ impl<'a> TypeLowering<'a> {
                 });
             }
 
+            let flags = if has_late_bound_members {
+                ObjectFlags::HAS_LATE_BOUND_MEMBERS
+            } else {
+                ObjectFlags::empty()
+            };
+
             if string_index.is_some() || number_index.is_some() {
                 if !self.index_signature_properties_compatible(
                     &properties,
@@ -1617,11 +1766,12 @@ impl<'a> TypeLowering<'a> {
                     properties,
                     string_index,
                     number_index,
+                    flags,
                     ..ObjectShape::default()
                 });
             }
 
-            self.interner.object(properties)
+            self.interner.object_with_flags(properties, flags)
         } else {
             self.interner.object(vec![])
         }
@@ -1688,10 +1838,15 @@ impl<'a> TypeLowering<'a> {
 
         let collected_params = if let Some(params) = type_params {
             self.push_type_param_scope();
-            self.collect_type_parameters(params)
+            let collected = self.collect_type_parameters(params);
+            self.pop_type_param_scope();
+            collected
         } else {
             Vec::new()
         };
+
+        let saved_type_param_scopes = self.type_param_scopes.borrow().clone();
+        *self.type_param_scopes.borrow_mut() = Vec::new();
 
         // Process declarations in reverse order: TypeScript's interface merging
         // rule puts later declarations' members first for overload resolution.
@@ -1708,18 +1863,25 @@ impl<'a> TypeLowering<'a> {
             let Some(interface) = self.arena.get_interface(node) else {
                 continue;
             };
-            self.collect_interface_members(&interface.members, &mut parts);
+            if let Some(params) = &interface.type_parameters
+                && !params.nodes.is_empty()
+            {
+                self.push_type_param_scope();
+                let _ = self.collect_type_parameters(params);
+                self.collect_interface_members(&interface.members, &mut parts);
+                self.pop_type_param_scope();
+            } else {
+                self.collect_interface_members(&interface.members, &mut parts);
+            }
         }
+
+        *self.type_param_scopes.borrow_mut() = saved_type_param_scopes;
 
         // Assign declaration_order in FORWARD declaration order for diagnostics.
         // The reverse iteration above is needed for overload resolution priority,
         // but TS2740 "missing properties" messages should list properties in the
         // order they first appear across declarations (earliest declaration first).
         self.assign_forward_declaration_order(&mut parts, declarations.iter().copied());
-
-        if type_params.is_some() {
-            self.pop_type_param_scope();
-        }
 
         (
             self.finish_interface_parts(parts, symbol_id),
@@ -1869,18 +2031,34 @@ impl<'a> TypeLowering<'a> {
                     }
                     k if k == syntax_kind_ext::METHOD_SIGNATURE => {
                         if let Some(name) = self.lower_signature_name(sig.name) {
+                            let is_symbol_named =
+                                self.lower_signature_name_is_symbol_named(sig.name);
+                            let (is_string_named, single_quoted_name) =
+                                self.arena.string_property_name_flags(sig.name);
                             let mut signature = self.lower_call_signature(sig);
                             signature.is_method = true;
                             let readonly = self.arena.has_modifier(
                                 &sig.modifiers,
                                 tsz_scanner::SyntaxKind::ReadonlyKeyword,
                             );
-                            parts.merge_method(name, signature, sig.question_token, readonly);
+                            parts.merge_method(
+                                name,
+                                signature,
+                                sig.question_token,
+                                readonly,
+                                is_symbol_named,
+                                is_string_named,
+                                single_quoted_name,
+                            );
+                        } else if self.is_unresolved_computed_property_name(sig.name) {
+                            parts.has_late_bound_members = true;
                         }
                     }
                     _ => {
                         if let Some(prop) = self.lower_type_element(idx) {
                             parts.merge_property(prop);
+                        } else if self.is_unresolved_computed_property_name(sig.name) {
+                            parts.has_late_bound_members = true;
                         }
                     }
                 }
@@ -1895,11 +2073,13 @@ impl<'a> TypeLowering<'a> {
             }
 
             // Handle accessor declarations (get/set) in interfaces and type literals
-            if (member.kind == syntax_kind_ext::GET_ACCESSOR
-                || member.kind == syntax_kind_ext::SET_ACCESSOR)
+            if member.is_accessor()
                 && let Some(accessor) = self.arena.get_accessor(member)
                 && let Some(name) = self.lower_signature_name(accessor.name)
             {
+                let is_symbol_named = self.lower_signature_name_is_symbol_named(accessor.name);
+                let (is_string_named, single_quoted_name) =
+                    self.arena.string_property_name_flags(accessor.name);
                 let is_getter = member.kind == syntax_kind_ext::GET_ACCESSOR;
                 if is_getter {
                     let getter_type = self.lower_type(accessor.type_annotation);
@@ -1927,9 +2107,9 @@ impl<'a> TypeLowering<'a> {
                                 visibility: Visibility::Public,
                                 parent_id: None,
                                 declaration_order: order,
-                                is_string_named: false,
-                                is_symbol_named: false,
-                                single_quoted_name: false,
+                                is_string_named,
+                                is_symbol_named,
+                                single_quoted_name,
                             }));
                         }
                     }
@@ -1965,13 +2145,18 @@ impl<'a> TypeLowering<'a> {
                                 visibility: Visibility::Public,
                                 parent_id: None,
                                 declaration_order: order,
-                                is_string_named: false,
-                                is_symbol_named: false,
-                                single_quoted_name: false,
+                                is_string_named,
+                                is_symbol_named,
+                                single_quoted_name,
                             }));
                         }
                     }
                 }
+            } else if member.is_accessor()
+                && let Some(accessor) = self.arena.get_accessor(member)
+                && self.is_unresolved_computed_property_name(accessor.name)
+            {
+                parts.has_late_bound_members = true;
             }
         }
     }
@@ -2046,9 +2231,26 @@ impl<'a> TypeLowering<'a> {
 
     fn finish_interface_parts(
         &self,
-        parts: InterfaceParts,
+        mut parts: InterfaceParts,
         symbol_id: Option<tsz_binder::SymbolId>,
     ) -> TypeId {
+        // When an interface (or merged interface group) carries multiple string-keyed
+        // index signatures with distinct key patterns (e.g. `[k: \`data-${string}\`]`
+        // and `[k: \`aria-${string}\`]`), union their key types so that excess-property
+        // checking accepts a property whose name matches ANY of the patterns.
+        for extra in parts.extra_string_indices.drain(..) {
+            if let Some(ref mut existing) = parts.string_index {
+                existing.key_type = self.interner.union2(existing.key_type, extra.key_type);
+                if existing.value_type != extra.value_type {
+                    existing.value_type =
+                        self.interner.union2(existing.value_type, extra.value_type);
+                }
+                existing.readonly &= extra.readonly;
+            } else {
+                parts.string_index = Some(extra);
+            }
+        }
+
         let mut properties = Vec::with_capacity(parts.properties.len());
         for (name, entry) in parts.properties {
             // Use forward declaration order when available (corrects reverse iteration order)
@@ -2071,9 +2273,9 @@ impl<'a> TypeLowering<'a> {
                     visibility: Visibility::Public,
                     parent_id: None,
                     declaration_order: forward_order.unwrap_or(methods.declaration_order),
-                    is_string_named: false,
-                    is_symbol_named: false,
-                    single_quoted_name: false,
+                    is_string_named: methods.is_string_named,
+                    is_symbol_named: methods.is_symbol_named,
+                    single_quoted_name: methods.single_quoted_name,
                 });
             } else if let PropertyMerge::Property(mut prop) = entry {
                 if let Some(order) = forward_order {
@@ -2100,6 +2302,12 @@ impl<'a> TypeLowering<'a> {
             });
         }
 
+        let flags = if parts.has_late_bound_members {
+            ObjectFlags::HAS_LATE_BOUND_MEMBERS
+        } else {
+            ObjectFlags::empty()
+        };
+
         if parts.string_index.is_some() || parts.number_index.is_some() {
             if !self.index_signature_properties_compatible(
                 &properties,
@@ -2113,12 +2321,12 @@ impl<'a> TypeLowering<'a> {
                 string_index: parts.string_index,
                 number_index: parts.number_index,
                 symbol: symbol_id,
-                ..ObjectShape::default()
+                flags,
             });
         }
 
         self.interner
-            .object_with_flags_and_symbol(properties, Default::default(), symbol_id)
+            .object_with_flags_and_symbol(properties, flags, symbol_id)
     }
 
     fn lower_call_signature(&self, sig: &SignatureData) -> CallSignature {
@@ -2160,6 +2368,65 @@ impl<'a> TypeLowering<'a> {
         })
     }
 
+    pub fn lower_interface_member_simple_type(&self, member_idx: NodeIndex) -> Option<TypeId> {
+        let member = self.arena.get(member_idx)?;
+        let sig = self.arena.get_signature(member)?;
+
+        match member.kind {
+            k if k == syntax_kind_ext::METHOD_SIGNATURE => Some(self.lower_method_signature(sig)),
+            k if k == syntax_kind_ext::PROPERTY_SIGNATURE => {
+                let base = if sig.type_annotation.is_some() {
+                    self.lower_type(sig.type_annotation)
+                } else {
+                    TypeId::ANY
+                };
+                if sig.question_token {
+                    Some(self.interner.union(vec![base, TypeId::UNDEFINED]))
+                } else {
+                    Some(base)
+                }
+            }
+            _ => None,
+        }
+    }
+
+    pub fn lower_interface_members_simple_types(
+        &self,
+        interface_idx: NodeIndex,
+        member_indices: &[NodeIndex],
+    ) -> Option<LoweredInterfaceMemberTypes> {
+        let interface = self
+            .arena
+            .get(interface_idx)
+            .and_then(|node| self.arena.get_interface(node))?;
+
+        let params = if let Some(type_params) = &interface.type_parameters
+            && !type_params.nodes.is_empty()
+        {
+            self.push_type_param_scope();
+            Some(self.collect_type_parameters(type_params))
+        } else {
+            None
+        };
+
+        let mut lowered = Vec::with_capacity(member_indices.len());
+        for &member_idx in member_indices {
+            let Some(member_type) = self.lower_interface_member_simple_type(member_idx) else {
+                if params.is_some() {
+                    self.pop_type_param_scope();
+                }
+                return None;
+            };
+            lowered.push((member_idx, member_type));
+        }
+
+        if params.is_some() {
+            self.pop_type_param_scope();
+        }
+
+        Some((params.unwrap_or_default(), lowered))
+    }
+
     fn lower_signature_params(&self, sig: &SignatureData) -> (Vec<ParamInfo>, Option<TypeId>) {
         let Some(params) = &sig.parameters else {
             return (Vec::new(), None);
@@ -2192,14 +2459,56 @@ impl<'a> TypeLowering<'a> {
                 return Some(self.interner.intern_string(&symbol_name));
             }
             // Try the computed name resolver for user-defined computed properties
-            // (e.g., [k] where k is a unique symbol variable)
-            if let Some(resolver) = self.computed_name_resolver
+            // (e.g., [k] where k is a unique symbol variable). The arena-aware
+            // variant takes precedence: it distinguishes the same NodeIndex value
+            // across different arenas (cross-arena merged-interface lowering).
+            let arena_ptr: *const NodeArena = self.arena;
+            if let Some(resolver) = self.computed_name_resolver_with_arena
+                && let Some(name) = resolver(computed.expression, arena_ptr)
+            {
+                return Some(name);
+            } else if let Some(resolver) = self.computed_name_resolver
                 && let Some(name) = resolver(computed.expression)
             {
                 return Some(name);
             }
         }
         None
+    }
+
+    /// Returns true when `name_idx` refers to a `COMPUTED_PROPERTY_NAME` node whose
+    /// expression could not be resolved to a static string/symbol key by
+    /// `lower_signature_name`. Callers use this after `lower_signature_name`
+    /// returned `None` to distinguish "genuinely unresolvable computed name"
+    /// (which implies a late-bound member) from "missing or malformed node".
+    fn is_unresolved_computed_property_name(&self, name_idx: NodeIndex) -> bool {
+        self.arena
+            .get(name_idx)
+            .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+    }
+
+    fn lower_signature_name_is_symbol_named(&self, node_idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+        let Some(computed) = self.arena.get_computed_property(node) else {
+            return false;
+        };
+        if self
+            .get_well_known_symbol_name(computed.expression)
+            .is_some()
+        {
+            return true;
+        }
+        let arena_ptr: *const NodeArena = self.arena;
+        if let Some(resolver) = self.computed_symbol_name_resolver_with_arena {
+            return resolver(computed.expression, arena_ptr);
+        }
+        self.computed_symbol_name_resolver
+            .is_some_and(|resolver| resolver(computed.expression))
     }
 
     /// Try to resolve a computed property expression to a well-known symbol name.
@@ -2268,6 +2577,9 @@ impl<'a> TypeLowering<'a> {
         if let Some(sig) = self.arena.get_signature(node) {
             // Get property name as Arc<str>
             let name = self.lower_signature_name(sig.name)?;
+            let is_symbol_named = self.lower_signature_name_is_symbol_named(sig.name);
+            let (is_string_named, single_quoted_name) =
+                self.arena.string_property_name_flags(sig.name);
 
             // Check for readonly modifier
             let readonly = self
@@ -2290,9 +2602,9 @@ impl<'a> TypeLowering<'a> {
                 visibility,
                 parent_id: None, // Type literals don't have parent_id
                 declaration_order: 0,
-                is_string_named: false,
-                is_symbol_named: false,
-                single_quoted_name: false,
+                is_string_named,
+                is_symbol_named,
+                single_quoted_name,
             })
         } else {
             None
@@ -2309,7 +2621,7 @@ mod constructor_parity_tests {
     //! field that is not a resolver. These tests fail the build if a future
     //! change drifts one constructor's defaults away from the rest.
     use super::*;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     fn assert_invariant_defaults(lowering: &TypeLowering<'_>) {
         // Caches/shared state must always start fresh.

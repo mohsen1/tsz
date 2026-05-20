@@ -1525,7 +1525,7 @@ mod tests {
     use tsz_binder::BinderState;
     use tsz_parser::parser::ParserState;
     use tsz_parser::parser::node::NodeAccess;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     fn enclosing_expression_statement(parser: &ParserState, idx: NodeIndex) -> Option<NodeIndex> {
         let mut current = idx;

@@ -852,11 +852,32 @@ impl BinderState {
                         if exported_symbols.iter().any(|(n, _)| n == name) {
                             continue;
                         }
-                        if let Some(sym_id) = self
+                        if let Some(mut sym_id) = self
                             .current_scope
                             .get(name)
                             .or_else(|| self.file_locals.get(name))
                         {
+                            if self
+                                .symbols
+                                .get(sym_id)
+                                .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::ALIAS))
+                                && let Some(type_sym_id) =
+                                    self.symbols.find_all_by_name(name).iter().copied().find(
+                                        |&candidate_id| {
+                                            candidate_id != sym_id
+                                                && self.symbols.get(candidate_id).is_some_and(
+                                                    |candidate| {
+                                                        candidate
+                                                            .has_any_flags(symbol_flags::TYPE_ALIAS)
+                                                            && !candidate
+                                                                .has_any_flags(symbol_flags::VALUE)
+                                                    },
+                                                )
+                                        },
+                                    )
+                            {
+                                sym_id = type_sym_id;
+                            }
                             if let Some(module_sym) = self.symbols.get_mut(module_symbol_id) {
                                 let exports = module_sym
                                     .exports

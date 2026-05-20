@@ -3,9 +3,9 @@ use std::fs;
 use std::path::Path;
 use tsz_binder::BinderState;
 use tsz_parser::parser::node::NodeArena;
-use tsz_solver::{
-    CompatChecker, FunctionShape, ParamInfo, RelationCacheKey, TypeId, TypeInterner, Visibility,
-};
+use tsz_solver::computation::CompatChecker;
+use tsz_solver::construction::TypeInterner;
+use tsz_solver::{FunctionShape, ParamInfo, RelationCacheKey, TypeId, Visibility};
 
 fn make_animal_and_dog(interner: &TypeInterner) -> (TypeId, TypeId) {
     let animal_name = interner.intern_string("name");
@@ -390,7 +390,7 @@ fn test_no_direct_type_queries_data_access_outside_query_boundaries() {
 }
 
 /// Architecture contract: checker code outside `query_boundaries/` and `tests/`
-/// must not construct `tsz_solver::RelationPolicy` or `tsz_solver::RelationContext`
+/// must not construct `tsz_solver::relations::relation_queries::RelationPolicy` or `tsz_solver::relations::relation_queries::RelationContext`
 /// directly.
 ///
 /// These solver-internal policy types should only be constructed inside
@@ -431,8 +431,8 @@ fn test_no_direct_relation_policy_construction_outside_query_boundaries() {
             if trimmed.starts_with("//") {
                 continue;
             }
-            if line.contains("tsz_solver::RelationPolicy")
-                || line.contains("tsz_solver::RelationContext")
+            if line.contains("tsz_solver::relations::relation_queries::RelationPolicy")
+                || line.contains("tsz_solver::relations::relation_queries::RelationContext")
             {
                 violations.push(format!("{}:{}: {}", rel, line_index + 1, trimmed));
             }
@@ -448,6 +448,85 @@ fn test_no_direct_relation_policy_construction_outside_query_boundaries() {
             violations.join("\n  ")
         );
     }
+}
+
+#[test]
+fn test_diagnostic_paths_do_not_branch_on_file_name_substrings() {
+    fn collect_rs_files(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
+        let entries = match fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+        for entry in entries {
+            let entry = entry.expect("failed to read checker source directory entry");
+            let path = entry.path();
+            if path.is_dir() {
+                collect_rs_files(&path, files);
+            } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+                files.push(path);
+            }
+        }
+    }
+
+    let mut files = Vec::new();
+    for dir in ["src/assignability", "src/checkers", "src/error_reporter"] {
+        collect_rs_files(Path::new(dir), &mut files);
+    }
+
+    let mut violations = Vec::new();
+    for path in files {
+        let src = fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+        for (line_index, line) in src.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            if line.contains("file_name.contains(") {
+                violations.push(format!(
+                    "{}:{}: {}",
+                    path.display(),
+                    line_index + 1,
+                    trimmed
+                ));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "diagnostic/checker paths must not branch on file-name substrings; use semantic or syntax facts instead:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn test_diagnostic_source_preservation_does_not_hardcode_mapped_iterator_names() {
+    let files = [
+        "src/error_reporter/core/diagnostic_source/assignment_source_preservation.rs",
+        "src/error_reporter/core/diagnostic_source/assignment_formatting.rs",
+    ];
+    let mut violations = Vec::new();
+
+    for path in files {
+        let src = fs::read_to_string(path)
+            .unwrap_or_else(|_| panic!("failed to read diagnostic-source file {path}"));
+        for (line_index, line) in src.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") || trimmed.starts_with("///") {
+                continue;
+            }
+            if line.contains("[P in ") || line.contains("[K in ") {
+                violations.push(format!("{}:{}: {}", path, line_index + 1, trimmed));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "diagnostic source preservation must recognize mapped clauses by syntax shape, not hardcoded iterator names:\n{}",
+        violations.join("\n")
+    );
 }
 
 #[test]
@@ -470,7 +549,7 @@ fn test_ambient_signature_checks_uses_assignability_query_boundary_helpers() {
 }
 
 /// Architecture contract: checker code outside `query_boundaries/` and `tests/`
-/// must not construct `tsz_solver::TypeEvaluator` directly.
+/// must not construct `tsz_solver::computation::TypeEvaluator` directly.
 ///
 /// `TypeEvaluator` is the solver's internal evaluation engine. Checker code should
 /// use the boundary wrappers in `query_boundaries/state/type_environment.rs`
@@ -513,7 +592,7 @@ fn test_no_direct_type_evaluator_construction_outside_query_boundaries() {
             }
             if line.contains("TypeEvaluator::with_resolver")
                 || line.contains("TypeEvaluator::new(")
-                || line.contains("use tsz_solver::TypeEvaluator")
+                || line.contains("use tsz_solver::computation::TypeEvaluator")
             {
                 violations.push(format!("{}:{}: {}", rel, line_index + 1, trimmed));
             }
@@ -598,4 +677,38 @@ fn test_no_direct_type_data_pattern_matching_outside_query_boundaries() {
             violations.join("\n  ")
         );
     }
+}
+
+#[test]
+fn test_js_global_fallback_relocation_does_not_branch_on_rendered_messages() {
+    let path = Path::new("src/assignability/assignment_checker/js_global_fallback.rs");
+    let source =
+        fs::read_to_string(path).unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+
+    let forbidden = [
+        "message_text.contains(",
+        "message_text.starts_with(",
+        "message_text.ends_with(",
+    ];
+    let violations: Vec<_> = source
+        .lines()
+        .enumerate()
+        .filter_map(|(line_index, line)| {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                return None;
+            }
+            forbidden
+                .iter()
+                .any(|needle| line.contains(needle))
+                .then(|| format!("{}:{}: {}", path.display(), line_index + 1, trimmed))
+        })
+        .collect();
+
+    assert!(
+        violations.is_empty(),
+        "JS global fallback relocation should use AST shape, span, and diagnostic code for \
+         decisions, not rendered diagnostic message text.\nViolations:\n  {}",
+        violations.join("\n  ")
+    );
 }

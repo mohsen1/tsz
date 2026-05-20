@@ -36,12 +36,13 @@ mod state_import_attributes;
 mod state_statements;
 mod state_statements_class;
 mod state_statements_class_members;
+mod state_type_parameters;
 mod state_types;
 mod state_types_jsx;
 
 #[cfg(test)]
 #[path = "../../tests/test_fixture.rs"]
-mod test_fixture;
+pub(crate) mod test_fixture;
 
 #[cfg(test)]
 #[path = "../../tests/parser_improvement_tests.rs"]

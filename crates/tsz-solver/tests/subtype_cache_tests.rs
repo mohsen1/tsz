@@ -9,11 +9,41 @@
 //! - Preserves correctness through `SubtypeChecker` with `QueryDatabase`
 //! - Separates subtype and assignability caches (no cross-contamination)
 
-use super::*;
-use crate::caches::query_cache::{QueryCache, subtype_cache_config_from_legacy_flags};
+use crate::caches::db::QueryDatabase;
+use crate::caches::query_cache::QueryCache;
+use crate::construction::RelationCacheProbe;
 use crate::intern::TypeInterner;
+use crate::relations::relation_queries::RelationPolicy;
 use crate::relations::subtype::SubtypeChecker;
-use crate::types::{PropertyInfo, RelationCacheKey, TypeId};
+use crate::types::{PropertyInfo, RelationCacheConfig, RelationCacheKey, RelationFlags, TypeId};
+
+fn assert_repeated_subtype_check_reuses_entries(
+    db: &QueryCache<'_>,
+    source: TypeId,
+    target: TypeId,
+    expected: bool,
+) -> usize {
+    assert_eq!(
+        db.is_subtype_of(source, target),
+        expected,
+        "first subtype check returned an unexpected result"
+    );
+    let entries_after_first = db.relation_cache_stats().subtype_entries;
+
+    assert_eq!(
+        db.is_subtype_of(source, target),
+        expected,
+        "repeated subtype check returned an unexpected result"
+    );
+    let entries_after_second = db.relation_cache_stats().subtype_entries;
+
+    assert_eq!(
+        entries_after_second, entries_after_first,
+        "repeated subtype check should reuse the existing cache entry"
+    );
+
+    entries_after_first
+}
 
 // =============================================================================
 // Cache Hit Tests
@@ -30,24 +60,11 @@ fn cache_hit_after_positive_subtype_check() {
 
     let hello = interner.literal_string("hello");
 
-    // First check: "hello" <: string (true, requires structural check)
-    assert!(db.is_subtype_of(hello, TypeId::STRING));
-
-    let stats_after_first = db.relation_cache_stats();
-    let entries_after_first = stats_after_first.subtype_entries;
+    let entries_after_first =
+        assert_repeated_subtype_check_reuses_entries(&db, hello, TypeId::STRING, true);
     assert!(
         entries_after_first >= 1,
         "Cache should have at least 1 entry after first check"
-    );
-
-    // Second check: same pair should be a cache hit
-    assert!(db.is_subtype_of(hello, TypeId::STRING));
-
-    let stats_after_second = db.relation_cache_stats();
-    // Entry count should not grow on cache hit
-    assert_eq!(
-        stats_after_second.subtype_entries, entries_after_first,
-        "Cache entries should not grow on cache hit"
     );
 }
 
@@ -58,19 +75,7 @@ fn cache_hit_with_literal_types() {
 
     let hello = interner.literal_string("hello");
 
-    // "hello" <: string is true
-    assert!(db.is_subtype_of(hello, TypeId::STRING));
-
-    let entries_first = db.relation_cache_stats().subtype_entries;
-
-    // Repeated check should hit cache
-    assert!(db.is_subtype_of(hello, TypeId::STRING));
-
-    let entries_second = db.relation_cache_stats().subtype_entries;
-    assert_eq!(
-        entries_first, entries_second,
-        "Cache entry count should not grow on hit"
-    );
+    assert_repeated_subtype_check_reuses_entries(&db, hello, TypeId::STRING, true);
 }
 
 #[test]
@@ -88,14 +93,7 @@ fn cache_hit_with_object_types() {
     ]);
     let narrow_obj = interner.object(vec![PropertyInfo::new(name_atom, TypeId::STRING)]);
 
-    let result1 = db.is_subtype_of(wider_obj, narrow_obj);
-    let entries1 = db.relation_cache_stats().subtype_entries;
-
-    let result2 = db.is_subtype_of(wider_obj, narrow_obj);
-    let entries2 = db.relation_cache_stats().subtype_entries;
-
-    assert_eq!(result1, result2, "Results must be identical");
-    assert_eq!(entries1, entries2, "Cache should not grow on cache hit");
+    assert_repeated_subtype_check_reuses_entries(&db, wider_obj, narrow_obj, true);
 }
 
 // =============================================================================
@@ -156,18 +154,9 @@ fn negative_result_is_cached() {
     let db = QueryCache::new(&interner);
 
     // string </: number (false)
-    assert!(!db.is_subtype_of(TypeId::STRING, TypeId::NUMBER));
-    let entries1 = db.relation_cache_stats().subtype_entries;
-    assert!(entries1 >= 1, "Failed check should be cached");
-
-    // Repeat: should be cache hit
-    assert!(!db.is_subtype_of(TypeId::STRING, TypeId::NUMBER));
-    let entries2 = db.relation_cache_stats().subtype_entries;
-
-    assert_eq!(
-        entries1, entries2,
-        "Negative result cache hit should not grow entries"
-    );
+    let entries_after_first =
+        assert_repeated_subtype_check_reuses_entries(&db, TypeId::STRING, TypeId::NUMBER, false);
+    assert!(entries_after_first >= 1, "Failed check should be cached");
 }
 
 #[test]
@@ -185,16 +174,7 @@ fn negative_cache_with_object_types() {
         PropertyInfo::new(age_atom, TypeId::NUMBER),
     ]);
 
-    assert!(!db.is_subtype_of(source, target));
-    let entries1 = db.relation_cache_stats().subtype_entries;
-
-    assert!(!db.is_subtype_of(source, target));
-    let entries2 = db.relation_cache_stats().subtype_entries;
-
-    assert_eq!(
-        entries1, entries2,
-        "Negative object subtype result should be cached"
-    );
+    assert_repeated_subtype_check_reuses_entries(&db, source, target, false);
 }
 
 // =============================================================================
@@ -400,15 +380,19 @@ fn cache_key_includes_flags() {
 
     let hello = interner.literal_string("hello");
 
-    // Check with default flags (0) — use non-trivial pair to avoid fast-path
-    db.is_subtype_of_with_flags(hello, TypeId::STRING, 0);
+    // Check with default compatibility policy — use non-trivial pair to avoid fast-path
+    db.is_subtype_of_with_policy(
+        hello,
+        TypeId::STRING,
+        RelationPolicy::unflagged_compatibility(),
+    );
     let entries_default = db.relation_cache_stats().subtype_entries;
 
     // Check with strict null checks flag (1)
-    db.is_subtype_of_with_flags(
+    db.is_subtype_of_with_policy(
         hello,
         TypeId::STRING,
-        RelationCacheKey::FLAG_STRICT_NULL_CHECKS,
+        RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_NULL_CHECKS),
     );
     let entries_strict = db.relation_cache_stats().subtype_entries;
 
@@ -424,8 +408,16 @@ fn cache_key_includes_flags() {
 
 #[test]
 fn relation_cache_key_subtype_vs_assignable() {
-    let key_sub = RelationCacheKey::subtype(TypeId::STRING, TypeId::NUMBER, 0, 0);
-    let key_assign = RelationCacheKey::assignability(TypeId::STRING, TypeId::NUMBER, 0, 0);
+    let key_sub = RelationCacheKey::for_subtype(
+        TypeId::STRING,
+        TypeId::NUMBER,
+        RelationCacheConfig::default(),
+    );
+    let key_assign = RelationCacheKey::for_assignability(
+        TypeId::STRING,
+        TypeId::NUMBER,
+        RelationCacheConfig::default(),
+    );
 
     assert_ne!(
         key_sub, key_assign,
@@ -435,8 +427,16 @@ fn relation_cache_key_subtype_vs_assignable() {
 
 #[test]
 fn relation_cache_key_different_source_target() {
-    let key_ab = RelationCacheKey::subtype(TypeId::STRING, TypeId::NUMBER, 0, 0);
-    let key_ba = RelationCacheKey::subtype(TypeId::NUMBER, TypeId::STRING, 0, 0);
+    let key_ab = RelationCacheKey::for_subtype(
+        TypeId::STRING,
+        TypeId::NUMBER,
+        RelationCacheConfig::default(),
+    );
+    let key_ba = RelationCacheKey::for_subtype(
+        TypeId::NUMBER,
+        TypeId::STRING,
+        RelationCacheConfig::default(),
+    );
 
     assert_ne!(
         key_ab, key_ba,
@@ -446,8 +446,16 @@ fn relation_cache_key_different_source_target() {
 
 #[test]
 fn relation_cache_key_same_pair_same_key() {
-    let key1 = RelationCacheKey::subtype(TypeId::STRING, TypeId::NUMBER, 0, 0);
-    let key2 = RelationCacheKey::subtype(TypeId::STRING, TypeId::NUMBER, 0, 0);
+    let key1 = RelationCacheKey::for_subtype(
+        TypeId::STRING,
+        TypeId::NUMBER,
+        RelationCacheConfig::default(),
+    );
+    let key2 = RelationCacheKey::for_subtype(
+        TypeId::STRING,
+        TypeId::NUMBER,
+        RelationCacheConfig::default(),
+    );
 
     assert_eq!(
         key1, key2,
@@ -457,12 +465,15 @@ fn relation_cache_key_same_pair_same_key() {
 
 #[test]
 fn relation_cache_key_different_flags_different_key() {
-    let key_default = RelationCacheKey::subtype(TypeId::STRING, TypeId::NUMBER, 0, 0);
-    let key_strict = RelationCacheKey::subtype(
+    let key_default = RelationCacheKey::for_subtype(
         TypeId::STRING,
         TypeId::NUMBER,
-        RelationCacheKey::FLAG_STRICT_NULL_CHECKS,
-        0,
+        RelationCacheConfig::default(),
+    );
+    let key_strict = RelationCacheKey::for_subtype(
+        TypeId::STRING,
+        TypeId::NUMBER,
+        RelationCacheConfig::from_flags(RelationFlags::STRICT_NULL_CHECKS),
     );
 
     assert_ne!(
@@ -530,10 +541,14 @@ fn probe_returns_miss_before_check() {
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
 
-    let key = RelationCacheKey::subtype(TypeId::STRING, TypeId::UNKNOWN, 0, 0);
+    let key = RelationCacheKey::for_subtype(
+        TypeId::STRING,
+        TypeId::UNKNOWN,
+        RelationCacheConfig::default(),
+    );
     assert_eq!(
         db.probe_subtype_cache(key),
-        crate::RelationCacheProbe::MissNotCached
+        RelationCacheProbe::MissNotCached
     );
 }
 
@@ -547,16 +562,13 @@ fn probe_returns_hit_after_check() {
     // Do a non-trivial check to populate cache (trivial pairs use fast-path)
     assert!(db.is_subtype_of(hello, TypeId::STRING));
 
-    // Probe with the canonical cache config for `is_subtype_of_with_flags(0)`.
+    // Probe with the canonical cache config for the unflagged compatibility policy.
     let key = RelationCacheKey::for_subtype(
         hello,
         TypeId::STRING,
-        subtype_cache_config_from_legacy_flags(0),
+        RelationPolicy::from_flags(0).cache_config(),
     );
-    assert_eq!(
-        db.probe_subtype_cache(key),
-        crate::RelationCacheProbe::Hit(true)
-    );
+    assert_eq!(db.probe_subtype_cache(key), RelationCacheProbe::Hit(true));
 }
 
 #[test]
@@ -569,12 +581,9 @@ fn probe_negative_hit_after_failed_check() {
     let key = RelationCacheKey::for_subtype(
         TypeId::STRING,
         TypeId::NUMBER,
-        subtype_cache_config_from_legacy_flags(0),
+        RelationPolicy::from_flags(0).cache_config(),
     );
-    assert_eq!(
-        db.probe_subtype_cache(key),
-        crate::RelationCacheProbe::Hit(false)
-    );
+    assert_eq!(db.probe_subtype_cache(key), RelationCacheProbe::Hit(false));
 }
 
 // =============================================================================
@@ -699,4 +708,88 @@ fn fast_path_error_is_bivariant() {
     assert!(db.is_subtype_of(TypeId::STRING, TypeId::ERROR));
     assert!(db.is_subtype_of(TypeId::ERROR, TypeId::NUMBER));
     assert!(db.is_subtype_of(TypeId::NUMBER, TypeId::ERROR));
+}
+
+// =============================================================================
+// Compiler-option flips mid-session must yield fresh relation answers.
+//
+// This is the acceptance criterion from the issue: when an LSP/project
+// session changes a compiler option such as `strictNullChecks` or
+// `exactOptionalPropertyTypes`, the relation cache must not serve stale
+// results from the previous flag value. With `RelationCacheKey` keying on
+// the relevant flags, the previous slot becomes unreachable and the new
+// query computes a fresh answer.
+// =============================================================================
+
+#[test]
+fn strict_null_checks_flip_yields_fresh_answer_via_shared_cache() {
+    // `null <: string` is FALSE under strict-null-checks (null is a
+    // distinct bottom-ish type) and TRUE under non-strict (where `null`
+    // and `undefined` are absorbed into every type). A single shared
+    // `QueryCache` must serve each mode's answer independently — flipping
+    // the flag mid-session must produce a fresh answer rather than
+    // returning the cached one from the other mode.
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let mut strict_checker = SubtypeChecker::new(&interner).with_query_db(&db);
+    strict_checker.strict_null_checks = true;
+    let strict_result = strict_checker.is_subtype_of(TypeId::NULL, TypeId::STRING);
+
+    let mut loose_checker = SubtypeChecker::new(&interner).with_query_db(&db);
+    loose_checker.strict_null_checks = false;
+    let loose_result = loose_checker.is_subtype_of(TypeId::NULL, TypeId::STRING);
+
+    assert_ne!(
+        strict_result, loose_result,
+        "null <: string must observably differ between strict and non-strict null-checks"
+    );
+
+    // Repeating each query in its own mode must remain stable (no
+    // cross-contamination), proving both cache slots coexist.
+    let mut strict_again = SubtypeChecker::new(&interner).with_query_db(&db);
+    strict_again.strict_null_checks = true;
+    assert_eq!(
+        strict_again.is_subtype_of(TypeId::NULL, TypeId::STRING),
+        strict_result,
+        "strict-null-checks slot must be stable after a non-strict query"
+    );
+
+    let mut loose_again = SubtypeChecker::new(&interner).with_query_db(&db);
+    loose_again.strict_null_checks = false;
+    assert_eq!(
+        loose_again.is_subtype_of(TypeId::NULL, TypeId::STRING),
+        loose_result,
+        "non-strict null-checks slot must be stable after a strict query"
+    );
+}
+
+#[test]
+fn flag_flip_does_not_reuse_stale_cache_entry() {
+    // Pin the cache-keying contract end-to-end: insert a result under one
+    // policy slot, flip a flag, and demonstrate that the query under the
+    // flipped policy does NOT observe the stale entry.
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let lit = interner.literal_string("flag-flip");
+
+    let checker_strict = SubtypeChecker::new(&interner).with_query_db(&db);
+    let key_strict = checker_strict.debug_cache_key_for(lit, TypeId::STRING);
+
+    let mut checker_loose = SubtypeChecker::new(&interner).with_query_db(&db);
+    checker_loose.strict_null_checks = false;
+    let key_loose = checker_loose.debug_cache_key_for(lit, TypeId::STRING);
+
+    assert_ne!(
+        key_strict, key_loose,
+        "strict_null_checks must produce distinct cache keys"
+    );
+
+    db.insert_subtype_cache(key_strict, false);
+
+    assert_eq!(
+        db.lookup_subtype_cache(key_loose),
+        None,
+        "flag flip must not serve the previous-mode cache entry"
+    );
 }

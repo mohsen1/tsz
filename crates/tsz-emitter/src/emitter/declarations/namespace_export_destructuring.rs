@@ -2,7 +2,105 @@ use crate::emitter::Printer;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 
+pub(in crate::emitter) struct SimpleNamespaceBindingExport {
+    export_name: String,
+    access: NamespaceBindingExportAccess,
+}
+
+enum NamespaceBindingExportAccess {
+    Property(String),
+    Element(usize),
+}
+
 impl<'a> Printer<'a> {
+    pub(in crate::emitter) fn simple_namespace_binding_export(
+        &self,
+        pattern_idx: NodeIndex,
+    ) -> Option<SimpleNamespaceBindingExport> {
+        let pattern_node = self.arena.get(pattern_idx)?;
+        if pattern_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN
+            && pattern_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN
+        {
+            return None;
+        }
+        let pattern = self.arena.get_binding_pattern(pattern_node)?;
+
+        let mut found = None;
+        for (index, &element_idx) in pattern.elements.nodes.iter().enumerate() {
+            let element_node = self.arena.get(element_idx)?;
+            if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                continue;
+            }
+            let element = self.arena.get_binding_element(element_node)?;
+            if element.dot_dot_dot_token || found.is_some() {
+                return None;
+            }
+            let export_name = self.binding_element_export_name(element.name)?;
+            let access = if pattern_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
+                NamespaceBindingExportAccess::Element(index)
+            } else {
+                let prop_idx = if element.property_name.is_some() {
+                    element.property_name
+                } else {
+                    element.name
+                };
+                NamespaceBindingExportAccess::Property(self.binding_element_export_name(prop_idx)?)
+            };
+            found = Some(SimpleNamespaceBindingExport {
+                export_name,
+                access,
+            });
+        }
+        found
+    }
+
+    pub(in crate::emitter) fn emit_simple_namespace_binding_export(
+        &mut self,
+        ns_name: &str,
+        initializer: NodeIndex,
+        binding: &SimpleNamespaceBindingExport,
+        wrote_any: &mut bool,
+    ) {
+        self.write_namespace_export_separator(wrote_any);
+        self.write(ns_name);
+        self.write(".");
+        self.write(&binding.export_name);
+        self.write(" = ");
+        self.emit_expression(initializer);
+        match &binding.access {
+            NamespaceBindingExportAccess::Property(prop_name) => {
+                if self
+                    .arena
+                    .get(initializer)
+                    .is_some_and(|n| n.is_numeric_literal())
+                {
+                    self.write(".");
+                }
+                self.write(".");
+                self.write(prop_name);
+            }
+            NamespaceBindingExportAccess::Element(index) => {
+                self.write("[");
+                self.write(&index.to_string());
+                self.write("]");
+            }
+        }
+    }
+
+    pub(in crate::emitter) fn can_inline_simple_namespace_binding_initializer(
+        &self,
+        idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+
+        node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+            || node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            || node.is_string_literal()
+            || node.is_numeric_literal()
+    }
+
     pub(in crate::emitter) fn reserve_namespace_destructuring_export_temps(
         &mut self,
         module: &tsz_parser::parser::node::ModuleData,
@@ -57,6 +155,9 @@ impl<'a> Printer<'a> {
                     }
                     if let Some(name_node) = self.arena.get(decl.name)
                         && name_node.is_binding_pattern()
+                        && (self.simple_namespace_binding_export(decl.name).is_none()
+                            || !self
+                                .can_inline_simple_namespace_binding_initializer(decl.initializer))
                     {
                         let temp = self.get_temp_var_name();
                         temps_by_decl.insert(decl_idx, temp.clone());

@@ -2827,7 +2827,7 @@ impl<'a> CheckerState<'a> {
         let Some(source_file) = target_arena.source_files.first() else {
             return false;
         };
-        source_file.file_name.contains("/node_modules/")
+        path_has_node_modules_segment(&source_file.file_name)
     }
 
     /// Returns `true` if `specifier` resolves to a non-declaration TypeScript input
@@ -2857,9 +2857,15 @@ impl<'a> CheckerState<'a> {
     }
 }
 
+fn path_has_node_modules_segment(file_name: &str) -> bool {
+    file_name
+        .split(['/', '\\'])
+        .any(|component| component == "node_modules")
+}
+
 #[cfg(test)]
 mod tests {
-    use super::ts_extension_suffix;
+    use super::{path_has_node_modules_segment, ts_extension_suffix};
     use crate::context::{CheckerOptions, ScriptTarget};
     use crate::module_resolution::build_module_resolution_maps;
     use crate::state::CheckerState;
@@ -2867,7 +2873,7 @@ mod tests {
     use tsz_binder::BinderState;
     use tsz_common::common::ModuleKind;
     use tsz_parser::parser::ParserState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     #[test]
     fn ts_extension_detects_ts() {
@@ -2887,6 +2893,26 @@ mod tests {
     #[test]
     fn ts_extension_detects_cts() {
         assert_eq!(ts_extension_suffix("./foo.cts"), Some(".cts"));
+    }
+
+    #[test]
+    fn import_external_library_check_uses_node_modules_path_segment() {
+        assert!(path_has_node_modules_segment(
+            "/repo/node_modules/pkg/index.d.ts"
+        ));
+        assert!(path_has_node_modules_segment(
+            r"C:\repo\node_modules\pkg\index.d.ts"
+        ));
+        assert!(path_has_node_modules_segment(
+            "/repo/packages/app/node_modules/pkg/index.d.ts"
+        ));
+
+        assert!(!path_has_node_modules_segment(
+            "/repo/fixtures/node_modules_pkg/index.d.ts"
+        ));
+        assert!(!path_has_node_modules_segment(
+            "/repo/fixtures/not_node_modules/index.d.ts"
+        ));
     }
 
     #[test]

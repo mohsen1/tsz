@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BinaryHeap;
 use std::path::{Path, PathBuf};
 
-use crate::config::{CompilerOptions, TsConfig, load_tsconfig};
+use crate::config::{CompilerOptions, TsConfig, load_tsconfig, normalize_jsonc};
 
 /// A project reference as specified in tsconfig.json
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -498,8 +498,7 @@ pub fn load_project(config_path: &Path) -> Result<ResolvedProject> {
 
 /// Parse tsconfig with references support
 pub fn parse_tsconfig_with_references(source: &str) -> Result<TsConfigWithReferences> {
-    let stripped = strip_jsonc(source);
-    let normalized = remove_trailing_commas(&stripped);
+    let normalized = normalize_jsonc(source);
     let config = serde_json::from_str(&normalized)
         .context("failed to parse tsconfig JSON with references")?;
     Ok(config)
@@ -571,123 +570,6 @@ fn resolve_single_reference(
         is_valid,
         error,
     }
-}
-
-// Helper functions copied from config.rs (ideally these would be shared)
-fn strip_jsonc(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut chars = input.chars().peekable();
-    let mut in_string = false;
-    let mut escape = false;
-    let mut in_line_comment = false;
-    let mut in_block_comment = false;
-
-    while let Some(ch) = chars.next() {
-        if in_line_comment {
-            if ch == '\n' {
-                in_line_comment = false;
-                out.push(ch);
-            }
-            continue;
-        }
-
-        if in_block_comment {
-            if ch == '*' {
-                if let Some('/') = chars.peek().copied() {
-                    chars.next();
-                    in_block_comment = false;
-                }
-            } else if ch == '\n' {
-                out.push(ch);
-            }
-            continue;
-        }
-
-        if in_string {
-            out.push(ch);
-            if escape {
-                escape = false;
-            } else if ch == '\\' {
-                escape = true;
-            } else if ch == '"' {
-                in_string = false;
-            }
-            continue;
-        }
-
-        if ch == '"' {
-            in_string = true;
-            out.push(ch);
-            continue;
-        }
-
-        if ch == '/'
-            && let Some(&next) = chars.peek()
-        {
-            if next == '/' {
-                chars.next();
-                in_line_comment = true;
-                continue;
-            }
-            if next == '*' {
-                chars.next();
-                in_block_comment = true;
-                continue;
-            }
-        }
-
-        out.push(ch);
-    }
-
-    out
-}
-
-fn remove_trailing_commas(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut chars = input.chars().peekable();
-    let mut in_string = false;
-    let mut escape = false;
-
-    while let Some(ch) = chars.next() {
-        if in_string {
-            out.push(ch);
-            if escape {
-                escape = false;
-            } else if ch == '\\' {
-                escape = true;
-            } else if ch == '"' {
-                in_string = false;
-            }
-            continue;
-        }
-
-        if ch == '"' {
-            in_string = true;
-            out.push(ch);
-            continue;
-        }
-
-        if ch == ',' {
-            let mut lookahead = chars.clone();
-            while let Some(next) = lookahead.peek().copied() {
-                if next.is_whitespace() {
-                    lookahead.next();
-                    continue;
-                }
-                break;
-            }
-
-            if let Some(next) = lookahead.peek().copied()
-                && (next == '}' || next == ']')
-            {
-                continue;
-            }
-        }
-
-        out.push(ch);
-    }
-
-    out
 }
 
 #[cfg(test)]

@@ -11,10 +11,9 @@
 //! - `substitute_infer`: Replace infer types with their bindings
 //! - `bind_infer`: Bind a type to an infer parameter
 
-use crate::instantiation::application::ApplicationEvaluator;
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::{
-    IntrinsicKind, LiteralValue, ParamInfo, TemplateSpan, TupleElement, TypeData, TypeId,
+    LiteralValue, ParamInfo, TemplateSpan, TupleElement, TypeApplication, TypeData, TypeId,
     TypeParamInfo,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -880,6 +879,32 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
             }
 
+            if let Some(TypeData::Array(rest_elem_type)) =
+                self.interner().lookup(pattern_elems[rest_index].type_id)
+            {
+                for source_elem in &source_elems[prefix_len..rest_source_end] {
+                    if source_elem.rest {
+                        return false;
+                    }
+                    let source_type = if source_elem.optional {
+                        self.interner()
+                            .union2(source_elem.type_id, TypeId::UNDEFINED)
+                    } else {
+                        source_elem.type_id
+                    };
+                    if !self.match_infer_pattern(
+                        source_type,
+                        rest_elem_type,
+                        bindings,
+                        visited,
+                        checker,
+                    ) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+
             // Collect middle elements (between prefix and suffix) into the rest tuple
             let mut rest_elems = Vec::new();
             for source_elem in &source_elems[prefix_len..rest_source_end] {
@@ -994,6 +1019,106 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
         }
         true
+    }
+
+    /// Maximum iterations for alias-application reduction loops.
+    /// Bounds peel/reduce walks against pathological alias chains.
+    pub(crate) const MAX_ALIAS_REDUCTION_STEPS: u32 = 8;
+
+    /// Decode `Application(Lazy(DefId)/TypeQuery, args)` and substitute the
+    /// alias's type-parameter args into its resolved body. Returns `None`
+    /// when the base isn't a resolvable DefId, arities disagree, or the
+    /// substitution is a no-op (so callers don't need their own fixed-point
+    /// guard for the substituted form).
+    ///
+    /// Used by `peel_alias_application` (requires body to be `Application`)
+    /// and by `reduce_alias_body_to_application_form` (also accepts
+    /// `Conditional` body for one infer-match step).
+    pub(crate) fn alias_application_substituted_body(&self, ty: TypeId) -> Option<TypeId> {
+        let Some(TypeData::Application(app_id)) = self.interner().lookup(ty) else {
+            return None;
+        };
+        let app = self.interner().type_application(app_id);
+        let def_id = match self.interner().lookup(app.base)? {
+            TypeData::Lazy(def_id) => def_id,
+            TypeData::TypeQuery(sym_ref) => self.resolver().symbol_to_def_id(sym_ref)?,
+            _ => return None,
+        };
+        let type_params = self.resolver().get_lazy_type_params(def_id)?;
+        if type_params.len() != app.args.len() {
+            return None;
+        }
+        let body = self.resolver().resolve_lazy(def_id, self.interner())?;
+        let substituted = crate::instantiation::instantiate::instantiate_generic(
+            self.interner(),
+            body,
+            &type_params,
+            &app.args,
+        );
+        (substituted != ty).then_some(substituted)
+    }
+
+    /// Peel one alias layer off an `Application` whose body is itself an
+    /// `Application(...)`. We do not gate on `get_def_kind`: zombie `DefId`s
+    /// from `interner.reference` are not tagged with `DefKind` in the
+    /// definition store, but the body shape (`Application` vs structural
+    /// `Object`/`Callable`) is the reliable structural signal.
+    pub(crate) fn peel_alias_application(&self, ty: TypeId) -> Option<TypeId> {
+        let substituted = self.alias_application_substituted_body(ty)?;
+        matches!(
+            self.interner().lookup(substituted),
+            Some(TypeData::Application(_))
+        )
+        .then_some(substituted)
+    }
+
+    /// Recover an `Application` form from a non-`Application` type via the
+    /// global display-alias map. Used by infer-match reduction when the
+    /// source has already been evaluated to its structural shape (e.g. an
+    /// interface body substituted with concrete args) and
+    /// `evaluate_application` recorded a back-reference to the original
+    /// `Application` for this instantiation.
+    pub(crate) fn try_recover_application_from_display_alias(&self, ty: TypeId) -> Option<TypeId> {
+        if matches!(self.interner().lookup(ty), Some(TypeData::Application(_))) {
+            return None;
+        }
+        let alias = self.interner().get_display_alias(ty)?;
+        (alias != ty
+            && matches!(
+                self.interner().lookup(alias),
+                Some(TypeData::Application(_))
+            ))
+        .then_some(alias)
+    }
+
+    /// Try to match a source Application's type args against a pattern Application's args.
+    ///
+    /// Returns `Some(true)` if all args matched, `Some(false)` if bases matched but an arg
+    /// failed, `None` if the bases are incompatible (caller should try another candidate).
+    ///
+    /// One-directional subtyping (`source.base <: pattern.base`) is accepted because
+    /// covariant interface hierarchies (e.g. `Promise<T> <: PromiseLike<T>`) preserve
+    /// positional type-argument correspondence.
+    fn try_match_application_args_to_pattern(
+        &self,
+        source: &TypeApplication,
+        pattern: &TypeApplication,
+        bindings: &mut FxHashMap<Atom, TypeId>,
+        visited: &mut FxHashSet<(TypeId, TypeId)>,
+        checker: &mut SubtypeChecker<'_, R>,
+    ) -> Option<bool> {
+        if source.args.len() != pattern.args.len() {
+            return None;
+        }
+        if source.base != pattern.base && !checker.is_subtype_of(source.base, pattern.base) {
+            return None;
+        }
+        for (source_arg, pattern_arg) in source.args.iter().zip(pattern.args.iter()) {
+            if !self.match_infer_pattern(*source_arg, *pattern_arg, bindings, visited, checker) {
+                return Some(false);
+            }
+        }
+        Some(true)
     }
 
     /// Main pattern matching function for infer types.
@@ -1212,50 +1337,116 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     checker,
                 ),
             TypeData::Application(pattern_app_id) => {
-                // First try declaration matching: Application vs Application
-                let declaration_matched = match self.interner().lookup(source) {
-                    Some(TypeData::Application(source_app_id)) => {
+                // Declaration-level match: walk `source` through one-step
+                // alias-application peeling until its base aligns with the
+                // pattern's base. Handles `Cond<RHS>` where `RHS = ToPromise<X>`
+                // and `ToPromise<X> = Promise<X>` by reducing the source
+                // `Application(ToPromise, [X])` to `Application(Promise, [X])`
+                // before matching `Application(Promise, [infer Y])`.
+                let pattern_app = self.interner().type_application(pattern_app_id);
+                if pattern_app.args.len() == 1
+                    && let Some(TypeData::Lazy(def_id)) = self.interner().lookup(pattern_app.base)
+                    && self.resolver().is_builtin_readonly_array_def(def_id)
+                    && let Some(source_elem) =
+                        crate::type_queries::get_array_element_type(self.interner(), source)
+                {
+                    return self.match_infer_pattern(
+                        source_elem,
+                        pattern_app.args[0],
+                        bindings,
+                        visited,
+                        checker,
+                    );
+                }
+                let mut current_source = source;
+                for _ in 0..Self::MAX_ALIAS_REDUCTION_STEPS {
+                    if let Some(TypeData::Application(source_app_id)) =
+                        self.interner().lookup(current_source)
+                    {
                         let source_app = self.interner().type_application(source_app_id);
-                        let pattern_app = self.interner().type_application(pattern_app_id);
-                        if source_app.args.len() != pattern_app.args.len() {
-                            return false;
+                        if let Some(result) = self.try_match_application_args_to_pattern(
+                            &source_app,
+                            &pattern_app,
+                            bindings,
+                            visited,
+                            checker,
+                        ) {
+                            return result;
                         }
-                        if !checker.is_subtype_of(source_app.base, pattern_app.base)
-                            || !checker.is_subtype_of(pattern_app.base, source_app.base)
-                        {
-                            return false;
-                        }
-                        for (source_arg, pattern_arg) in
-                            source_app.args.iter().zip(pattern_app.args.iter())
-                        {
-                            if !self.match_infer_pattern(
-                                *source_arg,
-                                *pattern_arg,
-                                bindings,
-                                visited,
-                                checker,
-                            ) {
-                                return false;
+                        if source_app.args.len() == pattern_app.args.len() {
+                            let candidate_pattern = self
+                                .interner()
+                                .application(pattern_app.base, source_app.args.clone());
+                            if checker.is_subtype_of(current_source, candidate_pattern) {
+                                for (source_arg, pattern_arg) in
+                                    source_app.args.iter().zip(pattern_app.args.iter())
+                                {
+                                    if !self.match_infer_pattern(
+                                        *source_arg,
+                                        *pattern_arg,
+                                        bindings,
+                                        visited,
+                                        checker,
+                                    ) {
+                                        return false;
+                                    }
+                                }
+                                return true;
                             }
                         }
-                        true
                     }
-                    _ => false,
-                };
+                    let Some(peeled) = self.peel_alias_application(current_source) else {
+                        break;
+                    };
+                    current_source = peeled;
+                }
 
-                // If declaration matching succeeded, we're done
-                if declaration_matched {
-                    return true;
+                // Source may have been evaluated from Application(Promise,[T]) to Object before
+                // reaching this point; display_alias records the original Application for recovery.
+                if let Some(recovered) = self.try_recover_application_from_display_alias(source)
+                    && let Some(TypeData::Application(recovered_app_id)) =
+                        self.interner().lookup(recovered)
+                {
+                    let recovered_app = self.interner().type_application(recovered_app_id);
+                    if let Some(result) = self.try_match_application_args_to_pattern(
+                        &recovered_app,
+                        &pattern_app,
+                        bindings,
+                        visited,
+                        checker,
+                    ) {
+                        return result;
+                    }
                 }
 
                 // Fallback: Structural expansion
                 // Expand the pattern Application to its structural form and recurse
                 // This handles cases like: Reducer<infer S> matching a structural function type
-                let evaluator = ApplicationEvaluator::new(self.interner(), self.resolver());
-                let expanded_pattern = evaluator.evaluate_or_original(pattern);
+                let mut evaluator = TypeEvaluator::with_resolver(self.interner(), self.resolver());
+                evaluator.set_no_unchecked_indexed_access(self.no_unchecked_indexed_access());
+                if let Some(query_db) = self.query_db() {
+                    evaluator = evaluator.with_query_db(query_db);
+                }
+                let expanded_pattern = evaluator.evaluate(pattern);
 
                 // Only recurse if expansion actually changed the type
                 if expanded_pattern != pattern {
+                    if let Some(alias) = self.interner().get_display_alias(source)
+                        && alias != source
+                    {
+                        let mut alias_bindings = bindings.clone();
+                        let mut alias_visited = visited.clone();
+                        if self.match_infer_pattern(
+                            alias,
+                            expanded_pattern,
+                            &mut alias_bindings,
+                            &mut alias_visited,
+                            checker,
+                        ) {
+                            *bindings = alias_bindings;
+                            return true;
+                        }
+                    }
                     return self.match_infer_pattern(
                         source,
                         expanded_pattern,
@@ -1289,12 +1480,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             checker,
                         )
                     }
-                    Some(TypeData::Intrinsic(IntrinsicKind::String)) => self
-                        .match_template_literal_string_type(
-                            pattern_spans.as_ref(),
-                            bindings,
-                            checker,
-                        ),
+                    // Primitive string does not match template literal patterns; tsc takes the false branch.
                     _ => false,
                 }
             }
@@ -1304,6 +1490,27 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // Algorithm: Match source members against non-infer pattern members,
             // then bind the infer to the remaining source members
             TypeData::Union(pattern_members) => {
+                let members = self.interner().type_list(pattern_members);
+                if members.iter().any(|&member| {
+                    !matches!(self.interner().lookup(member), Some(TypeData::Infer(_)))
+                        && self.type_contains_infer(member)
+                }) {
+                    for &member in members.iter() {
+                        let mut local_bindings = bindings.clone();
+                        let mut local_visited = FxHashSet::default();
+                        if self.match_infer_pattern(
+                            source,
+                            member,
+                            &mut local_bindings,
+                            &mut local_visited,
+                            checker,
+                        ) {
+                            *bindings = local_bindings;
+                            return true;
+                        }
+                    }
+                    return false;
+                }
                 self.match_infer_union_pattern(source, pattern_members, pattern, bindings, checker)
             }
             _ => checker.is_subtype_of(source, pattern),

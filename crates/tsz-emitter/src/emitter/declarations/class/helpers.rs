@@ -1,34 +1,93 @@
 use super::super::super::Printer;
+use super::AutoAccessorEmitOptions;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
-    /// Resolve the binding name for an anonymous class expression from its parent chain.
-    /// For `const C = class { ... }`, this returns `Some("C")`.
-    /// Walks up: `ClassExpression` -> `VariableDeclaration` -> name identifier.
+    /// Resolve the named-evaluation target for an anonymous class expression from
+    /// its parent chain. For `const C = class { ... }` and
+    /// `(C = class { ... })`, this returns `Some("C")`.
     pub(in crate::emitter) fn resolve_class_expr_binding_name(
         &self,
         class_idx: NodeIndex,
     ) -> Option<String> {
-        let ext = self.arena.get_extended(class_idx)?;
-        let parent_idx = ext.parent;
-        if parent_idx.is_none() {
-            return None;
-        }
-        let parent_node = self.arena.get(parent_idx)?;
-        if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
-            let decl = self.arena.get_variable_declaration(parent_node)?;
-            let name_node = self.arena.get(decl.name)?;
-            if name_node.kind == SyntaxKind::Identifier as u16 {
-                let name = self.get_identifier_text_idx(decl.name);
-                if !name.is_empty() {
-                    return Some(name);
+        let mut current = class_idx;
+        let mut hops = 0;
+
+        while hops < 8 {
+            let parent_idx = self.arena.get_extended(current)?.parent;
+            if parent_idx.is_none() {
+                return None;
+            }
+            let parent_node = self.arena.get(parent_idx)?;
+
+            match parent_node.kind {
+                syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                    let paren = self.arena.get_parenthesized(parent_node)?;
+                    if paren.expression != current {
+                        return None;
+                    }
+                    current = parent_idx;
+                    hops += 1;
                 }
+                syntax_kind_ext::TYPE_ASSERTION
+                | syntax_kind_ext::AS_EXPRESSION
+                | syntax_kind_ext::SATISFIES_EXPRESSION => {
+                    let assertion = self.arena.get_type_assertion(parent_node)?;
+                    if assertion.expression != current {
+                        return None;
+                    }
+                    current = parent_idx;
+                    hops += 1;
+                }
+                syntax_kind_ext::NON_NULL_EXPRESSION => {
+                    let non_null = self.arena.get_unary_expr_ex(parent_node)?;
+                    if non_null.expression != current {
+                        return None;
+                    }
+                    current = parent_idx;
+                    hops += 1;
+                }
+                syntax_kind_ext::VARIABLE_DECLARATION => {
+                    let decl = self.arena.get_variable_declaration(parent_node)?;
+                    if decl.initializer != current {
+                        return None;
+                    }
+                    return self.identifier_binding_name(decl.name);
+                }
+                syntax_kind_ext::PARAMETER => {
+                    let param = self.arena.get_parameter(parent_node)?;
+                    if param.initializer != current {
+                        return None;
+                    }
+                    return self.identifier_binding_name(param.name);
+                }
+                syntax_kind_ext::BINARY_EXPRESSION => {
+                    let binary = self.arena.get_binary_expr(parent_node)?;
+                    if binary.right != current
+                        || binary.operator_token != SyntaxKind::EqualsToken as u16
+                    {
+                        return None;
+                    }
+                    return self.identifier_binding_name(binary.left);
+                }
+                _ => return None,
             }
         }
+
         None
+    }
+
+    fn identifier_binding_name(&self, name_idx: NodeIndex) -> Option<String> {
+        let name_node = self.arena.get(name_idx)?;
+        if name_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let name = self.get_identifier_text_idx(name_idx);
+        (!name.is_empty()).then_some(name)
     }
 
     pub(in crate::emitter) fn emit_class_expr_set_function_name_comma_item(
@@ -95,7 +154,11 @@ impl<'a> Printer<'a> {
         static_block_idx: NodeIndex,
         saved_comment_idx: usize,
     ) {
-        self.write("(() => ");
+        if self.ctx.target_es5 {
+            self.write("(function () ");
+        } else {
+            self.write("(() => ");
+        }
         self.comment_emit_idx = saved_comment_idx;
         if let Some(static_node) = self.arena.get(static_block_idx) {
             let prev = self.emitting_function_body_block;
@@ -202,31 +265,72 @@ impl<'a> Printer<'a> {
         false
     }
 
+    pub(in crate::emitter) fn class_has_decorators(
+        &self,
+        class: &tsz_parser::parser::node::ClassData,
+    ) -> bool {
+        if class.modifiers.as_ref().is_some_and(|mods| {
+            mods.nodes.iter().any(|&mod_idx| {
+                self.arena
+                    .get(mod_idx)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::DECORATOR)
+            })
+        }) {
+            return true;
+        }
+
+        class.members.nodes.iter().any(|&member_idx| {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                return false;
+            };
+            let modifiers = match member_node.kind {
+                k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                    .arena
+                    .get_method_decl(member_node)
+                    .and_then(|member| member.modifiers.as_ref()),
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                    .arena
+                    .get_property_decl(member_node)
+                    .and_then(|member| member.modifiers.as_ref()),
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    self.arena
+                        .get_accessor(member_node)
+                        .and_then(|member| member.modifiers.as_ref())
+                }
+                _ => None,
+            };
+            modifiers.is_some_and(|mods| {
+                mods.nodes.iter().any(|&mod_idx| {
+                    self.arena
+                        .get(mod_idx)
+                        .is_some_and(|node| node.kind == syntax_kind_ext::DECORATOR)
+                })
+            })
+        })
+    }
+
     pub(in crate::emitter) fn emit_auto_accessor_methods(
         &mut self,
         node: &Node,
         storage_name: &str,
         is_static: bool,
-        static_accessor_alias: Option<&str>,
-        lower_auto_accessor_to_private_fields: bool,
-        class_name: &str,
-        property_end: u32,
+        options: AutoAccessorEmitOptions<'_>,
     ) {
         let Some(prop) = self.arena.get_property_decl(node) else {
             return;
         };
-        let computed_name_temp = if lower_auto_accessor_to_private_fields {
+        let computed_name_temp = if options.lower_to_private_fields {
             self.auto_accessor_computed_name_temp(prop.name)
         } else {
             None
         };
 
-        if lower_auto_accessor_to_private_fields {
+        if options.lower_to_private_fields {
             if is_static {
                 self.write("static ");
                 self.write("#");
                 self.write(storage_name);
-                if prop.initializer.is_some() {
+                if prop.initializer.is_some() && !options.omit_storage_initializer {
                     self.write(" = ");
                     self.emit_expression(prop.initializer);
                 }
@@ -234,7 +338,7 @@ impl<'a> Printer<'a> {
             } else {
                 self.write("#");
                 self.write(storage_name);
-                if prop.initializer.is_some() {
+                if prop.initializer.is_some() && !options.omit_storage_initializer {
                     self.write(" = ");
                     self.emit_expression(prop.initializer);
                 }
@@ -249,10 +353,10 @@ impl<'a> Printer<'a> {
             self.emit_auto_accessor_name(prop.name, computed_name_temp.as_deref(), true);
             self.write("() { return ");
             if is_static {
-                self.write(if class_name.is_empty() {
+                self.write(if options.class_name.is_empty() {
                     "this"
                 } else {
-                    class_name
+                    options.class_name
                 });
                 self.write(".#");
                 self.write(storage_name.trim_start_matches('#'));
@@ -262,10 +366,10 @@ impl<'a> Printer<'a> {
                 self.write("set ");
                 self.emit_auto_accessor_name(prop.name, computed_name_temp.as_deref(), false);
                 self.write("(value) { ");
-                self.write(if class_name.is_empty() {
+                self.write(if options.class_name.is_empty() {
                     "this"
                 } else {
-                    class_name
+                    options.class_name
                 });
                 self.write(".#");
                 self.write(storage_name.trim_start_matches('#'));
@@ -283,10 +387,10 @@ impl<'a> Printer<'a> {
                 self.write(storage_name.trim_start_matches('#'));
                 self.write(" = value; }");
             }
-            self.emit_trailing_comments(property_end);
+            self.emit_trailing_comments(options.property_end);
             self.write_line();
         } else if is_static {
-            let Some(alias) = static_accessor_alias else {
+            let Some(alias) = options.static_accessor_alias else {
                 return;
             };
             self.write("static ");
@@ -301,7 +405,7 @@ impl<'a> Printer<'a> {
             self.write(", \"f\", ");
             self.write(storage_name);
             self.write("); }");
-            self.emit_trailing_comments(property_end);
+            self.emit_trailing_comments(options.property_end);
             self.write_line();
             self.write("static ");
             self.write("set ");
@@ -317,13 +421,13 @@ impl<'a> Printer<'a> {
             self.write("); }");
         } else {
             self.write("get ");
-            self.emit(prop.name);
+            self.emit_auto_accessor_weakmap_name(prop.name, options.computed_storage_inits);
             self.write("() { return ");
             self.write_helper("__classPrivateFieldGet");
             self.write("(this, ");
             self.write(storage_name);
             self.write(", \"f\"); }");
-            self.emit_trailing_comments(property_end);
+            self.emit_trailing_comments(options.property_end);
             self.write_line();
             self.write("set ");
             self.emit(prop.name);
@@ -333,6 +437,44 @@ impl<'a> Printer<'a> {
             self.write(storage_name);
             self.write(", value, \"f\"); }");
         }
+    }
+
+    fn emit_auto_accessor_weakmap_name(&mut self, name_idx: NodeIndex, storage_inits: &[String]) {
+        if storage_inits.is_empty() {
+            self.emit(name_idx);
+            return;
+        }
+        let Some(name_node) = self.arena.get(name_idx) else {
+            self.emit(name_idx);
+            return;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            self.emit(name_idx);
+            return;
+        }
+        let Some(computed) = self.arena.get_computed_property(name_node) else {
+            self.emit(name_idx);
+            return;
+        };
+
+        self.write("[(");
+        for (i, init) in storage_inits.iter().enumerate() {
+            if i > 0 {
+                self.write(", ");
+            }
+            self.write(init);
+        }
+        self.write(", ");
+        if let Some(temp) = self
+            .computed_prop_temp_map
+            .get(&computed.expression)
+            .cloned()
+        {
+            self.write(&temp);
+            self.write(" = ");
+        }
+        self.emit_expression(computed.expression);
+        self.write(")]");
     }
 
     fn auto_accessor_computed_name_temp(&mut self, name_idx: NodeIndex) -> Option<String> {

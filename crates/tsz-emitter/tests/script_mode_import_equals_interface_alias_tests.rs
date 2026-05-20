@@ -81,3 +81,52 @@ fn script_mode_import_equals_to_non_instantiated_namespace_still_elides() {
         "Non-instantiated namespace alias must still be elided in script mode.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn script_mode_import_equals_missing_trailing_entity_identifier_emits_alias() {
+    let source = "namespace N { export type A = { value: string }; }\nimport x = N.A.\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let output = parse_lower_emit(source, opts);
+
+    assert!(
+        output.contains("var x = N.A.;"),
+        "Recovered import-equals entity names with a missing final identifier should still emit the runtime alias.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn type_only_import_equals_missing_trailing_entity_identifier_still_elides() {
+    let source = "namespace N { export type A = { value: string }; }\nimport type x = N.A.\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let output = parse_lower_emit(source, opts);
+
+    assert!(
+        !output.contains("var x = N.A."),
+        "`import type` aliases with recovered entity names should stay type-only.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn script_mode_import_equals_literal_recovery_still_elides_alias_prefix() {
+    let source = "import x = null\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let output = parse_lower_emit(source, opts);
+
+    assert!(
+        output.contains("null;"),
+        "Recovered literal import-equals RHS should still emit the recovered expression.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var x = null"),
+        "Recovered literal import-equals RHS should not gain an alias assignment prefix.\nOutput:\n{output}"
+    );
+}

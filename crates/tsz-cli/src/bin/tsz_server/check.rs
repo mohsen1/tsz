@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use tsz::binder::BinderState;
-use tsz::checker::context::{CheckerOptions, LibContext, ProjectEnv};
+use tsz::checker::context::{CheckerOptions, LibContext, ProgramContext};
 use tsz::checker::diagnostics::DiagnosticCategory;
 use tsz::checker::module_resolution::build_module_resolution_maps;
 use tsz::checker::state::CheckerState;
@@ -21,8 +21,8 @@ use tsz_cli::config::{
     checker_target_from_emitter, default_lib_name_for_target, resolve_default_lib_files_from_dir,
     resolve_lib_files_from_dir,
 };
-use tsz_solver::QueryCache;
-use tsz_solver::RelationCacheStats;
+use tsz_solver::construction::QueryCache;
+use tsz_solver::construction::RelationCacheStats;
 
 pub(crate) struct RunCheckResult {
     pub(crate) codes: Vec<i32>,
@@ -199,7 +199,7 @@ impl Server {
             (None, None, None, None, None, None)
         };
 
-        let mut project_env = ProjectEnv {
+        let mut program_context = ProgramContext {
             lib_contexts: std::sync::Arc::new(lib_contexts),
             all_arenas,
             all_binders,
@@ -212,7 +212,7 @@ impl Server {
             resolved_module_paths: Arc::new(resolved_module_paths),
             ..Default::default()
         };
-        project_env.build_global_indices();
+        program_context.build_global_indices();
 
         let mut diagnostics: Vec<tsz::checker::diagnostics::Diagnostic> = Vec::new();
         for (file_idx, file) in program.files.iter().enumerate() {
@@ -230,13 +230,13 @@ impl Server {
 
             let mut checker = CheckerState::new(
                 &file.arena,
-                &project_env.all_binders[file_idx],
+                &program_context.all_binders[file_idx],
                 &query_cache,
                 file.file_name.clone(),
                 checker_options.clone(),
             );
 
-            project_env.apply_to(&mut checker.ctx);
+            program_context.apply_to(&mut checker.ctx);
             checker
                 .ctx
                 .set_resolved_modules(Arc::clone(&resolved_modules_arc));
@@ -350,7 +350,7 @@ impl Server {
             Some(payload)
         })();
 
-        self.stub_response(seq, request, body)
+        self.success_response(seq, request, body)
     }
 
     pub(crate) fn run_check(
@@ -466,7 +466,7 @@ impl Server {
             (None, None, None, None, None, None)
         };
 
-        let mut project_env = ProjectEnv {
+        let mut program_context = ProgramContext {
             lib_contexts: std::sync::Arc::new(lib_contexts),
             all_arenas,
             all_binders,
@@ -479,7 +479,7 @@ impl Server {
             resolved_module_paths: Arc::new(resolved_module_paths),
             ..Default::default()
         };
-        project_env.build_global_indices();
+        program_context.build_global_indices();
 
         // Type check all files
         let query_cache = QueryCache::new(&program.type_interner);
@@ -496,13 +496,13 @@ impl Server {
 
             let mut checker = CheckerState::new(
                 &file.arena,
-                &project_env.all_binders[file_idx],
+                &program_context.all_binders[file_idx],
                 &query_cache,
                 file.file_name.clone(),
                 checker_options.clone(),
             );
 
-            project_env.apply_to(&mut checker.ctx);
+            program_context.apply_to(&mut checker.ctx);
             checker
                 .ctx
                 .set_resolved_modules(Arc::clone(&resolved_modules_arc));
@@ -598,11 +598,9 @@ impl Server {
         }
 
         // Phase 2: Create LibContexts from all loaded libs
-        // Use binder::LibContext for merge_lib_contexts_into_binder
-        use tsz::binder::LibContext as BinderLibContext;
-        let lib_contexts: Vec<BinderLibContext> = lib_files
+        let lib_contexts: Vec<LibContext> = lib_files
             .iter()
-            .map(|lib| BinderLibContext {
+            .map(|lib| LibContext {
                 arena: Arc::clone(&lib.arena),
                 binder: Arc::clone(&lib.binder),
             })
@@ -874,6 +872,9 @@ impl Server {
             no_property_access_from_index_signature: options
                 .no_property_access_from_index_signature,
             sound_mode: false, // Sound mode not yet exposed in server protocol
+            sound_check_declarations: false,
+            sound_report_only: false,
+            sound_pedantic: false,
             experimental_decorators: options.experimental_decorators,
             no_unused_locals: options.no_unused_locals,
             no_unused_parameters: options.no_unused_parameters,
@@ -882,15 +883,20 @@ impl Server {
             check_js: options.check_js,
             allow_js: options.allow_js,
             no_resolve: options.no_resolve,
-            isolated_declarations: false,
+            isolated_declarations: options.isolated_declarations,
             emit_declarations: options.declaration,
             no_unchecked_side_effect_imports: options.no_unchecked_side_effect_imports,
             no_implicit_override: options.no_implicit_override,
+            downlevel_iteration: options.downlevel_iteration,
             jsx_factory: "React.createElement".to_string(),
             jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
             jsx_fragment_factory_from_config: false,
-            jsx_mode: tsz_common::checker_options::JsxMode::None,
+            jsx_mode: options
+                .jsx
+                .as_deref()
+                .and_then(tsz::config::jsx_string_to_mode)
+                .unwrap_or_default(),
             module_explicitly_set: options.module.is_some(),
             suppress_excess_property_errors: false,
             suppress_implicit_any_index_errors: false,
@@ -900,8 +906,16 @@ impl Server {
             // CLI/checker behavior for the same options.
             allow_importing_ts_extensions: options.allow_importing_ts_extensions,
             rewrite_relative_import_extensions: options.rewrite_relative_import_extensions,
-            implied_classic_resolution: false,
-            jsx_import_source: String::new(),
+            implied_classic_resolution: options
+                .module_resolution
+                .as_deref()
+                .and_then(tsz::config::ModuleResolutionKind::from_ts_str)
+                .is_some_and(|r| r == tsz::config::ModuleResolutionKind::Classic),
+            jsx_import_source: options
+                .jsx_import_source
+                .as_deref()
+                .unwrap_or_default()
+                .to_owned(),
             verbatim_module_syntax: options.verbatim_module_syntax,
             ignore_deprecations: false,
             allow_umd_global_access: options.allow_umd_global_access,

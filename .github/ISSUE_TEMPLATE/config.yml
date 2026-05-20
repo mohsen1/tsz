@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Project coordination notes
+    url: https://github.com/mohsen1/tsz/blob/main/docs/plan/ROADMAP.md
+    about: Read the living roadmap before filing roadmap-adjacent implementation work.

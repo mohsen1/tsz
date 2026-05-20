@@ -6,23 +6,34 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
 const watchMode = process.argv.includes("--watch");
 
-const buildOptions = {
-  entryPoints: [path.join(root, "src", "playground-app", "main.jsx")],
+const sharedBuildOptions = {
   bundle: true,
   format: "esm",
   platform: "browser",
   target: ["es2020"],
-  jsx: "automatic",
-  outfile: path.join(root, "static", "playground-app.js"),
   sourcemap: true,
   external: ["/wasm/*"],
   logLevel: "info",
 };
 
+const builds = [
+  {
+    ...sharedBuildOptions,
+    entryPoints: [path.join(root, "src", "playground-app", "main.jsx")],
+    jsx: "automatic",
+    outfile: path.join(root, "static", "playground-app.js"),
+  },
+  {
+    ...sharedBuildOptions,
+    entryPoints: [path.join(root, "src", "sound-mode-page", "main.js")],
+    outfile: path.join(root, "static", "sound-mode-page.js"),
+  },
+];
+
 if (watchMode) {
-  const context = await esbuild.context(buildOptions);
-  await context.watch();
-  console.log("playground build watching");
+  const contexts = await Promise.all(builds.map(buildOptions => esbuild.context(buildOptions)));
+  await Promise.all(contexts.map(context => context.watch()));
+  console.log("playground builds watching");
 } else {
-  await esbuild.build(buildOptions);
+  await Promise.all(builds.map(buildOptions => esbuild.build(buildOptions)));
 }

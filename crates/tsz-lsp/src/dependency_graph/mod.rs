@@ -52,7 +52,9 @@ impl DependencyGraph {
     ///
     /// Handles cycles correctly by tracking visited nodes.
     pub fn get_affected_files(&self, file: &str) -> Vec<String> {
-        let mut affected = FxHashSet::default();
+        let initial_dependents = self.dependents.get(file).map_or(0, FxHashSet::len);
+        let mut affected =
+            FxHashSet::with_capacity_and_hasher(initial_dependents, Default::default());
         let mut stack = vec![file.to_string()];
 
         while let Some(current) = stack.pop() {
@@ -91,7 +93,9 @@ impl DependencyGraph {
         if imports.is_empty() {
             self.dependencies.remove(file);
         } else {
-            let new_set: FxHashSet<String> = imports.iter().cloned().collect();
+            let mut new_set =
+                FxHashSet::with_capacity_and_hasher(imports.len(), Default::default());
+            new_set.extend(imports.iter().cloned());
             self.dependencies.insert(file.to_string(), new_set);
 
             // 3. Add new edges to 'dependents'
@@ -152,7 +156,10 @@ impl DependencyGraph {
 
     /// Get the total number of files tracked in the graph.
     pub fn file_count(&self) -> usize {
-        let mut files = FxHashSet::default();
+        let mut files = FxHashSet::with_capacity_and_hasher(
+            self.dependencies.len() + self.dependents.len(),
+            Default::default(),
+        );
         files.extend(self.dependencies.keys().cloned());
         files.extend(self.dependents.keys().cloned());
         files.len()

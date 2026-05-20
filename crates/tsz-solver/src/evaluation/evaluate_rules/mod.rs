@@ -21,6 +21,7 @@ mod infer_pattern_helpers;
 pub mod infer_substitutor;
 pub mod keyof;
 pub mod mapped;
+mod mapped_template_index;
 mod string_index_helpers;
 pub mod string_intrinsic;
 mod substitute;

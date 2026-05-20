@@ -7,6 +7,7 @@
 use tracing::trace;
 use tsz_binder::SymbolId;
 use tsz_solver::TypeId;
+use tsz_solver::computation::TypeResolver;
 use tsz_solver::def::DefId;
 
 use crate::context::CheckerContext;
@@ -485,7 +486,9 @@ impl<'a> CheckerContext<'a> {
     /// Callers should use this instead of the inline `main_sym_id.unwrap_or(sym_id)`
     /// recovery pattern.
     pub fn canonical_lib_sym_id(&self, name: &str, per_lib_sym_id: SymbolId) -> SymbolId {
-        if let Some(sym_id) = self.binder.file_locals.get(name) {
+        if let Some(sym_id) = self.binder.file_locals.get(name)
+            && !self.symbol_has_current_file_type_declaration(sym_id, name)
+        {
             return sym_id;
         }
 
@@ -493,7 +496,15 @@ impl<'a> CheckerContext<'a> {
             .global_file_locals_index
             .as_ref()
             .and_then(|idx| idx.get(name))
-            .and_then(|entries| entries.iter().max_by_key(|(_, sym)| sym.0))
+            .and_then(|entries| {
+                entries
+                    .iter()
+                    .filter(|&&(_, sym_id)| {
+                        self.symbol_is_from_actual_or_cloned_lib(sym_id)
+                            && !self.symbol_has_current_file_type_declaration(sym_id, name)
+                    })
+                    .max_by_key(|(_, sym)| sym.0)
+            })
             .map(|&(_, sym)| sym)
         {
             return sym_id;
@@ -562,7 +573,9 @@ impl<'a> CheckerContext<'a> {
                     defs.into_iter()
                         .filter(|def_id| {
                             self.definition_store.get(*def_id).is_some_and(|info| {
-                                matches!(
+                                info.symbol_id.is_some_and(|sym_id| {
+                                    self.symbol_is_from_actual_or_cloned_lib(SymbolId(sym_id))
+                                }) && matches!(
                                     info.kind,
                                     tsz_solver::def::DefKind::TypeAlias
                                         | tsz_solver::def::DefKind::Interface
@@ -621,18 +634,38 @@ impl<'a> CheckerContext<'a> {
         let def_id = self.get_lib_def_id(sym_id);
         self.insert_def_type_params(def_id, params.clone());
         self.register_def_auto_params_in_envs(def_id, body, params);
+
+        if let Some(symbol) = self.binder.get_symbol(sym_id) {
+            let canonical_def_id = self.get_canonical_lib_def_id(&symbol.escaped_name, sym_id);
+            if canonical_def_id != def_id {
+                let canonical_params = self.get_def_type_params(def_id).unwrap_or_default();
+                self.insert_def_type_params(canonical_def_id, canonical_params.clone());
+                self.register_def_auto_params_in_envs(canonical_def_id, body, canonical_params);
+            }
+        }
+
         def_id
     }
 
-    /// Ensure the `TypeEnvironment` has a reference to the shared `DefinitionStore`.
+    /// Ensure **both** `TypeEnvironment` instances have a reference to the shared
+    /// `DefinitionStore`.
     ///
-    /// This enables `TypeEnvironment::get_def_kind` to fall back to the
-    /// `DefinitionStore` when the local `def_kinds` map is missing entries
-    /// (which happens when `insert_def_kind` fails due to `RefCell` borrow conflicts).
-    pub fn ensure_type_env_has_definition_store(&self) {
-        if let Ok(mut env) = self.type_env.try_borrow_mut() {
+    /// Both `type_env` (primary evaluator) and `type_environment` (flow-analyzer)
+    /// need the `DefinitionStore` fallback so that `get_def_kind` can locate
+    /// entries that were not written directly due to `RefCell` borrow conflicts
+    /// during recursive resolution.
+    ///
+    /// Wiring only `type_env` and leaving `type_environment` without the store
+    /// forces callers to clone one environment over the other just to propagate
+    /// the pointer — this helper eliminates that need.
+    ///
+    /// `set_definition_store` is idempotent when the same `Arc` pointer is
+    /// reinstalled (checked via `Arc::ptr_eq`), so calling this function
+    /// multiple times across registration sites is safe.
+    pub fn ensure_both_envs_have_definition_store(&self) {
+        self.with_envs_for_register("set_definition_store", |env| {
             env.set_definition_store(std::sync::Arc::clone(&self.definition_store));
-        }
+        });
     }
 
     // ---- Dual-environment registration helpers ----
@@ -648,10 +681,10 @@ impl<'a> CheckerContext<'a> {
     //
     // **Visibility on borrow failure.** The two environments are owned through
     // `RefCell`s, so registration can race with another mutable borrow elsewhere
-    // in the checker. The `borrow_envs_for_register` helper unifies the
-    // try_borrow_mut pattern across registration sites and traces every failed
-    // borrow with the registration `name`, so silent disappearance of a
-    // registration becomes observable in logs / structured-error output.
+    // in the checker. The helper unifies the try_borrow_mut pattern across
+    // registration sites and traces every failed borrow with the registration
+    // `name`, so missed per-environment registrations become observable in
+    // logs / structured-error output.
     // See `docs/architecture/ROBUSTNESS_AUDIT_2026-04-26.md` item 1 (PR #A).
     fn with_envs_for_register(
         &self,
@@ -665,7 +698,7 @@ impl<'a> CheckerContext<'a> {
                     register = name,
                     target_env = "type_env",
                     error = ?e,
-                    "register-in-envs: try_borrow_mut failed; registration deferred (DefinitionStore fallback applies)"
+                    "register-in-envs: try_borrow_mut failed; skipped registration for this environment"
                 );
             }
         }
@@ -676,7 +709,7 @@ impl<'a> CheckerContext<'a> {
                     register = name,
                     target_env = "type_environment",
                     error = ?e,
-                    "register-in-envs: try_borrow_mut failed; registration deferred (DefinitionStore fallback applies)"
+                    "register-in-envs: try_borrow_mut failed; skipped registration for this environment"
                 );
             }
         }
@@ -684,7 +717,11 @@ impl<'a> CheckerContext<'a> {
 
     /// Register a non-generic definition body in **both** type environments.
     pub fn register_def_in_envs(&self, def_id: DefId, body: TypeId) {
+        let body_changed = self.definition_store.get_body(def_id) != Some(body);
         self.definition_store.set_body(def_id, body);
+        if body_changed {
+            self.clear_type_evaluation_caches_for_def(def_id);
+        }
         self.with_envs_for_register("insert_def", |env| {
             env.insert_def(def_id, body);
         });
@@ -698,10 +735,18 @@ impl<'a> CheckerContext<'a> {
         body: TypeId,
         params: Vec<tsz_solver::TypeParamInfo>,
     ) {
+        let body_changed = self.definition_store.get_body(def_id) != Some(body);
+        let params_changed = self
+            .definition_store
+            .get_type_params(def_id)
+            .is_none_or(|existing| existing != params);
         self.definition_store.set_body(def_id, body);
         self.definition_store
             .set_type_params(def_id, params.clone());
-        let declared_variances = tsz_solver::TypeResolver::get_type_param_variance(self, def_id);
+        if body_changed || params_changed {
+            self.clear_type_evaluation_caches_for_def(def_id);
+        }
+        let declared_variances = TypeResolver::get_type_param_variance(self, def_id);
         self.with_envs_for_register("insert_def_with_params", |env| {
             env.insert_def_with_params(def_id, body, params.clone());
             if let Some(variances) = declared_variances.clone() {
@@ -744,6 +789,37 @@ impl<'a> CheckerContext<'a> {
         self.with_envs_for_register("register_class_extends", |env| {
             env.register_class_extends(def_id, parent_def_id);
         });
+    }
+
+    /// Register a `DefId` ↔ `SymbolId` bridge in **both** type environments.
+    ///
+    /// This keeps evaluator and flow-analyzer resolution paths aligned for
+    /// `TypeQuery`, inheritance, and solver-side DefId identity lookups.
+    pub fn register_def_symbol_mapping_in_envs(&self, def_id: DefId, sym_id: SymbolId) {
+        self.with_envs_for_register("register_def_symbol_mapping", |env| {
+            env.register_def_symbol_mapping(def_id, sym_id);
+        });
+    }
+
+    /// Register a `DefId` ↔ `SymbolId` bridge in the flow-analyzer environment.
+    ///
+    /// `register_resolved_type` historically populated this bridge only in
+    /// `type_environment`. Keep that path scoped so resolving a symbol's body
+    /// does not also change evaluator-side TypeQuery/Lazy resolution order.
+    pub fn register_def_symbol_mapping_in_type_environment(&self, def_id: DefId, sym_id: SymbolId) {
+        match self.type_environment.try_borrow_mut() {
+            Ok(mut env) => env.register_def_symbol_mapping(def_id, sym_id),
+            Err(e) => {
+                tracing::warn!(
+                    def_id = def_id.0,
+                    sym_id = sym_id.0,
+                    register = "register_def_symbol_mapping",
+                    target_env = "type_environment",
+                    error = ?e,
+                    "register-in-env: try_borrow_mut failed; skipped registration for this environment"
+                );
+            }
+        }
     }
 
     /// Register an augmented definition body in **both** type environments.
@@ -1207,6 +1283,13 @@ impl<'a> CheckerContext<'a> {
         self.create_type_formatter()
             .with_diagnostic_mode()
             .with_strict_null_checks(self.compiler_options.strict_null_checks)
+            .with_builtin_iterator_return_type(
+                if self.compiler_options.strict_builtin_iterator_return {
+                    tsz_solver::TypeId::UNDEFINED
+                } else {
+                    tsz_solver::TypeId::ANY
+                },
+            )
             .with_exact_optional_property_types(self.compiler_options.exact_optional_property_types)
     }
 
@@ -1248,9 +1331,7 @@ impl<'a> CheckerContext<'a> {
 
             // Register mapping for InheritanceGraph bridge (Phase 3.2)
             // This enables Lazy(DefId) types to use the O(1) InheritanceGraph
-            if let Ok(mut env) = self.type_environment.try_borrow_mut() {
-                env.register_def_symbol_mapping(def_id, sym_id);
-            }
+            self.register_def_symbol_mapping_in_type_environment(def_id, sym_id);
 
             // Set the body on the DefinitionInfo so the type formatter can
             // find type alias names via find_type_alias_by_body(). Without
@@ -1303,7 +1384,7 @@ impl<'a> CheckerContext<'a> {
     /// `DefinitionStore`'s `symbol_only_index`, so `get_or_create_def_id`
     /// Step 2 finds them in O(1) without the repair path.
     ///
-    /// Called from `ProjectEnv::apply_to` after `set_all_binders`.
+    /// Called from `ProgramContext::apply_to` after `set_all_binders`.
     /// Safe to overlap with `pre_populate_def_ids_from_binder` (the current
     /// file's binder may also appear in `all_binders`); the dedup check in
     /// `populate_def_ids_from_semantic_defs` skips already-registered entries.
@@ -1365,85 +1446,9 @@ impl<'a> CheckerContext<'a> {
                 continue;
             }
 
-            // Convert binder's SemanticDefKind to solver's DefKind
-            let kind = match entry.kind {
-                tsz_binder::SemanticDefKind::TypeAlias => DefKind::TypeAlias,
-                tsz_binder::SemanticDefKind::Interface => DefKind::Interface,
-                tsz_binder::SemanticDefKind::Class => DefKind::Class,
-                tsz_binder::SemanticDefKind::Enum => DefKind::Enum,
-                tsz_binder::SemanticDefKind::Namespace => DefKind::Namespace,
-                tsz_binder::SemanticDefKind::Function => DefKind::Function,
-                tsz_binder::SemanticDefKind::Variable => DefKind::Variable,
-            };
-
-            // Use the SemanticDefEntry's self-contained data (name, file_id,
-            // span_start) instead of looking up the symbol table. This makes
-            // pre-population independent of full symbol residency, which is a
-            // prerequisite for file-skeleton decomposition (Phase 2).
-            let name = self.types.intern_string(&entry.name);
-
-            // Create type parameter entries preserving arity and names.
-            // Binder captures type param names at bind time; we use them here
-            // so DefinitionInfo has real names from the start. Constraints and
-            // defaults are still filled in later by the checker walk via
-            // DefinitionStore::set_type_params().
-            let type_params = if entry.type_param_count > 0 {
-                (0..entry.type_param_count)
-                    .map(|i| {
-                        let name = entry
-                            .type_param_names
-                            .get(i as usize)
-                            .map(|n| self.types.intern_string(n))
-                            .unwrap_or(tsz_common::interner::Atom(0));
-                        tsz_solver::TypeParamInfo {
-                            name,
-                            constraint: None,
-                            default: None,
-                            is_const: false,
-                        }
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            };
-
-            // Propagate enum member names from binder's SemanticDefEntry.
-            // Values are set to Computed; real values are resolved later by
-            // the checker walk. This enables enum identity to be established
-            // at pre-population time without waiting for full type resolution.
-            let enum_members: Vec<(tsz_common::interner::Atom, tsz_solver::def::EnumMemberValue)> =
-                entry
-                    .enum_member_names
-                    .iter()
-                    .map(|name| {
-                        (
-                            self.types.intern_string(name),
-                            tsz_solver::def::EnumMemberValue::Computed,
-                        )
-                    })
-                    .collect();
-
-            let info = DefinitionInfo {
-                kind,
-                name,
-                type_params,
-                body: None,
-                instance_shape: None,
-                static_shape: None,
-                extends: None,
-                implements: Vec::new(),
-                enum_members,
-                exports: Vec::new(),
-                file_id: Some(entry.file_id),
-                span: Some((entry.span_start, entry.span_start)),
-                symbol_id: Some(sym_id.0),
-                heritage_names: entry.heritage_names(),
-                is_abstract: entry.is_abstract,
-                is_const: entry.is_const,
-                is_exported: entry.is_exported,
-                is_global_augmentation: entry.is_global_augmentation,
-                is_declare: entry.is_declare,
-            };
+            let intern = |s: &str| self.types.intern_string(s);
+            let info = DefinitionInfo::from_semantic_def(entry, sym_id.0, &intern);
+            let kind = info.kind;
 
             let def_id = self.definition_store.register(info);
             trace!(
@@ -1471,27 +1476,8 @@ impl<'a> CheckerContext<'a> {
             // checker can reuse stable identity instead of creating one on demand.
             // The body is left empty (filled lazily during type checking).
             if kind == DefKind::Class {
-                let ctor_info = DefinitionInfo {
-                    kind: DefKind::ClassConstructor,
-                    name: self.types.intern_string(&entry.name),
-                    type_params: Vec::new(),
-                    body: None,
-                    instance_shape: None,
-                    static_shape: None,
-                    extends: None,
-                    implements: Vec::new(),
-                    enum_members: Vec::new(),
-                    exports: Vec::new(),
-                    file_id: Some(entry.file_id),
-                    span: Some((entry.span_start, entry.span_start)),
-                    symbol_id: Some(sym_id.0),
-                    heritage_names: Vec::new(),
-                    is_abstract: entry.is_abstract,
-                    is_const: false,
-                    is_exported: entry.is_exported,
-                    is_global_augmentation: false,
-                    is_declare: entry.is_declare,
-                };
+                let ctor_info =
+                    DefinitionInfo::class_constructor_from_semantic_def(entry, sym_id.0, &intern);
                 let ctor_def_id = self.definition_store.register(ctor_info);
                 self.definition_store
                     .register_constructor_companion(def_id, ctor_def_id);
@@ -1546,7 +1532,7 @@ impl<'a> CheckerContext<'a> {
             return 0;
         }
 
-        let mappings = self.definition_store.all_symbol_mappings();
+        let mappings = self.definition_store.all_symbol_mappings_snapshot();
         let mut count = 0;
 
         // Hold both RefCell borrows for the entire loop. The previous
@@ -1566,8 +1552,8 @@ impl<'a> CheckerContext<'a> {
             d2s.reserve(additional);
         }
 
-        for (raw_sym_id, def_id) in &mappings {
-            let sym_id = tsz_binder::SymbolId(*raw_sym_id);
+        for &(raw_sym_id, def_id) in mappings.iter() {
+            let sym_id = tsz_binder::SymbolId(raw_sym_id);
 
             // Skip if already in local cache (e.g., from a prior warm pass).
             if s2d.contains_key(&sym_id) {
@@ -1588,13 +1574,13 @@ impl<'a> CheckerContext<'a> {
                 continue;
             }
 
-            s2d.insert(sym_id, *def_id);
-            d2s.insert(*def_id, sym_id);
+            s2d.insert(sym_id, def_id);
+            d2s.insert(def_id, sym_id);
 
             // NOTE: DefKind registration is intentionally skipped here.
             // The TypeEnvironment is rebuilt from scratch in build_type_environment()
-            // (called later in check_source_file), and ensure_type_env_has_definition_store()
-            // installs the DefinitionStore reference for lazy DefKind fallback.
+            // (called later in check_source_file), and ensure_both_envs_have_definition_store()
+            // installs the DefinitionStore reference into both TypeEnvironments for lazy DefKind fallback.
             // Eagerly registering DefKinds here would be overwritten and wastes
             // N DashMap lookups per symbol (for .get() and .get_constructor_def()).
 
@@ -1733,5 +1719,113 @@ impl<'a> CheckerContext<'a> {
         }
 
         resolved_count
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{CheckerContext, CheckerOptions};
+    use std::sync::Arc;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+    use tsz_solver::computation::TypeEnvironment;
+    use tsz_solver::construction::TypeInterner;
+    use tsz_solver::def::DefinitionInfo;
+
+    fn minimal_checker_ctx() -> (
+        Arc<tsz_parser::parser::node::NodeArena>,
+        Arc<BinderState>,
+        TypeInterner,
+    ) {
+        let mut parser = ParserState::new("fixture.ts".to_string(), "type T = string;".to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+        (
+            Arc::new(parser.get_arena().clone()),
+            Arc::new(binder),
+            TypeInterner::new(),
+        )
+    }
+
+    /// Pins the dual-env wiring invariant introduced in #8269:
+    /// `ensure_both_envs_have_definition_store` must give `type_environment`
+    /// (the flow-analyzer snapshot) the `DefinitionStore` fallback, so that
+    /// `get_def_kind` works there without relying on the clone-over in
+    /// `source_file.rs`.
+    #[test]
+    fn ensure_both_envs_wires_store_into_type_environment() {
+        use tsz_common::interner::Atom;
+        use tsz_solver::TypeId;
+        use tsz_solver::def::DefKind;
+
+        let (arena, binder, types) = minimal_checker_ctx();
+        let ctx = CheckerContext::new(
+            arena.as_ref(),
+            binder.as_ref(),
+            &types,
+            "fixture.ts".to_string(),
+            CheckerOptions::default(),
+        );
+
+        // Register a definition only in the shared store (not in any local env map).
+        let def_id = ctx.definition_store.register(DefinitionInfo::type_alias(
+            Atom::default(),
+            vec![],
+            TypeId::UNKNOWN,
+        ));
+
+        // Reset type_environment to a fresh instance: no local def_kinds, no store pointer.
+        *ctx.type_environment.borrow_mut() = TypeEnvironment::new();
+
+        // Without the store, the flow-analyzer env cannot find the DefKind.
+        assert_eq!(
+            ctx.type_environment.borrow().get_def_kind(def_id),
+            None,
+            "type_environment must not find a store-only DefKind before wiring"
+        );
+
+        // Wire both environments.
+        ctx.ensure_both_envs_have_definition_store();
+
+        // Now type_environment reaches the kind via the store fallback.
+        assert_eq!(
+            ctx.type_environment.borrow().get_def_kind(def_id),
+            Some(DefKind::TypeAlias),
+            "type_environment must find store-only DefKind via fallback after ensure_both_envs_have_definition_store"
+        );
+    }
+
+    /// Idempotency companion: calling `ensure_both_envs_have_definition_store`
+    /// a second time with the same store must not change either environment's
+    /// generation (the `Arc::ptr_eq` guard in `set_definition_store` must fire).
+    #[test]
+    fn ensure_both_envs_is_generation_idempotent_on_repeated_calls() {
+        let (arena, binder, types) = minimal_checker_ctx();
+        let ctx = CheckerContext::new(
+            arena.as_ref(),
+            binder.as_ref(),
+            &types,
+            "fixture.ts".to_string(),
+            CheckerOptions::default(),
+        );
+
+        // First call wires the store.
+        ctx.ensure_both_envs_have_definition_store();
+        let gen_env = ctx.type_env.borrow().generation();
+        let gen_flow = ctx.type_environment.borrow().generation();
+
+        // Second call with the same Arc must not bump either generation.
+        ctx.ensure_both_envs_have_definition_store();
+        assert_eq!(
+            ctx.type_env.borrow().generation(),
+            gen_env,
+            "type_env generation must not change on idempotent reinstall"
+        );
+        assert_eq!(
+            ctx.type_environment.borrow().generation(),
+            gen_flow,
+            "type_environment generation must not change on idempotent reinstall"
+        );
     }
 }

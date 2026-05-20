@@ -60,6 +60,40 @@ type PropertyType<T extends object, K extends keyof T> = T[K];
 }
 
 #[test]
+fn inherited_generic_method_pick_argument_reports_indexed_access_relation() {
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r#"
+class Component<S> {
+    setState<K extends keyof S>(state: Pick<S, K>) {}
+}
+
+export interface State<T> {
+    a?: T;
+}
+
+class Foo {}
+
+class Comp<T extends Foo, S> extends Component<S & State<T>> {
+    foo(a: T) {
+        this.setState({ a });
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("(S & State<T>)[\"a\"] | undefined")
+        }),
+        "inherited generic method calls should preserve the Pick<S, K> indexed-access TS2322 target.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2345),
+        "should not fall back to a generic call-argument TS2345.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_indexed_access_unconstrained_type_param_emits_ts2536() {
     let diagnostics = compile_and_get_diagnostics_with_lib(
         r"
@@ -70,6 +104,27 @@ type BadPropertyType<T extends object, K> = T[K];
     assert!(
         has_error(&diagnostics, 2536),
         "Should emit TS2536 when type parameter is unconstrained for indexed access.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_symbol_constrained_key_cannot_index_unconstrained_type_param() {
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r"
+function getSymbolProp<T, K extends symbol>(obj: T, key: K): T[K] {
+  return obj[key];
+}
+
+function readSymbolProp<T, K extends symbol>(obj: T, key: K) {
+  return obj[key];
+}
+        ",
+    );
+
+    let ts2536_count = diagnostics.iter().filter(|(code, _)| *code == 2536).count();
+    assert!(
+        ts2536_count >= 2,
+        "Should emit TS2536 for T[K] and value-level obj[key] when K extends symbol but T is unconstrained.\nActual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -88,6 +143,37 @@ type ChildrenOf<T extends Node> = T['children'][number];
     assert!(
         !has_error(&diagnostics, 2536),
         "Should not emit TS2536 for element access through constrained array property.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_direct_typeof_tuple_index_annotation_reports_mismatch() {
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r#"
+function concat<T extends readonly any[], U extends readonly any[]>(
+  a: T,
+  b: U
+): [...T, ...U] {
+  return [...a, ...b] as [...T, ...U];
+}
+
+const result = concat([1, 2] as const, ["a", "b"] as const);
+
+type R0 = typeof result[0];
+const viaAlias: R0 = "wrong";
+const direct: typeof result[0] = "wrong";
+
+const renamed = concat([true] as const, [99] as const);
+type First = typeof renamed[0];
+const viaRenamedAlias: First = 0;
+const renamedDirect: typeof renamed[0] = 0;
+"#,
+    );
+
+    let ts2322_count = diagnostics.iter().filter(|d| d.0 == 2322).count();
+    assert_eq!(
+        ts2322_count, 4,
+        "Alias and direct typeof tuple indexed access annotations should both report TS2322.\nActual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -141,6 +227,24 @@ type T00 = { [P in P]: string };
     assert!(
         !has_error(&diagnostics, 2304),
         "Should not emit TS2304 for self-reference constraint.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_mapped_type_commented_direct_circular_constraint_reports_ts2313() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+type T00 = { [Key in /* comment */ Key]: string };
+",
+    );
+
+    assert!(
+        has_error(&diagnostics, 2313),
+        "Expected TS2313 for comment-separated mapped type parameter self reference.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2304),
+        "Should not emit TS2304 for comment-separated self-reference constraint.\nActual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -210,6 +314,33 @@ type T2<K extends 'a'|'b'> = T1<K>[K];
     assert!(
         has_error(&diagnostics, 2536),
         "Expected TS2536 for indexing mapped result with unconstrained key subset (`AB[K]` values).\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_remapped_mapped_type_template_index_emits_ts2536_and_ts2344() {
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r#"
+interface Person {
+    name: string;
+    age: number;
+}
+
+type Getters<T> = {
+    [K in keyof T as `get${Capitalize<K & string>}`]: () => T[K];
+};
+
+type GetterReturn<T, K extends keyof T> = ReturnType<Getters<T>[`get${Capitalize<K & string>}`]>;
+        "#,
+    );
+
+    assert!(
+        has_error(&diagnostics, 2536),
+        "Expected TS2536 for generic template literal index into remapped mapped type.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2344),
+        "Expected TS2344 because the invalid indexed access cannot satisfy ReturnType's function constraint.\nActual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -1171,5 +1302,51 @@ function test2<T extends [number] | readonly [string]>(args: T) {
     assert_eq!(
         diagnostics[0].0, 2322,
         "Expected TS2322, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_generic_callback_context_keeps_specific_indexed_access_key() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function map<T extends object, K extends keyof T, U>(
+  obj: T,
+  key: K,
+  fn: (val: T[K]) => U
+): U {
+  return fn(obj[key]);
+}
+
+const person = { name: "John", age: 30 };
+
+const result1 = map(person, "name", (n) => n.toUpperCase());
+const result2 = map(person, "age", (a) => a * 2);
+
+function pluck<R extends object, P extends keyof R, V>(
+  record: R,
+  prop: P,
+  visit: (value: R[P]) => V
+): V {
+  return visit(record[prop]);
+}
+
+const book = { title: "TS", pages: 200 };
+const title = pluck(book, "title", (s) => s.toLowerCase());
+const pages = pluck(book, "pages", (n) => n.toFixed());
+"#,
+        CheckerOptions {
+            strict: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Expected callback parameter for key \"name\" to be string, not T[keyof T]. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2362),
+        "Expected callback parameter for key \"age\" to be number, not T[keyof T]. Actual diagnostics: {diagnostics:#?}"
     );
 }

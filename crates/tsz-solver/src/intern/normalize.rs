@@ -11,7 +11,7 @@
 use super::{TypeInterner, TypeListBuffer};
 use crate::types::{
     CallableShape, FunctionShapeId, IntrinsicKind, LiteralValue, ObjectShape, ObjectShapeId,
-    ParamInfo, PropertyInfo, TypeData, TypeId, Visibility,
+    ParamInfo, PropertyInfo, TemplateLiteralId, TemplateSpan, TypeData, TypeId, Visibility,
 };
 use crate::visitor::is_literal_type;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -541,7 +541,7 @@ impl TypeInterner {
     }
 
     pub(crate) fn intersection_has_disjoint_unit_values(&self, members: &[TypeId]) -> bool {
-        let mut seen = Vec::new();
+        let mut seen = Vec::with_capacity(members.len());
 
         for &member in members {
             let Some(key) = self.get_unit_value_key(member) else {
@@ -600,8 +600,8 @@ impl TypeInterner {
         // Collect property-bearing shapes from both Object AND Callable types.
         // Callable types (e.g., { (x: string): number, a: "" }) have named properties
         // that can conflict with Object type properties, reducing the intersection to never.
-        let mut object_shapes: Vec<Arc<ObjectShape>> = Vec::new();
-        let mut callable_shapes: Vec<Arc<CallableShape>> = Vec::new();
+        let mut object_shapes: Vec<Arc<ObjectShape>> = Vec::with_capacity(members.len());
+        let mut callable_shapes: Vec<Arc<CallableShape>> = Vec::with_capacity(members.len());
 
         for &member in members {
             if member.is_intrinsic() {
@@ -717,6 +717,19 @@ impl TypeInterner {
             let Some(other) = Self::find_property(large, prop.name) else {
                 continue;
             };
+
+            // Intersections cannot contain the same property as both private
+            // and non-private. TypeScript reduces these to never because a
+            // private member's declaring-class identity cannot be satisfied by
+            // a public or protected property with the same name. Protected
+            // members are intentionally left to the normal merge path because
+            // protected/public intersections can expose a public property.
+            if prop.visibility != other.visibility
+                && (prop.visibility == Visibility::Private
+                    || other.visibility == Visibility::Private)
+            {
+                return true;
+            }
 
             // If BOTH are optional, the object intersection is NOT never
             // (the property itself just becomes never).
@@ -876,15 +889,16 @@ impl TypeInterner {
                 return false;
             }
 
-            if matches!(
-                (&s_data, &t_data),
-                (
-                    Some(TypeData::Literal(LiteralValue::String(_))),
-                    Some(TypeData::TemplateLiteral(_))
-                )
-            ) {
-                let mut checker = crate::relations::subtype::SubtypeChecker::new(self);
-                return checker.is_subtype_of(source, target);
+            if let (
+                Some(TypeData::Literal(LiteralValue::String(literal))),
+                Some(TypeData::TemplateLiteral(template_id)),
+            ) = (&s_data, &t_data)
+            {
+                // Union normalization must stay shallow. Full template-literal
+                // matching may evaluate and intern large intermediate unions,
+                // turning normalization into a project-scale hotspot.
+                return self
+                    .literal_string_matches_template_literal_shallow(*literal, *template_id);
             }
 
             // Check if target is a union containing a compatible primitive
@@ -950,6 +964,124 @@ impl TypeInterner {
             ) => self.is_object_shape_subtype_shallow_depth(s_id, t_id, 0),
             (Some(TypeData::Function(s_id)), Some(TypeData::Function(t_id))) => {
                 self.is_function_subtype_shallow(s_id, t_id, depth)
+            }
+            _ => false,
+        }
+    }
+
+    fn literal_string_matches_template_literal_shallow(
+        &self,
+        literal: Atom,
+        template_id: TemplateLiteralId,
+    ) -> bool {
+        let literal = self.resolve_atom(literal);
+        if literal.len() > 128 {
+            return false;
+        }
+
+        let spans = self.template_list(template_id);
+        if spans.len() > 8 {
+            return false;
+        }
+
+        self.match_template_literal_shallow(literal.as_str(), &spans, 0)
+    }
+
+    fn match_template_literal_shallow(
+        &self,
+        remaining: &str,
+        spans: &[TemplateSpan],
+        span_idx: usize,
+    ) -> bool {
+        let Some(span) = spans.get(span_idx) else {
+            return remaining.is_empty();
+        };
+
+        match span {
+            TemplateSpan::Text(text) => {
+                let text = self.resolve_atom(*text);
+                remaining
+                    .strip_prefix(text.as_str())
+                    .is_some_and(|remaining| {
+                        self.match_template_literal_shallow(remaining, spans, span_idx + 1)
+                    })
+            }
+            TemplateSpan::Type(type_id) => {
+                self.match_template_type_span_shallow(remaining, spans, span_idx, *type_id)
+            }
+        }
+    }
+
+    fn match_template_type_span_shallow(
+        &self,
+        remaining: &str,
+        spans: &[TemplateSpan],
+        span_idx: usize,
+        type_id: TypeId,
+    ) -> bool {
+        match self.lookup(type_id) {
+            Some(TypeData::Intrinsic(IntrinsicKind::Number)) => {
+                let num_len =
+                    crate::relations::subtype::rules::literals::find_number_length(remaining);
+                if num_len == 0 {
+                    return false;
+                }
+                for len in (1..=num_len).rev() {
+                    if crate::relations::subtype::rules::literals::is_valid_number(
+                        &remaining[..len],
+                    ) && self.match_template_literal_shallow(
+                        &remaining[len..],
+                        spans,
+                        span_idx + 1,
+                    ) {
+                        return true;
+                    }
+                }
+                false
+            }
+            Some(TypeData::Intrinsic(IntrinsicKind::Bigint)) => {
+                let len =
+                    crate::relations::subtype::rules::literals::find_integer_length(remaining);
+                len > 0
+                    && self.match_template_literal_shallow(&remaining[len..], spans, span_idx + 1)
+            }
+            Some(TypeData::Intrinsic(IntrinsicKind::Boolean)) => {
+                ["true", "false"].into_iter().any(|prefix| {
+                    remaining.strip_prefix(prefix).is_some_and(|remaining| {
+                        self.match_template_literal_shallow(remaining, spans, span_idx + 1)
+                    })
+                })
+            }
+            Some(TypeData::Literal(literal)) => {
+                let literal_text = match literal {
+                    LiteralValue::String(atom) | LiteralValue::BigInt(atom) => {
+                        self.resolve_atom(atom)
+                    }
+                    LiteralValue::Number(num) => {
+                        crate::relations::subtype::rules::literals::format_number_for_template(
+                            num.0,
+                        )
+                    }
+                    LiteralValue::Boolean(value) => {
+                        if value {
+                            "true".into()
+                        } else {
+                            "false".into()
+                        }
+                    }
+                };
+                remaining
+                    .strip_prefix(literal_text.as_str())
+                    .is_some_and(|remaining| {
+                        self.match_template_literal_shallow(remaining, spans, span_idx + 1)
+                    })
+            }
+            Some(TypeData::Union(list_id)) => {
+                let members = self.type_list(list_id);
+                members.len() <= 8
+                    && members.iter().any(|member| {
+                        self.match_template_type_span_shallow(remaining, spans, span_idx, *member)
+                    })
             }
             _ => false,
         }
@@ -1216,6 +1348,50 @@ impl TypeInterner {
                 | (LiteralDomain::Boolean, PrimitiveClass::Boolean)
                 | (LiteralDomain::Bigint, PrimitiveClass::Bigint)
         )
+    }
+
+    /// Merge `Enum(D, X) | Enum(D, Y)` into `Enum(D, X | Y)` for same-`DefId` enum
+    /// types in the flat union list. After `sort_union_members`, same-def-id enums are
+    /// adjacent, so a single forward scan suffices.
+    ///
+    /// This preserves the nominal enum wrapper when control-flow analysis
+    /// splits and rejoins enum member types (e.g., `E1.a | E1.b` → `E1`).
+    pub(crate) fn merge_same_enum_parts(&self, flat: &mut TypeListBuffer) {
+        if flat.len() < 2 {
+            return;
+        }
+        let mut i = 0;
+        while i < flat.len() {
+            let Some(TypeData::Enum(def_a, _)) = self.lookup(flat[i]) else {
+                i += 1;
+                continue;
+            };
+            // Collect consecutive enum members with the same DefId.
+            let mut j = i + 1;
+            while j < flat.len() {
+                if let Some(TypeData::Enum(def_b, _)) = self.lookup(flat[j])
+                    && def_b == def_a
+                {
+                    j += 1;
+                    continue;
+                }
+                break;
+            }
+            if j > i + 1 {
+                // Multiple same-def enum parts: merge their inners.
+                let inners: Vec<TypeId> = flat[i..j]
+                    .iter()
+                    .filter_map(|&id| match self.lookup(id) {
+                        Some(TypeData::Enum(_, inner)) => Some(inner),
+                        _ => None,
+                    })
+                    .collect();
+                let merged_inner = self.union_from_iter(inners);
+                flat[i] = self.intern(TypeData::Enum(def_a, merged_inner));
+                flat.drain(i + 1..j);
+            }
+            i += 1;
+        }
     }
 
     /// Absorb literal types into their corresponding primitive types.
@@ -1586,7 +1762,7 @@ impl TypeInterner {
         // Find all union members in the intersection and calculate total combinations.
         // Two-pass approach: first compute the full cross-product size to check TS2590,
         // then apply the conservative distribution guard.
-        let mut union_indices = Vec::new();
+        let mut union_indices = Vec::with_capacity(flat.len());
         let mut total_combinations: usize = 1;
 
         for (i, &id) in flat.iter().enumerate() {
@@ -1643,7 +1819,8 @@ impl TypeInterner {
             let union_members = self.type_list(union_members);
 
             // For each existing combination, create new combinations with each union member
-            let mut new_combinations = Vec::new();
+            let mut new_combinations =
+                Vec::with_capacity(combinations.len().saturating_mul(union_members.len()));
             for combination in &combinations {
                 for &union_member in union_members.iter() {
                     let mut new_combination = combination.clone();
@@ -1662,5 +1839,26 @@ impl TypeInterner {
 
         // Return the union of all intersections
         Some(self.union(intersection_results))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::TemplateSpan;
+
+    #[test]
+    fn shallow_subtype_skips_literal_to_template_literal_matching() {
+        let interner = TypeInterner::new();
+        let literal = interner.literal_string("foo-x");
+        let template = interner.template_literal(vec![
+            TemplateSpan::Text(interner.intern_string("foo-")),
+            TemplateSpan::Type(TypeId::STRING),
+        ]);
+
+        assert!(
+            !interner.is_subtype_shallow(literal, template),
+            "union normalization should not invoke full template-literal subtype matching"
+        );
     }
 }

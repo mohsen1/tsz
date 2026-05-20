@@ -4,7 +4,7 @@
 //! building display strings, and extracting symbol metadata.
 
 use super::{HoverInfo, HoverProvider, format};
-use crate::jsdoc::{jsdoc_for_node, parse_jsdoc};
+use crate::jsdoc::{escape_markdown_label, format_inline_code, jsdoc_for_node, parse_jsdoc};
 use crate::resolver::{ScopeCache, ScopeCacheStats, ScopeWalker};
 use crate::utils::{
     find_symbol_query_node_at_or_before, is_comment_context, should_backtrack_to_previous_symbol,
@@ -171,6 +171,12 @@ impl<'a> HoverProvider<'a> {
             checker.get_type_of_symbol(symbol_id)
         };
         let mut type_string = checker.format_type(type_id);
+        if (type_string == "error" || type_string.is_empty())
+            && let Some(recomputed) =
+                self.recompute_hover_type_without_cache(symbol_id, symbol, decl_node_idx)
+        {
+            type_string = recomputed;
+        }
         if symbol.flags
             & (tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE
                 | tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE)
@@ -222,7 +228,7 @@ impl<'a> HoverProvider<'a> {
         let documentation_text = self.extract_plain_documentation(&raw_documentation);
 
         // 9. Build response
-        let mut contents = Vec::new();
+        let mut contents = Vec::with_capacity(if formatted_doc.is_some() { 2 } else { 1 });
 
         // Code block for the signature
         contents.push(format!("```typescript\n{display_string}\n```"));
@@ -805,7 +811,11 @@ impl<'a> HoverProvider<'a> {
 
         if f & symbol_flags::FUNCTION != 0 {
             let merged_with_namespace = self.symbol_has_namespace_merge(symbol);
-            let sig = if merged_with_namespace {
+            let has_overload_declarations = self.symbol_has_overload_declarations(symbol);
+            let sig = if merged_with_namespace
+                || has_overload_declarations
+                || self.is_overload_display(type_string)
+            {
                 self.function_signature_from_symbol(symbol)
                     .unwrap_or_else(|| format::arrow_to_colon(type_string))
             } else {
@@ -1061,68 +1071,84 @@ impl<'a> HoverProvider<'a> {
         })
     }
 
+    fn symbol_has_overload_declarations(&self, symbol: &tsz_binder::Symbol) -> bool {
+        symbol
+            .declarations
+            .iter()
+            .filter(|&&decl_idx| {
+                self.arena.get(decl_idx).is_some_and(|node| {
+                    node.kind == tsz_parser::syntax_kind_ext::FUNCTION_DECLARATION
+                })
+            })
+            .take(2)
+            .count()
+            > 1
+    }
+
+    fn is_overload_display(&self, type_string: &str) -> bool {
+        let trimmed = type_string.trim_start();
+        trimmed.starts_with('{') && trimmed.contains("):")
+    }
+
     fn function_signature_from_symbol(&self, symbol: &tsz_binder::Symbol) -> Option<String> {
         for &decl_idx in &symbol.declarations {
-            let Some(node) = self.arena.get(decl_idx) else {
-                continue;
-            };
-            let Some(func) = self.arena.get_function(node) else {
-                continue;
-            };
-            let Some(name_node) = self.arena.get(func.name) else {
-                continue;
-            };
-            let Some(name_ident) = self.arena.get_identifier(name_node) else {
-                continue;
-            };
-            let name = self.arena.resolve_identifier_text(name_ident);
-            if name != symbol.escaped_name.as_str() {
-                continue;
+            if let Some(signature) = self.function_signature_from_declaration(decl_idx, symbol) {
+                return Some(signature);
             }
+        }
+        None
+    }
 
-            let start = node.pos as usize;
-            let end = node.end.min(self.source_text.len() as u32) as usize;
-            if start >= end {
-                continue;
-            }
-            let text = &self.source_text[start..end];
-            let Some(open) = text.find('(') else {
-                continue;
-            };
-            let mut depth = 0i32;
-            let mut close = None;
-            for (i, ch) in text[open..].char_indices() {
-                match ch {
-                    '(' => depth += 1,
-                    ')' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            close = Some(open + i);
-                            break;
-                        }
+    fn function_signature_from_declaration(
+        &self,
+        decl_idx: NodeIndex,
+        symbol: &tsz_binder::Symbol,
+    ) -> Option<String> {
+        let node = self.arena.get(decl_idx)?;
+        let func = self.arena.get_function(node)?;
+        let name_node = self.arena.get(func.name)?;
+        let name_ident = self.arena.get_identifier(name_node)?;
+        let name = self.arena.resolve_identifier_text(name_ident);
+        if name != symbol.escaped_name.as_str() {
+            return None;
+        }
+
+        let start = node.pos as usize;
+        let end = node.end.min(self.source_text.len() as u32) as usize;
+        if start >= end {
+            return None;
+        }
+        let text = &self.source_text[start..end];
+        let open = text.find('(')?;
+        let mut depth = 0i32;
+        let mut close = None;
+        for (i, ch) in text[open..].char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        close = Some(open + i);
+                        break;
                     }
-                    _ => {}
                 }
+                _ => {}
             }
-            let Some(close_pos) = close else {
-                continue;
-            };
-            let params = &text[open..=close_pos];
-            let after = text[close_pos + 1..].trim_start();
-            if let Some(rest) = after.strip_prefix(':') {
-                let ret = rest
-                    .trim_start()
-                    .split(['{', ';', '\n'])
-                    .next()
-                    .unwrap_or("")
-                    .trim();
+        }
+        let close_pos = close?;
+        let params = &text[open..=close_pos];
+        if func.type_annotation.is_some() {
+            let type_node = self.arena.get(func.type_annotation)?;
+            let type_start = type_node.pos as usize;
+            let type_end = type_node.end.min(self.source_text.len() as u32) as usize;
+            if type_start < type_end && type_end <= self.source_text.len() {
+                let ret = self.source_text[type_start..type_end].trim();
                 if !ret.is_empty() {
                     return Some(format!("{params}: {ret}"));
                 }
             }
-            return Some(format!("{params}: void"));
         }
-        None
+        Some(format!("{params}: void"))
     }
 
     fn merged_function_initializer_display_type(&self, decl_node_idx: NodeIndex) -> Option<String> {
@@ -1347,6 +1373,35 @@ impl<'a> HoverProvider<'a> {
         })
     }
 
+    fn recompute_hover_type_without_cache(
+        &self,
+        symbol_id: tsz_binder::SymbolId,
+        symbol: &tsz_binder::Symbol,
+        decl_node_idx: NodeIndex,
+    ) -> Option<String> {
+        let mut checker = CheckerState::new(
+            self.arena,
+            self.binder,
+            self.interner,
+            self.file_name.clone(),
+            self.checker_options(),
+        );
+        self.apply_lib_contexts(&mut checker);
+
+        let type_id = if decl_node_idx.is_some()
+            && symbol.flags
+                & (tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE
+                    | tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE)
+                != 0
+        {
+            checker.get_type_of_node(decl_node_idx)
+        } else {
+            checker.get_type_of_symbol(symbol_id)
+        };
+        let text = checker.format_type(type_id);
+        (!text.is_empty() && text != "error").then_some(text)
+    }
+
     fn array_constructor_initializer_display_type(
         &self,
         decl_node_idx: NodeIndex,
@@ -1490,7 +1545,7 @@ impl<'a> HoverProvider<'a> {
         use tsz_binder::symbol_flags as sf;
         use tsz_parser::modifier_flags as mf;
 
-        let mut modifiers = Vec::new();
+        let mut modifiers = Vec::with_capacity(8);
 
         if symbol.is_exported || symbol.flags & sf::EXPORT_VALUE != 0 {
             modifiers.push("export");
@@ -1792,14 +1847,14 @@ impl<'a> HoverProvider<'a> {
 
         let parsed = parse_jsdoc(doc);
         if parsed.is_empty() {
-            return Some(doc.to_string());
+            return Some(escape_markdown_label(doc));
         }
 
         let mut sections = Vec::new();
         if let Some(summary) = parsed.summary.as_ref()
             && !summary.is_empty()
         {
-            sections.push(summary.clone());
+            sections.push(escape_markdown_label(summary));
         }
 
         if !parsed.params.is_empty() {
@@ -1809,10 +1864,11 @@ impl<'a> HoverProvider<'a> {
             lines.push("Parameters:".to_string());
             for name in names {
                 let desc = parsed.params.get(name).map_or("", |s| s.as_str());
+                let name_code = format_inline_code(name);
                 if desc.is_empty() {
-                    lines.push(format!("- `{name}`"));
+                    lines.push(format!("- {name_code}"));
                 } else {
-                    lines.push(format!("- `{name}` {desc}"));
+                    lines.push(format!("- {name_code} {}", escape_markdown_label(desc)));
                 }
             }
             sections.push(lines.join("\n"));
@@ -1822,30 +1878,37 @@ impl<'a> HoverProvider<'a> {
         for tag in &parsed.tags {
             match tag.name.as_str() {
                 "returns" if !tag.text.is_empty() => {
-                    sections.push(format!("Returns: {}", tag.text));
+                    sections.push(format!("Returns: {}", escape_markdown_label(&tag.text)));
                 }
                 "example" => {
+                    // Fenced code blocks render `tag.text` verbatim, so they
+                    // do not need inline escaping. Re-fence with enough
+                    // backticks to outlast any fence in the example.
                     if tag.text.is_empty() {
                         sections.push("Example:".to_string());
                     } else {
-                        sections.push(format!("Example:\n```\n{}\n```", tag.text));
+                        let fence: String = "`".repeat(pick_example_fence_length(&tag.text));
+                        sections.push(format!("Example:\n{fence}\n{}\n{fence}", tag.text));
                     }
                 }
                 "deprecated" => {
                     if tag.text.is_empty() {
                         sections.push("**@deprecated**".to_string());
                     } else {
-                        sections.push(format!("**@deprecated** {}", tag.text));
+                        sections.push(format!(
+                            "**@deprecated** {}",
+                            escape_markdown_label(&tag.text)
+                        ));
                     }
                 }
                 "see" if !tag.text.is_empty() => {
-                    sections.push(format!("See: {}", tag.text));
+                    sections.push(format!("See: {}", escape_markdown_label(&tag.text)));
                 }
                 "throws" | "exception" if !tag.text.is_empty() => {
-                    sections.push(format!("Throws: {}", tag.text));
+                    sections.push(format!("Throws: {}", escape_markdown_label(&tag.text)));
                 }
                 "since" if !tag.text.is_empty() => {
-                    sections.push(format!("Since: {}", tag.text));
+                    sections.push(format!("Since: {}", escape_markdown_label(&tag.text)));
                 }
                 _ => {}
             }
@@ -1853,9 +1916,22 @@ impl<'a> HoverProvider<'a> {
 
         let formatted = sections.join("\n\n");
         if formatted.is_empty() {
-            Some(doc.to_string())
+            Some(escape_markdown_label(doc))
         } else {
             Some(formatted)
         }
     }
+}
+
+/// Pick a fence length for an `@example` code block. `CommonMark` §4.5 requires
+/// the closing fence to be at least as long as the opening fence, so the
+/// returned length must exceed every backtick-only line prefix inside `text`.
+/// The minimum is three to match the conventional ` ``` ` fence.
+fn pick_example_fence_length(text: &str) -> usize {
+    let longest_inner_fence = text
+        .lines()
+        .map(|line| line.chars().take_while(|c| *c == '`').count())
+        .max()
+        .unwrap_or(0);
+    (longest_inner_fence + 1).max(3)
 }

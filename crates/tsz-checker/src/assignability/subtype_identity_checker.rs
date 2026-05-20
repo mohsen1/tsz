@@ -22,7 +22,7 @@ impl<'a> CheckerState<'a> {
     /// This is the main entry point for subtype checking, used for type compatibility
     /// throughout the type system. Subtyping is stricter than assignability.
     pub fn is_subtype_of(&mut self, source: TypeId, target: TypeId) -> bool {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use crate::diagnostics::diagnostic_codes;
         use tsz_binder::symbol_flags;
 
         // Fast path: identity check
@@ -74,10 +74,14 @@ impl<'a> CheckerState<'a> {
             )
         };
 
-        if relation_result.depth_exceeded {
+        if relation_result.iteration_exceeded || relation_result.depth_exceeded {
+            let source_name = self.format_type_diagnostic(source);
+            let target_name = self.format_type_diagnostic(target);
             self.error_at_current_node(
-                diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
-                diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                &format!(
+                    "Excessive complexity comparing types '{source_name}' and '{target_name}'."
+                ),
+                diagnostic_codes::EXCESSIVE_COMPLEXITY_COMPARING_TYPES_AND,
             );
         }
 

@@ -5,6 +5,12 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
+struct SourceFunctionSignatureText {
+    type_params_text: String,
+    params_text: String,
+    return_text: String,
+}
+
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn async_returned_function_initializer_promise_type_text(
         &self,
@@ -49,14 +55,141 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
             let inner_func = self.arena.get_function(init_node)?;
-            if let Some(type_text) =
-                self.source_function_initializer_type_text(outer_func, inner_func)
-            {
+            if let Some(type_text) = self.source_function_initializer_type_text(
+                outer_func,
+                var_decl.initializer,
+                inner_func,
+            ) {
                 return Some(type_text);
             }
         }
 
         None
+    }
+
+    pub(in crate::declaration_emitter) fn local_function_declaration_identifier_type_text(
+        &self,
+        identifier_idx: NodeIndex,
+    ) -> Option<String> {
+        let outer_func = self.enclosing_function_data(identifier_idx)?;
+        let outer_type_param_names = outer_func
+            .type_parameters
+            .as_ref()
+            .map(|type_params| self.collect_type_param_names(type_params))
+            .unwrap_or_default();
+        self.function_declaration_identifier_type_text(
+            identifier_idx,
+            Some(outer_func),
+            &outer_type_param_names,
+            &[],
+        )
+    }
+
+    pub(in crate::declaration_emitter) fn function_declaration_identifier_type_text(
+        &self,
+        identifier_idx: NodeIndex,
+        outer_func: Option<&tsz_parser::parser::node::FunctionData>,
+        outer_type_param_names: &[String],
+        type_param_renames: &[(String, String)],
+    ) -> Option<String> {
+        let identifier_name = self.identifier_text_or_source(identifier_idx)?;
+        if let Some(func_decls) = outer_func
+            .and_then(|func| self.local_function_declarations_in_body(func.body, &identifier_name))
+        {
+            let type_text = self.function_declaration_type_text_from_declarations(
+                &func_decls,
+                outer_func,
+                outer_type_param_names,
+            )?;
+            return Some(Self::rename_type_text_identifiers(
+                &type_text,
+                type_param_renames,
+            ));
+        }
+
+        let sym_id = self.value_reference_symbol(identifier_idx)?;
+        let binder = self.binder?;
+        let symbol = binder.symbols.get(sym_id)?;
+
+        let func_decls = symbol
+            .declarations
+            .iter()
+            .copied()
+            .filter_map(|decl_idx| self.function_declaration_from_symbol_decl(decl_idx))
+            .collect::<Vec<_>>();
+        if func_decls.is_empty() {
+            return None;
+        }
+
+        let type_text = self.function_declaration_type_text_from_declarations(
+            &func_decls,
+            outer_func,
+            outer_type_param_names,
+        )?;
+        Some(Self::rename_type_text_identifiers(
+            &type_text,
+            type_param_renames,
+        ))
+    }
+
+    fn function_declaration_type_text_from_declarations(
+        &self,
+        func_decls: &[NodeIndex],
+        outer_func: Option<&tsz_parser::parser::node::FunctionData>,
+        outer_type_param_names: &[String],
+    ) -> Option<String> {
+        let overload_decls = func_decls
+            .iter()
+            .copied()
+            .filter(|&func_idx| {
+                self.arena
+                    .get(func_idx)
+                    .and_then(|node| self.arena.get_function(node))
+                    .is_some_and(|func| func.body.is_none())
+            })
+            .collect::<Vec<_>>();
+        if !overload_decls.is_empty() {
+            return self.source_nested_function_overload_set_type_text(
+                outer_func,
+                &overload_decls,
+                outer_type_param_names,
+            );
+        }
+
+        let func_idx = func_decls
+            .iter()
+            .copied()
+            .find(|&func_idx| {
+                self.arena
+                    .get(func_idx)
+                    .and_then(|node| self.arena.get_function(node))
+                    .is_some_and(|func| func.body.is_some())
+            })
+            .or_else(|| func_decls.first().copied())?;
+        let func_node = self.arena.get(func_idx)?;
+        let func = self.arena.get_function(func_node)?;
+        self.source_nested_function_type_text(outer_func, func_idx, func, outer_type_param_names)
+    }
+
+    fn local_function_declarations_in_body(
+        &self,
+        body_idx: NodeIndex,
+        name: &str,
+    ) -> Option<Vec<NodeIndex>> {
+        let body_node = self.arena.get(body_idx)?;
+        let block = self.arena.get_block(body_node)?;
+        let mut declarations = Vec::new();
+        for &stmt_idx in &block.statements.nodes {
+            let stmt_node = self.arena.get(stmt_idx)?;
+            if stmt_node.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+                continue;
+            }
+            let func = self.arena.get_function(stmt_node)?;
+            if self.identifier_text_or_source(func.name).as_deref() == Some(name) {
+                declarations.push(stmt_idx);
+            }
+        }
+        (!declarations.is_empty()).then_some(declarations)
     }
 
     fn type_query_identifier_name(type_text: &str) -> Option<String> {
@@ -182,7 +315,11 @@ impl<'a> DeclarationEmitter<'a> {
                         return None;
                     }
                     let inner_func = self.arena.get_function(init_node)?;
-                    return self.source_function_initializer_type_text(outer_func, inner_func);
+                    return self.source_function_initializer_type_text(
+                        outer_func,
+                        decl.initializer,
+                        inner_func,
+                    );
                 }
             }
         }
@@ -201,9 +338,46 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
+    fn function_declaration_from_symbol_decl(&self, decl_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = decl_idx;
+        for _ in 0..8 {
+            let node = self.arena.get(current)?;
+            if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && self.arena.get_function(node).is_some()
+            {
+                let func = self.arena.get_function(node)?;
+                if current == decl_idx || func.name == decl_idx {
+                    return Some(current);
+                }
+                return None;
+            }
+            current = self.arena.parent_of(current)?;
+        }
+        None
+    }
+
+    fn enclosing_function_data(
+        &self,
+        from_idx: NodeIndex,
+    ) -> Option<&tsz_parser::parser::node::FunctionData> {
+        let mut current = from_idx;
+        while let Some(parent_idx) = self.arena.parent_of(current) {
+            let node = self.arena.get(parent_idx)?;
+            if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || node.kind == syntax_kind_ext::ARROW_FUNCTION
+            {
+                return self.arena.get_function(node);
+            }
+            current = parent_idx;
+        }
+        None
+    }
+
     fn source_function_initializer_type_text(
         &self,
         outer_func: &tsz_parser::parser::node::FunctionData,
+        inner_idx: NodeIndex,
         inner_func: &tsz_parser::parser::node::FunctionData,
     ) -> Option<String> {
         let outer_type_param_names = outer_func
@@ -211,19 +385,101 @@ impl<'a> DeclarationEmitter<'a> {
             .as_ref()
             .map(|type_params| self.collect_type_param_names(type_params))
             .unwrap_or_default();
-        self.source_nested_function_type_text(Some(outer_func), inner_func, &outer_type_param_names)
+        self.source_nested_function_type_text(
+            Some(outer_func),
+            inner_idx,
+            inner_func,
+            &outer_type_param_names,
+        )
     }
 
     pub(in crate::declaration_emitter) fn source_nested_function_type_text(
         &self,
         outer_func: Option<&tsz_parser::parser::node::FunctionData>,
+        inner_idx: NodeIndex,
         inner_func: &tsz_parser::parser::node::FunctionData,
         outer_type_param_names: &[String],
     ) -> Option<String> {
-        let outer_type_param_names = outer_func
-            .and_then(|func| func.type_parameters.as_ref())
-            .map(|type_params| self.collect_type_param_names(type_params))
-            .unwrap_or_else(|| outer_type_param_names.to_vec());
+        let signature = self.source_nested_function_signature_text(
+            outer_func,
+            inner_idx,
+            inner_func,
+            outer_type_param_names,
+        )?;
+        Some(format!(
+            "{}({}) => {}",
+            signature.type_params_text, signature.params_text, signature.return_text
+        ))
+    }
+
+    fn source_nested_function_call_signature_text(
+        &self,
+        outer_func: Option<&tsz_parser::parser::node::FunctionData>,
+        inner_idx: NodeIndex,
+        inner_func: &tsz_parser::parser::node::FunctionData,
+        outer_type_param_names: &[String],
+    ) -> Option<String> {
+        let signature = self.source_nested_function_signature_text(
+            outer_func,
+            inner_idx,
+            inner_func,
+            outer_type_param_names,
+        )?;
+        Some(format!(
+            "{}({}): {}",
+            signature.type_params_text, signature.params_text, signature.return_text
+        ))
+    }
+
+    fn source_nested_function_overload_set_type_text(
+        &self,
+        outer_func: Option<&tsz_parser::parser::node::FunctionData>,
+        overload_decls: &[NodeIndex],
+        outer_type_param_names: &[String],
+    ) -> Option<String> {
+        let signatures = overload_decls
+            .iter()
+            .copied()
+            .map(|func_idx| {
+                let func_node = self.arena.get(func_idx)?;
+                let func = self.arena.get_function(func_node)?;
+                self.source_nested_function_call_signature_text(
+                    outer_func,
+                    func_idx,
+                    func,
+                    outer_type_param_names,
+                )
+            })
+            .collect::<Option<Vec<_>>>()?;
+        if signatures.is_empty() {
+            return None;
+        }
+
+        let mut text = String::from("{");
+        for signature in signatures {
+            text.push_str("\n        ");
+            text.push_str(&signature);
+            text.push(';');
+        }
+        text.push_str("\n    }");
+        Some(text)
+    }
+
+    fn source_nested_function_signature_text(
+        &self,
+        outer_func: Option<&tsz_parser::parser::node::FunctionData>,
+        inner_idx: NodeIndex,
+        inner_func: &tsz_parser::parser::node::FunctionData,
+        outer_type_param_names: &[String],
+    ) -> Option<SourceFunctionSignatureText> {
+        let mut outer_type_param_names = outer_type_param_names.to_vec();
+        if let Some(type_params) = outer_func.and_then(|func| func.type_parameters.as_ref()) {
+            for name in self.collect_type_param_names(type_params) {
+                if !outer_type_param_names.contains(&name) {
+                    outer_type_param_names.push(name);
+                }
+            }
+        }
         let inner_type_params = inner_func.type_parameters.as_ref();
         let inner_renames = inner_type_params.map_or_else(Vec::new, |type_params| {
             self.shadowed_function_type_param_renames(type_params, &outer_type_param_names)
@@ -244,23 +500,37 @@ impl<'a> DeclarationEmitter<'a> {
             })
             .unwrap_or_default();
 
-        let params_text = inner_func
-            .parameters
-            .nodes
-            .iter()
-            .copied()
-            .map(|param_idx| self.source_function_parameter_text(param_idx, &inner_renames))
-            .collect::<Option<Vec<_>>>()?
-            .join(", ");
+        let jsdoc = self.returned_function_expression_jsdoc(inner_idx, inner_func);
+        let jsdoc_function_parts = jsdoc
+            .as_deref()
+            .and_then(Self::parse_jsdoc_type_text)
+            .and_then(|type_text| Self::parse_function_type_text(&type_text));
+        let mut used_param_names = Vec::new();
+        let mut params = Vec::with_capacity(inner_func.parameters.nodes.len());
+        for (position, param_idx) in inner_func.parameters.nodes.iter().copied().enumerate() {
+            let text = self.source_function_parameter_text(
+                param_idx,
+                position,
+                &inner_renames,
+                jsdoc.as_deref(),
+                jsdoc_function_parts.as_ref(),
+                &mut used_param_names,
+            )?;
+            params.push(text);
+        }
+        let params_text = params.join(", ");
         let return_text = self.source_function_initializer_return_type_text(
             outer_func,
+            inner_idx,
             inner_func,
             &inner_renames,
         )?;
 
-        Some(format!(
-            "{type_params_text}({params_text}) => {return_text}"
-        ))
+        Some(SourceFunctionSignatureText {
+            type_params_text,
+            params_text,
+            return_text,
+        })
     }
 
     pub(in crate::declaration_emitter) fn direct_returned_function_expression_type_text(
@@ -296,7 +566,7 @@ impl<'a> DeclarationEmitter<'a> {
         let inner_idx = returned_function?;
         let inner_node = self.arena.get(inner_idx)?;
         let inner_func = self.arena.get_function(inner_node)?;
-        self.source_nested_function_type_text(Some(outer_func), inner_func, &[])
+        self.source_nested_function_type_text(Some(outer_func), inner_idx, inner_func, &[])
     }
 
     pub(in crate::declaration_emitter) fn function_body_return_hint(
@@ -309,11 +579,13 @@ impl<'a> DeclarationEmitter<'a> {
             .then(|| self.direct_returned_function_expression_type_text(func))
             .flatten();
         let has_direct_function_return = direct_function_return.is_some();
-        (
-            direct_function_return
-                .or_else(|| self.function_body_preferred_return_type_text(func_body)),
-            has_direct_function_return,
-        )
+        let return_text = direct_function_return
+            .or_else(|| self.function_body_preferred_return_type_text(func_body))
+            .map(|type_text| {
+                self.expand_rest_tuple_parameters_in_function_type_text(func_body, &type_text)
+                    .unwrap_or(type_text)
+            });
+        (return_text, has_direct_function_return)
     }
 
     pub(in crate::declaration_emitter) fn class_property_function_initializer_type_text(
@@ -329,7 +601,12 @@ impl<'a> DeclarationEmitter<'a> {
         }
         let inner_func = self.arena.get_function(init_node)?;
         let outer_type_param_names = self.enclosing_class_type_param_names(prop_idx);
-        self.source_nested_function_type_text(None, inner_func, &outer_type_param_names)
+        self.source_nested_function_type_text(
+            None,
+            initializer,
+            inner_func,
+            &outer_type_param_names,
+        )
     }
 
     fn enclosing_class_type_param_names(&self, from_idx: NodeIndex) -> Vec<String> {
@@ -442,7 +719,11 @@ impl<'a> DeclarationEmitter<'a> {
     fn source_function_parameter_text(
         &self,
         param_idx: NodeIndex,
+        position: usize,
         type_param_renames: &[(String, String)],
+        function_jsdoc: Option<&str>,
+        jsdoc_function_parts: Option<&super::type_inference_function_text::FunctionTypeTextParts>,
+        used_param_names: &mut Vec<String>,
     ) -> Option<String> {
         let param_node = self.arena.get(param_idx)?;
         let param = self.arena.get_parameter(param_node)?;
@@ -450,193 +731,270 @@ impl<'a> DeclarationEmitter<'a> {
         let raw_type_text = self
             .preferred_annotation_name_text(param.type_annotation)
             .or_else(|| self.emit_type_node_text(param.type_annotation))
+            .or_else(|| {
+                self.source_is_js_file
+                    .then(|| {
+                        self.jsdoc_returned_function_parameter_type_text(
+                            param_idx,
+                            position,
+                            function_jsdoc,
+                            jsdoc_function_parts,
+                        )
+                    })
+                    .flatten()
+            })
             .unwrap_or_else(|| "any".to_string());
         let type_text = Self::simple_type_reference_name(&raw_type_text)
             .and_then(|alias_name| self.local_type_alias_annotation_text(param_idx, &alias_name))
             .unwrap_or_else(|| {
                 Self::rename_type_text_identifiers(&raw_type_text, type_param_renames)
             });
+        if param.dot_dot_dot_token
+            && let Some(params) =
+                self.expand_rest_tuple_parameter_text(param_idx, &type_text, used_param_names)
+        {
+            return Some(params);
+        }
+        if param.dot_dot_dot_token {
+            used_param_names.push(name.clone());
+            return Some(format!("...{name}: {type_text}"));
+        }
+        used_param_names.push(name.clone());
         Some(format!("{name}: {type_text}"))
     }
 
-    fn source_function_initializer_return_type_text(
+    fn jsdoc_returned_function_parameter_type_text(
         &self,
-        outer_func: Option<&tsz_parser::parser::node::FunctionData>,
-        inner_func: &tsz_parser::parser::node::FunctionData,
-        inner_type_param_renames: &[(String, String)],
+        param_idx: NodeIndex,
+        position: usize,
+        function_jsdoc: Option<&str>,
+        jsdoc_function_parts: Option<&super::type_inference_function_text::FunctionTypeTextParts>,
     ) -> Option<String> {
-        if inner_func.type_annotation.is_some() {
-            let type_text = self
-                .preferred_annotation_name_text(inner_func.type_annotation)
-                .or_else(|| self.emit_type_node_text(inner_func.type_annotation))?;
-            return Some(Self::rename_type_text_identifiers(
-                &type_text,
-                inner_type_param_renames,
-            ));
+        if let Some(part) = jsdoc_function_parts.and_then(|parts| parts.parameters.get(position)) {
+            return Some(part.type_text.clone());
         }
-        if inner_func.body.is_some() && self.body_returns_void(inner_func.body) {
-            return Some("void".to_string());
-        }
-        if inner_func.body.is_none() {
+
+        let params = function_jsdoc.map(Self::parse_jsdoc_param_decls)?;
+        if params.is_empty() {
             return None;
         }
-        let outer_func = outer_func?;
-        let return_expr = self
-            .const_asserted_expression(inner_func.body)
-            .unwrap_or(inner_func.body);
-        let return_node = self.arena.get(return_expr)?;
-        if return_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
-            return None;
+
+        let param_node = self.arena.get(param_idx)?;
+        let param = self.arena.get_parameter(param_node)?;
+        if let Some(name) = self.get_identifier_text(param.name)
+            && let Some(found) = params.iter().find(|decl| decl.name == name)
+        {
+            return Some(found.type_text.clone());
         }
-        let array = self.arena.get_literal_expr(return_node)?;
-        let elements = array
-            .elements
-            .nodes
-            .iter()
-            .copied()
-            .map(|elem_idx| {
-                self.function_scope_identifier_type_text(
-                    outer_func,
-                    inner_func,
-                    elem_idx,
-                    inner_type_param_renames,
-                )
+
+        params.into_iter().nth(position).map(|decl| decl.type_text)
+    }
+
+    fn expand_rest_tuple_parameter_text(
+        &self,
+        from_idx: NodeIndex,
+        type_text: &str,
+        used_param_names: &mut Vec<String>,
+    ) -> Option<String> {
+        let elements = self.expand_tuple_type_elements(from_idx, type_text, 0)?;
+
+        Some(
+            elements
+                .into_iter()
+                .map(|(name, ty, optional)| {
+                    let unique = Self::unique_parameter_name(&name, used_param_names);
+                    if optional {
+                        let ty = if Self::contains_whole_word_in_text(&ty, "undefined") {
+                            ty
+                        } else {
+                            format!("{ty} | undefined")
+                        };
+                        return format!("{unique}?: {ty}");
+                    }
+                    format!("{unique}: {ty}")
+                })
+                .collect::<Vec<_>>()
+                .join(", "),
+        )
+    }
+
+    pub(in crate::declaration_emitter) fn expand_rest_tuple_parameters_in_function_type_text(
+        &self,
+        scope_idx: NodeIndex,
+        type_text: &str,
+    ) -> Option<String> {
+        let trimmed = type_text.trim();
+        let arrow_idx = Self::find_top_level_arrow(trimmed)?;
+        let head = trimmed.get(..arrow_idx)?.trim_end();
+        let return_text = trimmed.get(arrow_idx + 2..)?.trim();
+        let open_idx = head.rfind('(')?;
+        let prefix = head.get(..open_idx)?;
+        let params_text = head.get(open_idx + 1..)?.strip_suffix(')')?;
+
+        let mut changed = false;
+        let mut used_param_names = Vec::new();
+        let params = Self::split_top_level_commas(params_text)
+            .into_iter()
+            .map(|param_text| {
+                let param_text = param_text.trim();
+                let Some(rest_text) = param_text.strip_prefix("...").map(str::trim) else {
+                    Self::track_existing_parameter_name(param_text, &mut used_param_names);
+                    return Some(param_text.to_string());
+                };
+                let colon_idx = Self::find_top_level_byte(rest_text, b':')?;
+                let type_text = rest_text.get(colon_idx + 1..)?.trim();
+                let expanded = self.expand_rest_tuple_parameter_text(
+                    scope_idx,
+                    type_text,
+                    &mut used_param_names,
+                )?;
+                changed = true;
+                Some(expanded)
             })
             .collect::<Option<Vec<_>>>()?;
-        Some(format!("readonly [{}]", elements.join(", ")))
+        changed.then(|| format!("{prefix}({}) => {return_text}", params.join(", ")))
     }
 
-    fn const_asserted_expression(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
-        let expr_node = self.arena.get(expr_idx)?;
-        if expr_node.kind != syntax_kind_ext::AS_EXPRESSION
-            && expr_node.kind != syntax_kind_ext::TYPE_ASSERTION
+    pub(in crate::declaration_emitter) fn preserve_call_argument_single_rest_parameter_text(
+        &self,
+        call_idx: NodeIndex,
+        type_text: &str,
+    ) -> Option<String> {
+        let call_node = self.arena.get(call_idx)?;
+        if call_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = self.arena.get_call_expr(call_node)?;
+        let args = call.arguments.as_ref()?;
+        let first_arg = args.nodes.first().copied()?;
+        let first_arg = self.skip_parenthesized_expression(first_arg)?;
+        let arg_node = self.arena.get(first_arg)?;
+        if arg_node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && arg_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
         {
             return None;
         }
-        let assertion = self.arena.get_type_assertion(expr_node)?;
-        if self
-            .arena
-            .get(assertion.type_node)
-            .is_some_and(|node| node.kind == SyntaxKind::ConstKeyword as u16)
+        let func = self.arena.get_function(arg_node)?;
+        let [param_idx] = func.parameters.nodes.as_slice() else {
+            return None;
+        };
+        let param_node = self.arena.get(*param_idx)?;
+        let param = self.arena.get_parameter(param_node)?;
+        if !param.dot_dot_dot_token {
+            return None;
+        }
+
+        let trimmed = type_text.trim();
+        let arrow_idx = Self::find_top_level_arrow(trimmed)?;
+        let head = trimmed.get(..arrow_idx)?.trim_end();
+        let return_text = trimmed.get(arrow_idx + 2..)?.trim();
+        let open_idx = head.rfind('(')?;
+        let prefix = head.get(..open_idx)?;
+        let params_text = head.get(open_idx + 1..)?.strip_suffix(')')?.trim();
+        if params_text.starts_with("...") || Self::split_top_level_commas(params_text).len() != 1 {
+            return None;
+        }
+        let colon_idx = Self::find_top_level_byte(params_text, b':')?;
+        let name = params_text.get(..colon_idx)?.trim();
+        let param_type = params_text.get(colon_idx + 1..)?.trim();
+        if name.is_empty()
+            || param_type.is_empty()
+            || !(param_type.ends_with("[]") || param_type.starts_with("Array<"))
         {
-            return Some(assertion.expression);
+            return None;
         }
-        let type_name = self
-            .get_identifier_text(assertion.type_node)
-            .or_else(|| self.emit_type_node_text(assertion.type_node))?;
-        (type_name == "const").then_some(assertion.expression)
+
+        Some(format!(
+            "{prefix}(...{name}: {param_type}) => {return_text}"
+        ))
     }
 
-    fn function_scope_identifier_type_text(
+    fn expand_tuple_type_elements(
         &self,
-        outer_func: &tsz_parser::parser::node::FunctionData,
-        inner_func: &tsz_parser::parser::node::FunctionData,
-        expr_idx: NodeIndex,
-        inner_type_param_renames: &[(String, String)],
-    ) -> Option<String> {
-        let name = self.get_identifier_text(expr_idx)?;
-        if let Some(type_text) = self.function_parameter_annotation_text(inner_func, &name) {
-            return Some(Self::rename_type_text_identifiers(
-                &type_text,
-                inner_type_param_renames,
-            ));
+        from_idx: NodeIndex,
+        type_text: &str,
+        depth: usize,
+    ) -> Option<Vec<(String, String, bool)>> {
+        if depth > 8 {
+            return None;
         }
-        if let Some(type_text) = self.function_parameter_annotation_text(outer_func, &name) {
-            return Some(type_text);
+        let inner = type_text
+            .trim()
+            .trim_end_matches(';')
+            .trim()
+            .strip_prefix('[')?
+            .strip_suffix(']')?
+            .trim();
+        if inner.is_empty() {
+            return Some(Vec::new());
         }
-        self.get_node_type_or_names(&[expr_idx])
-            .map(|type_id| self.print_type_id(type_id))
-    }
 
-    fn function_parameter_annotation_text(
-        &self,
-        func: &tsz_parser::parser::node::FunctionData,
-        name: &str,
-    ) -> Option<String> {
-        for param_idx in func.parameters.nodes.iter().copied() {
-            let param_node = self.arena.get(param_idx)?;
-            let param = self.arena.get_parameter(param_node)?;
-            if self.identifier_text_or_source(param.name).as_deref() != Some(name) {
+        let mut elements = Vec::new();
+        for part in Self::split_top_level_commas(inner) {
+            let part = part.trim();
+            if part.is_empty() {
                 continue;
             }
-            return self
-                .preferred_annotation_name_text(param.type_annotation)
-                .or_else(|| self.emit_type_node_text(param.type_annotation));
-        }
-        None
-    }
-
-    fn local_type_alias_annotation_text(&self, from_idx: NodeIndex, name: &str) -> Option<String> {
-        let mut current_idx = from_idx;
-        while let Some(parent_idx) = self.arena.parent_of(current_idx) {
-            let Some(parent_node) = self.arena.get(parent_idx) else {
-                break;
-            };
-            if parent_node.kind == syntax_kind_ext::BLOCK
-                && let Some(block) = self.arena.get_block(parent_node)
-            {
-                for stmt_idx in block.statements.nodes.iter().copied() {
-                    let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                        continue;
-                    };
-                    if stmt_node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
-                        continue;
-                    }
-                    let Some(alias) = self.arena.get_type_alias(stmt_node) else {
-                        continue;
-                    };
-                    if self.get_identifier_text(alias.name).as_deref() == Some(name) {
-                        return self
-                            .local_type_annotation_text(alias.type_node)
-                            .or_else(|| {
-                                self.preferred_annotation_name_text(alias.type_node)
-                                    .or_else(|| self.emit_type_node_text(alias.type_node))
-                            });
-                    }
+            if let Some(alias_name) = part.strip_prefix("...").map(str::trim) {
+                let alias_text = self.local_type_alias_annotation_text(from_idx, alias_name)?;
+                elements.extend(self.expand_tuple_type_elements(
+                    from_idx,
+                    &alias_text,
+                    depth + 1,
+                )?);
+                continue;
+            }
+            if let Some((name, ty)) = part.split_once(':') {
+                let name = name.trim().trim_start_matches("...");
+                let optional = name.ends_with('?');
+                let name = name.strip_suffix('?').unwrap_or(name).trim();
+                let ty = ty.trim();
+                if name.is_empty() || ty.is_empty() {
+                    return None;
                 }
-            }
-            current_idx = parent_idx;
-        }
-        None
-    }
-
-    fn renamed_type_param_name(name: &str, renames: &[(String, String)]) -> String {
-        renames
-            .iter()
-            .find_map(|(from, to)| (from == name).then(|| to.clone()))
-            .unwrap_or_else(|| name.to_string())
-    }
-
-    fn identifier_text_or_source(&self, idx: NodeIndex) -> Option<String> {
-        self.get_identifier_text(idx).or_else(|| {
-            let node = self.arena.get(idx)?;
-            (node.kind == SyntaxKind::Identifier as u16)
-                .then(|| self.get_source_slice_no_semi(node.pos, node.end))?
-        })
-    }
-
-    fn rename_type_text_identifiers(text: &str, renames: &[(String, String)]) -> String {
-        if renames.is_empty() {
-            return text.to_string();
-        }
-
-        let mut result = String::with_capacity(text.len());
-        let mut ident_start = None;
-        for (idx, ch) in text.char_indices() {
-            if ch == '_' || ch == '$' || ch.is_ascii_alphanumeric() {
-                ident_start.get_or_insert(idx);
+                elements.push((name.to_string(), ty.to_string(), optional));
                 continue;
             }
-            if let Some(start) = ident_start.take() {
-                let ident = &text[start..idx];
-                result.push_str(&Self::renamed_type_param_name(ident, renames));
+
+            // Unlabeled tuple elements are valid TypeScript (e.g. `[string, number]`).
+            // Synthesize stable parameter names so tuple rest expansion still works.
+            let optional = part.ends_with('?');
+            let ty = part.strip_suffix('?').unwrap_or(part).trim();
+            if ty.is_empty() {
+                return None;
             }
-            result.push(ch);
+            let synthesized = format!("arg{}", elements.len());
+            elements.push((synthesized, ty.to_string(), optional));
         }
-        if let Some(start) = ident_start {
-            let ident = &text[start..];
-            result.push_str(&Self::renamed_type_param_name(ident, renames));
+        Some(elements)
+    }
+
+    fn unique_parameter_name(name: &str, seen: &mut Vec<String>) -> String {
+        if !seen.iter().any(|existing| existing == name) {
+            seen.push(name.to_string());
+            return name.to_string();
         }
-        result
+
+        let mut suffix = 1usize;
+        loop {
+            let candidate = format!("{name}_{suffix}");
+            if !seen.iter().any(|existing| existing == &candidate) {
+                seen.push(candidate.clone());
+                return candidate;
+            }
+            suffix += 1;
+        }
+    }
+
+    fn track_existing_parameter_name(param_text: &str, seen: &mut Vec<String>) {
+        let Some(colon_idx) = Self::find_top_level_byte(param_text, b':') else {
+            return;
+        };
+        let raw_name = param_text.get(..colon_idx).unwrap_or_default().trim();
+        let raw_name = raw_name.strip_prefix("...").unwrap_or(raw_name).trim();
+        let raw_name = raw_name.strip_suffix('?').unwrap_or(raw_name).trim();
+        if !raw_name.is_empty() {
+            seen.push(raw_name.to_string());
+        }
     }
 }

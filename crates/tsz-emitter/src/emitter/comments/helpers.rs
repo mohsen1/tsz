@@ -444,6 +444,29 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// Returns whether the final pending comment before `pos` has a trailing
+    /// newline, without advancing the global comment cursor.
+    pub(in crate::emitter) fn last_pending_comment_before_pos_has_trailing_newline(
+        &self,
+        pos: u32,
+    ) -> bool {
+        if self.ctx.options.remove_comments {
+            return false;
+        }
+        let actual_start = self.skip_trivia_forward(pos, pos + 1024);
+        let mut scan_idx = self.comment_emit_idx;
+        let mut last_has_trailing_newline = false;
+        while scan_idx < self.all_comments.len() {
+            let comment = &self.all_comments[scan_idx];
+            if comment.end > actual_start {
+                break;
+            }
+            last_has_trailing_newline = comment.has_trailing_new_line;
+            scan_idx += 1;
+        }
+        last_has_trailing_newline
+    }
+
     /// Emit comments written between a `...` token and the following operand
     /// or binding name. TSC keeps these comments glued to the spread/rest token
     /// instead of treating them as ordinary leading comments on the operand.
@@ -668,6 +691,151 @@ impl<'a> Printer<'a> {
             last_comment_end = comment_end;
             last_comment_had_trailing_newline = comment_has_new_line;
             self.comment_emit_idx += 1;
+            previous_comment_had_trailing_newline = comment_has_new_line;
+        }
+
+        (
+            emitted_any,
+            last_comment_end,
+            last_comment_had_trailing_newline,
+        )
+    }
+
+    pub(in crate::emitter) fn emit_comments_after_deferred_semicolon(
+        &mut self,
+        start_pos: u32,
+        end_pos: u32,
+    ) {
+        if self.ctx.options.remove_comments {
+            return;
+        }
+
+        let Some(text) = self.source_text else {
+            return;
+        };
+
+        while self.comment_emit_idx < self.all_comments.len() {
+            let (comment_pos, comment_end, comment_has_new_line) = {
+                let comment = &self.all_comments[self.comment_emit_idx];
+                (comment.pos, comment.end, comment.has_trailing_new_line)
+            };
+
+            if comment_pos >= end_pos {
+                break;
+            }
+
+            if comment_end <= start_pos {
+                self.comment_emit_idx += 1;
+                continue;
+            }
+
+            if self.comment_preceded_by_newline(comment_pos) {
+                self.write_line();
+            } else {
+                self.write_space();
+            }
+
+            if let Ok(comment_text) =
+                crate::safe_slice::slice(text, comment_pos as usize, comment_end as usize)
+            {
+                self.write_comment_with_reindent(comment_text, Some(comment_pos));
+            }
+            if comment_has_new_line {
+                self.write_line();
+            }
+            self.comment_emit_idx += 1;
+        }
+    }
+
+    /// Emit comments in a source range without consulting or advancing the
+    /// global comment cursor. This is a narrow recovery path for transformed
+    /// emit shapes where an outer transform has already consumed the cursor,
+    /// but a preserved syntax form still needs to print comments from source.
+    ///
+    /// Returns:
+    /// (`did_emit_comment`, `last_comment_end_pos`, `last_comment_had_trailing_newline`)
+    pub(in crate::emitter) fn emit_comments_in_range_untracked(
+        &mut self,
+        start_pos: u32,
+        end_pos: u32,
+        insert_space_for_adjacent_inline: bool,
+        normalize_leading_text: bool,
+    ) -> (bool, u32, bool) {
+        if self.ctx.options.remove_comments {
+            return (false, 0, false);
+        }
+
+        let Some(text) = self.source_text else {
+            return (false, 0, false);
+        };
+
+        let mut emitted_any = false;
+        let mut last_comment_end = 0u32;
+        let mut last_comment_had_trailing_newline = false;
+        let mut previous_comment_had_trailing_newline = normalize_leading_text;
+        let mut cursor_pos = start_pos as usize;
+        let mut idx = self
+            .source_comment_ranges
+            .partition_point(|comment| comment.end <= start_pos);
+
+        while idx < self.source_comment_ranges.len() {
+            let comment = &self.source_comment_ranges[idx];
+            let comment_pos = comment.pos;
+            let comment_end = comment.end;
+            let comment_has_new_line = comment.has_trailing_new_line;
+
+            if comment_pos >= end_pos {
+                break;
+            }
+            idx += 1;
+
+            if comment_end <= start_pos {
+                continue;
+            }
+
+            let comment_pos_usize = comment_pos as usize;
+            if comment_pos_usize > cursor_pos {
+                if let Ok(leading_text) =
+                    crate::safe_slice::slice(text, cursor_pos, comment_pos_usize)
+                {
+                    if normalize_leading_text {
+                        self.write_normalized_jsx_comment_leading_text(
+                            leading_text,
+                            previous_comment_had_trailing_newline,
+                        );
+                    } else {
+                        self.write(leading_text);
+                    }
+                }
+            } else if insert_space_for_adjacent_inline
+                && !comment_has_new_line
+                && !self.comment_preceded_by_newline(comment_pos)
+            {
+                self.write_space();
+            }
+
+            if let Ok(comment_text) =
+                crate::safe_slice::slice(text, comment_pos as usize, comment_end as usize)
+            {
+                self.write_comment_with_reindent(comment_text, Some(comment_pos));
+            }
+            if comment_has_new_line {
+                self.write_line();
+                cursor_pos = comment_end as usize;
+                if let Some(next) = text.as_bytes().get(comment_end as usize..) {
+                    if next.starts_with(b"\r\n") {
+                        cursor_pos += 2;
+                    } else if matches!(next.first(), Some(b'\n' | b'\r')) {
+                        cursor_pos += 1;
+                    }
+                }
+            } else {
+                cursor_pos = comment_end as usize;
+            }
+
+            emitted_any = true;
+            last_comment_end = comment_end;
+            last_comment_had_trailing_newline = comment_has_new_line;
             previous_comment_had_trailing_newline = comment_has_new_line;
         }
 

@@ -315,6 +315,12 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
         // String enums are assignable to string (like numeric enums are to number).
         // Fall through to structural checking for this case.
+        if self.contains_string_like_source(source)
+            && let Some(target_parent_def) = self.same_parent_enum_member_union_def_id(target)
+            && !self.subtype.resolver.is_numeric_enum(target_parent_def)
+        {
+            return Some(false);
+        }
 
         // Fast path: Check if both are enum types with same DefId but different TypeIds
         // This handles the test case where enum members aren't in the resolver
@@ -420,7 +426,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 } else {
                     // String enums do NOT allow raw string assignability
                     // If source is string or string literal, reject
-                    if self.is_string_like(source) {
+                    if self.contains_string_like_source(source) {
                         return Some(false);
                     }
                     None
@@ -446,6 +452,39 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             // Case 4: Neither is an enum
             (None, None) => None,
         }
+    }
+
+    fn contains_string_like_source(&self, type_id: TypeId) -> bool {
+        if let Some(TypeData::Union(list_id)) = self.interner.lookup(type_id) {
+            return self
+                .interner
+                .type_list(list_id)
+                .iter()
+                .any(|&member| self.contains_string_like_source(member));
+        }
+
+        self.is_string_like(type_id)
+    }
+
+    fn same_parent_enum_member_union_def_id(&self, type_id: TypeId) -> Option<crate::def::DefId> {
+        let Some(TypeData::Union(list_id)) = self.interner.lookup(type_id) else {
+            return None;
+        };
+
+        let mut parent_def = None;
+        for &member in self.interner.type_list(list_id).iter() {
+            let (member_def, _) = crate::visitor::enum_components(self.interner, member)?;
+            let parent = self.subtype.resolver.get_enum_parent_def_id(member_def)?;
+            if !self.subtype.resolver.is_user_enum_def(parent) {
+                return None;
+            }
+            if parent_def.is_some_and(|existing| existing != parent) {
+                return None;
+            }
+            parent_def = Some(parent);
+        }
+
+        parent_def
     }
 
     /// Check if a type is string-like (string, string literal, or template literal).
@@ -937,7 +976,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// borrow conflicts: this borrows `interner` (immutable) while the caller
     /// needs `self.subtype` (mutable) for constraint comparison.
     fn collect_constraint_pairs(
-        interner: &dyn crate::TypeDatabase,
+        interner: &dyn crate::construction::TypeDatabase,
         a_shape_id: crate::types::ObjectShapeId,
         b_shape_id: crate::types::ObjectShapeId,
     ) -> Vec<(TypeId, TypeId)> {
@@ -1005,7 +1044,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
     /// Collect type parameter constraint pairs from two Callable types' signatures.
     fn collect_callable_constraint_pairs(
-        interner: &dyn crate::TypeDatabase,
+        interner: &dyn crate::construction::TypeDatabase,
         a_cid: crate::types::CallableShapeId,
         b_cid: crate::types::CallableShapeId,
     ) -> Vec<(TypeId, TypeId)> {
@@ -1048,7 +1087,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
     /// Collect type parameter constraint pairs from two Function types.
     fn collect_function_constraint_pairs(
-        interner: &dyn crate::TypeDatabase,
+        interner: &dyn crate::construction::TypeDatabase,
         a_fid: crate::types::FunctionShapeId,
         b_fid: crate::types::FunctionShapeId,
     ) -> Vec<(TypeId, TypeId)> {

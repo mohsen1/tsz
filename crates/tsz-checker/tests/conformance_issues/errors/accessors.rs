@@ -307,6 +307,24 @@ type X<T> = T[keyof T]["foo"];
 }
 
 #[test]
+fn test_ts_toolbelt_boolean_map_type_parameter_indices() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type Boolean = 0 | 1;
+type Not<B extends Boolean> = { 0: 1; 1: 0 }[B];
+type And<B1 extends Boolean, B2 extends Boolean> = {
+    0: { 0: 0; 1: 0 };
+    1: { 0: 0; 1: 1 };
+}[B1][B2];
+        "#,
+    );
+    assert!(
+        !has_error(&diagnostics, 2536),
+        "Boolean map type-parameter indices should be valid numeric keys.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_unknown_control_flow_generic_keyspace_and_overlap_regression() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
@@ -404,7 +422,7 @@ const arr: any[] = r;
 /// in unit tests without lib.d.ts it falls back to TS2322.
 #[test]
 fn test_ts2740_index_signature_object_to_array() {
-    let diagnostics = compile_and_get_diagnostics(
+    let diagnostics = compile_and_get_diagnostics_with_lib(
         r#"
 type Objectish<T extends unknown> = { [K in keyof T]: T[K] };
 type IndirectArrayish<U extends unknown[]> = Objectish<U>;
@@ -416,14 +434,30 @@ function bar(objectish: Objectish<any>, indirectArrayish: IndirectArrayish<any>)
 }
         "#,
     );
-    let error_count = diagnostics
+    let missing_property_messages: Vec<_> = diagnostics
         .iter()
-        .filter(|d| d.0 == 2322 || d.0 == 2740)
-        .count();
+        .filter(|(code, _)| *code == 2740)
+        .map(|(_, message)| message.as_str())
+        .collect();
     assert_eq!(
-        error_count, 2,
-        "Expected two assignability errors (one for objectish, one for indirectArrayish). \
-         Both are object types with index signatures assigned to any[].\n\
+        missing_property_messages.len(),
+        2,
+        "Expected two TS2740 diagnostics (one for objectish, one for indirectArrayish). \
+         The wrapper-alias case must not fall back to TS2322.\n\
+         Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        missing_property_messages
+            .iter()
+            .all(|message| message.contains("Type 'Objectish<any>' is missing")),
+        "Expected all missing-property diagnostics to display the mapped body alias \
+         rather than the wrapper alias. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !missing_property_messages
+            .iter()
+            .any(|message| message.contains("Type 'IndirectArrayish<any>' is missing")),
+        "Generic wrapper aliases should unfold one level in missing-property display. \
          Actual diagnostics: {diagnostics:#?}"
     );
 }
@@ -711,7 +745,6 @@ export class Foo {
 }
 
 #[test]
-#[ignore = "lib-backed JS overload diagnostic is currently red in direct unit CI"]
 fn test_check_js_global_tostring_overload_reports_ts2394_with_libs() {
     if !lib_files_available() {
         return;
@@ -734,13 +767,19 @@ function toString() {
         },
     );
 
-    // In tsc, file-scope function declarations shadow identically-named globals.
-    // `function toString()` shadows `lib.dom.d.ts`'s `declare function toString(): string;`
-    // rather than merging as overloads, so TS2394 should NOT be emitted.
+    // In checkJs, tsc still merges `function toString()` with the same-named
+    // `lib.dom.d.ts` global overload set. Keep the diagnostic shape aligned
+    // with that oracle instead of treating the JS declaration as a local-only
+    // shadow.
     assert!(
-        !diagnostics.iter().any(|d| d.code == 2394),
-        "function toString() in a script file should shadow the lib global, \
-         not produce TS2394. Actual diagnostics: {diagnostics:#?}"
+        diagnostics.iter().any(|d| d.code == 2394),
+        "Expected checkJs `function toString()` to report TS2394 against the \
+         lib global overload set. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2339),
+        "Expected checkJs `function toString()` to preserve TS2339 for an \
+         unknown `this` property. Actual diagnostics: {diagnostics:#?}"
     );
 }
 

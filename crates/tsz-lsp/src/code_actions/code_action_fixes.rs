@@ -617,8 +617,31 @@ impl CodeFixRegistry {
                 vec![("fixInvalidImportSyntax", "fixInvalidImportSyntax", "Fix invalid import syntax", "Fix all invalid import syntax")]
             }
 
+            // === fixMissingTypeAnnotationOnExports ===
+            // Variable must have an explicit type annotation with --isolatedDeclarations.
+            9010 => {
+                vec![("fixMissingTypeAnnotationOnExports", "fixMissingTypeAnnotationOnExports", "Add annotation of type", "Add annotations of inferred types to all items with missing annotations")]
+            }
+
             _ => vec![],
         }
+    }
+
+    /// Returns `true` for diagnostic codes that `fixMissingImport` can address
+    /// by adding an import statement. Used to gate the expensive O(project)
+    /// full-symbol scan in import-candidate collection.
+    pub const fn is_import_fix_code(code: u32) -> bool {
+        matches!(
+            code,
+            2304 // Cannot find name
+            | 2503 // Cannot find namespace
+            | 2583 // Cannot find name (target library variant)
+            | 2693 // Only refers to a type, but is being used as a value
+            // 7016 (Could not find a declaration file for module) has no registered
+            // fix action here, but including it lets import-candidate collection
+            // consider untyped JS modules as candidates for a future @types install.
+            | 7016
+        )
     }
 
     /// Get all error codes that have registered code fixes.
@@ -689,6 +712,40 @@ impl CodeFixRegistry {
             1205, // convertToTypeOnlyExport
             2412, 2375, 2379, // addOptionalPropertyUndefined
             1259, // fixInvalidImportSyntax
+            9010, // fixMissingTypeAnnotationOnExports
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CodeFixRegistry;
+
+    #[test]
+    fn missing_type_annotation_fix_is_only_advertised_for_variable_exports() {
+        let variable_fixes = CodeFixRegistry::fixes_for_error_code(9010);
+        assert!(
+            variable_fixes
+                .iter()
+                .any(|(fix_name, _, _, _)| *fix_name == "fixMissingTypeAnnotationOnExports"),
+            "TS9010 should advertise fixMissingTypeAnnotationOnExports"
+        );
+
+        let function_fixes = CodeFixRegistry::fixes_for_error_code(9007);
+        assert!(
+            function_fixes
+                .iter()
+                .all(|(fix_name, _, _, _)| *fix_name != "fixMissingTypeAnnotationOnExports"),
+            "TS9007 must not advertise fixMissingTypeAnnotationOnExports until the server implements function return edits"
+        );
+
+        assert!(
+            CodeFixRegistry::supported_error_codes().contains(&9010),
+            "TS9010 should remain in supported_error_codes"
+        );
+        assert!(
+            !CodeFixRegistry::supported_error_codes().contains(&9007),
+            "TS9007 should not be in supported_error_codes"
+        );
     }
 }

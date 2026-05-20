@@ -8,13 +8,8 @@
 //! Previously we widened `"false"` to `string`, producing a nonsensical
 //! message when the constraint is itself a string-literal type.
 
-use tsz_checker::context::CheckerOptions;
-
 fn compile_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
-    tsz_checker::test_utils::check_source(source, "test.ts", CheckerOptions::default())
-        .into_iter()
-        .map(|d| (d.code, d.message_text))
-        .collect()
+    tsz_checker::test_utils::check_source_code_messages(source)
 }
 
 #[test]

@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 
+use crate::type_queries::type_includes_undefined;
 use crate::types::{ConditionalType, IntrinsicKind, TypeData, TypeId};
 use crate::visitor::{
     conditional_type_id, contains_type_parameter_named, intrinsic_kind, type_param_info,
@@ -16,16 +17,116 @@ use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Conditional extends-types use a stricter equivalence than ordinary
-    /// assignability. In particular, tsc does not collapse `{ a?: T }` and
-    /// `{ a?: T | undefined }` to the same type here, even when
-    /// `exactOptionalPropertyTypes` is otherwise disabled.
+    /// assignability. Two extends-types are equivalent only when their full
+    /// per-property modifier shape matches, even when individual differences
+    /// are invisible to ordinary subtype rules:
+    ///
+    /// - `{ a?: T }` is NOT collapsed with `{ a?: T | undefined }`, even
+    ///   when `exactOptionalPropertyTypes` is otherwise disabled.
+    /// - `{ readonly x: T }` is NOT collapsed with `{ x: T }`, even though
+    ///   ordinary assignability is permissive about readonly. This is what
+    ///   makes the higher-order `IfEquals` pattern (and `ReadonlyKeys` /
+    ///   `MutableKeys` built on top of it) able to distinguish properties
+    ///   by mutability.
     fn conditional_extends_types_equivalent(&mut self, left: TypeId, right: TypeId) -> bool {
-        let prev = self.exact_optional_property_types;
+        if !self.identity_fallback_property_modifiers_match(left, right) {
+            return false;
+        }
+
+        if self.with_extends_clause_identity_mode(|sub| {
+            sub.check_subtype(left, right).is_true() && sub.check_subtype(right, left).is_true()
+        }) {
+            return true;
+        }
+
+        let left_eval = self.evaluate_type(left);
+        let right_eval = self.evaluate_type(right);
+        if (left_eval != left || right_eval != right)
+            && self.with_extends_clause_identity_mode(|sub| {
+                sub.check_subtype(left_eval, right_eval).is_true()
+                    && sub.check_subtype(right_eval, left_eval).is_true()
+            })
+        {
+            return true;
+        }
+
+        if !self.identity_fallback_property_modifiers_match(left_eval, right_eval) {
+            return false;
+        }
+
+        let mut fallback = SubtypeChecker::with_resolver(self.interner, self.resolver);
+        fallback.check_subtype(left_eval, right_eval).is_true()
+            && fallback.check_subtype(right_eval, left_eval).is_true()
+    }
+
+    fn identity_fallback_property_modifiers_match(&self, left: TypeId, right: TypeId) -> bool {
+        let left_members = match self.interner.lookup(left) {
+            Some(TypeData::Union(list_id)) => self.interner.type_list(list_id).to_vec(),
+            _ => vec![left],
+        };
+        let right_members = match self.interner.lookup(right) {
+            Some(TypeData::Union(list_id)) => self.interner.type_list(list_id).to_vec(),
+            _ => vec![right],
+        };
+
+        for left_member in &left_members {
+            for right_member in &right_members {
+                let left_shape = match self.interner.lookup(*left_member) {
+                    Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                        Some(self.interner.object_shape(shape_id))
+                    }
+                    _ => None,
+                };
+                let right_shape = match self.interner.lookup(*right_member) {
+                    Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                        Some(self.interner.object_shape(shape_id))
+                    }
+                    _ => None,
+                };
+                let (Some(left_shape), Some(right_shape)) = (left_shape, right_shape) else {
+                    continue;
+                };
+                for left_prop in &left_shape.properties {
+                    if let Some(right_prop) = right_shape
+                        .properties
+                        .iter()
+                        .find(|prop| prop.name == left_prop.name)
+                        && !self.property_identity_shapes_match(left_prop, right_prop)
+                    {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        true
+    }
+
+    fn property_identity_shapes_match(
+        &self,
+        left: &crate::types::PropertyInfo,
+        right: &crate::types::PropertyInfo,
+    ) -> bool {
+        left.optional == right.optional
+            && left.readonly == right.readonly
+            && left.is_symbol_named == right.is_symbol_named
+            && type_includes_undefined(self.interner, left.type_id)
+                == type_includes_undefined(self.interner, right.type_id)
+    }
+
+    /// Run `f` with the stricter property-modifier identity rules used by
+    /// conditional `extends` equivalence (`exact_optional_property_types`
+    /// and `strict_readonly_identity`). Both flags are restored on normal
+    /// return.
+    fn with_extends_clause_identity_mode<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
+        let saved_exact_optional = self.exact_optional_property_types;
+        let saved_strict_readonly = self.strict_readonly_identity;
         self.exact_optional_property_types = true;
-        let equivalent =
-            self.check_subtype(left, right).is_true() && self.check_subtype(right, left).is_true();
-        self.exact_optional_property_types = prev;
-        equivalent
+        self.strict_readonly_identity = true;
+        let result = self.with_identity_check_mode(f);
+        self.exact_optional_property_types = saved_exact_optional;
+        self.strict_readonly_identity = saved_strict_readonly;
+        result
     }
 
     /// Check conditional type to conditional type subtyping.
@@ -534,6 +635,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
+        // `T extends unknown ? T : never` and `T extends any ? T : never`
+        // are transparent identity conditionals in target position. Keep this
+        // narrower than the general Extract-like path: `T extends object ? T :
+        // never` is not transparent for unconstrained T.
+        if source == target.check_type
+            && target.true_type == target.check_type
+            && target.false_type == TypeId::NEVER
+            && (target.extends_type == TypeId::UNKNOWN || target.extends_type == TypeId::ANY)
+        {
+            return SubtypeResult::True;
+        }
+
         let target_contains_unbound_infer =
             crate::type_queries::contains_infer_types_db(self.interner, target.extends_type)
                 || crate::type_queries::contains_infer_types_db(self.interner, target.true_type)
@@ -594,10 +707,46 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
-        // Strategy 2: Both branches must be supertypes of source.
-        if self.check_subtype(source, target.true_type).is_true()
-            && self.check_subtype(source, target.false_type).is_true()
+        // Strategy 1.5: Evaluate statically determinable conditionals.
+        //
+        // When the check type and extends type are both concrete (contain no type
+        // parameters), the conditional resolves to a single branch without needing
+        // any substitution context. Evaluate it and check source against the result.
+        //
+        // This handles generic defaults with conditional types that become fully
+        // concrete after substitution, e.g.:
+        //   type Wrap<K, V, M = K extends string ? Map<K, V> : Map<string, V>>
+        // After Test<string, number>: M = string extends string ? Map<string,number> : ...
+        // which evaluates to Map<string,number>. Strategy 2 below would also reach
+        // the correct answer when both branches are identical, but this strategy
+        // correctly handles the case where only one branch matches the source.
+        if !crate::visitor::contains_type_parameters(self.interner, target.check_type)
+            && !crate::visitor::contains_type_parameters(self.interner, target.extends_type)
         {
+            let evaluated = self.evaluate_type(target_id);
+            if evaluated != target_id {
+                return self.check_subtype(source, evaluated);
+            }
+        }
+
+        // Strategy 2: Branch compatibility. A distributive
+        // `T extends any|unknown ? X : never` target is the canonical shape of
+        // utility aliases that map over each constituent of `T`. For any
+        // non-empty constituent the false branch is unreachable; for `never`,
+        // distribution produces `never` rather than a value outside `X`. When
+        // the source already fits `X`, do not require it to also fit `never`.
+        let true_result = self.check_subtype(source, target.true_type);
+        if true_result.is_true()
+            && target.is_distributive
+            && target.false_type == TypeId::NEVER
+            && (target.extends_type == TypeId::ANY || target.extends_type == TypeId::UNKNOWN)
+        {
+            return SubtypeResult::True;
+        }
+
+        // Otherwise both branches must be supertypes of source.
+        let false_result = self.check_subtype(source, target.false_type);
+        if true_result.is_true() && false_result.is_true() {
             SubtypeResult::True
         } else {
             SubtypeResult::False

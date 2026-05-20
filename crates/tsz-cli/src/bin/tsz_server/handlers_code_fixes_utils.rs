@@ -524,17 +524,7 @@ pub(super) fn import_spec_sort_key(
     };
     let (folded, case_rank, original) = if ignore_case {
         let folded = spec.local_name.to_ascii_lowercase();
-        let case_rank = if spec
-            .local_name
-            .chars()
-            .next()
-            .is_some_and(|ch| ch.is_ascii_lowercase())
-        {
-            0
-        } else {
-            1
-        };
-        (folded, case_rank, String::new())
+        (folded, 0, String::new())
     } else {
         (spec.local_name.clone(), 0, String::new())
     };

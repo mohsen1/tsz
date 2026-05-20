@@ -5,7 +5,8 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::node::CallExprData;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{GuardSense, ParamInfo, TypeGuard, TypeId, TypePredicate, TypePredicateTarget};
+use tsz_solver::narrowing::{GuardSense, TypeGuard};
+use tsz_solver::{ParamInfo, TypeId, TypePredicate, TypePredicateTarget};
 
 use super::{FlowAnalyzer, PredicateSignature};
 use crate::query_boundaries::flow as flow_boundary;
@@ -41,6 +42,12 @@ impl<'a> FlowAnalyzer<'a> {
     ) -> bool {
         let left = self.skip_parenthesized(left);
         let target = self.skip_parenthesized(target);
+        if !check_property_access
+            && self.is_plain_identifier_reference(target)
+            && self.is_member_access_reference(left)
+        {
+            return false;
+        }
         if self.is_matching_reference(left, target) {
             return true;
         }
@@ -165,6 +172,20 @@ impl<'a> FlowAnalyzer<'a> {
         false
     }
 
+    fn is_plain_identifier_reference(&self, idx: NodeIndex) -> bool {
+        self.arena
+            .get(idx)
+            .is_some_and(|node| node.kind == SyntaxKind::Identifier as u16)
+    }
+
+    fn is_member_access_reference(&self, idx: NodeIndex) -> bool {
+        self.arena.get(idx).is_some_and(|node| {
+            node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                || node.kind == syntax_kind_ext::QUALIFIED_NAME
+        })
+    }
+
     pub(crate) fn array_mutation_affects_reference(
         &self,
         call: &CallExprData,
@@ -220,9 +241,7 @@ impl<'a> FlowAnalyzer<'a> {
             if self.contains_optional_chain(predicate_target)
                 && self.is_optional_chain_prefix(predicate_target, target)
             {
-                let narrowing = self.make_narrowing_context();
-                let narrowed = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
-                return Some(narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED));
+                return Some(flow_boundary::narrow_non_nullish(self.interner, type_id));
             }
             // Handle assertion predicates where the asserted condition is itself
             // a call with a type predicate (or a negation thereof).
@@ -347,7 +366,10 @@ impl<'a> FlowAnalyzer<'a> {
                         // Non-predicate member: only allowed if it returns exclusively `false`
                         // or `never`. A member returning `boolean` (or any truthy type) makes
                         // the overall union guard unsound.
-                        if !callable_returns_only_false_or_never(self.interner, member) {
+                        if !super::narrowing_helpers::callable_returns_only_false_or_never(
+                            self.interner,
+                            member,
+                        ) {
                             has_non_predicate_boolean = true;
                         }
                     }
@@ -782,7 +804,7 @@ impl<'a> FlowAnalyzer<'a> {
                 return Some(if unwrapped.len() == 1 {
                     unwrapped[0]
                 } else {
-                    crate::query_boundaries::flow_analysis::union_types(self.interner, unwrapped)
+                    flow_query::union_types(self.interner, unwrapped)
                 });
             }
         }
@@ -791,7 +813,7 @@ impl<'a> FlowAnalyzer<'a> {
         let inferred = if remaining.len() == 1 {
             remaining[0]
         } else {
-            crate::query_boundaries::flow_analysis::union_types(self.interner, remaining)
+            flow_query::union_types(self.interner, remaining)
         };
         Some(inferred)
     }
@@ -866,8 +888,7 @@ impl<'a> FlowAnalyzer<'a> {
                         .any(|m| *m == TypeId::NULL || *m == TypeId::UNDEFINED)
                 );
                 if is_nonnullable_shaped && source_is_nullable {
-                    let excluded = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
-                    let excluded = narrowing.narrow_excluding_type(excluded, TypeId::UNDEFINED);
+                    let excluded = flow_boundary::narrow_non_nullish(self.interner, type_id);
                     if excluded != type_id && excluded != TypeId::NEVER {
                         return excluded;
                     }
@@ -905,35 +926,40 @@ impl<'a> FlowAnalyzer<'a> {
             return type_id;
         }
 
-        // Extract instance type from constructor expression (AST -> TypeId).
-        // If we can't determine the instance type:
-        // - True branch: narrow to object-like types (instanceof always returns
-        //   false for null/undefined/primitives)
-        // - False branch: keep source type unchanged (we can't exclude anything
-        //   without knowing the constructor)
-        // We must NOT fall back to TypeId::OBJECT because the solver would treat
-        // it as `instanceof Object` and incorrectly exclude all non-primitives
-        // from the false branch.
-        let instance_type = match self.instance_type_from_constructor(bin.right) {
-            Some(t) => t,
-            None => {
-                if is_true_branch {
-                    // Even without knowing the constructor, instanceof true
-                    // means the value is definitely an object (not null/undefined).
-                    let env_borrow;
-                    let narrowing = if let Some(env) = &self.type_environment {
-                        env_borrow = env.borrow();
-                        self.make_narrowing_context().with_resolver(&*env_borrow)
-                    } else {
-                        self.make_narrowing_context()
-                    };
-                    return narrowing.narrow_to_objectish(type_id);
+        // When the constructor carries `[Symbol.hasInstance](v: ...): v is T`, use it
+        // as the instance type and route through type-predicate narrowing (not instanceof
+        // narrowing) so primitive union members are not incorrectly excluded or kept.
+        // Checking it first avoids a redundant solver call inside instance_type_from_constructor.
+        let (instance_type, use_predicate_guard) = if let Some(ctor_type) = constructor_expr_type
+            && let Some(pred_type) =
+                flow_query::instance_type_from_symbol_has_instance(self.interner, ctor_type)
+            && pred_type != TypeId::ANY
+        {
+            (pred_type, true)
+        } else {
+            // No non-any hasInstance predicate: resolve via construct signatures,
+            // prototype, the any-predicate fallback, or symbol resolution.
+            // We must NOT fall back to TypeId::OBJECT — the solver would treat it
+            // as `instanceof Object` and exclude all non-primitives in the false branch.
+            let instance_type = match self.instance_type_from_constructor(bin.right) {
+                Some(t) => t,
+                None => {
+                    if is_true_branch {
+                        let env_borrow;
+                        let narrowing = if let Some(env) = &self.type_environment {
+                            env_borrow = env.borrow();
+                            self.make_narrowing_context().with_resolver(&*env_borrow)
+                        } else {
+                            self.make_narrowing_context()
+                        };
+                        return narrowing.narrow_to_objectish(type_id);
+                    }
+                    return type_id;
                 }
-                return type_id;
-            }
+            };
+            (instance_type, false)
         };
 
-        // Delegate to solver via unified narrow_type API
         let env_borrow;
         let narrowing = if let Some(env) = &self.type_environment {
             env_borrow = env.borrow();
@@ -942,21 +968,23 @@ impl<'a> FlowAnalyzer<'a> {
             self.make_narrowing_context()
         };
 
-        narrowing.narrow_type(
-            type_id,
-            &TypeGuard::Instanceof(instance_type, false),
-            GuardSense::from(is_true_branch),
-        )
+        let guard = if use_predicate_guard {
+            TypeGuard::Predicate {
+                type_id: Some(instance_type),
+                asserts: false,
+            }
+        } else {
+            TypeGuard::Instanceof(instance_type, false)
+        };
+
+        narrowing.narrow_type(type_id, &guard, GuardSense::from(is_true_branch))
     }
 
     pub(crate) fn instance_type_from_constructor(&self, expr: NodeIndex) -> Option<TypeId> {
         if let Some(node_types) = self.node_types
             && let Some(&type_id) = node_types.get(&expr.0)
             && let Some(instance_type) =
-                crate::query_boundaries::flow_analysis::instance_type_from_constructor(
-                    self.interner,
-                    type_id,
-                )
+                flow_query::instance_type_from_constructor(self.interner, type_id)
         {
             return Some(instance_type);
         }
@@ -966,10 +994,11 @@ impl<'a> FlowAnalyzer<'a> {
         let symbol = self.binder.get_symbol(sym_id)?;
         let symbol_ref = tsz_solver::SymbolRef(sym_id.0);
         if symbol.has_any_flags(symbol_flags::CLASS) {
-            return Some(
-                self.resolve_symbol_to_lazy(symbol_ref)
-                    .unwrap_or_else(|| self.interner.reference(symbol_ref)),
-            );
+            // Class symbols must narrow through a real DefId-backed lazy type.
+            // Falling back to `reference(SymbolRef)` would create Lazy(DefId(symbol_id)),
+            // which can point at an unrelated definition because SymbolId and DefId
+            // are independent identity spaces.
+            return self.resolve_symbol_to_lazy(symbol_ref);
         }
 
         // Global constructor variables (e.g., `declare var Array: ArrayConstructor`)
@@ -979,10 +1008,7 @@ impl<'a> FlowAnalyzer<'a> {
         if symbol.has_any_flags(symbol_flags::INTERFACE)
             && symbol.has_any_flags(symbol_flags::VARIABLE)
         {
-            return Some(
-                self.resolve_symbol_to_lazy(symbol_ref)
-                    .unwrap_or_else(|| self.interner.reference(symbol_ref)),
-            );
+            return self.resolve_symbol_to_lazy(symbol_ref);
         }
 
         // For FUNCTION symbols (e.g., JS constructor functions with @constructor),
@@ -994,10 +1020,7 @@ impl<'a> FlowAnalyzer<'a> {
             let env_borrow = env.borrow();
             if let Some(func_type) = env_borrow.get(symbol_ref)
                 && let Some(instance_type) =
-                    crate::query_boundaries::flow_analysis::instance_type_from_constructor(
-                        self.interner,
-                        func_type,
-                    )
+                    flow_query::instance_type_from_constructor(self.interner, func_type)
             {
                 return Some(instance_type);
             }
@@ -1012,10 +1035,7 @@ impl<'a> FlowAnalyzer<'a> {
                 let env_borrow = env.borrow();
                 if let Some(constructor_type) = env_borrow.get(symbol_ref)
                     && let Some(instance_type) =
-                        crate::query_boundaries::flow_analysis::instance_type_from_constructor(
-                            self.interner,
-                            constructor_type,
-                        )
+                        flow_query::instance_type_from_constructor(self.interner, constructor_type)
                 {
                     return Some(instance_type);
                 }
@@ -1067,10 +1087,7 @@ impl<'a> FlowAnalyzer<'a> {
             let env_borrow = env.borrow();
             if let Some(constructor_type) = env_borrow.get(type_symbol_ref)
                 && let Some(instance_type) =
-                    crate::query_boundaries::flow_analysis::instance_type_from_constructor(
-                        self.interner,
-                        constructor_type,
-                    )
+                    flow_query::instance_type_from_constructor(self.interner, constructor_type)
             {
                 return Some(instance_type);
             }
@@ -1080,10 +1097,7 @@ impl<'a> FlowAnalyzer<'a> {
         // and try to extract the instance type from it
         if let Some(lazy_type) = self.resolve_symbol_to_lazy(type_symbol_ref)
             && let Some(instance_type) =
-                crate::query_boundaries::flow_analysis::instance_type_from_constructor(
-                    self.interner,
-                    lazy_type,
-                )
+                flow_query::instance_type_from_constructor(self.interner, lazy_type)
         {
             return Some(instance_type);
         }
@@ -1213,10 +1227,13 @@ impl<'a> FlowAnalyzer<'a> {
         let idx = self.skip_parenthesized(idx);
         let node = self.arena.get(idx)?;
 
-        if node.kind == SyntaxKind::Identifier as u16
-            && let Some((_sym_id, initializer)) = self.const_condition_initializer(idx)
-        {
-            return self.literal_type_from_node(initializer);
+        if node.kind == SyntaxKind::Identifier as u16 {
+            if let Some((_sym_id, initializer)) = self.const_condition_initializer(idx) {
+                return self.literal_type_from_node(initializer);
+            }
+            if let Some(ty) = self.unique_symbol_const_identifier_type(idx) {
+                return Some(ty);
+            }
         }
         if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             && let Some(access) = self.arena.get_access_expr(node)
@@ -1467,43 +1484,10 @@ impl<'a> FlowAnalyzer<'a> {
         idx: NodeIndex,
         node: &tsz_parser::parser::node::Node,
     ) -> Option<TypeId> {
-        // Only process identifiers
         self.arena.get_identifier(node)?;
-
-        // Resolve to a symbol
         let sym_id = self.binder.resolve_identifier(self.arena, idx)?;
-        let symbol = self.binder.get_symbol(sym_id)?;
-
-        // Must be a block-scoped variable (const/let)
-        if !symbol.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE) {
-            return None;
-        }
-
-        // Must be const — mutable let variables should not be treated as narrowing literals
-        let mut decl_id = symbol.value_declaration;
-        if decl_id.is_none() {
-            return None;
-        }
-
-        // Binder symbols can point at the identifier node for the declaration name
-        // (e.g. destructuring aliases). Normalize to the enclosing VARIABLE_DECLARATION.
-        if let Some(decl_node_check) = self.arena.get(decl_id)
-            && decl_node_check.kind == SyntaxKind::Identifier as u16
-            && let Some(ext) = self.arena.get_extended(decl_id)
-            && ext.parent.is_some()
-            && let Some(parent_node) = self.arena.get(ext.parent)
-            && parent_node.kind == tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION
-        {
-            decl_id = ext.parent;
-        }
-
-        if !self.arena.is_const_variable_declaration(decl_id) {
-            return None;
-        }
-
-        // Get the VariableDeclaration AST node
-        let decl_node = self.arena.get(decl_id)?;
-        let decl_data = self.arena.get_variable_declaration(decl_node)?;
+        let decl_data =
+            super::narrowing_helpers::block_scoped_const_var_decl(self.arena, self.binder, sym_id)?;
 
         // Recognize primitive-annotated consts so equality narrowing of
         // `unknown`/`any` against a typed const reaches `is_narrowing_literal`.
@@ -1802,9 +1786,11 @@ impl<'a> FlowAnalyzer<'a> {
         // flow-inferred node_types. This can incorrectly narrow unrelated targets
         // (e.g., `e === Ns.Enum.Member` while narrowing `Ns`).
         //
-        // Keep two safe identifier cases:
+        // Keep safe identifier cases:
         // 1) enum members,
-        // 2) const aliases with literal initializers.
+        // 2) const aliases with literal initializers,
+        // 3) `unique symbol`-annotated const bindings, whose value is a
+        //    declaration-bound singleton type the binder fixes per-symbol.
         if node.kind == SyntaxKind::Identifier as u16 {
             if self.is_global_undefined_identifier(idx) {
                 return Some(TypeId::UNDEFINED);
@@ -1821,10 +1807,24 @@ impl<'a> FlowAnalyzer<'a> {
                 return self.literal_type_from_node(initializer);
             }
 
+            if let Some(ty) = self.unique_symbol_const_identifier_type(idx) {
+                return Some(ty);
+            }
+
             return None;
         }
 
         self.literal_type_from_node(idx)
+    }
+
+    fn unique_symbol_const_identifier_type(&self, idx: NodeIndex) -> Option<TypeId> {
+        let sym_id = self.reference_symbol(idx)?;
+        super::narrowing_helpers::unique_symbol_const_decl_type(
+            self.arena,
+            self.binder,
+            self.interner,
+            sym_id,
+        )
     }
 
     /// Try to extract a discriminant guard for an aliased condition.
@@ -1975,19 +1975,5 @@ impl<'a> FlowAnalyzer<'a> {
             return Some((path, is_optional, lit));
         }
         None
-    }
-}
-
-/// Returns true if the callable type's return type is exclusively `false` or `never`.
-///
-/// Used to validate non-predicate members in a union of callables: TSC permits a union
-/// to act as a type guard only when non-predicate members can never return a truthy value.
-fn callable_returns_only_false_or_never(
-    interner: &dyn tsz_solver::QueryDatabase,
-    callable_type: TypeId,
-) -> bool {
-    match flow_query::function_return_type(interner, callable_type) {
-        Some(rt) => flow_query::is_only_false_or_never(interner, rt),
-        None => false,
     }
 }

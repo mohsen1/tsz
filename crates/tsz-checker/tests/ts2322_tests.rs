@@ -3,26 +3,22 @@
 //! These tests verify that TS2322 "Type 'X' is not assignable to type 'Y'" errors
 //! are properly emitted in various contexts.
 
-use rustc_hash::FxHashSet;
-use std::path::Path;
 use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_binder::lib_loader::LibFile;
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::diagnostics::{Diagnostic, diagnostic_codes};
 use tsz_checker::state::CheckerState;
+use tsz_checker::test_utils::{
+    HasDiagnosticCode, check_source_with_libs, diagnostic_codes as project_diagnostic_codes,
+    load_lib_files,
+};
 use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_roots = [
-        manifest_dir.join("../../crates/tsz-core/src/lib-assets"),
-        manifest_dir.join("../../crates/tsz-core/src/lib-assets-stripped"),
-        manifest_dir.join("../../TypeScript/src/lib"),
-    ];
-    let lib_names = [
+    load_lib_files(&[
         "es5.d.ts",
         "es2015.d.ts",
         "es2015.core.d.ts",
@@ -34,31 +30,13 @@ fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
         "es2015.reflect.d.ts",
         "es2015.symbol.d.ts",
         "es2015.symbol.wellknown.d.ts",
+        "es2019.array.d.ts",
         "dom.d.ts",
         "dom.generated.d.ts",
         "dom.iterable.d.ts",
+        "esnext.iterator.d.ts",
         "esnext.d.ts",
-    ];
-
-    let mut lib_files = Vec::new();
-    let mut seen_files = FxHashSet::default();
-    for file_name in lib_names {
-        for root in &lib_roots {
-            let lib_path = root.join(file_name);
-            if lib_path.exists()
-                && let Ok(content) = std::fs::read_to_string(&lib_path)
-            {
-                if !seen_files.insert(file_name.to_string()) {
-                    break;
-                }
-                let lib_file = LibFile::from_source(file_name.to_string(), content);
-                lib_files.push(Arc::new(lib_file));
-                break;
-            }
-        }
-    }
-
-    lib_files
+    ])
 }
 
 fn with_lib_contexts(source: &str, file_name: &str, options: CheckerOptions) -> Vec<(u32, String)> {
@@ -163,6 +141,40 @@ fn get_all_diagnostics(source: &str) -> Vec<(u32, String)> {
     with_lib_contexts(source, "test.ts", CheckerOptions::default())
 }
 
+fn ts2322_messages(source: &str) -> Vec<String> {
+    get_all_diagnostics(source)
+        .into_iter()
+        .filter_map(|(code, message)| (code == 2322).then_some(message))
+        .collect()
+}
+
+fn ts2820_messages(source: &str) -> Vec<String> {
+    get_all_diagnostics(source)
+        .into_iter()
+        .filter_map(|(code, message)| (code == 2820).then_some(message))
+        .collect()
+}
+
+fn diagnostic_count<T: HasDiagnosticCode>(diagnostics: &[T], code: u32) -> usize {
+    diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.diagnostic_code() == code)
+        .count()
+}
+
+fn diagnostics_with_code<T: HasDiagnosticCode>(diagnostics: &[T], code: u32) -> Vec<&T> {
+    diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.diagnostic_code() == code)
+        .collect()
+}
+
+fn has_diagnostic_code<T: HasDiagnosticCode>(diagnostics: &[T], code: u32) -> bool {
+    diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.diagnostic_code() == code)
+}
+
 fn assert_no_missing_property_diagnostics(diagnostics: &[Diagnostic]) {
     let missing_property_codes = [
         diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
@@ -183,6 +195,27 @@ fn assert_no_missing_property_diagnostics(diagnostics: &[Diagnostic]) {
     assert!(
         actual.is_empty(),
         "Expected no missing-property diagnostics, got codes {actual:?}. Diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn callable_interface_call_signature_returning_this_preserves_members() {
+    let source = r#"
+interface Chainable {
+  (): this;
+  value: number;
+}
+
+declare const chain: Chainable;
+const c = chain();
+const _c: Chainable = c;
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+
+    assert!(
+        diagnostics.is_empty(),
+        "Callable interface `this` return should preserve interface members. Diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -219,8 +252,46 @@ const r: Next<number> = result;
     );
 
     assert!(
-        diagnostics.iter().any(|(code, _)| *code == 2322),
+        has_diagnostic_code(&diagnostics, 2322),
         "Expected IteratorResult<number, undefined> to reject Next<number>, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn custom_iterator_result_name_does_not_trigger_iterator_result_required_value_rule() {
+    let diagnostics = with_lib_contexts(
+        r#"
+interface MyIteratorYieldResult<TYield> {
+    done?: false;
+    value: TYield;
+}
+interface MyIteratorReturnResult<TReturn> {
+    done: true;
+    value: TReturn;
+}
+type MyIteratorResult<T, TReturn = any> =
+    | MyIteratorYieldResult<T>
+    | MyIteratorReturnResult<TReturn>;
+
+interface Next<A> {
+    readonly done?: boolean;
+    readonly value: A;
+}
+
+declare const result: MyIteratorResult<number, undefined>;
+const r: Next<number> = result;
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_diagnostic_code(&diagnostics, 2322),
+        "Renamed IteratorResult-like aliases should still reject through normal structural assignability, got: {diagnostics:?}"
     );
 }
 
@@ -342,6 +413,213 @@ fn test_ts2322_for_index_accesses_with_distinct_key_type_parameters() {
     );
 }
 
+/// Adjacent-case test matrix for the `S[T1]` vs `S[T2]` distinct-type-parameter
+/// elaboration (issue #7647).
+///
+/// Structural rule: when an index access `S[T1]` is assigned to `S[T2]` and
+/// `T1`, `T2` are distinct type parameters with relatable constraints, tsc
+/// emits the TS2322 chain:
+///
+/// ```text
+/// Type 'S[T1]' is not assignable to type 'S[T2]'.
+///   Type 'T1' is not assignable to type 'T2'.
+///     'T1' is assignable to the constraint of type 'T2', but 'T2' could be
+///     instantiated with a different subtype of constraint '<constraint>'.
+/// ```
+///
+/// The expected elaboration is independent of the chosen parameter names —
+/// the tests below rename the parameters and the object type to prove
+/// the rule isn't keyed on identifier spelling (anti-hardcoding §25).
+mod index_access_type_parameter_mismatch_elaboration {
+    use super::*;
+    use tsz_checker::test_utils::check_source_diagnostics;
+
+    fn assert_index_access_elaboration_chain(
+        source: &str,
+        source_param: &str,
+        target_param: &str,
+        constraint_display: &str,
+    ) {
+        let diagnostics = check_source_diagnostics(source);
+        let primary = diagnostics
+            .iter()
+            .find(|d| {
+                d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                    && d.message_text
+                        .contains("is not assignable to type")
+                    && !d.message_text.contains(&format!("Type '{source_param}'"))
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "Expected primary TS2322 diagnostic for index-access mismatch; got: {diagnostics:#?}"
+                )
+            });
+        let related: Vec<(u32, &str)> = primary
+            .related_information
+            .iter()
+            .map(|r| (r.code, r.message_text.as_str()))
+            .collect();
+        let inner_msg =
+            format!("Type '{source_param}' is not assignable to type '{target_param}'.");
+        assert!(
+            related.iter().any(|(code, msg)| {
+                let expected_code = if source_param == target_param {
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_TWO_DIFFERENT_TYPES_WITH_THIS_NAME_EXIST_BUT_THEY
+                } else {
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                };
+                *code == expected_code && msg.contains(&inner_msg)
+            }),
+            "Expected related parameter mismatch with `{inner_msg}`; got related: {related:?}"
+        );
+        if source_param == target_param {
+            assert!(
+                related.iter().any(|(_, msg)| msg
+                    .contains("Two different types with this name exist, but they are unrelated.")),
+                "Expected same-spelling distinct parameters to mention unrelated names; got related: {related:?}"
+            );
+        }
+        let ts5075_msg = format!(
+            "'{source_param}' is assignable to the constraint of type '{target_param}', but '{target_param}' could be instantiated with a different subtype of constraint '{constraint_display}'."
+        );
+        assert!(
+            related.iter().any(|(_, msg)| msg.contains(&ts5075_msg)),
+            "Expected TS5075 elaboration `{ts5075_msg}`; got related: {related:?}"
+        );
+    }
+
+    /// Reported repro shape: `JSX.IntrinsicElements[T1]` vs `[T2]`.
+    #[test]
+    fn jsx_intrinsic_elements_index_access_emits_elaboration_chain() {
+        assert_index_access_elaboration_chain(
+            r#"
+            declare namespace JSX {
+                interface IntrinsicElements {
+                    div: { divOnly?: string };
+                    span: { spanOnly?: string };
+                }
+            }
+            class I<
+                T1 extends keyof JSX.IntrinsicElements,
+                T2 extends keyof JSX.IntrinsicElements
+            > {
+                M() {
+                    let c1: JSX.IntrinsicElements[T1] = {};
+                    const c2: JSX.IntrinsicElements[T2] = c1;
+                }
+            }
+            "#,
+            "T1",
+            "T2",
+            "keyof IntrinsicElements",
+        );
+    }
+
+    /// Same rule with renamed parameters proves the elaboration is structural,
+    /// not hardcoded to the `T1`/`T2` spelling.
+    #[test]
+    fn renamed_parameters_still_emit_elaboration_chain() {
+        assert_index_access_elaboration_chain(
+            r#"
+            declare namespace JSX {
+                interface IntrinsicElements {
+                    div: { divOnly?: string };
+                    span: { spanOnly?: string };
+                }
+            }
+            class Holder<
+                Source extends keyof JSX.IntrinsicElements,
+                Target extends keyof JSX.IntrinsicElements
+            > {
+                M() {
+                    let a: JSX.IntrinsicElements[Source] = {};
+                    const b: JSX.IntrinsicElements[Target] = a;
+                }
+            }
+            "#,
+            "Source",
+            "Target",
+            "keyof IntrinsicElements",
+        );
+    }
+
+    /// A user-defined object type (no JSX namespace) and single-letter
+    /// rename: the constraint display follows the *target's* constraint.
+    #[test]
+    fn user_defined_object_index_access_uses_target_constraint() {
+        assert_index_access_elaboration_chain(
+            r#"
+            interface Map {
+                a: { x: number };
+                b: { y: string };
+            }
+            class Pair<
+                K1 extends keyof Map,
+                K2 extends keyof Map
+            > {
+                M() {
+                    let lhs: Map[K1] = { x: 0, y: "" } as any;
+                    const rhs: Map[K2] = lhs;
+                }
+            }
+            "#,
+            "K1",
+            "K2",
+            "keyof Map",
+        );
+    }
+
+    /// Same spelling in nested scopes still represents distinct type parameters.
+    #[test]
+    fn nested_same_spelling_parameters_still_emit_elaboration_chain() {
+        assert_index_access_elaboration_chain(
+            r#"
+            interface Dict {
+                a: { aOnly: string };
+                b: { bOnly: number };
+            }
+
+            function outer<K extends keyof Dict>(x: Dict[K]) {
+                function inner<K extends keyof Dict>(y: Dict[K]) {
+                    y = x;
+                }
+            }
+            "#,
+            "K",
+            "K",
+            "keyof Dict",
+        );
+    }
+
+    /// Negative case: same type parameter on both sides is reflexive — no diagnostic.
+    /// Proves the structural rule fires only on *distinct* type parameters.
+    #[test]
+    fn same_type_parameter_does_not_emit_elaboration() {
+        let source = r#"
+            declare namespace JSX {
+                interface IntrinsicElements {
+                    div: { divOnly?: string };
+                }
+            }
+            class Same<T extends keyof JSX.IntrinsicElements> {
+                M() {
+                    let a: JSX.IntrinsicElements[T] = {};
+                    const b: JSX.IntrinsicElements[T] = a;
+                }
+            }
+        "#;
+        let diagnostics = check_source_diagnostics(source);
+        let ts2322_count = diagnostics
+            .iter()
+            .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+            .count();
+        assert_eq!(
+            ts2322_count, 0,
+            "Same type-parameter index accesses must not emit TS2322; got: {diagnostics:#?}"
+        );
+    }
+}
+
 #[test]
 fn test_ts2322_identifier_literal_initializer_display_for_literal_sensitive_targets() {
     let diagnostics = get_all_diagnostics(
@@ -392,6 +670,30 @@ var iu: typeof undefined = i;
             .iter()
             .any(|message| message.contains("Type 'number' is not assignable to type 'undefined'.")),
         "expected numeric initializer display to remain widened, got: {ts2322:#?}"
+    );
+}
+
+#[test]
+fn typeof_mutable_object_property_widens_literal_value() {
+    let source = r#"
+const obj = { a: 1, b: "x" };
+type ObjAType = typeof obj.a;
+const _oa: ObjAType = 42;
+
+const objConst = { a: 1 } as const;
+type ObjConstAType = typeof objConst.a;
+const _oc: ObjConstAType = 2;
+"#;
+
+    let diagnostics = with_lib_contexts(source, "test.ts", CheckerOptions::default());
+    assert_eq!(
+        diagnostics.iter().filter(|(code, _)| *code == 2322).count(),
+        1,
+        "expected only the as-const property assignment to fail, got: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics[0].1.contains("not assignable to type '1'"),
+        "expected as-const property to remain literal, got: {diagnostics:#?}"
     );
 }
 
@@ -451,6 +753,110 @@ function fx1(x: Variants) {
     assert!(
         message.contains(r#"Type '"d" | "c"' is not assignable to type 'never'."#),
         "expected residual string-literal union display to match tsc, got: {message}"
+    );
+}
+
+#[test]
+fn test_ts2322_numeric_literal_union_alias_source_display_preserved() {
+    let diagnostics = get_all_diagnostics(
+        r#"
+type Single = 1;
+type Count = 1 | 2 | 3;
+type Offset = 0 | 1 | 2;
+
+function assign(single: Single, count: Count, offset: Offset) {
+    single = count;
+    single = offset;
+}
+"#,
+    );
+
+    let ts2322 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|(_, message)| message.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(
+        ts2322
+            .iter()
+            .any(|message| message.contains("Type 'Count' is not assignable to type '1'.")),
+        "numeric union source aliases should survive TS2322 display, got: {ts2322:#?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .any(|message| message.contains("Type 'Offset' is not assignable to type '1'.")),
+        "numeric union source aliases should survive TS2322 display, got: {ts2322:#?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .all(|message| { !message.contains("2 | 3 | 1") && !message.contains("0 | 2 | 1") }),
+        "numeric union canonicalization must not expand preserved source aliases: {ts2322:#?}"
+    );
+}
+
+#[test]
+fn test_ts2322_same_enum_member_union_source_display_collapses_to_enum() {
+    let diagnostics = get_all_diagnostics(
+        r#"
+enum E {
+    A = "a",
+    B = "b",
+}
+declare let both: E.A | E.B;
+let onlyA: E.A = both;
+"#,
+    );
+
+    let ts2322 = diagnostics
+        .iter()
+        .find(|(code, message)| {
+            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && message.contains("is not assignable to type 'E.A'.")
+        })
+        .expect("expected TS2322 for assigning E.A | E.B to E.A");
+
+    let message = ts2322.1.as_str();
+    assert!(
+        message.contains("Type 'E' is not assignable to type 'E.A'."),
+        "expected same-enum member union source to collapse to parent enum, got: {message}"
+    );
+}
+
+#[test]
+fn test_ts2322_numeric_literal_union_alias_source_display_preserved_for_property_assignment() {
+    let diagnostics = get_all_diagnostics(
+        r#"
+interface Slot {
+    value: 10;
+}
+type Choices = 10 | 20 | 30;
+
+function write(slot: Slot, choices: Choices) {
+    slot.value = choices;
+}
+"#,
+    );
+
+    let ts2322 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|(_, message)| message.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(
+        ts2322
+            .iter()
+            .any(|message| message.contains("Type 'Choices' is not assignable to type '10'.")),
+        "property assignment should also preserve the numeric union source alias, got: {ts2322:#?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .all(|message| !message.contains("20 | 30 | 10")),
+        "property assignment should not expand the preserved alias into reordered numeric members: {ts2322:#?}"
     );
 }
 
@@ -677,7 +1083,7 @@ const target: ExpectedThenable<number> = bad;
     let diagnostics = diagnostics_for_source(source);
 
     assert!(
-        diagnostics.iter().any(|d| d.code == 2322),
+        has_diagnostic_code(&diagnostics, 2322),
         "Expected TS2322 for unrelated thenables with incompatible then signatures, got: {diagnostics:?}"
     );
 }
@@ -746,7 +1152,12 @@ a16 = b16;
 b16 = a16;
 "#;
 
-    let diagnostics = get_all_diagnostics(source);
+    let options = CheckerOptions {
+        strict_null_checks: true,
+        exact_optional_property_types: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = with_lib_contexts(source, "test.ts", options);
     let ts2322_errors: Vec<_> = diagnostics
         .into_iter()
         .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
@@ -840,10 +1251,10 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
 "#;
 
     let diagnostics = get_all_diagnostics(source);
-    let ts2322_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .collect();
+    let ts2322_errors: Vec<_> = diagnostics_with_code(
+        &diagnostics,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    );
     let ts2345_errors: Vec<_> = diagnostics
         .iter()
         .filter(|(code, _)| {
@@ -1000,9 +1411,10 @@ t = () => 1;
     let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
 
     assert!(
-        diagnostics
-            .iter()
-            .any(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        has_diagnostic_code(
+            &diagnostics,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
         "Expected TS2322 for function-to-object assignment. Diagnostics: {diagnostics:#?}"
     );
     assert_no_missing_property_diagnostics(&diagnostics);
@@ -1022,9 +1434,10 @@ t = () => 1;
     let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
 
     assert!(
-        diagnostics
-            .iter()
-            .any(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        has_diagnostic_code(
+            &diagnostics,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
         "Expected TS2322 for function-to-constructor-member assignment. Diagnostics: {diagnostics:#?}"
     );
     assert_no_missing_property_diagnostics(&diagnostics);
@@ -1144,10 +1557,13 @@ x = 'hello';
 "#;
 
     let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
-    let ts2322 = diagnostics
-        .iter()
-        .find(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .expect("expected TS2322");
+    let ts2322 = diagnostics_with_code(
+        &diagnostics,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    )
+    .into_iter()
+    .next()
+    .expect("expected TS2322");
 
     assert!(
         ts2322
@@ -1158,6 +1574,30 @@ x = 'hello';
     assert!(
         !ts2322.message_text.contains("Foo1<"),
         "literal source display should not leak conditional alias provenance: {ts2322:?}"
+    );
+}
+
+#[test]
+fn template_literal_number_union_expands_to_string_literals() {
+    let source = r#"
+        type Digit = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+        type DigitString = `${Digit}`;
+        declare const digit: DigitString;
+        const check: "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" = digit;
+
+        type Prefixed = `prefix-${0 | 1}-suffix`;
+        declare const prefixed: Prefixed;
+        const prefixedCheck: "prefix-0-suffix" | "prefix-1-suffix" = prefixed;
+    "#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let ts2322: Vec<_> = diagnostics_with_code(
+        &diagnostics,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    );
+    assert!(
+        ts2322.is_empty(),
+        "numeric template literal unions should expand to string literal unions, got: {ts2322:#?}"
     );
 }
 
@@ -1310,11 +1750,11 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
     );
 
     assert!(
-        !diagnostics.iter().any(|(code, _)| *code == 2349),
+        !has_diagnostic_code(&diagnostics, 2349),
         "generic indexed access into mapped type should be callable, got: {diagnostics:?}"
     );
     assert!(
-        !diagnostics.iter().any(|(code, _)| *code == 2344),
+        !has_diagnostic_code(&diagnostics, 2344),
         "generic indexed access into mapped type should preserve the `keyof TypesMap` constraint, got: {diagnostics:?}"
     );
     assert!(
@@ -1322,6 +1762,113 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
             .iter()
             .any(|(code, _)| *code == diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
         "mapped type object literal handlers should contextually type callback params, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn mapped_application_generic_indexed_call_preserves_key_correlation() {
+    // Structural rule: indexing a homomorphic mapped alias application with a
+    // generic key preserves the key in the callable template. The return type is
+    // Model[Key], not the union Model[keyof Model].
+    let source = r#"
+type Readers<T> = { [K in keyof T]: (value: T[K]) => T[K] };
+
+type Model = {
+    alpha: { tag: "alpha"; value: number };
+    beta: { tag: "beta"; value: string };
+};
+
+declare const model: Model;
+declare const readers: Readers<Model>;
+
+function read<Key extends keyof Model>(key: Key): Model[Key] {
+    return readers[key](model[key]);
+}
+"#;
+
+    let diagnostics = compile_with_options(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_diagnostic_code(&diagnostics, 2322),
+        "homomorphic mapped alias application indexed with a generic key should keep return correlation, got: {diagnostics:?}"
+    );
+    assert!(
+        !has_diagnostic_code(&diagnostics, 2345),
+        "homomorphic mapped alias application indexed with a generic key should keep argument correlation, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn renamed_mapped_application_generic_indexed_call_preserves_key_correlation() {
+    // Same rule with different type parameter and mapped variable names to guard
+    // against spelling-based fixes.
+    let source = r#"
+type Accessors<Input> = { [Slot in keyof Input]: (item: Input[Slot]) => Input[Slot] };
+
+type Store = {
+    left: { side: "left"; count: number };
+    right: { side: "right"; label: string };
+};
+
+declare const store: Store;
+declare const accessors: Accessors<Store>;
+
+function get<X extends keyof Store>(slot: X): Store[X] {
+    return accessors[slot](store[slot]);
+}
+"#;
+
+    let diagnostics = compile_with_options(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_diagnostic_code(&diagnostics, 2322),
+        "renamed homomorphic mapped alias application should keep return correlation, got: {diagnostics:?}"
+    );
+    assert!(
+        !has_diagnostic_code(&diagnostics, 2345),
+        "renamed homomorphic mapped alias application should keep argument correlation, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn concrete_union_callable_still_rejects_uncorrelated_union_argument() {
+    let source = r#"
+declare const fnUnion:
+    ((value: { tag: "alpha"; value: number }) => { tag: "alpha"; value: number })
+    | ((value: { tag: "beta"; value: string }) => { tag: "beta"; value: string });
+declare const value:
+    { tag: "alpha"; value: number }
+    | { tag: "beta"; value: string };
+
+fnUnion(value);
+"#;
+
+    let diagnostics = compile_with_options(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_diagnostic_code(&diagnostics, 2345),
+        "uncorrelated concrete union calls should still be rejected, got: {diagnostics:?}"
     );
 }
 
@@ -1359,7 +1906,7 @@ class Test {
 
     // Should not emit TS2349 (not callable) for .push() call
     assert!(
-        !diagnostics.iter().any(|(code, _)| *code == 2349),
+        !has_diagnostic_code(&diagnostics, 2349),
         "push on mapped type with generic index should be callable, got: {diagnostics:?}"
     );
 }
@@ -1420,7 +1967,7 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
     );
 
     assert!(
-        !diagnostics.iter().any(|(code, _)| *code == 2344),
+        !has_diagnostic_code(&diagnostics, 2344),
         "full mapped-type generic indexed-access repro should not emit TS2344, got: {diagnostics:?}"
     );
     assert!(
@@ -1533,6 +2080,74 @@ interface Buzz { id: number; buzz: string }
             .iter()
             .any(|(code, _)| *code == diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
         "union of built-in array methods should contextually type callback params, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn inherited_generic_class_field_array_methods_preserve_callback_context() {
+    let source = r#"
+export {};
+type StringCheck =
+  | { kind: "email"; pattern: string }
+  | { kind: "regex"; regex: RegExp };
+interface StringDef extends BaseDef {
+  checks: StringCheck[];
+}
+interface BoxDef<Item> extends BaseDef {
+  values: Item[];
+}
+interface BaseDef {
+  errorMap?: (issue: unknown) => string;
+}
+declare abstract class Base<
+  Output,
+  Def extends BaseDef = BaseDef,
+  Input = Output
+> {
+  readonly _type: Output;
+  readonly _output: Output;
+  readonly _input: Input;
+  readonly _def: Def;
+  abstract parse(input: unknown): Output;
+}
+class StringSchema extends Base<string, StringDef> {
+  parse(input: unknown): string {
+    return String(input);
+  }
+  get isEmail() {
+    return !!this._def.checks.find(ch => ch.kind === "email");
+  }
+  get usesRegex() {
+    return !!this._def.checks.find(entry => entry.kind === "regex");
+  }
+}
+class BoxSchema<T> extends Base<T, BoxDef<T>> {
+  parse(input: unknown): T {
+    return input as T;
+  }
+  has(value: T) {
+    return this._def.values.find(item => item === value);
+  }
+}
+"#;
+
+    let diagnostics = compile_with_libs_for_ts(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            no_implicit_any: true,
+            strict_null_checks: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        "array methods reached through inherited generic class fields should contextually type callback params, got: {diagnostics:?}"
     );
 }
 // =============================================================================
@@ -1650,10 +2265,10 @@ var r = foo<number>({ bar: 1, baz: '' });
 "#;
 
     let diagnostics = diagnostics_for_source(source);
-    let errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .collect();
+    let errors: Vec<_> = diagnostics_with_code(
+        &diagnostics,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    );
     let has_ts2345 = diagnostics.iter().any(|d| {
         d.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
     });
@@ -1771,6 +2386,66 @@ b = a;
 }
 
 #[test]
+fn inferred_generic_class_new_preserves_application_display() {
+    let source = r#"
+namespace FirstSource {
+    export interface OptionalShape<T, U> {
+        one: T;
+        two?: U;
+    }
+    var obj: OptionalShape<number, string> = { one: 1 };
+    export var value = obj;
+}
+
+namespace FirstTarget {
+    export class RequiredShape<T, U> {
+        constructor(public one: T, public two: U) {}
+    }
+    var instance = new RequiredShape(1, "a");
+    export var value = instance;
+}
+
+FirstTarget.value = FirstSource.value;
+
+namespace SecondSource {
+    export interface MaybePair<X, Y> {
+        left: X;
+        right?: Y;
+    }
+    var obj: MaybePair<boolean, number> = { left: true };
+    export var value = obj;
+}
+
+namespace SecondTarget {
+    export class StrictPair<A, B> {
+        constructor(public left: A, public right: B) {}
+    }
+    var instance = new StrictPair(false, 1);
+    export var value = instance;
+}
+
+SecondTarget.value = SecondSource.value;
+"#;
+
+    let messages = ts2322_messages(source);
+
+    assert!(
+        messages.iter().any(|message| {
+            message.contains("OptionalShape<number, string>")
+                && message.contains("RequiredShape<number, string>")
+        }),
+        "expected inferred RequiredShape application display, got: {messages:?}"
+    );
+    assert!(
+        messages.iter().any(|message| {
+            message.contains("MaybePair<boolean, number>")
+                && message.contains("StrictPair<boolean, number>")
+        }),
+        "expected inferred StrictPair application display, got: {messages:?}"
+    );
+}
+
+#[test]
 fn generic_object_assign_initializer_keeps_outer_ts2322() {
     let source = r#"
 type Omit<T, K> = Pick<T, Exclude<keyof T, K>>;
@@ -1797,7 +2472,7 @@ export class Foo<T> extends Base<T> {
         },
     );
 
-    let codes: Vec<_> = diagnostics.iter().map(|(code, _)| *code).collect();
+    let codes = project_diagnostic_codes(&diagnostics);
     assert!(
         codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Expected outer TS2322 for generic Object.assign initializer, got: {diagnostics:?}"
@@ -1825,7 +2500,7 @@ const res: (() => void) & { func: any } = assign(() => {}, { func });
         },
     );
 
-    let codes: Vec<_> = diagnostics.iter().map(|(code, _)| *code).collect();
+    let codes = project_diagnostic_codes(&diagnostics);
     assert!(
         codes.contains(&diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL),
         "Expected inner TS2769 for generic Object.assign helper, got: {diagnostics:?}"
@@ -2129,10 +2804,8 @@ fn test_ts2322_no_false_positive_simple_generic_identity() {
     ";
 
     let errors = get_all_diagnostics(source);
-    let ts2322_errors: Vec<_> = errors
-        .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .collect();
+    let ts2322_errors: Vec<_> =
+        diagnostics_with_code(&errors, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
     assert!(
         ts2322_errors.is_empty(),
         "Expected no TS2322 for Id<number> = 42, got: {ts2322_errors:?}"
@@ -2148,10 +2821,8 @@ fn test_ts2322_no_false_positive_generic_object_wrapper() {
     ";
 
     let errors = get_all_diagnostics(source);
-    let ts2322_errors: Vec<_> = errors
-        .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .collect();
+    let ts2322_errors: Vec<_> =
+        diagnostics_with_code(&errors, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
     assert!(
         ts2322_errors.is_empty(),
         "Expected no TS2322 for Box<number> = {{ value: 42 }}, got: {ts2322_errors:?}"
@@ -2167,10 +2838,8 @@ fn test_ts2322_no_false_positive_conditional_type_true_branch() {
     ";
 
     let errors = get_all_diagnostics(source);
-    let ts2322_errors: Vec<_> = errors
-        .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .collect();
+    let ts2322_errors: Vec<_> =
+        diagnostics_with_code(&errors, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
     assert!(
         ts2322_errors.is_empty(),
         "Expected no TS2322 for IsStr<string> = true, got: {ts2322_errors:?}"
@@ -2186,10 +2855,8 @@ fn test_ts2322_no_false_positive_conditional_type_false_branch() {
     ";
 
     let errors = get_all_diagnostics(source);
-    let ts2322_errors: Vec<_> = errors
-        .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .collect();
+    let ts2322_errors: Vec<_> =
+        diagnostics_with_code(&errors, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
     assert!(
         ts2322_errors.is_empty(),
         "Expected no TS2322 for IsStr<number> = false, got: {ts2322_errors:?}"
@@ -2207,10 +2874,8 @@ fn test_ts2322_no_false_positive_user_defined_mapped_type() {
     "#;
 
     let errors = get_all_diagnostics(source);
-    let ts2322_errors: Vec<_> = errors
-        .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .collect();
+    let ts2322_errors: Vec<_> =
+        diagnostics_with_code(&errors, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
     assert!(
         ts2322_errors.is_empty(),
         "Expected no TS2322 for MyPartial<Cfg>, got: {ts2322_errors:?}"
@@ -2226,10 +2891,8 @@ fn test_ts2322_no_false_positive_conditional_infer() {
     ";
 
     let errors = get_all_diagnostics(source);
-    let ts2322_errors: Vec<_> = errors
-        .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .collect();
+    let ts2322_errors: Vec<_> =
+        diagnostics_with_code(&errors, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
     assert!(
         ts2322_errors.is_empty(),
         "Expected no TS2322 for UnpackPromise<Promise<number>> = 42, got: {ts2322_errors:?}"
@@ -2253,10 +2916,8 @@ fn test_ts2322_conditional_doesnt_leak_uninstantiated_type_parameter() {
 
     // y = 3 should NOT error (number is assignable to number)
     // z = '3' SHOULD error (string is not assignable to number)
-    let ts2322_errors: Vec<_> = errors
-        .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .collect();
+    let ts2322_errors: Vec<_> =
+        diagnostics_with_code(&errors, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
     assert_eq!(
         ts2322_errors.len(),
         1,
@@ -2293,10 +2954,8 @@ fn test_ts2322_no_false_positive_conditional_expression_with_generics() {
     "#;
 
     let errors = get_all_diagnostics(source);
-    let ts2322_errors: Vec<_> = errors
-        .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .collect();
+    let ts2322_errors: Vec<_> =
+        diagnostics_with_code(&errors, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
     assert!(
         ts2322_errors.is_empty(),
         "Expected no TS2322 for conditional expression in generic function call, got: {ts2322_errors:?}"
@@ -2320,10 +2979,8 @@ fn test_ts2322_no_false_positive_nested_conditional() {
     "#;
 
     let errors = get_all_diagnostics(source);
-    let ts2322_errors: Vec<_> = errors
-        .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .collect();
+    let ts2322_errors: Vec<_> =
+        diagnostics_with_code(&errors, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
     assert!(
         ts2322_errors.is_empty(),
         "Expected no TS2322 for nested conditional expression, got: {ts2322_errors:?}"
@@ -2396,10 +3053,10 @@ fn test_ts2322_accessor_incompatible_getter_setter() {
     "#;
 
     let diagnostics = get_all_diagnostics(source_both_explicit);
-    let ts2322: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .collect();
+    let ts2322: Vec<_> = diagnostics_with_code(
+        &diagnostics,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    );
     assert!(
         ts2322.is_empty(),
         "TS 5.1+ allows unrelated types when both annotated; got: {ts2322:?}"
@@ -2415,10 +3072,10 @@ fn test_ts2322_accessor_incompatible_getter_setter() {
     "#;
 
     let diagnostics = get_all_diagnostics(source_inferred_getter);
-    let ts2322: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .collect();
+    let ts2322: Vec<_> = diagnostics_with_code(
+        &diagnostics,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    );
     assert!(
         !ts2322.is_empty(),
         "Inferred getter type (number) conflicts with explicit setter type (string) → TS2322"
@@ -2436,10 +3093,10 @@ fn test_ts2322_accessor_compatible_divergent_types() {
     "#;
 
     let diagnostics = get_all_diagnostics(source);
-    let ts2322: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .collect();
+    let ts2322: Vec<_> = diagnostics_with_code(
+        &diagnostics,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    );
 
     assert!(
         ts2322.is_empty(),
@@ -2457,10 +3114,10 @@ fn test_ts2322_annotated_getter_contextually_types_unannotated_setter_parameter(
     "#;
 
     let diagnostics = get_all_diagnostics(source);
-    let ts2322: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .collect();
+    let ts2322: Vec<_> = diagnostics_with_code(
+        &diagnostics,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    );
     let ts7006: Vec<_> = diagnostics
         .iter()
         .filter(|(code, _)| *code == diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE)
@@ -2510,9 +3167,10 @@ fn test_ts2322_js_accessor_jsdoc_does_not_force_inferred_getter_mismatch() {
     );
 
     assert!(
-        !diagnostics
-            .iter()
-            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        !has_diagnostic_code(
+            &diagnostics,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
         "Expected JS accessor JSDoc pair to avoid TS2322 getter/setter mismatch. Actual diagnostics: {diagnostics:?}"
     );
 }
@@ -2545,9 +3203,10 @@ fn test_ts2322_check_js_true_reports_javascript_annotation_mismatch() {
             ..CheckerOptions::default()
         },
     );
-    let has_2322 = diagnostics
-        .iter()
-        .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    let has_2322 = has_diagnostic_code(
+        &diagnostics,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    );
     assert!(
         has_2322,
         "Expected TS2322 when checkJs checks mismatched JS annotation, got: {diagnostics:?}"
@@ -2569,9 +3228,10 @@ fn test_ts2322_check_mjs_true_reports_javascript_annotation_mismatch() {
             ..CheckerOptions::default()
         },
     );
-    let has_2322 = diagnostics
-        .iter()
-        .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    let has_2322 = has_diagnostic_code(
+        &diagnostics,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    );
     assert!(
         has_2322,
         "Expected TS2322 for .mjs jsdoc mismatch when checkJs is enabled, got: {diagnostics:?}"
@@ -2594,9 +3254,10 @@ fn test_ts2322_check_js_false_does_not_enforce_annotation_type() {
             ..CheckerOptions::default()
         },
     );
-    let has_2322 = diagnostics
-        .iter()
-        .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    let has_2322 = has_diagnostic_code(
+        &diagnostics,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    );
     assert!(
         !has_2322,
         "Expected no TS2322 when checkJs is disabled, got: {diagnostics:?}"
@@ -2618,9 +3279,10 @@ fn test_ts2322_check_cjs_true_reports_javascript_annotation_mismatch() {
             ..CheckerOptions::default()
         },
     );
-    let has_2322 = diagnostics
-        .iter()
-        .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    let has_2322 = has_diagnostic_code(
+        &diagnostics,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    );
     assert!(
         has_2322,
         "Expected TS2322 for .cjs jsdoc mismatch when checkJs is enabled, got: {diagnostics:?}"
@@ -2643,9 +3305,10 @@ fn test_ts2322_check_cjs_false_does_not_enforce_annotation_type() {
         },
     );
     assert!(
-        !diagnostics
-            .iter()
-            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        !has_diagnostic_code(
+            &diagnostics,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
         "Expected no TS2322 for .cjs when checkJs is disabled, got: {diagnostics:?}"
     );
 }
@@ -2673,10 +3336,10 @@ module.exports.n.toFixed();
         },
     );
 
-    let ts2322: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .collect();
+    let ts2322: Vec<_> = diagnostics_with_code(
+        &diagnostics,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    );
     assert_eq!(
         ts2322.len(),
         2,
@@ -2715,9 +3378,7 @@ ab = {};
     );
 
     assert!(
-        diags
-            .iter()
-            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Expected TS2322 for impossible private-brand intersection assignment, got: {diags:?}"
     );
     assert!(
@@ -2732,6 +3393,41 @@ ab = {};
             .any(|(code, _)| *code
                 == diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE),
         "Intersection should reduce before TS2741 missing-property classification, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_private_public_intersection_reduces_to_never_for_asserts_this() {
+    let diags = with_lib_contexts(
+        r#"
+class Value<T> {
+  constructor(private value: T | null) {}
+
+  assertHasValue(): asserts this is { value: T } & Value<T> {
+    if (this.value === null) {
+      throw new Error("No value");
+    }
+  }
+
+  getValue(): T {
+    this.assertHasValue();
+    return this.value;
+  }
+}
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+                && message.contains("Property 'value' does not exist on type 'never'")
+        }),
+        "Expected TS2339 for private/public impossible intersection reduced to never, got: {diags:?}"
     );
 }
 
@@ -2752,9 +3448,10 @@ fn test_ts2322_check_mjs_false_does_not_enforce_annotation_type() {
         },
     );
     assert!(
-        !diagnostics
-            .iter()
-            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        !has_diagnostic_code(
+            &diagnostics,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
         "Expected no TS2322 for .mjs when checkJs is disabled, got: {diagnostics:?}"
     );
 }
@@ -2778,9 +3475,10 @@ fn test_ts2322_check_js_false_does_not_enforce_jsdoc_return_type() {
         },
     );
     assert!(
-        !diagnostics
-            .iter()
-            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        !has_diagnostic_code(
+            &diagnostics,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
         "Expected no TS2322 for jsdoc return annotation when checkJs is disabled, got: {diagnostics:?}"
     );
 }
@@ -2813,9 +3511,8 @@ fn test_ts2322_strict_js_strictness_affects_nullability() {
         },
     );
 
-    let strict_has_2322 = strict
-        .iter()
-        .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    let strict_has_2322 =
+        has_diagnostic_code(&strict, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
     assert!(
         strict_has_2322,
         "Expected strict+checkJs to emit TS2322 for null -> number jsdoc mismatch, got: {strict:?}"
@@ -2843,9 +3540,10 @@ fn test_ts2322_target_es2015_enables_template_lib_type_checks_without_falsely_re
             ..Default::default()
         },
     );
-    let has_2322 = diagnostics
-        .iter()
-        .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    let has_2322 = has_diagnostic_code(
+        &diagnostics,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    );
     assert!(
         !has_2322,
         "No TS2322 expected in valid ES2015 + strict baseline case: {diagnostics:?}"
@@ -2880,12 +3578,9 @@ fn test_ts2322_target_es3_vs_target_es2015_jsdoc_annotation_mismatch() {
             ..Default::default()
         },
     );
-    let es3_has_2322 = es3
-        .iter()
-        .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
-    let es2022_has_2322 = es2022
-        .iter()
-        .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    let es3_has_2322 = has_diagnostic_code(&es3, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    let es2022_has_2322 =
+        has_diagnostic_code(&es2022, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
     assert!(
         es3_has_2322 && es2022_has_2322,
         "Expected jsdoc mismatch TS2322 under both targets, got es3={es3:?}, es2022={es2022:?}"
@@ -2900,10 +3595,10 @@ foo({ x: false, y: 0, z: "" });
 "#;
 
     let diagnostics = get_all_diagnostics(source);
-    let ts2322_count = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .count();
+    let ts2322_count = diagnostic_count(
+        &diagnostics,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    );
     let has_ts2345 = diagnostics.iter().any(|(code, _)| {
         *code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
     });
@@ -2930,9 +3625,10 @@ someGenerics3<number>(() => undefined);
 "#;
 
     let diagnostics = get_all_diagnostics(source);
-    let has_ts2322 = diagnostics
-        .iter()
-        .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    let has_ts2322 = has_diagnostic_code(
+        &diagnostics,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    );
 
     assert!(
         has_ts2322,
@@ -2962,9 +3658,10 @@ fn test_ts2322_check_js_true_does_not_relabel_with_unrelated_diagnostics() {
             ..Default::default()
         },
     );
-    let has_2322 = diagnostics
-        .iter()
-        .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    let has_2322 = has_diagnostic_code(
+        &diagnostics,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    );
     assert!(
         has_2322,
         "Expected TS2322 for generic helper return mismatched with number annotation in JS, got: {diagnostics:?}"
@@ -2998,10 +3695,10 @@ fn test_ts2322_arrow_expression_body_jsdoc_cast_reports_template_return_mismatch
         },
     );
 
-    let has_2322 = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .count();
+    let has_2322 = diagnostic_count(
+        &diagnostics,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    );
 
     assert_eq!(
         has_2322, 2,
@@ -3033,9 +3730,10 @@ fn test_ts2322_namespace_export_assignment_optional_to_required() {
         },
     );
 
-    let has_2322 = diagnostics
-        .iter()
-        .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    let has_2322 = has_diagnostic_code(
+        &diagnostics,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    );
     assert!(
         has_2322,
         "Expected TS2322 for assigning optional property type to required property target, got: {diagnostics:?}"
@@ -3543,9 +4241,10 @@ fn test_ts2322_check_js_true_reports_annotation_union_mismatch() {
             ..Default::default()
         },
     );
-    let has_2322 = diagnostics
-        .iter()
-        .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    let has_2322 = has_diagnostic_code(
+        &diagnostics,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    );
     assert!(
         has_2322,
         "Expected TS2322 when assigning `{{}}` to `number | string` in JS mode, got: {diagnostics:?}"
@@ -3569,9 +4268,10 @@ fn test_ts2322_check_js_false_does_not_enforce_nested_annotation_types() {
         },
     );
     assert!(
-        !diagnostics
-            .iter()
-            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        !has_diagnostic_code(
+            &diagnostics,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
         "Expected TS2322 to be suppressed when checkJs is false, got: {diagnostics:?}"
     );
 }
@@ -3592,9 +4292,10 @@ fn test_ts2322_check_jsx_true_reports_javascript_annotation_mismatch() {
         },
     );
     assert!(
-        diagnostics
-            .iter()
-            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        has_diagnostic_code(
+            &diagnostics,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
         "Expected TS2322 for .jsx JSDoc mismatch when checkJs is enabled, got: {diagnostics:?}"
     );
 }
@@ -3615,9 +4316,10 @@ fn test_ts2322_check_jsx_false_does_not_enforce_annotation_type() {
         },
     );
     assert!(
-        !diagnostics
-            .iter()
-            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        !has_diagnostic_code(
+            &diagnostics,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
         "Expected no TS2322 for .jsx when checkJs is disabled, got: {diagnostics:?}"
     );
 }
@@ -3650,9 +4352,8 @@ fn test_ts2322_check_jsx_strict_nullability_effect() {
         },
     );
 
-    let strict_has_2322 = strict
-        .iter()
-        .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    let strict_has_2322 =
+        has_diagnostic_code(&strict, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
     assert!(
         strict_has_2322,
         "Expected strict+checkJs to emit TS2322 for .jsx nullability mismatch, got: {strict:?}"
@@ -3682,9 +4383,10 @@ fn test_ts2322_assignable_through_generic_identity_in_jsdoc_mode_jsx() {
         },
     );
     assert!(
-        diagnostics
-            .iter()
-            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        has_diagnostic_code(
+            &diagnostics,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
         "Expected TS2322 for 'string' not assignable to 'number' in @returns (.jsx), got: {diagnostics:?}"
     );
 }
@@ -3710,9 +4412,10 @@ fn test_ts2322_assignable_through_generic_identity_in_jsdoc_mode() {
         },
     );
     assert!(
-        diagnostics
-            .iter()
-            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        has_diagnostic_code(
+            &diagnostics,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
         "Expected TS2322 for 'string' not assignable to 'number' in @returns, got: {diagnostics:?}"
     );
 }
@@ -3736,9 +4439,10 @@ fn test_ts2322_assignable_through_generic_identity_in_jsdoc_mode_mjs() {
         },
     );
     assert!(
-        diagnostics
-            .iter()
-            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        has_diagnostic_code(
+            &diagnostics,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
         "Expected TS2322 for 'string' not assignable to 'number' in @returns (.mjs), got: {diagnostics:?}"
     );
 }
@@ -3760,9 +4464,10 @@ fn test_ts2322_for_of_uses_declared_type_for_predeclared_identifier() {
 
     let diagnostics = get_all_diagnostics(source);
     assert!(
-        !diagnostics
-            .iter()
-            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        !has_diagnostic_code(
+            &diagnostics,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
         "Expected no TS2322 in for-of assignment flow for predeclared identifier, got: {diagnostics:?}"
     );
 }
@@ -3783,9 +4488,10 @@ fn test_ts2322_for_of_array_destructuring_assignment_no_false_positive() {
 
     let diagnostics = get_all_diagnostics(source);
     assert!(
-        !diagnostics
-            .iter()
-            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        !has_diagnostic_code(
+            &diagnostics,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
         "Expected no TS2322 for array destructuring in for-of with matching types, got: {diagnostics:?}"
     );
 }
@@ -3804,9 +4510,10 @@ fn test_ts2322_for_of_array_destructuring_wrong_default_still_errors() {
 
     let diagnostics = get_all_diagnostics(source);
     assert!(
-        diagnostics
-            .iter()
-            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        has_diagnostic_code(
+            &diagnostics,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
         "Expected TS2322 for wrong default value type in array destructuring for-of"
     );
 }
@@ -3820,9 +4527,10 @@ fn test_ts2322_object_destructuring_default_not_checked_for_required_property() 
 
     let diagnostics = get_all_diagnostics(source);
     assert!(
-        !diagnostics
-            .iter()
-            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        !has_diagnostic_code(
+            &diagnostics,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
         "Expected no TS2322 for required-property object destructuring default initializer, got: {diagnostics:?}"
     );
 }
@@ -3871,9 +4579,10 @@ fn test_ts2322_nested_assignment_destructuring_default_is_not_whole_pattern_chec
 
     let diagnostics = get_all_diagnostics(source);
     assert!(
-        !diagnostics
-            .iter()
-            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        !has_diagnostic_code(
+            &diagnostics,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
         "Expected no whole-pattern TS2322 for nested assignment destructuring default, got: {diagnostics:?}"
     );
 }
@@ -3893,9 +4602,10 @@ fn test_ts2322_type_query_in_type_assertion_uses_flow_narrowed_property_type() {
 
     let diagnostics = get_all_diagnostics(source);
     assert!(
-        !diagnostics
-            .iter()
-            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        !has_diagnostic_code(
+            &diagnostics,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
         "Expected no TS2322 for flow-narrowed typeof property type in assertion, got: {diagnostics:?}"
     );
 }
@@ -3919,9 +4629,10 @@ fn test_ts2322_class_or_null_assignable_to_object_or_null() {
 
     let diagnostics = get_all_diagnostics(source);
     assert!(
-        !diagnostics
-            .iter()
-            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        !has_diagnostic_code(
+            &diagnostics,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
         "Expected no TS2322 for `Foo | null` assignment to `Object | null`, got: {diagnostics:?}"
     );
 }
@@ -3951,9 +4662,10 @@ fn test_ts2322_noimplicitany_nullish_initializer_mutation_is_not_assignability_e
         },
     );
     assert!(
-        !diagnostics
-            .iter()
-            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        !has_diagnostic_code(
+            &diagnostics,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
         "Expected no TS2322 for mutable noImplicitAny variable with undefined initializer, got: {diagnostics:?}"
     );
 }
@@ -3983,7 +4695,7 @@ fn test_ts2322_no_false_positive_mapped_type_key_narrowed_by_conditional() {
     ";
     let errors = get_all_diagnostics(source);
     assert!(
-        !errors.iter().any(|(code, _)| *code == 2322),
+        !has_diagnostic_code(&errors, 2322),
         "Expected no TS2322 for narrowed T in mapped type key (T extends string). Got: {errors:?}"
     );
 }
@@ -3996,10 +4708,10 @@ fn test_ts2322_conditional_extends_distinguishes_optional_and_optional_undefined
     "#;
 
     let diagnostics = get_all_diagnostics(source);
-    let ts2322: Vec<&(u32, String)> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .collect();
+    let ts2322: Vec<&(u32, String)> = diagnostics_with_code(
+        &diagnostics,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    );
 
     assert_eq!(
         ts2322.len(),
@@ -4007,10 +4719,10 @@ fn test_ts2322_conditional_extends_distinguishes_optional_and_optional_undefined
         "Expected one TS2322 for conditional extends optional-property identity. Actual diagnostics: {diagnostics:?}"
     );
     assert!(
-        ts2322[0]
-            .1
-            .contains("Type '<T>() => T extends { a?: string; } ? 0 : 1' is not assignable to type '<T>() => T extends { a?: string | undefined; } ? 0 : 1'"),
-        "Expected TS2322 to preserve the differing optional-property conditional signatures. Actual diagnostics: {diagnostics:?}"
+        ts2322[0].1.contains(
+            "is not assignable to type '<T>() => T extends { a?: string | undefined; } ? 0 : 1'"
+        ),
+        "Expected TS2322 for differing optional-property conditional signatures. Actual diagnostics: {diagnostics:?}"
     );
 }
 
@@ -4049,10 +4761,10 @@ class E<T extends Date> {
         },
     );
 
-    let ts2322: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .collect();
+    let ts2322: Vec<_> = diagnostics_with_code(
+        &diagnostics,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    );
 
     assert_eq!(
         ts2322.len(),
@@ -4106,10 +4818,10 @@ function foo4<T extends U, U extends V, V extends Date>(t: T, u: U, v: V) {
         },
     );
 
-    let ts2322: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .collect();
+    let ts2322: Vec<_> = diagnostics_with_code(
+        &diagnostics,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    );
 
     assert_eq!(
         ts2322.len(),
@@ -4194,6 +4906,46 @@ class Comp<T extends Foo, S> extends Component<S & State<T>>
     );
 }
 
+#[test]
+fn indexed_access_on_intersection_real_pick_preserves_deferred_constraints() {
+    // Same conformance case as above, but using the real library `Pick`.
+    // The no-lib reduced test can pass while the lib mapped type loses the
+    // deferred `(S & State<T>)["a"]` constraint and incorrectly accepts `T`.
+    let source = r#"
+class Component<S> {
+    setState<K extends keyof S>(state: Pick<S, K>) {}
+}
+
+export interface State<T> {
+    a?: T;
+}
+
+class Foo {}
+
+class Comp<T extends Foo, S> extends Component<S & State<T>>
+{
+    foo(a: T) {
+        this.setState({ a: a });
+    }
+}
+"#;
+    let libs = load_lib_files_for_test();
+    let diagnostics = check_source_with_libs(
+        source,
+        "indexedAccessRelation.ts",
+        CheckerOptions::default(),
+        &libs,
+    );
+    let ts2322 = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect::<Vec<_>>();
+    assert!(
+        !ts2322.is_empty(),
+        "Expected TS2322 for real Pick indexed access on intersection with unconstrained type parameter. Actual diagnostics: {diagnostics:?}"
+    );
+}
+
 /// Regression test: arrays should NOT be assignable to interfaces that extend
 /// ReadonlyArray/Array but have additional required properties.
 ///
@@ -4226,7 +4978,7 @@ fn test_ts2322_array_not_assignable_to_interface_extending_array_with_extra_prop
     assert!(
         !assignability_errors.is_empty(),
         "Expected TS2322/TS2741/TS2739 when assigning string[] to interface extending ReadonlyArray with extra properties. All diagnostics: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        project_diagnostic_codes(&diagnostics)
     );
 }
 
@@ -4245,8 +4997,8 @@ fn nested_weak_type_in_intersection_target_emits_ts2322() {
     "#;
 
     let diagnostics = get_all_diagnostics(source);
-    let has_ts2322 = diagnostics.iter().any(|(code, _)| *code == 2322);
-    let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
+    let has_ts2322 = has_diagnostic_code(&diagnostics, 2322);
+    let has_ts2559 = has_diagnostic_code(&diagnostics, 2559);
     assert!(
         has_ts2322 || has_ts2559,
         "Expected TS2322 or TS2559 for nested weak type mismatch in intersection target. Got: {diagnostics:?}"
@@ -4264,10 +5016,75 @@ fn flat_weak_type_in_intersection_target_emits_ts2559() {
     "#;
 
     let diagnostics = get_all_diagnostics(source);
-    let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
+    let has_ts2559 = has_diagnostic_code(&diagnostics, 2559);
     assert!(
         has_ts2559,
         "Expected TS2559 for flat weak type mismatch in intersection target. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn direct_object_literal_excess_prop_against_weak_intersection_emits_ts2353() {
+    // tsc emits TS2353 (excess property check) — NOT TS2559 — when a fresh object
+    // literal with an unrecognized property is assigned to a weak intersection target.
+    // EPC runs first for fresh literals; TS2559 applies to non-fresh sources only.
+    let source = r#"
+        interface A { x?: number }
+        interface B { y?: string }
+        const v: A & B = { z: 1 };
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2353 = has_diagnostic_code(&diagnostics, 2353);
+    let has_ts2559 = has_diagnostic_code(&diagnostics, 2559);
+    assert!(
+        has_ts2353,
+        "Expected TS2353 (excess property) for fresh literal with unrecognized property against weak intersection. Got: {diagnostics:?}"
+    );
+    assert!(
+        !has_ts2559,
+        "Expected no TS2559 for a fresh object literal (EPC fires first). Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn direct_object_literal_prop_matching_second_weak_intersection_member_no_ts2559() {
+    // `y` is a property of `Second` and therefore of the intersection `First & Second`.
+    // Having any property in common with ANY member is sufficient — no TS2559.
+    // This verifies that `violates_weak_type` collects ALL members' properties.
+    let source = r#"
+        interface First { x?: number }
+        interface Second { y?: string }
+        const v: First & Second = { y: "hello" };
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2559 = has_diagnostic_code(&diagnostics, 2559);
+    assert!(
+        !has_ts2559,
+        "Source with property matching second intersection member should NOT emit TS2559. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn direct_object_literal_excess_prop_against_single_weak_type_emits_ts2353() {
+    // tsc emits TS2353 (excess property check) when a fresh object literal with an
+    // unrecognized property is assigned to a single weak type. EPC fires first for
+    // fresh literals; TS2559 applies only to non-fresh sources.
+    let source = r#"
+        interface Opts { timeout?: number; retries?: number }
+        const v: Opts = { url: "x" };
+    "#;
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2353 = has_diagnostic_code(&diagnostics, 2353);
+    let has_ts2559 = has_diagnostic_code(&diagnostics, 2559);
+    assert!(
+        has_ts2353,
+        "Expected TS2353 (excess property) for fresh literal with unrecognized property against single weak type. Got: {diagnostics:?}"
+    );
+    assert!(
+        !has_ts2559,
+        "Expected no TS2559 for a fresh object literal (EPC fires first). Got: {diagnostics:?}"
     );
 }
 
@@ -4288,8 +5105,8 @@ fn intersection_member_weak_type_suppression_still_works() {
     "#;
 
     let diagnostics = get_all_diagnostics(source);
-    let has_ts2322 = diagnostics.iter().any(|(code, _)| *code == 2322);
-    let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
+    let has_ts2322 = has_diagnostic_code(&diagnostics, 2322);
+    let has_ts2559 = has_diagnostic_code(&diagnostics, 2559);
     assert!(
         !has_ts2322 && !has_ts2559,
         "ITreeItem should be assignable to ITreeItem & IDecl without error. Got: {diagnostics:?}"
@@ -4311,7 +5128,7 @@ fn primitive_number_literal_vs_weak_type_emits_ts2559() {
     "#;
 
     let diagnostics = get_all_diagnostics(source);
-    let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
+    let has_ts2559 = has_diagnostic_code(&diagnostics, 2559);
     assert!(
         has_ts2559,
         "Expected TS2559 for number literal assigned to weak type. Got: {diagnostics:?}"
@@ -4331,7 +5148,7 @@ fn primitive_string_literal_vs_weak_type_emits_ts2559() {
     "#;
 
     let diagnostics = get_all_diagnostics(source);
-    let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
+    let has_ts2559 = has_diagnostic_code(&diagnostics, 2559);
     assert!(
         has_ts2559,
         "Expected TS2559 for string literal assigned to weak type. Got: {diagnostics:?}"
@@ -4351,7 +5168,7 @@ fn primitive_boolean_literal_vs_weak_type_emits_ts2559() {
     "#;
 
     let diagnostics = get_all_diagnostics(source);
-    let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
+    let has_ts2559 = has_diagnostic_code(&diagnostics, 2559);
     assert!(
         has_ts2559,
         "Expected TS2559 for boolean literal assigned to weak type. Got: {diagnostics:?}"
@@ -4369,7 +5186,7 @@ fn enum_member_vs_weak_type_emits_ts2559() {
     "#;
 
     let diagnostics = get_all_diagnostics(source);
-    let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
+    let has_ts2559 = has_diagnostic_code(&diagnostics, 2559);
     assert!(
         has_ts2559,
         "Expected TS2559 for enum member assigned to weak type. Got: {diagnostics:?}"
@@ -4385,7 +5202,7 @@ fn primitive_with_matching_property_passes_weak_type() {
     "#;
 
     let diagnostics = get_all_diagnostics(source);
-    let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
+    let has_ts2559 = has_diagnostic_code(&diagnostics, 2559);
     assert!(
         !has_ts2559,
         "String should not trigger TS2559 for weak type with 'length' property. Got: {diagnostics:?}"
@@ -4411,8 +5228,8 @@ fn callable_value_to_weak_type_emits_ts2560_not_ts2559() {
     "#;
 
     let diagnostics = get_all_diagnostics(source);
-    let has_ts2560 = diagnostics.iter().any(|(code, _)| *code == 2560);
-    let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
+    let has_ts2560 = has_diagnostic_code(&diagnostics, 2560);
+    let has_ts2559 = has_diagnostic_code(&diagnostics, 2559);
     assert!(
         has_ts2560,
         "Expected TS2560 for callable value assigned to weak type. Got: {diagnostics:?}"
@@ -4437,7 +5254,7 @@ fn arrow_function_to_weak_type_emits_ts2560() {
     "#;
 
     let diagnostics = get_all_diagnostics(source);
-    let has_ts2560 = diagnostics.iter().any(|(code, _)| *code == 2560);
+    let has_ts2560 = has_diagnostic_code(&diagnostics, 2560);
     assert!(
         has_ts2560,
         "Expected TS2560 for arrow function assigned to weak type. Got: {diagnostics:?}"
@@ -4458,8 +5275,8 @@ fn primitive_still_emits_ts2559_not_ts2560() {
     "#;
 
     let diagnostics = get_all_diagnostics(source);
-    let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
-    let has_ts2560 = diagnostics.iter().any(|(code, _)| *code == 2560);
+    let has_ts2559 = has_diagnostic_code(&diagnostics, 2559);
+    let has_ts2560 = has_diagnostic_code(&diagnostics, 2560);
     assert!(
         has_ts2559,
         "Expected TS2559 for primitives assigned to weak type. Got: {diagnostics:?}"
@@ -4482,7 +5299,7 @@ fn test_generic_callable_return_type_mismatch_emits_ts2322() {
     "#;
 
     let diagnostics = get_all_diagnostics(source);
-    let has_ts2322 = diagnostics.iter().any(|(code, _)| *code == 2322);
+    let has_ts2322 = has_diagnostic_code(&diagnostics, 2322);
     assert!(
         has_ts2322,
         "Expected TS2322 for incompatible generic callable assignment. Got: {diagnostics:?}"
@@ -4506,12 +5323,12 @@ fn test_function_to_class_with_private_emits_ts2322_not_ts2741() {
         var a: D = foo("hi", []);
     "#;
     let diagnostics = get_all_diagnostics(source);
-    let has_ts2741 = diagnostics.iter().any(|(code, _)| *code == 2741);
+    let has_ts2741 = has_diagnostic_code(&diagnostics, 2741);
     assert!(
         !has_ts2741,
         "Should not emit TS2741 for function→class assignment with private members. Got: {diagnostics:?}"
     );
-    let has_ts2322 = diagnostics.iter().any(|(code, _)| *code == 2322);
+    let has_ts2322 = has_diagnostic_code(&diagnostics, 2322);
     assert!(
         has_ts2322,
         "Expected TS2322 for function→class assignment. Got: {diagnostics:?}"
@@ -4530,12 +5347,12 @@ fn test_index_signature_target_missing_prop_emits_ts2322_not_ts2741() {
         tb1 = sb1;
     "#;
     let diagnostics = get_all_diagnostics(source);
-    let has_ts2741 = diagnostics.iter().any(|(code, _)| *code == 2741);
+    let has_ts2741 = has_diagnostic_code(&diagnostics, 2741);
     assert!(
         !has_ts2741,
         "Should not emit TS2741 for index signature target mismatch. Got: {diagnostics:?}"
     );
-    let has_ts2322 = diagnostics.iter().any(|(code, _)| *code == 2322);
+    let has_ts2322 = has_diagnostic_code(&diagnostics, 2322);
     assert!(
         has_ts2322,
         "Expected TS2322 for index signature target mismatch. Got: {diagnostics:?}"
@@ -4723,6 +5540,40 @@ preferredRevision = PUPPETEER_REVISIONS.firefox;
     );
 }
 
+#[test]
+fn object_seal_widens_mutable_literal_property_values() {
+    let source = r#"
+const sealed = Object.seal({ x: 1 });
+sealed.x = 2;
+
+const frozen = Object.freeze({ x: 1 });
+frozen.x = 2;
+"#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let seal_assignment_start = source
+        .find("sealed.x = 2")
+        .expect("sealed assignment should exist") as u32;
+    let frozen_assignment_start = source
+        .find("frozen.x = 2")
+        .expect("frozen assignment should exist") as u32;
+    let seal_diagnostics: Vec<_> = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.start == seal_assignment_start)
+        .collect();
+    assert_eq!(
+        seal_diagnostics.len(),
+        0,
+        "Expected Object.seal property assignment to remain mutable and widened. Got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|diagnostic| diagnostic.code
+            == diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_READ_ONLY_PROPERTY
+            && diagnostic.start == frozen_assignment_start + "frozen.".len() as u32),
+        "Expected Object.freeze assignment to remain readonly. Got: {diagnostics:?}"
+    );
+}
+
 /// Regression: assignFromStringInterface2.ts
 /// When both source and target have number index signatures but the source is
 /// missing named properties from the target, TS2739/TS2740 should be emitted
@@ -4764,7 +5615,7 @@ fn test_missing_properties_not_suppressed_by_number_index_signatures() {
          missing-property diagnostics in favor of TS2322. Got: {diagnostics:?}"
     );
     // Should NOT have TS2322 for this case — TS2740 replaces it
-    let has_ts2322 = diagnostics.iter().any(|(code, _)| *code == 2322);
+    let has_ts2322 = has_diagnostic_code(&diagnostics, 2322);
     assert!(
         !has_ts2322,
         "Expected TS2740, not TS2322, when source is missing named properties. Got: {diagnostics:?}"
@@ -4843,15 +5694,108 @@ const x: number = undefined as R;
     };
     let diagnostics = compile_with_libs_for_ts(source, "test.ts", options);
 
-    let ts2322_count = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .count();
+    let ts2322_count = diagnostic_count(
+        &diagnostics,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    );
     assert!(
         ts2322_count >= 1,
         "Expected TS2322 for assigning BuiltinIteratorReturn (=undefined) to number when \
          strictBuiltinIteratorReturn is true. Got: {diagnostics:?}"
     );
+}
+
+#[test]
+fn test_strict_builtin_iterator_return_in_lib_heritage_displays_undefined() {
+    let source = r#"
+declare const map: Map<string, number>;
+const r1: number = map.values().next().value;
+"#;
+    let options = CheckerOptions {
+        strict_builtin_iterator_return: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_with_libs_for_ts(source, "test.ts", options);
+
+    let messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|(_, message)| message.as_str())
+        .collect();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("number | undefined")),
+        "Expected IteratorObject heritage argument BuiltinIteratorReturn to resolve to undefined, got: {messages:?}"
+    );
+    assert!(
+        !messages
+            .iter()
+            .any(|message| message.contains("BuiltinIteratorReturn")),
+        "BuiltinIteratorReturn should not leak into strict diagnostics, got: {messages:?}"
+    );
+}
+
+#[test]
+fn test_builtin_iterator_helpers_keep_contextual_callback_types() {
+    let source = r#"
+const iterator = Iterator.from([0, 1, 2]);
+
+const mapped: IteratorObject<string> =
+    iterator.map((value, index) => value === index ? "same" : String(value));
+const filtered: IteratorObject<number> =
+    iterator.filter((value, index) => value > index);
+
+function isZero(value: number): value is 0 {
+    return value === 0;
+}
+const zero: IteratorObject<0> = iterator.filter(isZero);
+
+function* gen() {
+    yield 0;
+}
+const mappedGen: IteratorObject<string> =
+    gen().map(value => value === 0 ? "zero" : "other");
+const mappedValues: IteratorObject<string> =
+    [0, 1, 2].values().map(value => value === 0 ? "zero" : "other");
+
+class GoodIterator extends Iterator<number> {
+    next() {
+        return { done: false, value: 0 } as const;
+    }
+}
+
+mapped;
+filtered;
+zero;
+mappedGen;
+mappedValues;
+new GoodIterator();
+"#;
+    let diagnostics = compile_with_libs_for_ts(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            strict_builtin_iterator_return: true,
+            strict_null_checks: true,
+            target: ScriptTarget::ESNext,
+            ..CheckerOptions::default()
+        },
+    );
+
+    for code in [
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+        diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+        diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE,
+    ] {
+        assert_eq!(
+            diagnostic_count(&diagnostics, code),
+            0,
+            "builtin iterator helpers should not emit TS{code}, got: {diagnostics:?}"
+        );
+    }
 }
 
 /// When `strictBuiltinIteratorReturn` is false, `BuiltinIteratorReturn` resolves to `any`.
@@ -4869,14 +5813,41 @@ const r1: number = x;
     };
     let diagnostics = compile_with_libs_for_ts(source, "test.ts", options);
 
-    let ts2322_count = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .count();
+    let ts2322_count = diagnostic_count(
+        &diagnostics,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    );
     assert!(
         ts2322_count == 0,
         "Expected no TS2322 when strictBuiltinIteratorReturn is false \
          (BuiltinIteratorReturn=any). Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn iterator_intersection_return_method_name_is_not_unresolved_identifier() {
+    let source = r#"
+type WithReturn = Iterator<number> & { return(): IteratorReturnResult<void> };
+
+const iter: WithReturn = {
+  next() { return { value: 1, done: false as const }; },
+  return() { return { value: undefined, done: true as const }; }
+};
+"#;
+    let diagnostics = compile_with_libs_for_ts(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let codes: Vec<_> = diagnostics.iter().map(|diagnostic| diagnostic.0).collect();
+    assert!(
+        !codes.contains(&diagnostic_codes::CANNOT_FIND_NAME)
+            && !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "object literal method name `return` should satisfy Iterator intersection without TS2304/TS2322, got {diagnostics:#?}"
     );
 }
 
@@ -4992,7 +5963,6 @@ function foo(v: From) {
 }
 
 #[test]
-#[ignore = "current main CI restore: pre-existing red assertion exposed by Rust 1.95 build fix"]
 fn test_ts2322_keeps_outer_object_error_for_direct_index_access_target() {
     let source = r#"
 interface TextChannel {
@@ -5044,10 +6014,10 @@ newTextChannel2.phoneNumber = '613-555-1234';
         },
     );
 
-    let ts2322: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .collect();
+    let ts2322: Vec<_> = diagnostics_with_code(
+        &diagnostics,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    );
     assert_eq!(
         ts2322.len(),
         1,
@@ -5077,6 +6047,93 @@ newTextChannel2.phoneNumber = '613-555-1234';
             .iter()
             .all(|(_, message)| !message.contains("never[\"type\"]")),
         "Did not expect property-level never[\"type\"] elaboration. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_flatarray_assignment_keeps_rhs_declared_alias_display() {
+    let source = r#"
+declare const foo: unknown[];
+const bar = foo.flatMap(bar => bar as Foo);
+
+interface Foo extends Array<string> {}
+
+function f<Arr, D extends number>(x: FlatArray<Arr, any>, y: FlatArray<Arr, D>) {
+    x = y;
+    y = x;
+}
+"#;
+    let diagnostics = compile_with_libs_for_ts(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            emit_declarations: true,
+            target: ScriptTarget::ESNext,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2322: Vec<_> = diagnostics_with_code(
+        &diagnostics,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    );
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected one FlatArray assignment TS2322. Got: {diagnostics:?}"
+    );
+    let message = &ts2322[0].1;
+    assert!(
+        message
+            .contains("Type 'FlatArray<Arr, any>' is not assignable to type 'FlatArray<Arr, D>'."),
+        "Expected source display to preserve the RHS FlatArray alias. Got: {message}"
+    );
+    assert!(
+        !message.contains("Arr | Arr extends"),
+        "Did not expect FlatArray source to expand to its conditional body. Got: {message}"
+    );
+}
+
+#[test]
+fn test_ts2322_recursive_indexed_alias_assignment_keeps_declared_alias_display() {
+    let source = r#"
+type Step<Arr, Depth extends number> = {
+    done: Arr;
+    recur: Arr extends { item: infer InnerArr } ? Step<InnerArr, [-1, 0, 1, 2][Depth]> : Arr;
+}[Depth extends -1 ? "done" : "recur"];
+
+function f<Arr, D extends number>(x: Step<Arr, any>, y: Step<Arr, D>) {
+    x = y;
+    y = x;
+}
+"#;
+    let diagnostics = with_lib_contexts(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2322: Vec<_> = diagnostics_with_code(
+        &diagnostics,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    );
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected one recursive alias assignment TS2322. Got: {diagnostics:?}"
+    );
+    let message = &ts2322[0].1;
+    assert!(
+        message.contains("Type 'Step<Arr, any>' is not assignable to type 'Step<Arr, D>'."),
+        "Expected source display to preserve the declared Step alias. Got: {message}"
+    );
+    assert!(
+        !message.contains("Arr extends") && !message.contains("infer InnerArr"),
+        "Did not expect Step source to expand to its conditional body. Got: {message}"
     );
 }
 
@@ -5162,6 +6219,32 @@ const t = f({ a: 1, b: "c", d: ["e", 2] });
 }
 
 #[test]
+fn mixin_inferred_const_literal_tag_substitutes_return_class_property() {
+    let source = r#"
+type Constructor<T = {}> = new (...args: any[]) => T;
+
+class User {
+  name = 'unknown';
+}
+
+function Tagged<TBase extends Constructor, TTag>(Base: TBase, tag: TTag) {
+  return class Tagged extends Base {
+    tag: TTag = tag;
+  };
+}
+
+const TaggedUser = Tagged(User, 'user' as const);
+const tagu = new TaggedUser();
+const tag: 'user' = tagu.tag;
+"#;
+
+    assert!(
+        !has_error_with_code(source, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Should not emit TS2322 when an inferred const literal tag flows into a mixin return class property"
+    );
+}
+
+#[test]
 fn non_primitive_conditional_with_type_params_matches_tsc_errors() {
     let source = r#"
 type A<T, V> = { [P in keyof T]: T[P] extends V ? 1 : 0; };
@@ -5226,9 +6309,10 @@ probablyArray = numberLiteralKeys;
     };
     let diagnostics = with_lib_contexts(source, "test.ts", options);
     assert!(
-        diagnostics
-            .iter()
-            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        has_diagnostic_code(
+            &diagnostics,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
         "expected TS2322 for optional numeric property vs number index, got: {diagnostics:?}"
     );
 }
@@ -5248,9 +6332,10 @@ let stringDictionary: { [key: string]: string } = optionalProperties;
     };
     let diagnostics = with_lib_contexts(source, "test.ts", options);
     assert!(
-        !diagnostics
-            .iter()
-            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        !has_diagnostic_code(
+            &diagnostics,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
         "expected no TS2322 for `{{ k1?: string }}` vs string index, got: {diagnostics:?}"
     );
 }
@@ -5322,9 +6407,10 @@ function f(obj: { a?: string, b?: string | undefined }) {
         "Expected TS2412 to report the offending undefined source, got: {diagnostics:#?}"
     );
     assert!(
-        !diagnostics
-            .iter()
-            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        !has_diagnostic_code(
+            &diagnostics,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
         "Expected direct undefined exact-optional write to avoid TS2322 fallback, got: {diagnostics:#?}"
     );
 }
@@ -5416,6 +6502,304 @@ const x: { foo?: number } = { foo: undefined };
 }
 
 #[test]
+fn exact_optional_tuple_elements_reject_present_undefined() {
+    let source = r#"
+declare let t: [number, string?, boolean?];
+t[1] = undefined;
+t = [1, undefined];
+t = [1, "ok", undefined];
+t = [1, undefined, undefined];
+"#;
+    let options = CheckerOptions {
+        exact_optional_property_types: true,
+        strict: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = with_lib_contexts(source, "test.ts", options);
+    let ts2322_messages = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|(_, message)| message.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        ts2322_messages.len(),
+        4,
+        "Expected exact optional tuple writes/literals with present undefined to emit TS2322, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322_messages
+            .iter()
+            .any(|message| message.contains("Type 'undefined' is not assignable to type 'string'")),
+        "Expected direct tuple slot write to reject undefined against string, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn tuple_source_display_widens_boolean_literals_past_fixed_target_slots() {
+    let source = r#"
+declare let target: [number, string];
+target = [1, "x", true];
+target = [1, "x", (false)];
+"#;
+    let options = CheckerOptions {
+        strict: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = with_lib_contexts(source, "test.ts", options);
+    let ts2322_messages = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|(_, message)| message.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        ts2322_messages.len(),
+        2,
+        "Expected both tuple overflow literals to emit TS2322, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322_messages
+            .iter()
+            .all(|message| message.contains("Type '[number, string, boolean]'")),
+        "Expected overflow boolean literals to display as boolean, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322_messages
+            .iter()
+            .all(|message| !message.contains("Type '[number, string, true]'")
+                && !message.contains("Type '[number, string, false]'")),
+        "Tuple overflow source display must not preserve uncontextualized boolean literals, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn exact_optional_tuple_source_display_uses_boolean_literal_policy() {
+    let source = r#"
+declare let t: [number, string?, boolean?];
+declare let u: [number, string?, false?];
+declare let p: [number, string?, boolean?];
+declare let c: [number, string?, boolean?];
+declare let s: [number, string?, boolean?];
+declare let a: [number, string?, boolean?];
+t = [42, undefined, true];
+u = [42, undefined, false];
+p = [42, undefined, (true)];
+c = [42, undefined, true as const];
+s = [42, undefined, true satisfies boolean];
+a = [42, undefined, true as boolean];
+"#;
+    let options = CheckerOptions {
+        exact_optional_property_types: true,
+        strict: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = with_lib_contexts(source, "test.ts", options);
+    let ts2322_messages = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|(_, message)| message.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(
+        ts2322_messages
+            .iter()
+            .any(|message| message.contains("Type '[number, undefined, true]'")),
+        "Expected tuple source display to preserve true literal, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322_messages
+            .iter()
+            .any(|message| message.contains("Type '[number, undefined, false]'")),
+        "Expected tuple source display to preserve false literal, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322_messages
+            .iter()
+            .filter(|message| message.contains("Type '[number, undefined, true]'"))
+            .count()
+            == 4,
+        "Boolean-compatible tuple targets should preserve direct, parenthesized, const-asserted, and satisfies true literals, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322_messages
+            .iter()
+            .any(|message| message.contains("Type '[number, undefined, boolean]'")),
+        "Expected explicit boolean assertion to display as boolean, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322_messages
+            .iter()
+            .filter(|message| message.contains("[number, undefined, boolean]"))
+            .count()
+            == 1,
+        "Only explicit boolean assertions should display widened boolean literal elements, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn exact_optional_tuple_source_display_uses_contextual_literal_policy_per_element() {
+    let source = r#"
+declare let primitiveString: [number, boolean?, string?];
+declare let literalString: [number, boolean?, "x"?];
+declare let literalNumber: [number, boolean?, 1?];
+primitiveString = [42, undefined, "x"];
+literalString = [42, undefined, "x"];
+literalNumber = [42, undefined, 1];
+"#;
+    let options = CheckerOptions {
+        exact_optional_property_types: true,
+        strict: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = with_lib_contexts(source, "test.ts", options);
+    let ts2322_messages = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|(_, message)| message.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(
+        ts2322_messages
+            .iter()
+            .any(|message| message.contains("Type '[number, undefined, string]'")),
+        "Expected primitive contextual string to display as string, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322_messages
+            .iter()
+            .any(|message| message.contains("Type '[number, undefined, \"x\"]'")),
+        "Expected literal contextual string to stay literal, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322_messages
+            .iter()
+            .any(|message| message.contains("Type '[number, undefined, 1]'")),
+        "Expected literal contextual number to stay literal, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn variadic_tuple_source_display_maps_middle_positions_to_rest_before_suffix() {
+    let source = r#"
+declare let target: [number, ...boolean[], string];
+target = [1, true, false, true, false];
+"#;
+    let options = CheckerOptions {
+        strict: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = with_lib_contexts(source, "test.ts", options);
+    let ts2322_messages = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|(_, message)| message.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(
+        ts2322_messages
+            .iter()
+            .any(|message| message.contains("Type '[number, true, false, true, false]'")),
+        "Expected variadic boolean tuple slots to preserve literal source display, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322_messages
+            .iter()
+            .all(|message| !message.contains("Type '[number, true, false, boolean, boolean]'")),
+        "Middle positions in variadic+suffix tuples must not map to trailing fixed suffix slots, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn non_exact_optional_tuple_elements_still_accept_present_undefined() {
+    let source = r#"
+declare let t: [number, string?, boolean?];
+t[1] = undefined;
+t = [1, undefined];
+t = [1, "ok", undefined];
+t = [1, undefined, undefined];
+"#;
+    let options = CheckerOptions {
+        exact_optional_property_types: false,
+        strict: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = with_lib_contexts(source, "test.ts", options);
+
+    assert!(
+        diagnostics
+            .iter()
+            .all(|(code, _)| *code != diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected non-exact optional tuple slots to accept present undefined, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn duplicate_block_scoped_and_var_reference_uses_first_value_declaration_type() {
+    let source = r#"
+declare const duplicateValue: string | boolean | undefined;
+declare var duplicateValue: { a: number; b?: string | undefined };
+declare var stringNumberMap: { [x: string]: number | string };
+stringNumberMap = duplicateValue;
+"#;
+    let options = CheckerOptions {
+        exact_optional_property_types: true,
+        strict: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = with_lib_contexts(source, "test.ts", options);
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, _)| { *code == diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE }),
+        "Expected duplicate declarations to still emit TS2451, got: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && message.contains("Type 'string | boolean | undefined'")
+                && message.contains("'{ [x: string]: string | number; }'")
+        }),
+        "Expected assignment to use the first value declaration's union type, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn exact_optional_tuple_inference_preserves_explicit_undefined_element() {
+    let source = r#"
+declare let tx2: [string | undefined];
+declare let tx4: [(string | undefined)?];
+declare function f12<T>(x: [T?]): T;
+declare function f13<T>(x: Partial<T>): T;
+f12(tx2);
+f12(tx4);
+f13(tx2);
+f13(tx4);
+"#;
+    let options = CheckerOptions {
+        exact_optional_property_types: true,
+        strict: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = with_lib_contexts(source, "test.ts", options);
+
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code
+            != diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE),
+        "Expected generic optional tuple inference to preserve explicit undefined, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn jsdoc_typedef_body_display_alias_does_not_expand_ts2322_target() {
     let source = r#"
 /**
@@ -5436,10 +6820,10 @@ const a = 1;
         },
     );
 
-    let ts2322: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .collect();
+    let ts2322: Vec<_> = diagnostics_with_code(
+        &diagnostics,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    );
     assert_eq!(
         ts2322.len(),
         1,
@@ -5516,10 +6900,10 @@ logFirstLength([42]);
     };
     let diagnostics = with_lib_contexts(source, "test.ts", options);
 
-    let ts2322_count = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .count();
+    let ts2322_count = diagnostic_count(
+        &diagnostics,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    );
     let ts2345_count = diagnostics
         .iter()
         .filter(|(code, _)| {
@@ -5560,7 +6944,7 @@ fn no_infer_wrapped_weak_type_in_intersection_target_emits_ts2559() {
     "#;
 
     let diagnostics = get_all_diagnostics(source);
-    let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
+    let has_ts2559 = has_diagnostic_code(&diagnostics, 2559);
     assert!(
         has_ts2559,
         "Expected TS2559 for {{ x: string }} against NoInfer<T> & {{ prop?: unknown }} target. Got: {diagnostics:?}"
@@ -5587,7 +6971,7 @@ fn no_infer_intersection_of_two_no_infers_emits_ts2559() {
     "#;
 
     let diagnostics = get_all_diagnostics(source);
-    let has_ts2559 = diagnostics.iter().any(|(code, _)| *code == 2559);
+    let has_ts2559 = has_diagnostic_code(&diagnostics, 2559);
     assert!(
         has_ts2559,
         "Expected TS2559 for {{ x: string }} against NoInfer<U> & NoInfer<V> target. Got: {diagnostics:?}"
@@ -5658,10 +7042,10 @@ const fn = ({ x }: { x: number | string }) => {
 };
 "#;
     let diagnostics = get_all_diagnostics(source);
-    let ts2322 = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .count();
+    let ts2322 = diagnostic_count(
+        &diagnostics,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    );
     assert_eq!(
         ts2322, 0,
         "Destructured parameter in const-fn must not be skipped by fixed-point iteration; \
@@ -5688,9 +7072,9 @@ fn test_ts2322_too_many_parameters_emits_chained_target_signature_elaboration() 
     "#;
 
     let diags = diagnostics_for_source(source);
-    let mismatch = diags
-        .iter()
-        .find(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+    let mismatch = diagnostics_with_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .into_iter()
+        .next()
         .unwrap_or_else(|| panic!("expected TS2322, got: {diags:#?}"));
 
     assert!(
@@ -5723,9 +7107,9 @@ fn test_reverse_mapped_contextual_target_display_uses_inferred_application_args(
     "#;
 
     let diags = diagnostics_for_source(source);
-    let mismatch = diags
-        .iter()
-        .find(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+    let mismatch = diagnostics_with_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .into_iter()
+        .next()
         .unwrap_or_else(|| panic!("expected TS2322, got: {diags:#?}"));
 
     assert!(
@@ -5755,9 +7139,7 @@ const n: number = "not a number";
 "#;
     let diags = compile_with_options(source, "test.ts", CheckerOptions::default());
     assert!(
-        diags
-            .iter()
-            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "@ts-nocheck inside a string literal must not suppress TS2322; got: {diags:?}"
     );
 }
@@ -5771,9 +7153,7 @@ const n: number = "not a number";
 "#;
     let diags = compile_with_options(source, "test.ts", CheckerOptions::default());
     assert!(
-        !diags
-            .iter()
-            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        !has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "// @ts-nocheck in leading comment should suppress TS2322; got: {diags:?}"
     );
 }
@@ -5788,9 +7168,7 @@ const n: number = "not a number";
 "#;
     let diags = compile_with_options(source, "test.ts", CheckerOptions::default());
     assert!(
-        diags
-            .iter()
-            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "@ts-nocheck after real code must not suppress TS2322; got: {diags:?}"
     );
 }
@@ -5838,6 +7216,328 @@ const literalFromType: AType = "A";
     );
 }
 
+#[test]
+fn scoped_destructured_typeof_indexed_access_uses_binding_type() {
+    let source = r#"
+type IsolationLevel = 'read committed' | 'serializable';
+type Tedious = { ISOLATION_LEVEL: Record<string, number> };
+
+class Driver {
+  #tedious: Tedious;
+
+  constructor(tedious: Tedious) {
+    this.#tedious = tedious;
+  }
+
+  getLevel(isolationLevel: IsolationLevel): number {
+    const { ISOLATION_LEVEL } = this.#tedious;
+    const mapper: Record<
+      IsolationLevel,
+      (typeof ISOLATION_LEVEL)[keyof typeof ISOLATION_LEVEL]
+    > = {
+      'read committed': ISOLATION_LEVEL.READ_COMMITTED,
+      serializable: ISOLATION_LEVEL.SERIALIZABLE,
+    };
+
+    return mapper[isolationLevel];
+  }
+}
+"#;
+    let diags = diagnostics_for_source(source);
+    assert!(
+        !has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "expected local destructured typeof indexed access to resolve to number; got: {diags:#?}"
+    );
+    assert!(
+        !has_diagnostic_code(
+            &diags,
+            diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE,
+        ),
+        "expected mapped Record keys to stay concrete; got: {diags:#?}"
+    );
+}
+
+#[test]
+fn imported_destructured_typeof_indexed_access_uses_binding_type() {
+    let config = r#"
+export type Tedious = { ISOLATION_LEVEL: Record<string, number> };
+"#;
+    let driver = r#"
+import type { Tedious } from './config';
+
+type IsolationLevel = 'read committed' | 'serializable';
+
+class Driver {
+  #tedious: Tedious;
+
+  constructor(tedious: Tedious) {
+    this.#tedious = tedious;
+  }
+
+  getLevel(isolationLevel: IsolationLevel): number {
+    const { ISOLATION_LEVEL } = this.#tedious;
+    const mapper: Record<
+      IsolationLevel,
+      (typeof ISOLATION_LEVEL)[keyof typeof ISOLATION_LEVEL]
+    > = {
+      'read committed': ISOLATION_LEVEL.READ_COMMITTED,
+      serializable: ISOLATION_LEVEL.SERIALIZABLE,
+    };
+
+    return mapper[isolationLevel];
+  }
+}
+"#;
+    let diags = tsz_checker::test_utils::check_multi_file(
+        &[("./config.ts", config), ("./driver.ts", driver)],
+        "./driver.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        !has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "expected imported destructured typeof indexed access to resolve to number; got: {diags:#?}"
+    );
+    assert!(
+        !has_diagnostic_code(
+            &diags,
+            diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE,
+        ),
+        "expected imported mapped Record keys to stay concrete; got: {diags:#?}"
+    );
+}
+
+#[test]
+fn imported_array_item_type_from_const_array_preserves_literals() {
+    let type_utils_padding: String = (0..140)
+        .map(|idx| format!("export type PaddingAlias{idx} = {{ value: {idx} }};\n"))
+        .collect();
+    let type_utils = format!(
+        r#"
+{type_utils_padding}
+export type ArrayItemType<T> = T extends ReadonlyArray<infer I> ? I : never;
+"#
+    );
+    let driver = r#"
+import type { ArrayItemType } from '../util/type-utils.js';
+
+export const TRANSACTION_ISOLATION_LEVELS = [
+  'read uncommitted',
+  'read committed',
+  'repeatable read',
+  'serializable',
+  'snapshot',
+] as const;
+
+export type IsolationLevel = ArrayItemType<typeof TRANSACTION_ISOLATION_LEVELS>;
+
+export interface TransactionSettings {
+  readonly accessMode?: AccessMode;
+  readonly isolationLevel?: IsolationLevel;
+}
+
+export const TRANSACTION_ACCESS_MODES = ['read only', 'read write'] as const;
+
+export type AccessMode = ArrayItemType<typeof TRANSACTION_ACCESS_MODES>;
+
+export function validateTransactionSettings(settings: TransactionSettings): void {
+  if (
+    settings.accessMode &&
+    !TRANSACTION_ACCESS_MODES.includes(settings.accessMode)
+  ) {
+    throw new Error(`invalid transaction access mode ${settings.accessMode}`);
+  }
+
+  if (
+    settings.isolationLevel &&
+    !TRANSACTION_ISOLATION_LEVELS.includes(settings.isolationLevel)
+  ) {
+    throw new Error(`invalid transaction isolation level ${settings.isolationLevel}`);
+  }
+}
+"#;
+    let type_error = r#"
+export type KyselyTypeError<E extends string> = { __error__: E } & never;
+"#;
+    let config = r#"
+import type { KyselyTypeError } from '../../util/type-error.js';
+
+export interface Tedious {
+  connectionFactory: () => TediousConnection | Promise<TediousConnection>;
+  ISOLATION_LEVEL: TediousIsolationLevel;
+  Request: TediousRequestClass;
+  resetConnectionOnRelease?: KyselyTypeError<'deprecated'>;
+  TYPES: TediousTypes;
+}
+export type TediousIsolationLevel = Record<string, number>;
+export type TediousConnection = {
+  beginTransaction(
+    callback: (err: Error | null | undefined) => void,
+    name?: string | undefined,
+    isolationLevel?: number | undefined,
+  ): void;
+  connect(connectListener: (err?: Error) => void): void;
+  on(event: 'error', listener: (error: unknown) => void): this;
+  on(event: string, listener: (...args: any[]) => void): this;
+};
+export interface TediousRequestClass {
+  new (
+    sqlTextOrProcedure: string | undefined,
+    callback: (error?: Error | null, rowCount?: number, rows?: any) => void,
+    options?: { statementColumnEncryptionSetting?: any },
+  ): TediousRequest;
+}
+export declare class TediousRequest {}
+export interface TediousTypes {
+  NVarChar: TediousDataType;
+  [x: string]: TediousDataType;
+}
+export interface TediousDataType {}
+"#;
+    let database_connection = r#"
+import type { TransactionSettings } from './driver.js';
+
+export interface DatabaseConnection {
+  beginTransaction(settings: TransactionSettings): Promise<void>;
+}
+"#;
+    let usage = r#"
+import type { IsolationLevel, TransactionSettings } from '../../driver/driver.js';
+import type { DatabaseConnection } from '../../driver/database-connection.js';
+import type { Tedious, TediousConnection } from './mssql-dialect-config.js';
+
+const LOCAL_TRANSACTION_ISOLATION_LEVELS = [
+  'read uncommitted',
+  'read committed',
+  'repeatable read',
+  'serializable',
+  'snapshot',
+] as const;
+
+class Driver implements DatabaseConnection {
+  #tedious: Tedious;
+  #connection: TediousConnection;
+
+  constructor(tedious: Tedious, connection: TediousConnection) {
+    this.#tedious = tedious;
+    this.#connection = connection;
+  }
+
+  async beginTransaction(settings: TransactionSettings): Promise<void> {
+    const { isolationLevel } = settings;
+
+    await new Promise((resolve, reject) =>
+      this.#connection.beginTransaction(
+        (error) => {
+          if (error) reject(error);
+          else resolve(undefined);
+        },
+        isolationLevel ? 'tx' : undefined,
+        isolationLevel ? this.#getTediousIsolationLevel(isolationLevel) : undefined,
+      ),
+    );
+  }
+
+  #getTediousIsolationLevel(isolationLevel: IsolationLevel) {
+    if (!LOCAL_TRANSACTION_ISOLATION_LEVELS.includes(isolationLevel)) {
+      throw new Error(`invalid transaction isolation level ${isolationLevel}`);
+    }
+
+    const { ISOLATION_LEVEL } = this.#tedious;
+
+    const mapper: Record<
+      IsolationLevel,
+      (typeof ISOLATION_LEVEL)[keyof typeof ISOLATION_LEVEL]
+    > = {
+      'read committed': ISOLATION_LEVEL.READ_COMMITTED,
+      'read uncommitted': ISOLATION_LEVEL.READ_UNCOMMITTED,
+      'repeatable read': ISOLATION_LEVEL.REPEATABLE_READ,
+      serializable: ISOLATION_LEVEL.SERIALIZABLE,
+      snapshot: ISOLATION_LEVEL.SNAPSHOT,
+    };
+
+    const tediousIsolationLevel = mapper[isolationLevel];
+    if (tediousIsolationLevel === undefined) {
+      throw new Error(`Unknown isolation level: ${isolationLevel}`);
+    }
+
+    return tediousIsolationLevel;
+  }
+}
+
+const bad: IsolationLevel = 'nope';
+const badNumber: IsolationLevel = 1;
+"#;
+    let driver_diags = tsz_checker::test_utils::check_multi_file(
+        &[
+            ("./src/util/type-error.ts", type_error),
+            ("./src/util/type-utils.ts", type_utils.as_str()),
+            ("./src/driver/driver.ts", driver),
+        ],
+        "./src/driver/driver.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        !has_diagnostic_code(&driver_diags, 2345),
+        "expected imported const-array item type to be accepted by includes() in defining module; got: {driver_diags:#?}"
+    );
+
+    let diags = tsz_checker::test_utils::check_multi_file(
+        &[
+            ("./src/util/type-error.ts", type_error),
+            ("./src/util/type-utils.ts", type_utils.as_str()),
+            ("./src/driver/driver.ts", driver),
+            ("./src/driver/database-connection.ts", database_connection),
+            ("./src/dialect/mssql/mssql-dialect-config.ts", config),
+            ("./src/dialect/mssql/mssql-driver.ts", usage),
+        ],
+        "./src/dialect/mssql/mssql-driver.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "expected imported const-array item type to reject unrelated literals; got: {diags:#?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .filter(|diag| diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+            .count()
+            >= 2,
+        "expected imported const-array item type to reject string and number literals; got: {diags:#?}"
+    );
+    assert!(
+        !diags.iter().any(|diag| {
+            diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && diag.message_text.contains("Record<IsolationLevel")
+                && diag.message_text.contains("[number]")
+        }),
+        "expected indexing Record<IsolationLevel, number> by IsolationLevel to be number; got: {diags:#?}"
+    );
+    assert!(
+        !has_diagnostic_code(&diags, 2345),
+        "expected imported const-array item type to be accepted by includes(); got: {diags:#?}"
+    );
+    assert!(
+        !has_diagnostic_code(
+            &diags,
+            diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE,
+        ),
+        "expected Record keys from imported const-array item type; got: {diags:#?}"
+    );
+}
+
 // =============================================================================
 // Type alias instantiation with template-literal interpolation (TS2322)
 // =============================================================================
@@ -5859,10 +7559,10 @@ fn ts2322_template_literal_alias_arg_does_not_force_covariant_rejection() {
     "#;
 
     let diagnostics = diagnostics_for_source(source);
-    let ts2322: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .collect();
+    let ts2322: Vec<_> = diagnostics_with_code(
+        &diagnostics,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    );
     assert!(
         ts2322.is_empty(),
         "AGen<number>/AGen<\"yes\"> should be assignable to AGen<string> via template-literal stringification, got: {ts2322:#?}"
@@ -5879,10 +7579,10 @@ fn ts2322_template_literal_alias_alt_param_name_still_passes() {
     "#;
 
     let diagnostics = diagnostics_for_source(source);
-    let ts2322: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .collect();
+    let ts2322: Vec<_> = diagnostics_with_code(
+        &diagnostics,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    );
     assert!(
         ts2322.is_empty(),
         "Wrap<number> should be assignable to Wrap<string> regardless of param name, got: {ts2322:#?}"
@@ -5901,9 +7601,1261 @@ fn ts2322_non_template_alias_still_rejects_covariant_mismatch() {
 
     let diagnostics = diagnostics_for_source(source);
     assert!(
-        diagnostics
-            .iter()
-            .any(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        has_diagnostic_code(
+            &diagnostics,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
         "Box<number> should NOT be assignable to Box<string>, got: {diagnostics:#?}"
+    );
+}
+
+// =============================================================================
+// Missing string index signature — interface/class vs indexed target
+// =============================================================================
+
+#[test]
+fn ts2322_interface_without_index_sig_not_assignable_to_string_indexed_type() {
+    let source = r#"
+        interface StringIndex { [key: string]: number }
+        interface SpecificProps { a: number; b: number }
+        const idx: StringIndex = { a: 1, b: 2 } as SpecificProps;
+    "#;
+    assert!(has_error_with_code(
+        source,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+    ));
+}
+
+#[test]
+fn ts2322_interface_without_index_sig_via_variable_not_assignable_to_string_indexed_type() {
+    // Variable binding (not type assertion) also requires index signature.
+    let source = r#"
+        interface StringIndex { [key: string]: number }
+        interface Counts { x: number; y: number }
+        declare const counts: Counts;
+        const idx: StringIndex = counts;
+    "#;
+    assert!(has_error_with_code(
+        source,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+    ));
+}
+
+#[test]
+fn ts2322_interface_with_matching_index_sig_is_assignable_to_string_indexed_type() {
+    // Baseline: an interface that already declares the matching index signature is fine.
+    let source = r#"
+        interface StringIndex { [key: string]: number }
+        interface Indexed { [key: string]: number; a: number; b: number }
+        declare const x: Indexed;
+        const idx: StringIndex = x;
+    "#;
+    assert!(!has_error_with_code(
+        source,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+    ));
+}
+
+#[test]
+fn ts2322_fresh_object_literal_with_compatible_props_is_assignable_to_string_indexed_type() {
+    // Fresh object literals are assignable even without an explicit index sig.
+    let source = r#"
+        interface StringIndex { [key: string]: number }
+        const idx: StringIndex = { a: 1, b: 2 };
+    "#;
+    assert!(!has_error_with_code(
+        source,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+    ));
+}
+
+// =============================================================================
+// Issue #5887: optional generic `|| {}` / `?? {}` not assignable to `object`
+// Structural rule: when (T | undefined) || X or (T | undefined) ?? X where T
+// is an unconstrained type parameter, tsc produces (T & {}) | X (the
+// non-nullable intersection of T). For X = {}, this reduces to {} which IS
+// assignable to `object`. Any name for T must work (generalization check).
+// =============================================================================
+
+#[test]
+fn test_ts2322_no_false_positive_optional_generic_or_empty_object_as_object_return() {
+    // function test<D>(input?: D): object { return input || {}; }
+    // TSC: OK (no TS2322). The `||` result is `D & {} | {}` = `{}` after
+    // non-nullable type-parameter reduction; `{}` is assignable to `object`.
+    let source = r#"
+        function test<D>(input?: D): object {
+            return input || {};
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    assert!(
+        !has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no TS2322 for `(D | undefined) || {{}}` returned as `object`, \
+         got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_no_false_positive_optional_generic_nullish_coalesce_empty_object_as_object() {
+    // function test<D>(input?: D): object { return input ?? {}; }
+    // The `??` operator also applies the non-nullable approximation.
+    let source = r#"
+        function test<D>(input?: D): object {
+            return input ?? {};
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    assert!(
+        !has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no TS2322 for `(D | undefined) ?? {{}}` returned as `object`, \
+         got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_no_false_positive_optional_generic_name_invariant() {
+    // The fix must not be keyed on the type-parameter name.
+    // Use three different names to verify generality.
+    let source = r#"
+        function withT<T>(x?: T): object { return x || {}; }
+        function withK<K>(x?: K): object { return x || {}; }
+        function withValue<Value>(x?: Value): object { return x || {}; }
+    "#;
+    let diags = get_all_diagnostics(source);
+    assert!(
+        !has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no TS2322 for optional generic `|| {{}}` with various type-param names, \
+         got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_no_false_positive_generic_null_or_empty_object_as_object() {
+    // function test<D>(input: D | null): object { return input || {}; }
+    // null-union instead of undefined-union — same rule applies.
+    let source = r#"
+        function test<D>(input: D | null): object {
+            return input || {};
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    assert!(
+        !has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no TS2322 for `(D | null) || {{}}` returned as `object`, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_optional_generic_or_primitive_fallback_still_errors() {
+    // function test<D>(input?: D): string { return input || "hello"; }
+    // D is unconstrained, so `D & {}` is not assignable to `string`.
+    // This should still be a TS2322 error.
+    let source = r#"
+        function test<D>(input?: D): string {
+            return input || "hello";
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    assert!(
+        has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected TS2322 for `(D | undefined) || \"hello\"` returned as `string`, \
+         got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_constrained_to_object_optional_generic_no_false_positive() {
+    // function test<D extends object>(x?: D): object { return x || {}; }
+    // D extends object so D is definitely assignable to object; the whole
+    // pattern should still compile cleanly.
+    let source = r#"
+        function test<D extends object>(x?: D): object {
+            return x || {};
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    assert!(
+        !has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no TS2322 for `(D extends object | undefined) || {{}}`, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_no_false_positive_explicit_union_undefined_or_empty_object_as_object_assignment() {
+    // Explicit `D | undefined` parameter assigned via `||` fallback to `object`:
+    // tsc accepts this because the truthy branch produces `D & {}`, which IS
+    // assignable to the `object` keyword even for an unconstrained type param.
+    let source = r#"
+        function test<D>(data: D | undefined): object {
+            let d: object = data || {};
+            return d;
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    assert!(
+        !has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no TS2322 for explicit `(D | undefined) || {{}}` assigned to `object`, \
+         got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_no_false_positive_explicit_union_undefined_or_empty_object_various_names() {
+    // Verify name-invariance for the explicit `D | undefined` variant.
+    let source = r#"
+        function withT<T>(x: T | undefined): object {
+            let r: object = x || {};
+            return r;
+        }
+        function withValue<Value>(x: Value | undefined): object {
+            let r: object = x || {};
+            return r;
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    assert!(
+        !has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no TS2322 for explicit `(T | undefined) || {{}}` assignment with various names, \
+         got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_no_false_positive_multi_type_param_union_undefined_or_empty_object() {
+    // Structural rule: when `D | E | undefined || {}` is used, where D and E are
+    // both unconstrained type parameters, the result should be assignable to `object`
+    // because each type param gets the `& {}` treatment making the union object-safe.
+    let source = r#"
+        function withTwo<D, E>(x: D | E | undefined): object {
+            let r: object = x || {};
+            return r;
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    assert!(
+        !has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no TS2322 for `(D | E | undefined) || {{}}` assigned to `object`, \
+         got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_no_false_positive_class_method_generic_or_empty_object_as_object() {
+    // The `(D | undefined) || {}` → `object` rule applies in class method contexts too.
+    let source = r#"
+        class Foo<D> {
+            method(data: D | undefined): object {
+                let d: object = data || {};
+                return d;
+            }
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    assert!(
+        !has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no TS2322 for class method `(D | undefined) || {{}}` assigned to `object`, \
+         got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_generic_alias_chain_reduces_to_application_for_infer() {
+    // Structural rule: when matching `Application(B, args)` against
+    // pattern `Application(B_pat, [infer V])` and `B` is a generic type
+    // alias whose body is itself an `Application(B_pat, [X])`, peel one
+    // alias step so bases align and `V` binds to the substituted `X`.
+    let source = r#"
+        type Cond<P> = P extends Promise<infer T> ? T : never;
+        type ToPromise<X> = Promise<X>;
+
+        type R = Cond<ToPromise<{ id: number }>>;
+        const ok: R = { id: 1 };
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322: Vec<_> =
+        diagnostics_with_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        ts2322.is_empty(),
+        "Expected no TS2322 for Cond<ToPromise<{{id}}>>: {ts2322:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_generic_alias_chain_renamed_infer_var() {
+    // Anti-hardcoding: the rule must hold regardless of the infer variable
+    // name (`T` vs `P`) and the alias parameter name (`X` vs `Y`).
+    let source = r#"
+        type Cond<Q> = Q extends Promise<infer P> ? P : never;
+        type Wrap<Y> = Promise<Y>;
+
+        type R = Cond<Wrap<string>>;
+        const ok: R = "hello";
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322: Vec<_> =
+        diagnostics_with_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        ts2322.is_empty(),
+        "Expected no TS2322 for renamed-infer Cond<Wrap<string>>: {ts2322:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_multi_layer_generic_alias_chain() {
+    // Two layers of generic aliasing must all peel back to Promise.
+    let source = r#"
+        type Inner<X> = Promise<X>;
+        type Outer<Y> = Inner<Y>;
+        type Cond<P> = P extends Promise<infer T> ? T : never;
+
+        type R = Cond<Outer<{ id: number }>>;
+        const ok: R = { id: 1 };
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322: Vec<_> =
+        diagnostics_with_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        ts2322.is_empty(),
+        "Expected no TS2322 for two-layer alias chain: {ts2322:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_async_return_via_return_type_promise_infer() {
+    // Reported repro from issue #6581: when the alias body is a Conditional
+    // (ReturnType's body) that yields `Application(Promise, ...)` via infer,
+    // the outer conditional must still recover the Application form for
+    // `Promise<infer T>` to bind `T`.
+    let source = r#"
+        type AsyncReturn<F extends (...args: any) => any> =
+            ReturnType<F> extends Promise<infer T> ? T : never;
+
+        declare function fetchUser(): Promise<{ id: number }>;
+
+        type FU = AsyncReturn<typeof fetchUser>;
+        const fu: FU = { id: 1 };
+    "#;
+    let diags = diagnostics_for_source(source);
+    assert!(
+        !has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no TS2322 for AsyncReturn<typeof fetchUser>: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_unwrap_over_return_type_alias() {
+    // Variant: the source is `Unwrap<R>` where `R` is a non-generic alias
+    // for `ReturnType<typeof f>`. Same conditional-body reduction must apply.
+    let source = r#"
+        type Unwrap<P> = P extends Promise<infer X> ? X : never;
+        declare function getUser(): Promise<{ id: number }>;
+
+        type R = ReturnType<typeof getUser>;
+        type U = Unwrap<R>;
+        const u: U = { id: 1 };
+    "#;
+    let diags = diagnostics_for_source(source);
+    assert!(
+        !has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no TS2322 for Unwrap<R> via ReturnType alias: {diags:?}"
+    );
+}
+
+#[test]
+fn awaited_return_type_object_literal_reports_all_property_mismatches() {
+    let source = r#"
+        async function fetchData(): Promise<{ id: number; name: string }> {
+            return { id: 1, name: "test" };
+        }
+
+        type AwaitedData = Awaited<ReturnType<typeof fetchData>>;
+        const wrongAwaitedData: AwaitedData = { id: "wrong", name: 123 };
+    "#;
+    let diags = diagnostics_for_source(source);
+    let ts2322: Vec<_> =
+        diagnostics_with_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert_eq!(
+        ts2322.len(),
+        2,
+        "expected both Awaited<ReturnType<...>> property mismatches, got: {ts2322:#?}",
+    );
+    assert!(
+        ts2322.iter().any(|diag| diag
+            .message_text
+            .contains("Type 'string' is not assignable to type 'number'")),
+        "expected id mismatch diagnostic, got: {ts2322:#?}",
+    );
+    assert!(
+        ts2322.iter().any(|diag| diag
+            .message_text
+            .contains("Type 'number' is not assignable to type 'string'")),
+        "expected name mismatch diagnostic, got: {ts2322:#?}",
+    );
+}
+
+#[test]
+fn mapped_type_object_literal_reports_all_property_mismatches() {
+    let source = r#"
+        type Nullable<T> = { [K in keyof T]: T[K] | null };
+
+        interface User {
+            name: string;
+            age: number;
+        }
+
+        type NullableUser = Nullable<User>;
+        const wrongU: NullableUser = { name: 42, age: "hello" };
+    "#;
+    let diags = diagnostics_for_source(source);
+    let ts2322: Vec<_> =
+        diagnostics_with_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert_eq!(
+        ts2322.len(),
+        2,
+        "expected both mapped type property mismatches, got: {ts2322:#?}",
+    );
+    assert!(
+        ts2322.iter().any(|diag| diag
+            .message_text
+            .contains("Type 'number' is not assignable to type 'string'")),
+        "expected name mismatch diagnostic, got: {ts2322:#?}",
+    );
+    assert!(
+        ts2322.iter().any(|diag| diag
+            .message_text
+            .contains("Type 'string' is not assignable to type 'number'")),
+        "expected age mismatch diagnostic, got: {ts2322:#?}",
+    );
+}
+
+#[test]
+fn test_ts2322_generic_alias_chain_inline_vs_alias_parity() {
+    // Generalization gate: peeling must not regress the no-alias path.
+    // `Cond<Promise<X>>` (inline) and `Cond<ToPromise<X>>` (aliased) must
+    // both bind `T` to `X`.
+    let source = r#"
+        type Cond<P> = P extends Promise<infer T> ? T : never;
+        type ToPromise<X> = Promise<X>;
+
+        type Inline = Cond<Promise<{ id: number }>>;
+        type Aliased = Cond<ToPromise<{ id: number }>>;
+        const inline: Inline = { id: 1 };
+        const aliased: Aliased = { id: 1 };
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322: Vec<_> =
+        diagnostics_with_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        ts2322.is_empty(),
+        "Expected inline and aliased Cond to behave identically: {ts2322:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_generic_alias_chain_negative_non_promise_takes_false_branch() {
+    // Negative: ensure peeling does NOT cause a false positive in the
+    // false branch. When the source is not Promise-shaped at all, the
+    // conditional must take the false branch and the result type must
+    // reject Promise-shape assignments.
+    let source = r#"
+        type Unwrap<P> = P extends Promise<infer X> ? X : "fallback";
+        type NotPromise = { x: number };
+        type U = Unwrap<NotPromise>;
+        const ok: U = "fallback";
+        const bad: U = { x: 1 };
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        ts2322 >= 1,
+        "Expected the `bad` line to error (U is 'fallback'), got {ts2322} TS2322 diagnostics: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_async_return_via_return_type_negative_sync_function() {
+    // Negative: a synchronous function should take the `never` branch.
+    // Assigning a value-shape to `never` must still error.
+    let source = r#"
+        type AsyncReturn<F extends (...args: any) => any> =
+            ReturnType<F> extends Promise<infer T> ? T : never;
+        declare function syncFn(): { id: number };
+        type FU = AsyncReturn<typeof syncFn>;
+        const bad: FU = { id: 1 };
+    "#;
+    let diags = diagnostics_for_source(source);
+    assert!(
+        has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected TS2322 when assigning to AsyncReturn of a sync function: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_type_param_extends_never_return_no_false_positive() {
+    // `T extends never` → T can only be `never`, so returning T as `never` is valid.
+    let source = r#"
+        function handleT<T extends never>(x: T): never { return x; }
+        function handleN<N extends never>(x: N): never { return x; }
+        function handleK<K extends never>(x: K): never { return x; }
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert_eq!(
+        ts2322, 0,
+        "Expected no TS2322 for `T extends never` return: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_type_param_extends_never_variable_no_false_positive() {
+    // Assigning a value of type T (extends never) to a variable of type never is valid.
+    let source = r#"
+        function f<T extends never>(x: T): T {
+            const y: never = x;
+            return y;
+        }
+        function g<U extends never>(x: U): U {
+            const z: never = x;
+            return z;
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert_eq!(
+        ts2322, 0,
+        "Expected no TS2322 when assigning `T extends never` to `never`: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_type_param_extends_never_transitive_constraint() {
+    // T extends U where U extends never → T should also be assignable to never.
+    let source = r#"
+        function passDown<U extends never, T extends U>(x: T): never { return x; }
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert_eq!(
+        ts2322, 0,
+        "Expected no TS2322 for transitive `T extends U extends never`: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_type_param_assigns_to_recursive_interface_constraint() {
+    let source = r#"
+        interface MyNode<T> {
+            value: T;
+            child?: MyNode<T>;
+        }
+        function f<T extends MyNode<number>>(t: T): MyNode<number> {
+            return t;
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert_eq!(
+        ts2322, 0,
+        "Expected no TS2322 when returning a type parameter through its recursive interface constraint: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_type_param_assigns_to_aliased_recursive_interface_constraint() {
+    let source = r#"
+        interface TreeBox<U> {
+            item: U;
+            next?: TreeBox<U>;
+        }
+        type NumberTree = TreeBox<number>;
+        function f<X extends NumberTree>(x: X): NumberTree {
+            return x;
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert_eq!(
+        ts2322, 0,
+        "Expected no TS2322 when returning a type parameter through an aliased recursive interface constraint: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_type_param_assigns_through_transitive_recursive_constraint() {
+    let source = r#"
+        interface Link<V> {
+            value: V;
+            child?: Link<V>;
+        }
+        function f<Base extends Link<number>, Item extends Base>(item: Item): Link<number> {
+            return item;
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert_eq!(
+        ts2322, 0,
+        "Expected no TS2322 when returning through a transitive recursive interface constraint: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_incompatible_recursive_interface_constraint_still_errors() {
+    let source = r#"
+        interface NumberNode {
+            value: number;
+            child?: NumberNode;
+        }
+        interface TextNode {
+            value: string;
+            child?: TextNode;
+        }
+        function f<T extends TextNode>(t: T): NumberNode {
+            return t;
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        ts2322 >= 1,
+        "Expected TS2322 when a recursive constraint is structurally incompatible with the target: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_fbounded_object_literal_empty_array_no_error() {
+    let source = r#"
+        interface TreeNodeBase<T extends TreeNodeBase<T>> {
+            parent: TreeNodeBase<T> | null;
+            children: T[];
+        }
+        interface FileEntry extends TreeNodeBase<FileEntry> {
+            name: string;
+        }
+        const root: FileEntry = { name: "root", parent: null, children: [] };
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert_eq!(
+        ts2322, 0,
+        "Expected no TS2322: empty array in F-bounded object literal should adopt contextual type: {diags:?}"
+    );
+
+    let libs = load_lib_files_for_test();
+    if !libs.is_empty() {
+        let diags = compile_with_libs_for_ts(source, "test.ts", CheckerOptions::default());
+        let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+        assert_eq!(
+            ts2322, 0,
+            "Expected no TS2322 with lib files: empty array in F-bounded object literal should adopt contextual type: {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn test_ts2322_fbounded_object_literal_empty_array_renamed_param() {
+    let source = r#"
+        interface NodeBase<U extends NodeBase<U>> {
+            parent: NodeBase<U> | null;
+            children: U[];
+        }
+        interface TreeItem extends NodeBase<TreeItem> {
+            label: string;
+        }
+        const root: TreeItem = { label: "root", parent: null, children: [] };
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert_eq!(
+        ts2322, 0,
+        "Expected no TS2322: empty array in F-bounded (U param) object literal should adopt contextual type: {diags:?}"
+    );
+
+    let libs = load_lib_files_for_test();
+    if !libs.is_empty() {
+        let diags = compile_with_libs_for_ts(source, "test.ts", CheckerOptions::default());
+        let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+        assert_eq!(
+            ts2322, 0,
+            "Expected no TS2322 with lib files (U param): {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn test_ts2322_fbounded_wrong_element_type_errors() {
+    let source = r#"
+        interface TreeNodeBase<T extends TreeNodeBase<T>> {
+            children: T[];
+        }
+        interface FileEntry extends TreeNodeBase<FileEntry> {
+            name: string;
+        }
+        const root: FileEntry = { name: "root", children: [42] };
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        ts2322 >= 1,
+        "Expected TS2322: number is not assignable to FileEntry: {diags:?}"
+    );
+}
+
+const TREE_BTREE_INTERFACES: &str = r#"
+        interface Tree<T extends Tree<T>> {
+            children: T[];
+        }
+        interface BTree extends Tree<BTree> {
+            value: number;
+        }
+    "#;
+
+#[test]
+fn test_ts2322_fbounded_no_parent_field_empty_array_no_error() {
+    // Minimal F-bounded pattern without a parent field — empty array should
+    // adopt the contextual element type from the heritage clause.
+    let source = format!("{TREE_BTREE_INTERFACES}const bt: BTree = {{ value: 1, children: [] }};");
+    let diags = get_all_diagnostics(&source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert_eq!(
+        ts2322, 0,
+        "Expected no TS2322: empty array in minimal F-bounded object literal should adopt contextual type: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_fbounded_no_parent_field_wrong_element_type_errors() {
+    // When the element type is wrong, TS2322 must still fire.
+    let source =
+        format!("{TREE_BTREE_INTERFACES}const bt: BTree = {{ value: 1, children: [42] }};");
+    let diags = get_all_diagnostics(&source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        ts2322 >= 1,
+        "Expected TS2322: number is not assignable to BTree: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2345_concrete_value_to_never_param_errors() {
+    // Negative: concrete types remain non-assignable to never (the fix must not loosen this).
+    let source = r#"
+        declare function needsNever(x: never): void;
+        needsNever(42);
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2345 = diagnostic_count(
+        &diags,
+        diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
+    );
+    assert!(
+        ts2345 >= 1,
+        "Expected TS2345 when passing number to `never` param: {diags:?}"
+    );
+}
+
+#[test]
+fn conditional_type_result_object_literal_reports_each_bad_property() {
+    let source = r#"
+interface Dog {
+    type: "dog";
+    breeds: "Hound" | "Shepherd";
+}
+
+type LookUp<U, T> = U extends { type: T } ? U : never;
+type MyDog = LookUp<Dog, "dog">;
+
+const wrong: MyDog = { type: "cat", breeds: "Curl" };
+"#;
+
+    let messages = ts2322_messages(source);
+    assert_eq!(
+        messages.len(),
+        2,
+        "expected one TS2322 for each mismatched property, got: {messages:#?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Type '\"cat\"' is not assignable to type '\"dog\"'")),
+        "expected the discriminant property mismatch, got: {messages:#?}"
+    );
+    assert!(
+        messages.iter().any(|message| {
+            message.contains("Type '\"Curl\"' is not assignable to type '\"Hound\" | \"Shepherd\"'")
+        }),
+        "expected the union-literal property mismatch, got: {messages:#?}"
+    );
+}
+
+#[test]
+fn renamed_conditional_result_object_literal_reports_each_bad_property() {
+    let source = r#"
+interface Cat {
+    kind: "cat";
+    color: "black" | "white";
+}
+
+type Choose<Each, Wanted> = Each extends { kind: Wanted } ? Each : never;
+type PickedCat = Choose<Cat, "cat">;
+
+const wrong: PickedCat = { kind: "dog", color: "orange" };
+"#;
+
+    let messages = ts2322_messages(source);
+    assert_eq!(
+        messages.len(),
+        2,
+        "expected renamed conditional result to report both property mismatches, got: {messages:#?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Type '\"dog\"' is not assignable to type '\"cat\"'")),
+        "expected renamed discriminant property mismatch, got: {messages:#?}"
+    );
+    assert!(
+        messages.iter().any(|message| {
+            message.contains("Type '\"orange\"' is not assignable to type '\"black\" | \"white\"'")
+        }),
+        "expected renamed union-literal property mismatch, got: {messages:#?}"
+    );
+}
+
+#[test]
+fn inline_conditional_result_object_literal_reports_each_bad_property() {
+    let source = r#"
+interface Bird {
+    tag: "bird";
+    wings: 2 | 4;
+}
+
+type Select<Member, Tag> = Member extends { tag: Tag } ? Member : never;
+
+const wrong: Select<Bird, "bird"> = { tag: "fish", wings: 6 };
+"#;
+
+    let messages = ts2322_messages(source);
+    assert_eq!(
+        messages.len(),
+        2,
+        "expected inline conditional result to report both property mismatches, got: {messages:#?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Type '\"fish\"' is not assignable to type '\"bird\"'")),
+        "expected inline discriminant property mismatch, got: {messages:#?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Type '6' is not assignable to type '2 | 4'")),
+        "expected inline numeric-union property mismatch, got: {messages:#?}"
+    );
+}
+
+// =============================================================================
+// Intersection source assigned to callable-interface target (issue #6202)
+// =============================================================================
+
+/// Structural rule: when an intersection containing a function member and object
+/// members is assigned to a callable interface with properties, the failure message
+/// must list only properties not supplied by any intersection member.
+#[test]
+fn intersection_function_object_satisfies_callable_interface_with_matching_props() {
+    // All required call sig and properties are satisfied by the intersection.
+    let source = r#"
+interface CallableWithProps {
+  (x: number): string;
+  version: string;
+}
+
+const cwp: CallableWithProps = Object.assign(
+  (x: number) => x.toString(),
+  { version: "1.0" }
+);
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors: fn-object intersection should satisfy callable interface with matching properties. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn intersection_type_alias_satisfies_callable_interface_with_matching_props() {
+    // Same structural rule via explicit type alias (not Object.assign).
+    let source = r#"
+interface CallableWithProps {
+  (x: number): string;
+  version: string;
+}
+
+type FnWithVersion = ((x: number) => string) & { version: string };
+declare const fn1: FnWithVersion;
+const cwp: CallableWithProps = fn1;
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors: explicit fn-object intersection alias should satisfy callable interface. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn intersection_function_object_missing_one_prop_reports_only_that_prop() {
+    // The intersection provides `version` but not `name`.
+    // The error should name only `name`, not both `version` and `name`.
+    let source = r#"
+interface RequiresAll {
+  (x: number): string;
+  version: string;
+  name: string;
+}
+
+type FnWithVersionOnly = ((x: number) => string) & { version: string };
+declare const cwp2: FnWithVersionOnly;
+const cwp: RequiresAll = cwp2;
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        !diagnostics.is_empty(),
+        "Expected an error when required property `name` is missing from intersection source."
+    );
+    // Should NOT report `version` as missing; it is supplied by the object member.
+    for diag in &diagnostics {
+        let msg = &diag.message_text;
+        assert!(
+            !msg.contains("version"),
+            "Error message should not mention `version` (it is present in the intersection): {msg}"
+        );
+    }
+}
+
+#[test]
+fn intersection_type_alias_missing_one_prop_reports_only_that_prop() {
+    // Same rule via explicit intersection alias.
+    let source = r#"
+interface RequiresAll {
+  (x: number): string;
+  version: string;
+  name: string;
+}
+
+type FnWithVersion = ((x: number) => string) & { version: string };
+declare const fn1: FnWithVersion;
+const cwp: RequiresAll = fn1;
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        !diagnostics.is_empty(),
+        "Expected an error when required property `name` is missing from intersection alias."
+    );
+    for diag in &diagnostics {
+        let msg = &diag.message_text;
+        assert!(
+            !msg.contains("version"),
+            "Error message should not mention `version` (it is present in intersection member): {msg}"
+        );
+    }
+}
+
+#[test]
+fn intersection_function_object_all_props_missing_reports_all() {
+    // The intersection has no object member providing properties.
+    // The error should list both required properties.
+    let source = r#"
+interface RequiresAll {
+  (x: number): string;
+  version: string;
+  name: string;
+}
+
+type FnOnly = (x: number) => string;
+declare const cwp2: FnOnly;
+const cwp: RequiresAll = cwp2;
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        !diagnostics.is_empty(),
+        "Expected an error when all required properties are missing from intersection source."
+    );
+}
+
+#[test]
+fn inline_intersection_satisfies_callable_interface_multiple_props() {
+    // Intersection with multiple properties covering all target requirements.
+    let source = r#"
+interface FullCallable {
+  (x: number): string;
+  name: string;
+  version: number;
+}
+
+const fc: FullCallable = Object.assign(
+  (x: number) => x.toString(),
+  { name: "fn", version: 1 }
+);
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors: fn-object intersection with all props should satisfy callable interface. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn named_function_with_assign_satisfies_callable_interface() {
+    // Named function (not arrow) assigned via Object.assign.
+    let source = r#"
+interface CallableWithProps {
+  (x: number): string;
+  version: string;
+}
+
+function myFn(x: number): string { return x.toString(); }
+const cwp: CallableWithProps = Object.assign(myFn, { version: "1.0" });
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors: named function + Object.assign should satisfy callable interface. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn ts2820_preserves_generic_interface_target_surface_structurally() {
+    let source = r#"
+interface Box<T> { kind: T; count: 1; }
+declare let got: Box<"frist">;
+let expected: Box<"first" | "second"> = got;
+"#;
+
+    let messages = ts2322_messages(source);
+    assert_eq!(
+        messages.len(),
+        1,
+        "expected one TS2322 spelling-suggestion diagnostic, got: {messages:#?}"
+    );
+    let message = &messages[0];
+    assert!(
+        message.contains("Box<\"first\" | \"second\">"),
+        "generic interface target surface should be preserved structurally, got: {message}"
+    );
+}
+
+#[test]
+fn ts2820_preserves_renamed_generic_alias_target_surface_structurally() {
+    let source = r#"
+type Wrapper<Value> = { kind: Value; count: 1 };
+declare let got: Wrapper<"frist">;
+let expected: Wrapper<"first" | "second"> = got;
+"#;
+
+    let messages = ts2322_messages(source);
+    assert_eq!(
+        messages.len(),
+        1,
+        "expected one TS2322 spelling-suggestion diagnostic, got: {messages:#?}"
+    );
+    let message = &messages[0];
+    assert!(
+        message.contains("Wrapper<\"first\" | \"second\">"),
+        "generic alias target surface should be preserved independent of parameter name, got: {message}"
+    );
+}
+
+/// Regression test for issue #6800.
+///
+/// When an overloaded generic function is called with an inline arrow
+/// callback, the first-pass overload resolution collects argument types once
+/// using the union of all overload signatures as the contextual type. The
+/// callback parameter type therefore picks up a reference to the sigs' shared
+/// type-parameter atom (`T`). The per-overload rename then renames the sig's
+/// `T` to a fresh atom, leaving the arg's `T` as a stale reference. During
+/// inference, that stale reference would surface as a contravariant
+/// candidate and dominate the genuine covariant candidate inferred from the
+/// array value, causing the resolver to fall back to the contra-candidate
+/// (the bare type parameter name) rather than the widened concrete type.
+///
+/// The structural rule: when every contravariant candidate is a bare
+/// unconstrained type parameter (so it carries no shape requirement that
+/// could be violated), the informative covariant inference must win.
+#[test]
+fn overload_inline_callback_does_not_leak_outer_sig_type_param() {
+    let source = r#"
+declare function map<T, U>(arr: T[], fn: (x: T) => U): U[];
+declare function map<T>(arr: T[], fn: (x: T) => T): T[];
+
+const mapped = map([1, 2, 3], x => String(x));
+const check: string[] = mapped;
+"#;
+    let diagnostics = compile_with_libs_for_ts(source, "test.ts", CheckerOptions::default());
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors for generic overload with callback returning different type. Got: {diagnostics:#?}"
+    );
+}
+
+/// Same as `overload_inline_callback_does_not_leak_outer_sig_type_param` but
+/// with the overload order reversed to verify the fix is symmetric.
+#[test]
+fn overload_inline_callback_does_not_leak_outer_sig_type_param_reversed_order() {
+    let source = r#"
+declare function map<T>(arr: T[], fn: (x: T) => T): T[];
+declare function map<T, U>(arr: T[], fn: (x: T) => U): U[];
+
+const mapped = map([1, 2, 3], x => String(x));
+const check: string[] = mapped;
+"#;
+    let diagnostics = compile_with_libs_for_ts(source, "test.ts", CheckerOptions::default());
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors regardless of overload declaration order. Got: {diagnostics:#?}"
+    );
+}
+
+/// Renamed type-parameter variant of the bug: the fix must not depend on the
+/// spelling of the sig's type parameter name. Using `A`/`B` and `C` instead of
+/// `T`/`U` and `T` should produce the same result.
+#[test]
+fn overload_inline_callback_leak_fix_is_independent_of_type_param_name() {
+    let source = r#"
+declare function map<A, B>(arr: A[], fn: (x: A) => B): B[];
+declare function map<C>(arr: C[], fn: (x: C) => C): C[];
+
+const mapped = map([1, 2, 3], x => String(x));
+const check: string[] = mapped;
+"#;
+    let diagnostics = compile_with_libs_for_ts(source, "test.ts", CheckerOptions::default());
+    assert!(
+        diagnostics.is_empty(),
+        "Fix must be structural, not name-dependent. Got: {diagnostics:#?}"
+    );
+}
+
+/// Negative case for the same fix: when the inline callback genuinely returns
+/// the input type, the `T`-identity overload should match cleanly without
+/// requiring the leak guard.
+#[test]
+fn overload_inline_callback_identity_overload_still_matches() {
+    let source = r#"
+declare function map<T, U>(arr: T[], fn: (x: T) => U): U[];
+declare function map<T>(arr: T[], fn: (x: T) => T): T[];
+
+const arr: number[] = [1, 2, 3];
+const mapped = map(arr, x => x + 1);
+const check: number[] = mapped;
+"#;
+    let diagnostics = compile_with_libs_for_ts(source, "test.ts", CheckerOptions::default());
+    assert!(
+        diagnostics.is_empty(),
+        "Identity-return callback should pick either overload and yield `number[]`. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn ts2820_preserves_generic_alias_application_inside_union_target() {
+    let source = r#"
+type Values<T> = T[keyof T];
+type ExtractFields<Options> = Values<{
+  [K in keyof Options]: Options[K] extends object ? keyof Options[K] : never;
+}>;
+type SetType<Options> = {
+  [key: string]: any;
+  target?: ExtractFields<Options>;
+};
+declare function test<OptionsData extends SetType<OptionsData>>(options: OptionsData): void;
+
+test({
+  target: "$test6",
+  data1: { $test1: 111, $test2: null },
+  data2: { $test3: {}, $test4: () => {}, $test5() {} },
+});
+"#;
+    let msgs = ts2820_messages(source);
+    assert_eq!(
+        msgs.len(),
+        1,
+        "expected exactly one TS2820 diagnostic, got: {msgs:#?}"
+    );
+    let msg = &msgs[0];
+    assert!(
+        msg.contains("ExtractFields<"),
+        "ts2820 target should preserve the ExtractFields<...> alias form, got: {msg}"
+    );
+    assert!(
+        msg.contains("Did you mean"),
+        "ts2820 should include a spelling suggestion, got: {msg}"
+    );
+}
+
+#[test]
+fn ts2820_preserves_generic_alias_application_inside_union_target_renamed_param() {
+    // "alphx" is one character off from "alpha" to trigger the spelling suggestion.
+    let source = r#"
+type AllValues<U> = U[keyof U];
+type PickFields<Config> = AllValues<{
+  [K in keyof Config]: Config[K] extends object ? keyof Config[K] : never;
+}>;
+type Schema<Config> = {
+  [key: string]: any;
+  target?: PickFields<Config>;
+};
+declare function run<C extends Schema<C>>(opts: C): void;
+
+run({
+  target: "alphx",
+  group1: { alpha: 1, beta: null },
+  group2: { gamma: {}, delta: () => {} },
+});
+"#;
+    let msgs = ts2820_messages(source);
+    assert_eq!(
+        msgs.len(),
+        1,
+        "expected exactly one TS2820 diagnostic with renamed params, got: {msgs:#?}"
+    );
+    let msg = &msgs[0];
+    assert!(
+        msg.contains("PickFields<"),
+        "ts2820 target should preserve PickFields<...> alias form regardless of type param name, got: {msg}"
+    );
+}
+
+#[test]
+fn ts2820_preserves_application_union_with_null_instead_of_undefined() {
+    let source = r#"
+interface Container<T> { value: T; tag: 1 }
+declare let src: Container<"frist">;
+declare let dst: Container<"first" | "second"> | null;
+dst = src;
+"#;
+    let all = get_all_diagnostics(source);
+    let msg = all
+        .iter()
+        .find_map(|(code, msg)| (*code == 2322 || *code == 2820).then_some(msg))
+        .unwrap_or_else(|| panic!("expected a 2322/2820 diagnostic, got: {all:#?}"));
+    assert!(
+        msg.contains("Container<"),
+        "ts2820/ts2322 should preserve Container<...> alias when target is application | null, got: {msg}"
+    );
+}
+
+#[test]
+fn ts2820_union_of_plain_string_literals_uses_literal_union_form() {
+    let source = r#"
+declare let c: "bleu";
+let x: "red" | "green" | "blue" = c;
+"#;
+    let all = get_all_diagnostics(source);
+    let msg = all
+        .iter()
+        .find_map(|(code, msg)| (*code == 2322 || *code == 2820).then_some(msg))
+        .unwrap_or_else(|| panic!("expected a type mismatch diagnostic, got none"));
+    assert!(
+        msg.contains("\"red\" | \"green\" | \"blue\""),
+        "plain string literal union target should use full literal union form, got: {msg}"
     );
 }

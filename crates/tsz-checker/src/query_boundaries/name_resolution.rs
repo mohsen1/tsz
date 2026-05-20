@@ -715,7 +715,15 @@ impl<'a> CheckerState<'a> {
 
         match &failure.kind {
             ResolutionFailureKind::NotFound => {
-                if failure.has_suggestions() && !suppress_suggestions {
+                if matches!(request.kind, NameLookupKind::Value)
+                    && self.should_report_await_call_async_suggestion(request.name, request.idx)
+                {
+                    self.error_at_node_msg(
+                        request.idx,
+                        crate::diagnostics::diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN_TO_WRITE_THIS_IN_AN_ASYNC_FUNCTION,
+                        &[request.name],
+                    );
+                } else if failure.has_suggestions() && !suppress_suggestions {
                     self.error_cannot_find_name_with_suggestions(
                         request.name,
                         &failure.suggestions,
@@ -754,6 +762,31 @@ impl<'a> CheckerState<'a> {
                 self.error_cannot_find_name_at(request.name, request.idx);
             }
         }
+    }
+
+    fn should_report_await_call_async_suggestion(&self, name: &str, idx: NodeIndex) -> bool {
+        if name != "await" || self.ctx.in_async_context() {
+            return false;
+        }
+
+        let Some(ext) = self.ctx.arena.get_extended(idx) else {
+            return false;
+        };
+        let parent_idx = ext.parent;
+        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+            return false;
+        };
+        if parent_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return false;
+        }
+        let Some(call) = self.ctx.arena.get_call_expr(parent_node) else {
+            return false;
+        };
+        if call.expression != idx {
+            return false;
+        }
+
+        self.ctx.function_depth > 0 || !self.ctx.binder.is_external_module()
     }
 
     /// Emit a wrong-meaning diagnostic based on the actual meaning of the symbol.

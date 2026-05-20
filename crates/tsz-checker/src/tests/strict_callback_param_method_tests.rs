@@ -58,6 +58,87 @@ f2 = f1;       // Error — Animal not <: Dog at the inner param level
 }
 
 #[test]
+fn callback_parameter_check_is_strict_for_extracted_static_methods() {
+    let source = r#"
+// @strict: true
+interface Animal { animal: void }
+interface Dog extends Animal { dog: void }
+
+class Foo {
+    static f1(x: Animal): Animal { throw "wat"; }
+    static f2(x: Dog): Animal { throw "wat"; }
+}
+
+declare let f1: (cb: typeof Foo.f1) => void;
+declare let f2: (cb: typeof Foo.f2) => void;
+f1 = f2;
+f2 = f1;  // Error
+"#;
+    let diags = check_source_diagnostics(source);
+
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected exactly one TS2322 for the strict extracted-method callback assignment, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.start, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        ts2322[0].start as usize,
+        source
+            .find("f2 = f1")
+            .expect("test source contains assignment"),
+        "TS2322 should anchor at the failing callback assignment"
+    );
+    assert_eq!(
+        ts2322[0].message_text,
+        "Type '(cb: (x: Animal) => Animal) => void' is not assignable to type '(cb: (x: Dog) => Animal) => void'."
+    );
+}
+
+#[test]
+fn strict_callback_param_display_expands_method_indexed_access_alias() {
+    let source = r#"
+// @strict: true
+interface Animal { animal: void }
+interface Dog extends Animal { dog: void }
+
+type BivariantHack<Input, Output> = { foo(x: Input): Output }["foo"];
+
+declare let f1: (cb: BivariantHack<Animal, Animal>) => void;
+declare let f2: (cb: BivariantHack<Dog, Animal>) => void;
+f1 = f2;
+f2 = f1;  // Error
+"#;
+    let diags = check_source_diagnostics(source);
+
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected exactly one TS2322 for the method-indexed-access callback assignment, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.start, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        ts2322[0].start as usize,
+        source
+            .find("f2 = f1")
+            .expect("test source contains assignment"),
+        "TS2322 should anchor at the failing callback assignment"
+    );
+    assert_eq!(
+        ts2322[0].message_text,
+        "Type '(cb: (x: Animal) => Animal) => void' is not assignable to type '(cb: (x: Dog) => Animal) => void'."
+    );
+}
+
+#[test]
 fn callback_return_type_failure_under_strict_callback_param_check() {
     // For `fc1 = fc2`: target.f's return is Animal, source.f's return is Dog.
     // Strict covariance requires source.return <: target.return — but here we
@@ -100,6 +181,68 @@ fc2 = fc1;  // Error
             .iter()
             .map(|d| (d.code, d.start, &d.message_text))
             .collect::<Vec<_>>()
+    );
+}
+
+/// `fc2 = fc1` fails because the *callback's parameter* (`x: Animal` vs
+/// `x: Dog`) is contravariantly incompatible. tsc keeps the outer
+/// "Type X is not assignable to type Y" wrapper (TS2322) and does NOT
+/// emit a separate TS2328 diagnostic at this site. tsz must do the same.
+#[test]
+fn callback_param_inner_param_failure_emits_ts2322_only() {
+    let diags = check_source_diagnostics(
+        r#"
+// @strict: true
+interface Animal { animal: void }
+interface Dog extends Animal { dog: void }
+
+declare let fc1: (f: (x: Animal) => Animal) => void;
+declare let fc2: (f: (x: Dog) => Dog) => void;
+fc2 = fc1;  // inner failure on parameter (Animal not <: Dog)
+"#,
+    );
+
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(codes.contains(&2322), "Expected TS2322 in {codes:?}");
+    assert!(
+        !codes.contains(&2328),
+        "TS2328 should NOT be emitted as a separate diagnostic when the \
+         inner callback failure is on a parameter; tsc emits TS2322 only \
+         and chains the inner messages. Got {codes:?}"
+    );
+}
+
+/// `fc1 = fc2` fails because the *callback's return* type (`Animal` vs
+/// `Dog`) is covariantly incompatible. tsc bumps `overrideNextErrorInfo`
+/// when reporting the inner-callback return mismatch (via the elided
+/// TS2202 message). That suppresses the outer "Type X is not assignable
+/// to type Y" wrapper, so the diagnostic is reported with code TS2328
+/// directly. tsz must do the same — emit TS2328 alone, not TS2322 +
+/// TS2328 as two separate diagnostics.
+#[test]
+fn callback_param_inner_return_failure_emits_ts2328_only() {
+    let diags = check_source_diagnostics(
+        r#"
+// @strict: true
+interface Animal { animal: void }
+interface Dog extends Animal { dog: void }
+
+declare let fc1: (f: (x: Animal) => Animal) => void;
+declare let fc2: (f: (x: Dog) => Dog) => void;
+fc1 = fc2;  // inner failure on return (Animal not <: Dog)
+"#,
+    );
+
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2328),
+        "Expected TS2328 for the inner-return-failure direction, got {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2322),
+        "TS2322 should NOT be emitted when the inner callback failure is \
+         on the return type; tsc suppresses the outer wrapper and reports \
+         TS2328 directly. Got {codes:?}"
     );
 }
 

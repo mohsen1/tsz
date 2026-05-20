@@ -1,19 +1,16 @@
 //! Class member declaration and accessibility validation helpers.
-
 use crate::context::TypingRequest;
-use crate::state::{CheckerState, MemberAccessInfo, MemberAccessLevel, MemberLookup};
+use crate::state::{CheckerState, MemberAccessLevel, MemberLookup};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
-
 impl<'a> CheckerState<'a> {
     pub(crate) fn check_async_modifier_on_declaration(
         &mut self,
         modifiers: &Option<tsz_parser::parser::NodeList>,
     ) {
         use crate::diagnostics::diagnostic_codes;
-
         if let Some(async_mod_idx) = self.find_async_modifier(modifiers) {
             self.error_at_node(
                 async_mod_idx,
@@ -23,8 +20,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// TS1277: `const` modifier can only appear on a type parameter of a
-    /// function, method, or class. Interfaces and type aliases are rejected.
+    /// TS1277: `const` modifier can only appear on function, method, or class type parameters.
     pub(crate) fn check_const_type_parameter_on_non_function(
         &mut self,
         type_params: Option<&tsz_parser::parser::NodeList>,
@@ -56,10 +52,10 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// TS1273: modifiers categorically invalid on a type parameter (public,
-    /// private, protected, static, readonly, async, declare, abstract,
-    /// override, export, default, accessor). TS1274 is reserved for `in`/`out`
-    /// in the wrong context.
+    /// TS1273: modifiers categorically invalid on a type parameter (`public`,
+    /// `private`, `protected`, `static`, `readonly`, `async`, `declare`,
+    /// `abstract`, `override`, `export`, `default`, `accessor`). TS1274 is
+    /// reserved for `in`/`out` in the wrong context.
     pub(crate) fn check_never_valid_type_parameter_modifiers(
         &mut self,
         type_params: Option<&tsz_parser::parser::NodeList>,
@@ -80,7 +76,6 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
                     let kind = mod_node.kind;
-                    // Modifiers that can NEVER appear on any type parameter
                     let is_invalid = matches!(
                         kind,
                         x if x == SyntaxKind::PublicKeyword as u16
@@ -123,9 +118,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// TS1274: Check that variance modifiers (`in`, `out`) are not used on
-    /// function/method type parameters. They are only valid on class, interface,
-    /// and type alias type parameters.
+    /// TS1274: variance modifiers (`in`, `out`) are invalid on function/method type parameters.
     pub(crate) fn check_variance_on_function_type_parameters(
         &mut self,
         type_params: Option<&tsz_parser::parser::NodeList>,
@@ -292,7 +285,8 @@ impl<'a> CheckerState<'a> {
                             continue;
                         };
                         if param_name == name {
-                            return match self.member_access_level_from_modifiers(&param.modifiers) {
+                            let level = self.member_access_level_from_modifiers(&param.modifiers);
+                            return match level {
                                 Some(level) => MemberLookup::Restricted(level),
                                 None => MemberLookup::Public,
                             };
@@ -373,38 +367,6 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    pub(crate) fn find_member_access_info(
-        &self,
-        class_idx: NodeIndex,
-        name: &str,
-        is_static: bool,
-    ) -> Option<MemberAccessInfo> {
-        use rustc_hash::FxHashSet;
-
-        let mut current = class_idx;
-        let mut visited: FxHashSet<NodeIndex> = FxHashSet::default();
-
-        while visited.insert(current) {
-            match self.lookup_member_access_in_class(current, name, is_static) {
-                MemberLookup::Restricted(level) => {
-                    return Some(MemberAccessInfo {
-                        level,
-                        declaring_class_idx: current,
-                        declaring_class_name: self
-                            .get_class_name_with_type_params_from_decl(current),
-                    });
-                }
-                MemberLookup::Public => return None,
-                MemberLookup::NotFound => {
-                    let base_idx = self.get_base_class_idx(current)?;
-                    current = base_idx;
-                }
-            }
-        }
-
-        None
-    }
-
     /// Recursively check a type node for parameter properties in function types.
     /// Function types (like `(x: T) => R` or `new (x: T) => R`) cannot have parameter properties.
     /// Walk a type node and emit TS2304 for unresolved type names inside complex types.
@@ -431,11 +393,11 @@ impl<'a> CheckerState<'a> {
         let Some(node) = self.ctx.arena.get(type_idx) else {
             return;
         };
-        let factory = self.ctx.types.factory();
 
         match node.kind {
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
-                if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+                if !self.ctx.symbol_resolution_set.is_empty()
+                    && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
                     && let Some(sym_id) = self
                         .resolve_type_symbol_for_lowering(type_ref.type_name)
                         .map(tsz_binder::SymbolId)
@@ -553,27 +515,13 @@ impl<'a> CheckerState<'a> {
                     self.ctx.in_conditional_extends_depth += 1;
                     self.check_type_for_missing_names(cond.extends_type);
                     self.ctx.in_conditional_extends_depth -= 1;
+                    self.check_unique_symbol_in_conditional_extends(cond.extends_type);
 
                     // TS2838: Check that duplicate infer type params have identical constraints
                     self.check_infer_constraint_consistency(cond.extends_type);
 
-                    // Collect infer type parameters from extends_type and add them to scope for true_type
-                    let infer_params = self.collect_infer_type_parameters(cond.extends_type);
-                    let mut param_bindings = Vec::new();
-                    for param_name in &infer_params {
-                        let atom = self.ctx.types.intern_string(param_name);
-                        let type_id = factory.type_param(tsz_solver::TypeParamInfo {
-                            name: atom,
-                            constraint: None,
-                            default: None,
-                            is_const: false,
-                        });
-                        let previous = self
-                            .ctx
-                            .type_parameter_scope
-                            .insert(param_name.clone(), type_id);
-                        param_bindings.push((param_name.clone(), previous));
-                    }
+                    // Collect infer bindings and install them in scope for true_type.
+                    let param_bindings = self.push_infer_bindings_from_extends(cond.extends_type);
 
                     // Check true_type with infer type parameters in scope
                     self.check_type_for_missing_names(cond.true_type);
@@ -644,31 +592,22 @@ impl<'a> CheckerState<'a> {
                             7039,
                         );
                     }
-                    let mut param_binding: Option<(String, Option<TypeId>)> = None;
-                    if let Some(param_node) = self.ctx.arena.get(mapped.type_parameter)
-                        && let Some(param) = self.ctx.arena.get_type_parameter(param_node)
-                        && let Some(name_node) = self.ctx.arena.get(param.name)
-                        && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                    {
-                        let name = ident.escaped_text.clone();
-                        let atom = self.ctx.types.intern_string(&name);
-                        let type_id = factory.type_param(tsz_solver::TypeParamInfo {
-                            name: atom,
-                            constraint: None,
-                            default: None,
-                            is_const: false,
-                        });
-                        let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
-                        param_binding = Some((name, previous));
-                    }
+                    let param_binding =
+                        self.push_mapped_type_param_provisional(mapped.type_parameter);
                     let is_direct_self_constraint = param_binding
                         .as_ref()
                         .and_then(|(name, _)| {
                             let param_node = self.ctx.arena.get(mapped.type_parameter)?;
                             let param = self.ctx.arena.get_type_parameter(param_node)?;
-                            let constraint = param.constraint;
-                            let constraint_text = self.node_text(constraint)?.trim().to_string();
-                            if constraint_text == name.as_str() {
+                            let constraint_node = self.ctx.arena.get(param.constraint)?;
+                            let constraint_ref = self.ctx.arena.get_type_ref(constraint_node)?;
+                            if constraint_ref.type_arguments.is_some() {
+                                return None;
+                            }
+                            let constraint_name = self.ctx.arena.get(constraint_ref.type_name)?;
+                            let constraint_ident =
+                                self.ctx.arena.get_identifier(constraint_name)?;
+                            if constraint_ident.escaped_text == name.as_str() {
                                 Some(())
                             } else {
                                 None
@@ -702,13 +641,7 @@ impl<'a> CheckerState<'a> {
                             self.check_type_member_for_missing_names(member_idx);
                         }
                     }
-                    if let Some((name, previous)) = param_binding {
-                        if let Some(prev_type) = previous {
-                            self.ctx.type_parameter_scope.insert(name, prev_type);
-                        } else {
-                            self.ctx.type_parameter_scope.remove(&name);
-                        }
-                    }
+                    self.pop_mapped_type_param_provisional(param_binding);
                 }
             }
             k if k == syntax_kind_ext::TYPE_PREDICATE => {
@@ -762,11 +695,15 @@ impl<'a> CheckerState<'a> {
             };
             let name = ident.escaped_text.clone();
             let atom = self.ctx.types.intern_string(&name);
+            let is_const = self
+                .ctx
+                .arena
+                .has_modifier(&param.modifiers, SyntaxKind::ConstKeyword);
             let type_id = factory.type_param(TypeParamInfo {
                 name: atom,
                 constraint: None,
                 default: None,
-                is_const: false,
+                is_const,
             });
             let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
             updates.push((name, previous, false));
@@ -1575,6 +1512,35 @@ impl<'a> CheckerState<'a> {
         let legacy_decorator_not_valid = self.ctx.compiler_options.experimental_decorators
             && (is_private_member || is_class_expression_member);
 
+        // ES (TC39) decorator first-argument shape per member kind. Computed once
+        // before the per-decorator loop because the member kind and modifiers do
+        // not vary across decorators on the same declaration.
+        //
+        // - Plain field: runtime invokes `decorator(undefined, context)`.
+        // - Auto-accessor (`accessor x = …`): runtime invokes
+        //   `decorator(target, context)` where `target` is a
+        //   `ClassAccessorDecoratorTarget<This, Value>` object. We resolve the
+        //   global type and instantiate it with `<any, any>`; the decorator's
+        //   `This`/`Value` type parameters are inferred from this shape.
+        //
+        // If `ClassAccessorDecoratorTarget` is unavailable (e.g. `--noLib`) we
+        // fall back to `ANY` so the absence of the lib type cannot itself
+        // produce a TS1240 false positive.
+        let es_member_first_arg: Option<TypeId> =
+            if !self.ctx.compiler_options.experimental_decorators
+                && node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                && !is_ambient_field
+            {
+                Some(if self.has_accessor_modifier_ref(modifiers) {
+                    self.resolve_class_accessor_decorator_target_any()
+                        .unwrap_or(TypeId::ANY)
+                } else {
+                    TypeId::UNDEFINED
+                })
+            } else {
+                None
+            };
+
         if let Some(modifiers) = modifiers {
             for &modifier_idx in &modifiers.nodes {
                 let Some(modifier_node) = self.ctx.arena.get(modifier_idx) else {
@@ -1613,22 +1579,38 @@ impl<'a> CheckerState<'a> {
 
                 let decorator_type = self.compute_type_of_node(decorator.expression);
 
-                // TS1329: Check if the decorator accepts too few arguments for this position.
-                // For experimental decorators on methods/accessors, the decorator is called
-                // with 3 arguments (target, propertyKey, descriptor). If the decorator has
-                // call signatures but none can accept 3 args, it's likely a factory that
-                // should be called first: @dec() instead of @dec.
+                if let Some(first_arg) = es_member_first_arg {
+                    self.check_es_member_decorator_call_signature(
+                        modifier_idx,
+                        decorator_type,
+                        first_arg,
+                    );
+                }
+
                 if self.ctx.compiler_options.experimental_decorators
                     && !is_abstract
+                    && !legacy_decorator_not_valid
+                    && node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                {
+                    self.check_legacy_property_decorator_call_signature(
+                        modifier_idx,
+                        decorator_type,
+                        self.has_accessor_modifier_ref(Some(modifiers)),
+                    );
+                }
+
+                if !is_abstract
                     && !legacy_decorator_not_valid
                     && (node.kind == syntax_kind_ext::METHOD_DECLARATION
                         || node.kind == syntax_kind_ext::GET_ACCESSOR
                         || node.kind == syntax_kind_ext::SET_ACCESSOR)
                 {
-                    self.check_method_decorator_arity(
+                    self.check_method_or_accessor_decorator_call_signature(
                         decorator.expression,
                         decorator_type,
                         modifier_idx,
+                        member_idx,
+                        self.ctx.compiler_options.experimental_decorators,
                     );
                 }
             }
@@ -1664,13 +1646,34 @@ impl<'a> CheckerState<'a> {
                             // TS1497: Check decorator expression grammar
                             self.check_grammar_decorator(decorator.expression);
 
-                            self.get_type_of_node(decorator.expression);
+                            let decorator_type = self.compute_type_of_node(decorator.expression);
 
                             // TS1308: Check for await expressions in decorator arguments.
                             // Decorator arguments are evaluated in the enclosing scope,
                             // not the decorated method's scope. An await in a non-async
                             // enclosing function should trigger TS1308.
                             self.check_await_expression(decorator.expression);
+
+                            // TS1239: Validate parameter decorator call signature.
+                            // The runtime invokes parameter decorators as
+                            // `decorator(target, key, parameterIndex)`. For
+                            // constructor parameters tsc passes `undefined` for
+                            // `key`; for method/accessor parameters tsc passes a
+                            // string (the method name). Decorators whose `key`
+                            // parameter type disagrees with the position are
+                            // rejected with TS1239. Only check under
+                            // `experimentalDecorators` since stage-3 decorators
+                            // (which use a different runtime ABI) are not yet a
+                            // supported configuration.
+                            if self.ctx.compiler_options.experimental_decorators {
+                                let is_constructor_parameter =
+                                    node.kind == syntax_kind_ext::CONSTRUCTOR;
+                                self.check_parameter_decorator_call_signature(
+                                    modifier_idx,
+                                    decorator_type,
+                                    is_constructor_parameter,
+                                );
+                            }
                         }
                     }
                 }
@@ -1701,300 +1704,5 @@ impl<'a> CheckerState<'a> {
             }
         }
         false
-    }
-
-    /// TS1329: Check if a method/accessor decorator accepts too few arguments.
-    ///
-    /// For experimental decorators, method/accessor decorators are called as
-    /// `decorator(target, propertyKey, descriptor)` — 3 arguments.
-    /// If the decorator expression has call signatures but none can accept 3 args,
-    /// emit TS1329 suggesting to call it first: `@dec()` instead of `@dec`.
-    fn check_method_decorator_arity(
-        &mut self,
-        decorator_expr: NodeIndex,
-        decorator_type: TypeId,
-        decorator_node: NodeIndex,
-    ) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-
-        // Skip validation for error/any/unknown types
-        if decorator_type == TypeId::ERROR
-            || decorator_type == TypeId::ANY
-            || decorator_type == TypeId::UNKNOWN
-        {
-            return;
-        }
-
-        // Try multiple approaches to get call signatures:
-        // 1. Direct function shape (works for simple function types)
-        // 2. Call signatures query (works for overloaded/complex types)
-        let has_too_few_args = if let Some(shape) =
-            crate::query_boundaries::class_type::function_shape(self.ctx.types, decorator_type)
-        {
-            shape.params.is_empty()
-        } else if let Some(callable) = crate::query_boundaries::class_type::callable_shape_for_type(
-            self.ctx.types,
-            decorator_type,
-        ) {
-            // Check if ALL call signatures accept zero args (decorator factory pattern)
-            !callable.call_signatures.is_empty()
-                && callable
-                    .call_signatures
-                    .iter()
-                    .all(|sig| sig.params.is_empty())
-        } else {
-            false
-        };
-
-        if has_too_few_args {
-            let name = self.get_decorator_expression_name(decorator_expr);
-            let msg = diagnostic_messages::ACCEPTS_TOO_FEW_ARGUMENTS_TO_BE_USED_AS_A_DECORATOR_HERE_DID_YOU_MEAN_TO_CALL_IT
-                .replace("{0}", &name);
-            self.error_at_node(
-                decorator_node,
-                &msg,
-                diagnostic_codes::ACCEPTS_TOO_FEW_ARGUMENTS_TO_BE_USED_AS_A_DECORATOR_HERE_DID_YOU_MEAN_TO_CALL_IT,
-            );
-        }
-    }
-
-    /// Get the text name of a decorator expression for error messages.
-    /// For simple identifiers like `dec`, returns "dec".
-    /// For member access like `a.b`, returns "a.b".
-    /// Falls back to "decorator" if the name can't be determined.
-    fn get_decorator_expression_name(&self, expr: NodeIndex) -> String {
-        if let Some(node) = self.ctx.arena.get(expr)
-            && let Some(ident) = self.ctx.arena.get_identifier(node)
-        {
-            return ident.escaped_text.to_string();
-        }
-        "decorator".to_string()
-    }
-
-    /// TS2838: Check that all `infer X` declarations with the same name in a
-    /// conditional type's extends clause have identical constraints.
-    ///
-    /// For example, `T extends { a: infer U extends string, b: infer U extends number }`
-    /// should emit TS2838 because `U` has constraints `string` and `number`.
-    fn check_infer_constraint_consistency(&mut self, extends_type: NodeIndex) {
-        use crate::diagnostics::diagnostic_codes;
-        use std::collections::HashMap;
-
-        let infer_decls = self.collect_infer_type_params_with_constraints(extends_type);
-        if infer_decls.len() < 2 {
-            return;
-        }
-
-        // Group by name: collect all (constraint, type_param_node) for each infer name
-        let mut groups: HashMap<String, Vec<[NodeIndex; 2]>> = HashMap::new();
-        for (name, constraint, tp_node) in &infer_decls {
-            groups
-                .entry(name.clone())
-                .or_default()
-                .push([*constraint, *tp_node]);
-        }
-
-        // For each duplicate group, check constraint consistency.
-        // Only declarations with EXPLICIT constraints participate — unconstrained
-        // `infer U` declarations inherit from the constrained ones (TSC behavior).
-        for (name, entries) in &groups {
-            if entries.len() < 2 {
-                continue;
-            }
-
-            // Collect only entries that have an explicit constraint
-            let constrained: Vec<(TypeId, NodeIndex)> = entries
-                .iter()
-                .filter(|pair| pair[0] != NodeIndex::NONE)
-                .map(|pair| (self.get_type_from_type_node(pair[0]), pair[1]))
-                .collect();
-
-            // Need at least 2 explicitly constrained declarations to have a conflict
-            if constrained.len() < 2 {
-                continue;
-            }
-
-            // Check if all explicit constraints are identical
-            let first_type = constrained[0].0;
-            let all_identical = constrained
-                .iter()
-                .all(|(type_id, _)| *type_id == first_type);
-
-            if !all_identical {
-                // Emit TS2838 at each explicitly constrained declaration site
-                for (_, tp_node) in &constrained {
-                    self.error_at_node_msg(
-                        *tp_node,
-                        diagnostic_codes::ALL_DECLARATIONS_OF_MUST_HAVE_IDENTICAL_CONSTRAINTS,
-                        &[name],
-                    );
-                }
-            }
-        }
-    }
-
-    /// Check if a node is a bare `intrinsic` type reference (no type args, no qualification,
-    /// not inside parentheses).
-    ///
-    /// Returns true when `node_idx` points to a `TYPE_REFERENCE` whose `type_name` is a simple
-    /// `IDENTIFIER` with text `"intrinsic"` and no type arguments.
-    ///
-    /// TSC treats `intrinsic` as a keyword only when it appears directly as the type alias body
-    /// (e.g., `type Uppercase<S extends string> = intrinsic`). When parenthesized like
-    /// `type TE1 = (intrinsic)`, TSC treats it as a regular identifier reference (TS2304).
-    /// Since our parser doesn't create a `PARENTHESIZED_TYPE` wrapper node, we detect
-    /// parenthesization by checking if the character before the type reference in the source
-    /// is `(`.
-    pub(crate) fn is_bare_intrinsic_type_ref(&self, node_idx: NodeIndex) -> bool {
-        let Some(node) = self.ctx.arena.get(node_idx) else {
-            return false;
-        };
-        if node.kind != syntax_kind_ext::TYPE_REFERENCE {
-            return false;
-        }
-        let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
-            return false;
-        };
-        // Must have no type arguments
-        if type_ref.type_arguments.is_some() {
-            return false;
-        }
-        // type_name must be a simple IDENTIFIER (not QUALIFIED_NAME)
-        let Some(name_node) = self.ctx.arena.get(type_ref.type_name) else {
-            return false;
-        };
-        let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
-            return false;
-        };
-        if ident.escaped_text != "intrinsic" {
-            return false;
-        }
-        // Check that it's not parenthesized: look at the source text before the
-        // type reference's position. If the nearest non-whitespace character is `(`,
-        // the reference is parenthesized and should NOT be treated as the keyword.
-        if let Some(sf) = self.ctx.arena.source_files.first() {
-            let pos = node.pos as usize;
-            if pos > 0 {
-                let before = &sf.text[..pos];
-                let last_non_ws = before
-                    .bytes()
-                    .rev()
-                    .find(|&b| b != b' ' && b != b'\t' && b != b'\n' && b != b'\r');
-                if last_non_ws == Some(b'(') {
-                    return false;
-                }
-            }
-        }
-        true
-    }
-
-    /// Whether `name_idx` is the IDENTIFIER node `intrinsic` directly inside a
-    /// `TypeReference` that forms the entire body of a `TypeAliasDeclaration`.
-    /// In that position tsc treats `intrinsic` as a keyword and reports TS2795
-    /// (or accepts it for the four built-in string mapping aliases) — name
-    /// resolution must not also fire TS2304.
-    pub(crate) fn is_intrinsic_keyword_in_type_alias_body(&self, name_idx: NodeIndex) -> bool {
-        let Some(name_node) = self.ctx.arena.get(name_idx) else {
-            return false;
-        };
-        let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
-            return false;
-        };
-        if ident.escaped_text != "intrinsic" {
-            return false;
-        }
-        let Some(name_ext) = self.ctx.arena.get_extended(name_idx) else {
-            return false;
-        };
-        let type_ref_idx = name_ext.parent;
-        if type_ref_idx.is_none() {
-            return false;
-        }
-        if !self.is_bare_intrinsic_type_ref(type_ref_idx) {
-            return false;
-        }
-        let Some(type_ref_ext) = self.ctx.arena.get_extended(type_ref_idx) else {
-            return false;
-        };
-        let Some(parent_node) = self.ctx.arena.get(type_ref_ext.parent) else {
-            return false;
-        };
-        parent_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
-    }
-
-    /// Check if a type node subtree contains a circular reference to any type
-    /// currently being resolved (i.e., present in `symbol_resolution_set`).
-    /// Used to detect TS2577 "Return type annotation circularly references itself".
-    fn type_node_contains_circular_reference(&self, type_idx: NodeIndex) -> bool {
-        let Some(node) = self.ctx.arena.get(type_idx) else {
-            return false;
-        };
-        match node.kind {
-            k if k == syntax_kind_ext::TYPE_REFERENCE => {
-                if let Some(type_ref) = self.ctx.arena.get_type_ref(node) {
-                    if let Some(sym_id) = self
-                        .resolve_type_symbol_for_lowering(type_ref.type_name)
-                        .map(tsz_binder::SymbolId)
-                    {
-                        // Only flag direct self-references (the type reference
-                        // directly names a type alias currently being resolved).
-                        // Transitive references through other type aliases (e.g.,
-                        // `type Op<I,O> = (x: Thing<I>) => Thing<O>` where Thing
-                        // references Op) are valid mutual recursion and should NOT
-                        // trigger TS2577. tsc only emits TS2577 for the case
-                        // where a function's return type annotation directly names
-                        // the same type being defined (e.g., `type F = () => F`).
-                        if self.ctx.symbol_resolution_set.contains(&sym_id) {
-                            return true;
-                        }
-                    }
-                    // Also check type arguments
-                    if let Some(args) = type_ref.type_arguments.as_ref() {
-                        for &arg_idx in &args.nodes {
-                            if self.type_node_contains_circular_reference(arg_idx) {
-                                return true;
-                            }
-                        }
-                    }
-                }
-                false
-            }
-            k if k == syntax_kind_ext::TUPLE_TYPE => {
-                if let Some(tuple) = self.ctx.arena.get_tuple_type(node) {
-                    for &elem_idx in &tuple.elements.nodes {
-                        if self.type_node_contains_circular_reference(elem_idx) {
-                            return true;
-                        }
-                    }
-                }
-                false
-            }
-            k if k == syntax_kind_ext::ARRAY_TYPE => {
-                if let Some(arr) = self.ctx.arena.get_array_type(node) {
-                    return self.type_node_contains_circular_reference(arr.element_type);
-                }
-                false
-            }
-            k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE => {
-                if let Some(composite) = self.ctx.arena.get_composite_type(node) {
-                    for &member_idx in &composite.types.nodes {
-                        if self.type_node_contains_circular_reference(member_idx) {
-                            return true;
-                        }
-                    }
-                }
-                false
-            }
-            k if k == syntax_kind_ext::REST_TYPE
-                || k == syntax_kind_ext::OPTIONAL_TYPE
-                || k == syntax_kind_ext::PARENTHESIZED_TYPE =>
-            {
-                if let Some(wrapped) = self.ctx.arena.get_wrapped_type(node) {
-                    return self.type_node_contains_circular_reference(wrapped.type_node);
-                }
-                false
-            }
-            _ => false,
-        }
     }
 }

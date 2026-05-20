@@ -1,4 +1,9 @@
 use super::*;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 // =====================================================================
 // Template literal enum evaluation
@@ -138,6 +143,36 @@ export interface State<in out T> {
     assert!(output.contains("out T"), "out variance: {output}");
     assert!(output.contains("in T"), "in variance: {output}");
     assert!(output.contains("in out T"), "in out variance: {output}");
+}
+
+#[test]
+fn variance_recovery_modifiers_are_preserved_in_dts() {
+    let output = emit_dts(
+        r#"type T20<public T> = T;
+class C {
+    in a = 0;
+    out b = 0;
+}
+let Anon = class <out T> {
+    value!: T;
+};"#,
+    );
+    assert!(
+        output.contains("type T20<public T> = T;"),
+        "invalid type-parameter modifier should be preserved: {output}"
+    );
+    assert!(
+        output.contains("in a: number;"),
+        "recovered `in` class-member modifier should be preserved: {output}"
+    );
+    assert!(
+        output.contains("out b: number;"),
+        "recovered `out` class-member modifier should be preserved: {output}"
+    );
+    assert!(
+        output.contains("new <out T>()"),
+        "class-expression constructor type parameters should keep variance: {output}"
+    );
 }
 
 #[test]
@@ -891,8 +926,7 @@ fn probe_constructor_type_with_conditional_return_in_extends() {
 fn take_diagnostics_drops_swapped_ts2883_when_canonical_exists() {
     use tsz_common::diagnostics::Diagnostic;
 
-    let mut parser = ParserState::new("test.ts".to_string(), "".to_string());
-    let _ = parser.parse_source_file();
+    let (parser, _root) = parse_test_source("");
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     emitter.diagnostics.push(Diagnostic::from_code(
         2883,
@@ -925,8 +959,7 @@ fn take_diagnostics_drops_swapped_ts2883_when_canonical_exists() {
 fn take_diagnostics_keeps_ts2883_when_swapped_seen_before_canonical_duplicate() {
     use tsz_common::diagnostics::Diagnostic;
 
-    let mut parser = ParserState::new("test.ts".to_string(), "".to_string());
-    let _ = parser.parse_source_file();
+    let (parser, _root) = parse_test_source("");
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     emitter.diagnostics.push(Diagnostic::from_code(
         2883,
@@ -1061,8 +1094,7 @@ fn check_call_expression_return_type_portability_skips_non_call() {
 #[test]
 fn check_call_expression_return_type_portability_skip_when_disabled() {
     // Verify the check respects skip_portability_check flag
-    let mut parser = ParserState::new("test.ts".to_string(), "".to_string());
-    let _ = parser.parse_source_file();
+    let (parser, _root) = parse_test_source("");
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     emitter.set_skip_portability_check(true);
 
@@ -1083,14 +1115,39 @@ fn make_path_only_emitter<'a>(parser: &'a ParserState) -> DeclarationEmitter<'a>
 }
 
 #[test]
+fn strip_ts_extensions_restores_arbitrary_extension_declaration_user_form() {
+    let (parser, _root) = parse_test_source("");
+    let emitter = make_path_only_emitter(&parser);
+
+    assert_eq!(emitter.strip_ts_extensions("./foo.d.html.ts"), "./foo.html");
+    assert_eq!(
+        emitter.strip_ts_extensions("../styles.d.css.ts"),
+        "../styles.css"
+    );
+    assert_eq!(
+        emitter.strip_ts_extensions("components/Button.d.svelte.ts"),
+        "components/Button.svelte"
+    );
+}
+
+#[test]
+fn strip_ts_extensions_leaves_regular_ts_js_declaration_shapes_on_normal_path() {
+    let (parser, _root) = parse_test_source("");
+    let emitter = make_path_only_emitter(&parser);
+
+    assert_eq!(emitter.strip_ts_extensions("./foo.d.ts"), "./foo");
+    assert_eq!(emitter.strip_ts_extensions("./foo.d.mts"), "./foo");
+    assert_eq!(emitter.strip_ts_extensions("./foo.d.js.ts"), "./foo.d.js");
+}
+
+#[test]
 fn symlinked_nested_package_reference_fires_when_outer_package_is_not_consumer_ancestor() {
     // Structural shape: type's source path is `<X>/node_modules/<P>/<sub>` and
     // `<X>` is a sibling of (not an ancestor of) the consumer's directory. The
     // package was reached only through a nested / symlinked `node_modules` chain
     // outside the consumer's normal Node.js resolution scope, so writing `<P>`
     // as a bare specifier from the consumer would not resolve to the same file.
-    let mut parser = ParserState::new("test.ts".to_string(), String::new());
-    let _ = parser.parse_source_file();
+    let (parser, _root) = parse_test_source("");
     let emitter = make_path_only_emitter(&parser);
 
     let result = emitter.symlinked_nested_package_reference(
@@ -1109,13 +1166,145 @@ fn symlinked_nested_package_reference_fires_when_outer_package_is_not_consumer_a
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn symlinked_nested_package_reference_fires_even_when_canonical_package_is_reachable() {
+    let root = std::env::temp_dir().join(format!(
+        "tsz-ts2883-symlink-import-ref-{}",
+        std::process::id()
+    ));
+    let top_level_pkg = root.join("Folder/node_modules/styled-components");
+    let nested_node_modules = root.join("Folder/monorepo/package-a/node_modules");
+    let nested_pkg = nested_node_modules.join("styled-components");
+    let source_path = nested_pkg.join("typings/styled-components.d.ts");
+    let current_path = root.join("Folder/monorepo/core/index.ts");
+
+    std::fs::create_dir_all(top_level_pkg.join("typings")).expect("create top-level package");
+    std::fs::create_dir_all(&nested_node_modules).expect("create nested node_modules");
+    std::fs::create_dir_all(current_path.parent().unwrap()).expect("create consumer directory");
+    std::fs::write(
+        top_level_pkg.join("package.json"),
+        r#"{"name":"styled-components","typings":"typings/styled-components.d.ts"}"#,
+    )
+    .expect("write package.json");
+    std::fs::write(
+        top_level_pkg.join("typings/styled-components.d.ts"),
+        "export interface InterpolationValue {}",
+    )
+    .expect("write declaration");
+    std::os::unix::fs::symlink(&top_level_pkg, &nested_pkg).expect("create package symlink");
+
+    let (parser, _root) = parse_test_source("");
+    let emitter = make_path_only_emitter(&parser);
+
+    let result = emitter.symlinked_nested_package_reference(
+        &source_path.to_string_lossy(),
+        "InterpolationValue",
+        &current_path.to_string_lossy(),
+    );
+
+    assert_eq!(
+        result,
+        Some((
+            "../package-a/node_modules/styled-components/typings/styled-components".to_string(),
+            "InterpolationValue".to_string(),
+        )),
+        "canonical reachability through a top-level symlink must not hide the syntactic nested package path"
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn check_symbol_portability_prefers_symlinked_nested_package_over_public_root_export() {
+    let root = std::env::temp_dir().join(format!(
+        "tsz-ts2883-symlink-precedence-{}",
+        std::process::id()
+    ));
+    let top_level_pkg = root.join("Folder/node_modules/styled-components");
+    let top_level_source = top_level_pkg.join("typings/styled-components.d.ts");
+    let nested_source = root.join(
+        "Folder/monorepo/package-a/node_modules/styled-components/typings/styled-components.d.ts",
+    );
+    let current_path = root.join("Folder/monorepo/core/index.ts");
+
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(top_level_pkg.join("typings")).expect("create top-level package");
+    std::fs::create_dir_all(current_path.parent().unwrap()).expect("create consumer directory");
+    std::fs::write(
+        top_level_pkg.join("package.json"),
+        r#"{"name":"styled-components","typings":"typings/styled-components.d.ts"}"#,
+    )
+    .expect("write package.json");
+    std::fs::write(&top_level_source, "export interface InterpolationValue {}")
+        .expect("write declaration");
+
+    let (parser, _root) = parse_test_source("");
+    let source_arena = std::sync::Arc::new(parser.arena.clone());
+    let mut emitter = make_path_only_emitter(&parser);
+    let nested_source = nested_source.to_string_lossy().into_owned();
+    let top_level_source = top_level_source.to_string_lossy().into_owned();
+    let current_path = current_path.to_string_lossy().into_owned();
+    emitter.arena_to_path.insert(
+        std::sync::Arc::as_ptr(&source_arena) as usize,
+        nested_source,
+    );
+
+    let mut binder = tsz_binder::BinderState::new();
+    let sym_id = binder.symbols.alloc(
+        tsz_binder::symbol_flags::INTERFACE,
+        "InterpolationValue".to_string(),
+    );
+    let mut symbol_arenas = rustc_hash::FxHashMap::default();
+    symbol_arenas.insert(sym_id, source_arena);
+    binder.symbol_arenas = std::sync::Arc::new(symbol_arenas);
+
+    let mut exports = tsz_binder::SymbolTable::new();
+    exports.set("InterpolationValue".to_string(), sym_id);
+    let mut module_exports = rustc_hash::FxHashMap::default();
+    module_exports.insert(top_level_source, exports);
+    binder.module_exports = std::sync::Arc::new(module_exports);
+
+    assert!(
+        emitter
+            .package_root_export_reference_path(
+                sym_id,
+                "InterpolationValue",
+                &binder,
+                &current_path,
+            )
+            .is_some(),
+        "fixture should prove the package-root public-surface suppression would otherwise match"
+    );
+
+    let result = emitter.check_symbol_portability(
+        sym_id,
+        &binder,
+        &current_path,
+        &mut rustc_hash::FxHashSet::default(),
+        &mut rustc_hash::FxHashSet::default(),
+        &mut rustc_hash::FxHashSet::default(),
+        &mut rustc_hash::FxHashSet::default(),
+    );
+
+    assert_eq!(
+        result,
+        Some((
+            "../package-a/node_modules/styled-components/typings/styled-components".to_string(),
+            "InterpolationValue".to_string(),
+        )),
+        "nested symlink reachability should win over package-root public export suppression"
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
 #[test]
 fn symlinked_nested_package_reference_independent_of_user_chosen_names() {
     // The fix must be structural: changing user-chosen package and type names
     // (the bound identifiers in this scenario) must not affect whether the
     // helper fires. Mirrors the failing test's shape with different names.
-    let mut parser = ParserState::new("test.ts".to_string(), String::new());
-    let _ = parser.parse_source_file();
+    let (parser, _root) = parse_test_source("");
     let emitter = make_path_only_emitter(&parser);
 
     let result = emitter.symlinked_nested_package_reference(
@@ -1138,8 +1327,7 @@ fn symlinked_nested_package_reference_independent_of_user_chosen_names() {
 fn symlinked_nested_package_reference_skips_normal_node_modules_resolution() {
     // Normal resolution: the package's `<X>` is an ancestor of the consumer.
     // The helper must return None so the existing logic decides portability.
-    let mut parser = ParserState::new("test.ts".to_string(), String::new());
-    let _ = parser.parse_source_file();
+    let (parser, _root) = parse_test_source("");
     let emitter = make_path_only_emitter(&parser);
 
     let result = emitter.symlinked_nested_package_reference(
@@ -1159,8 +1347,7 @@ fn symlinked_nested_package_reference_skips_paths_without_node_modules() {
     // Source paths without any `node_modules` segment (e.g. workspace siblings
     // resolved via symlinked package roots) are handled by other rules; this
     // helper must only consider node_modules-bearing source paths.
-    let mut parser = ParserState::new("test.ts".to_string(), String::new());
-    let _ = parser.parse_source_file();
+    let (parser, _root) = parse_test_source("");
     let emitter = make_path_only_emitter(&parser);
 
     let result = emitter.symlinked_nested_package_reference(
@@ -1180,8 +1367,7 @@ fn symlinked_nested_package_reference_skips_multiple_node_modules() {
     // Source paths with two or more `node_modules` segments are already handled
     // by the existing nested-rules in `check_symbol_portability` (Cases 1 and 2).
     // The helper must defer to them by returning None.
-    let mut parser = ParserState::new("test.ts".to_string(), String::new());
-    let _ = parser.parse_source_file();
+    let (parser, _root) = parse_test_source("");
     let emitter = make_path_only_emitter(&parser);
 
     let result = emitter.symlinked_nested_package_reference(

@@ -113,17 +113,17 @@ pub struct ScannerState {
     /// between the scanner, parser, and Thin AST without cloning the full file text.
     source: Arc<str>,
     /// Current byte position
-    pos: usize,
+    pub(crate) pos: usize,
     /// End byte position
-    end: usize,
+    pub(crate) end: usize,
     /// Full start position including leading trivia (byte offset)
     full_start_pos: usize,
     /// Token start position (excluding trivia, byte offset)
-    token_start: usize,
+    pub(crate) token_start: usize,
     /// Current token kind
-    token: SyntaxKind,
+    pub(crate) token: SyntaxKind,
     /// Current token's string value
-    token_value: String,
+    pub(crate) token_value: String,
     /// Token flags
     token_flags: u32,
     /// First invalid numeric separator position, if any (byte offset)
@@ -314,7 +314,7 @@ impl ScannerState {
     /// FAST PATH: For ASCII bytes (0-127), this is the character code.
     #[inline]
     #[must_use]
-    fn char_code_unchecked(&self, index: usize) -> u32 {
+    pub(crate) fn char_code_unchecked(&self, index: usize) -> u32 {
         let bytes = self.source.as_bytes();
         if index < bytes.len() {
             let b = bytes[index];
@@ -343,7 +343,7 @@ impl ScannerState {
     /// Get the character code at the given byte index.
     /// Returns None if out of bounds.
     #[inline]
-    fn char_code_at(&self, index: usize) -> Option<u32> {
+    pub(crate) fn char_code_at(&self, index: usize) -> Option<u32> {
         let bytes = self.source.as_bytes();
         if index < bytes.len() {
             let b = bytes[index];
@@ -365,7 +365,7 @@ impl ScannerState {
 
     /// Get byte length of character at position (1 for ASCII, 1-4 for UTF-8)
     #[inline]
-    fn char_len_at(&self, index: usize) -> usize {
+    pub(crate) fn char_len_at(&self, index: usize) -> usize {
         let bytes = self.source.as_bytes();
         if index >= bytes.len() {
             return 0;
@@ -384,7 +384,7 @@ impl ScannerState {
 
     /// Get a substring from start to end byte indices.
     #[inline]
-    fn substring(&self, start: usize, end: usize) -> String {
+    pub(crate) fn substring(&self, start: usize, end: usize) -> String {
         let len = self.source.len();
         let clamped_start = start.min(len);
         let clamped_end = end.min(len);
@@ -951,7 +951,19 @@ impl ScannerState {
                         self.scan_identifier_with_escapes();
                         return self.token;
                     }
-                    if escaped_ch.is_some() {
+                    if let Some(code_point) = escaped_ch {
+                        if !self.allow_astral_identifier_chars
+                            && code_point > 0xFFFF
+                            && self
+                                .source
+                                .as_bytes()
+                                .get(self.pos + 2)
+                                .is_some_and(|&b| b == b'{')
+                        {
+                            self.pos += 1;
+                            self.token = SyntaxKind::Unknown;
+                            return self.token;
+                        }
                         let _ = self.scan_unicode_escape_value();
                         self.token = SyntaxKind::Unknown;
                         return self.token;
@@ -1842,8 +1854,8 @@ impl ScannerState {
 
     /// Peek at a unicode escape sequence in identifier text without advancing
     /// the position. Returns the code point if the escape is valid
-    /// (`\uXXXX`, or a BMP `\u{XXXXX}`), None otherwise.
-    fn peek_unicode_escape(&self) -> Option<u32> {
+    /// (`\uXXXX`, or `\u{XXXXX}` for a valid Unicode scalar), None otherwise.
+    pub(crate) fn peek_unicode_escape(&self) -> Option<u32> {
         // Must start with \u
         if self.pos + 1 >= self.end {
             return None;
@@ -1863,7 +1875,9 @@ impl ScannerState {
                 return None;
             }
             let hex = &self.source[start..end];
-            u32::from_str_radix(hex, 16).ok().filter(|&cp| cp <= 0xFFFF)
+            u32::from_str_radix(hex, 16)
+                .ok()
+                .filter(|&cp| char::from_u32(cp).is_some())
         } else {
             // \uXXXX form (exactly 4 hex digits)
             if self.pos + 5 >= self.end {
@@ -1925,7 +1939,7 @@ impl ScannerState {
     /// Scan continuation of a private identifier that starts with a regular char.
     /// Handles unicode escapes in the continuation (e.g., `#x\u0078`).
     /// Returns true if any unicode escapes were found and `token_value` was set.
-    fn scan_private_identifier_rest(&mut self) -> bool {
+    pub(crate) fn scan_private_identifier_rest(&mut self) -> bool {
         // First, scan regular identifier parts
         while self.pos < self.end {
             let ch = self.char_code_unchecked(self.pos);
@@ -1988,7 +2002,7 @@ impl ScannerState {
     }
 
     /// Scan a private identifier that starts with a unicode escape: `#\u0078`.
-    fn scan_private_identifier_with_escapes(&mut self) {
+    pub(crate) fn scan_private_identifier_with_escapes(&mut self) {
         let mut result = String::from("#");
 
         // Process initial unicode escape
@@ -2076,49 +2090,12 @@ impl ScannerState {
 
     // =========================================================================
     // Rescan methods - for context-sensitive parsing
+    //
+    // Many rescan modes live in the `rescan` sibling module so the mode-shifting
+    // surface is isolated from the main `scan()` loop. Template, slash, and JSX
+    // rescans remain here because they share many private scanning helpers with
+    // the main scan path.
     // =========================================================================
-
-    /// Re-scan the current `>` token to see if it should be `>=`, `>>`, `>>>`, `>>=`, or `>>>=`.
-    /// This is used by the parser for type arguments and bitwise operators.
-    #[wasm_bindgen(js_name = reScanGreaterToken)]
-    pub fn re_scan_greater_token(&mut self) -> SyntaxKind {
-        if self.token == SyntaxKind::GreaterThanToken {
-            let next_char = self.char_code_unchecked(self.pos);
-            if next_char == CharacterCodes::GREATER_THAN {
-                let next_next = self.char_code_unchecked(self.pos + 1);
-                if next_next == CharacterCodes::GREATER_THAN {
-                    // >>>
-                    let next_next_next = self.char_code_unchecked(self.pos + 2);
-                    if next_next_next == CharacterCodes::EQUALS {
-                        // >>>=
-                        self.pos += 3;
-                        self.token = SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken;
-                        return self.token;
-                    }
-                    self.pos += 2;
-                    self.token = SyntaxKind::GreaterThanGreaterThanGreaterThanToken;
-                    return self.token;
-                }
-                if next_next == CharacterCodes::EQUALS {
-                    // >>=
-                    self.pos += 2;
-                    self.token = SyntaxKind::GreaterThanGreaterThanEqualsToken;
-                    return self.token;
-                }
-                // >>
-                self.pos += 1;
-                self.token = SyntaxKind::GreaterThanGreaterThanToken;
-                return self.token;
-            }
-            if next_char == CharacterCodes::EQUALS {
-                // >=
-                self.pos += 1;
-                self.token = SyntaxKind::GreaterThanEqualsToken;
-                return self.token;
-            }
-        }
-        self.token
-    }
 
     /// Re-scan the current `/` or `/=` token as a regex literal.
     /// This is used by the parser when it determines the context requires a regex.
@@ -2232,17 +2209,6 @@ impl ScannerState {
 
             self.token_value = self.substring(self.token_start, self.pos);
             self.token = SyntaxKind::RegularExpressionLiteral;
-        }
-        self.token
-    }
-
-    /// Re-scan the current `*=` token as `*` followed by `=`.
-    /// Used when parsing computed property names.
-    #[wasm_bindgen(js_name = reScanAsteriskEqualsToken)]
-    pub fn re_scan_asterisk_equals_token(&mut self) -> SyntaxKind {
-        if self.token == SyntaxKind::AsteriskEqualsToken {
-            self.pos = self.token_start + 1;
-            self.token = SyntaxKind::EqualsToken;
         }
         self.token
     }
@@ -2791,70 +2757,6 @@ impl ScannerState {
         self.scan_jsx_attribute_value()
     }
 
-    /// Re-scan a `<` token in JSX context.
-    /// Returns `LessThanSlashToken` if followed by `/`, otherwise `LessThanToken`.
-    #[wasm_bindgen(js_name = reScanLessThanToken)]
-    pub fn re_scan_less_than_token(&mut self) -> SyntaxKind {
-        if self.token == SyntaxKind::LessThanToken
-            && self.pos < self.end
-            && self.char_code_unchecked(self.pos) == CharacterCodes::SLASH
-        {
-            self.pos += 1;
-            self.token = SyntaxKind::LessThanSlashToken;
-        }
-        self.token
-    }
-
-    /// Re-scan the current `#` token as a hash token or private identifier.
-    #[wasm_bindgen(js_name = reScanHashToken)]
-    pub fn re_scan_hash_token(&mut self) -> SyntaxKind {
-        if self.token == SyntaxKind::HashToken && self.pos < self.end {
-            let ch = self.char_code_unchecked(self.pos);
-            if self.is_identifier_start(ch) {
-                // Properly handle multi-byte UTF-8 characters in private identifiers
-                self.pos += self.char_len_at(self.pos);
-                let has_escapes = self.scan_private_identifier_rest();
-                if !has_escapes {
-                    self.token_value = self.substring(self.token_start, self.pos);
-                }
-                self.token = SyntaxKind::PrivateIdentifier;
-            } else if ch == CharacterCodes::BACKSLASH {
-                // Unicode escape starting a private identifier: #\u0078
-                if let Some(code_point) = self.peek_unicode_escape()
-                    && self.is_identifier_start(code_point)
-                {
-                    self.scan_private_identifier_with_escapes();
-                }
-            }
-        }
-        self.token
-    }
-
-    /// Re-scan the current `?` token for optional chaining.
-    #[wasm_bindgen(js_name = reScanQuestionToken)]
-    pub fn re_scan_question_token(&mut self) -> SyntaxKind {
-        if self.token == SyntaxKind::QuestionToken {
-            let ch = self.char_code_at(self.pos);
-            if ch == Some(CharacterCodes::DOT) {
-                // Check it's not ?. followed by a digit
-                let next = self.char_code_at(self.pos + 1);
-                if !next.is_some_and(is_digit) {
-                    self.pos += 1;
-                    self.token = SyntaxKind::QuestionDotToken;
-                }
-            } else if ch == Some(CharacterCodes::QUESTION) {
-                if self.char_code_at(self.pos + 1) == Some(CharacterCodes::EQUALS) {
-                    self.pos += 2;
-                    self.token = SyntaxKind::QuestionQuestionEqualsToken;
-                } else {
-                    self.pos += 1;
-                    self.token = SyntaxKind::QuestionQuestionToken;
-                }
-            }
-        }
-        self.token
-    }
-
     // =========================================================================
     // JSDoc Scanning Methods
     // =========================================================================
@@ -3099,31 +3001,6 @@ impl ScannerState {
 
         0
     }
-
-    /// Re-scan an invalid identifier to check if it's valid in a specific context.
-    #[wasm_bindgen(js_name = reScanInvalidIdentifier)]
-    pub fn re_scan_invalid_identifier(&mut self) -> SyntaxKind {
-        // This method is used when the parser encounters an invalid identifier
-        // and wants to check if it could be valid in certain contexts (like keywords)
-        if self.token == SyntaxKind::Unknown && !self.token_value.is_empty() {
-            // Check if the token value is a valid identifier
-            let chars: Vec<char> = self.token_value.chars().collect();
-            if !chars.is_empty() && is_identifier_start(chars[0] as u32) {
-                let mut all_valid = true;
-                for c in chars.iter().skip(1) {
-                    if !is_identifier_part(*c as u32) {
-                        all_valid = false;
-                        break;
-                    }
-                }
-                if all_valid {
-                    self.token =
-                        crate::text_to_keyword(&self.token_value).unwrap_or(SyntaxKind::Identifier);
-                }
-            }
-        }
-        self.token
-    }
 }
 
 // =============================================================================
@@ -3137,12 +3014,12 @@ impl ScannerState {
     }
 
     #[inline]
-    fn is_identifier_start(&self, ch: u32) -> bool {
+    pub(crate) fn is_identifier_start(&self, ch: u32) -> bool {
         (self.allow_astral_identifier_chars || ch <= 0xFFFF) && is_identifier_start(ch)
     }
 
     #[inline]
-    fn is_identifier_part(&self, ch: u32) -> bool {
+    pub(crate) fn is_identifier_part(&self, ch: u32) -> bool {
         (self.allow_astral_identifier_chars || ch <= 0xFFFF) && is_identifier_part(ch)
     }
 
@@ -3389,7 +3266,7 @@ fn is_white_space_single_line(ch: u32) -> bool {
         || ch == CharacterCodes::BYTE_ORDER_MARK
 }
 
-fn is_digit(ch: u32) -> bool {
+pub(crate) fn is_digit(ch: u32) -> bool {
     (CharacterCodes::_0..=CharacterCodes::_9).contains(&ch)
 }
 
@@ -3407,7 +3284,7 @@ fn is_hex_digit(ch: u32) -> bool {
         || (CharacterCodes::LOWER_A..=CharacterCodes::LOWER_F).contains(&ch)
 }
 
-fn is_identifier_start(ch: u32) -> bool {
+pub(crate) fn is_identifier_start(ch: u32) -> bool {
     // Fast path for ASCII (0-127)
     if ch < 128 {
         return (CharacterCodes::UPPER_A..=CharacterCodes::UPPER_Z).contains(&ch)
@@ -3423,7 +3300,7 @@ fn is_identifier_start(ch: u32) -> bool {
     false
 }
 
-fn is_identifier_part(ch: u32) -> bool {
+pub(crate) fn is_identifier_part(ch: u32) -> bool {
     // Fast path for ASCII
     if ch < 128 {
         return is_identifier_start(ch) || is_digit(ch);
@@ -3610,6 +3487,25 @@ mod tests {
         let tokens = scan_all("a·b");
         assert_eq!(tokens.len(), 1);
         assert_eq!(tokens[0], (SyntaxKind::Identifier, "a·b".to_string()));
+    }
+
+    #[test]
+    fn scan_es2015_braced_astral_escape_as_identifier_start() {
+        let mut scanner = ScannerState::new(r"\u{102A7}tail".to_string(), true);
+        scanner.set_language_version(ScriptTarget::ES2015);
+
+        assert_eq!(scanner.scan(), SyntaxKind::Identifier);
+        assert_eq!(scanner.get_token_value_ref(), "𐊧tail");
+        assert_eq!(scanner.get_token_text(), r"\u{102A7}tail");
+    }
+
+    #[test]
+    fn scan_es5_braced_astral_escape_remains_invalid_identifier_start() {
+        let mut scanner = ScannerState::new(r"\u{102A7}tail".to_string(), true);
+        scanner.set_language_version(ScriptTarget::ES5);
+
+        assert_eq!(scanner.scan(), SyntaxKind::Unknown);
+        assert_eq!(scanner.get_token_text(), "\\");
     }
 
     // ── Keywords ──────────────────────────────────────────────────────

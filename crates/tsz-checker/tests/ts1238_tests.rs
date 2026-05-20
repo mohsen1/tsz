@@ -169,6 +169,62 @@ class C {
     );
 }
 
+#[test]
+fn ts1270_class_decorator_number_return_emits_error() {
+    let codes = tsz_checker::test_utils::check_source_codes_experimental_decorators(
+        r#"
+function badDecorator(target: Function): number {
+  return 42;
+}
+
+@badDecorator
+class Example {
+  value = 1;
+}
+"#,
+    );
+    assert!(
+        codes.contains(&1270),
+        "Expected TS1270 for incompatible class decorator return, got: {codes:?}"
+    );
+}
+
+#[test]
+fn ts1270_not_emitted_for_void_or_replacement_class_return() {
+    let void_codes = tsz_checker::test_utils::check_source_codes_experimental_decorators(
+        r#"
+function decorate(target: Function): void {}
+
+@decorate
+class Example {
+  value = 1;
+}
+"#,
+    );
+    assert!(
+        !void_codes.contains(&1270),
+        "Should not emit TS1270 for void class decorator return, got: {void_codes:?}"
+    );
+
+    let replacement_codes = tsz_checker::test_utils::check_source_codes_experimental_decorators(
+        r#"
+declare const replacement: typeof Example;
+function decorate(target: Function): typeof Example {
+  return replacement;
+}
+
+@decorate
+class Example {
+  value = 1;
+}
+"#,
+    );
+    assert!(
+        !replacement_codes.contains(&1270),
+        "Should not emit TS1270 for class replacement decorator return, got: {replacement_codes:?}"
+    );
+}
+
 // === ES decorators (experimental_decorators: false) =======================
 //
 // ES decorators call the decorator factory with `(value, context)`.

@@ -5,7 +5,7 @@ use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::{NodeIndex, ParserState};
 use tsz_parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn variable_declaration_initializer_at(
     parser: &ParserState,
@@ -257,7 +257,6 @@ const staticZ = StaticC.z;
 }
 
 #[test]
-#[ignore = "pre-existing regression"]
 fn object_entries_computed_object_literal_keeps_string_any_shape() {
     let source = r#"
 type ArrayLike<T> = {

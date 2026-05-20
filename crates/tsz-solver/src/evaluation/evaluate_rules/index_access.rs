@@ -3,8 +3,11 @@
 //! Handles TypeScript's index access types: `T[K]`
 //! Including property access, array indexing, and tuple indexing.
 
-use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
-use crate::objects::{PropertyCollectionResult, collect_properties};
+use crate::construction::TypeDatabase;
+use crate::instantiation::instantiate::{
+    TypeSubstitution, instantiate_type, instantiate_type_preserving_meta_cached,
+};
+use crate::objects::{ApparentMemberKind, PropertyCollectionResult, collect_properties};
 use crate::relations::subtype::TypeResolver;
 use crate::types::{
     CallableShape, CallableShapeId, IntrinsicKind, LiteralValue, MappedModifier, MappedType,
@@ -16,7 +19,6 @@ use crate::visitor::{
     TypeVisitor, array_element_type, intersection_list_id, keyof_inner_type, literal_number,
     tuple_list_id, union_list_id,
 };
-use crate::{ApparentMemberKind, TypeDatabase};
 
 use super::super::evaluate::{
     ARRAY_METHODS_RETURN_ANY, ARRAY_METHODS_RETURN_BOOLEAN, ARRAY_METHODS_RETURN_NUMBER,
@@ -24,7 +26,7 @@ use super::super::evaluate::{
 };
 use super::apparent::make_apparent_method_type;
 use super::string_index_helpers::string_index_signature_applies;
-use crate::objects::apparent::is_member;
+use crate::objects::apparent::{is_member, literal_value_intrinsic_kind};
 
 const MAX_UNION_INDEX_SIZE: usize = 500;
 /// Lazily compute and cache array member types (length + apparent methods).
@@ -436,9 +438,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
     }
 
     fn visit_literal(&mut self, value: &LiteralValue) -> Self::Output {
-        self.evaluator
-            .apparent_literal_kind(value)
-            .and_then(|kind| self.evaluate_apparent_primitive(kind))
+        self.evaluate_apparent_primitive(literal_value_intrinsic_kind(value))
     }
 
     fn visit_object(&mut self, shape_id: u32) -> Self::Output {
@@ -552,8 +552,6 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                 if result == TypeId::UNDEFINED {
                     // Check if the member is a type parameter without a meaningful constraint.
                     // If so, create a deferred IndexAccess to preserve the constraint.
-                    // This ensures (S & State<T>)["a"] produces S["a"] & (T | undefined)
-                    // even when the index is generic (e.g., inferred as "a" from context).
                     if let Some(TypeData::TypeParameter(param_info)) =
                         self.evaluator.interner().lookup(member)
                     {
@@ -561,8 +559,6 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                             .constraint
                             .is_some_and(|c| c != TypeId::UNKNOWN && c != TypeId::ANY);
                         if !has_meaningful_constraint {
-                            // Create a deferred IndexAccess for the type parameter
-                            // without a meaningful constraint
                             let deferred = self
                                 .evaluator
                                 .interner()
@@ -589,10 +585,8 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                 ));
             }
 
-            // If no concrete results but we have deferred results, return those.
             // This handles cases like `(S & State<T>)["a"]` where S is a type parameter
             // without a meaningful constraint - we need to preserve S["a"] as a deferred
-            // IndexAccess to ensure correct assignability checking.
             if !deferred_results.is_empty() {
                 return Some(crate::utils::intersection_or_single(
                     self.evaluator.interner(),
@@ -623,8 +617,6 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                     } else {
                         self.evaluator.interner().object(properties)
                     };
-                    // Index access on merged object will defer (generic index),
-                    // but the merged object has all properties accessible.
                     return Some(self.evaluator.recurse_index_access(merged, self.index_type));
                 }
                 PropertyCollectionResult::Any => return Some(TypeId::ANY),
@@ -635,7 +627,6 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
         }
 
         // For concrete indexes, distribute over intersection members and intersect results.
-        // (A & B)[K] = A[K] & B[K] — index access distributes over intersections.
         // Members that don't have the property (returning UNDEFINED) are excluded.
         //
         // CRITICAL: Deferred IndexAccess types (from type parameters without constraints)
@@ -670,8 +661,6 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                         .constraint
                         .is_some_and(|c| c != TypeId::UNKNOWN && c != TypeId::ANY);
                     if !has_meaningful_constraint {
-                        // Create a deferred IndexAccess for the type parameter
-                        // without a meaningful constraint
                         let deferred = self
                             .evaluator
                             .interner()
@@ -726,12 +715,8 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             .evaluator
             .evaluate_tuple_index(&elements, self.index_type);
 
-        // CRITICAL FIX: If we can't find the element, but the index is generic,
-        // we must defer evaluation (return None) instead of returning UNDEFINED.
-        // This prevents false TS2344 errors when a tuple is indexed by a type
-        // parameter (e.g., `[-1, 0, 1, ...][Depth]` where `Depth extends number`).
-        // Without this, the evaluator resolves the IndexAccess to `undefined`,
-        // which then fails the constraint check against `number`.
+        // Generic tuple indexes defer instead of becoming `undefined`, avoiding
+        // false constraint errors for patterns like `Tuple[Depth]`.
         if result == TypeId::UNDEFINED && self.is_generic_index() {
             return None;
         }
@@ -773,11 +758,43 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
         self.evaluate_type_param(param_info)
     }
 
+    fn visit_this_type(&mut self) -> Self::Output {
+        let concrete_this = self
+            .evaluator
+            .resolver()
+            .resolve_this_type(self.evaluator.interner())?;
+        if concrete_this == self.object_type {
+            return Some(
+                self.evaluator
+                    .interner()
+                    .index_access(self.object_type, self.index_type),
+            );
+        }
+        Some(
+            self.evaluator
+                .recurse_index_access(concrete_this, self.index_type),
+        )
+    }
+
     fn visit_readonly_type(&mut self, inner_type: TypeId) -> Self::Output {
         Some(
             self.evaluator
                 .recurse_index_access(inner_type, self.index_type),
         )
+    }
+
+    fn visit_enum(&mut self, def_id: u32, _member_type: TypeId) -> Self::Output {
+        let ns_type = self
+            .evaluator
+            .resolver()
+            .get_enum_namespace_type(crate::def::DefId(def_id))?;
+        let result = self
+            .evaluator
+            .recurse_index_access(ns_type, self.index_type);
+        if result == TypeId::UNDEFINED && self.is_generic_index() {
+            return None;
+        }
+        Some(result)
     }
 
     fn visit_mapped(&mut self, mapped_id: u32) -> Self::Output {
@@ -786,35 +803,13 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             .interner()
             .get_mapped(MappedTypeId(mapped_id));
 
-        // Optimization: Mapped[K] -> Template[P/K] where K matches constraint
-        // This handles cases like `Ev<K>["callback"]` where Ev<K> is a mapped type
-        // over K, without needing to expand the mapped type (which fails for TypeParameter K).
-
-        tracing::trace!(
-            mapped_constraint = mapped.constraint.0,
-            mapped_constraint_key = ?self.evaluator.interner().lookup(mapped.constraint),
-            index_type = self.index_type.0,
-            index_type_key = ?self.evaluator.interner().lookup(self.index_type),
-            "visit_mapped index access"
-        );
-
         // Only apply if no name remapping (as clause)
         if mapped.name_type.is_some() {
             return None;
         }
 
-        // Same-name TypeParameter match: handle the case where the mapped constraint and
-        // the index type are both TypeParameters with the same name but different TypeIds.
-        //
-        // This occurs with `T extends Record<K, number>, K extends string` where
-        // `T[K]` should resolve to `number`. After Application expansion:
-        // - `Record<K, number>` → `{ [P in K_inner]: number }` where K_inner (TypeId A)
-        //   was created before K's `extends string` constraint was recorded.
-        // - The function's K has a different TypeId (TypeId B) with the constraint.
-        // - Both have the same Atom name (e.g., Atom("K")).
-        //
-        // By name-matching TypeParams we correctly identify that the index K is the
-        // same parameter as the mapped constraint K, enabling substitution.
+        // Name-match TypeParams so expanded `Record<K, V>` constraints still
+        // substitute for the caller's distinct-but-same-name `K`.
         let same_type_param_name = {
             let interner = self.evaluator.interner();
             match (
@@ -875,25 +870,29 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             // Implicit index signature: when the constraint is `keyof T`,
             // string/number are valid key types because keyof T always
             // includes string | number | symbol for any T.
-            // This handles for-in loops: `for (let k in obj) { result[k] = ... }`
-            // where `k: string` and `result: { [K in keyof T]: V }`.
+            // This handles for-in loops: `for (let k in obj) { result[k] = ... }`.
             || (matches!(self.index_type, TypeId::STRING | TypeId::NUMBER)
                 && keyof_inner_type(self.evaluator.interner(), mapped.constraint).is_some())
             // Intersection index containing the constraint: when index is
             // `string & keyof T` and constraint is `keyof T`, the intersection
             // is a subset of the constraint. This handles for-in loops where the
-            // key type is refined to `string & keyof T`.
-            || self.intersection_contains_mapped_constraint(mapped.constraint);
+            || self.intersection_contains_mapped_constraint(mapped.constraint)
+            || self
+                .evaluator
+                .constraints_semantically_match(self.index_type, mapped.constraint);
 
         if can_substitute {
-            // `{ [K in Keys]: F<K> }[Keys]` is a union over each key, not `F<Keys>`.
-            // When the index is the whole symbolic key space (typically `keyof T`),
-            // substituting `K := Keys` collapses per-key conditionals like
-            // `{ [K in keyof T]: T[K] extends U ? K : never }[keyof T]` into
-            // `T[keyof T] extends U ? keyof T : never`, which is unsound.
-            // Preserve the per-key relationship by evaluating the template against a
-            // constrained iteration variable instead of the whole key-space type.
+            // `{ [K in Keys]: F<K> }[Keys]` is a per-key union, not `F<Keys>`.
+            // Preserve that relationship for symbolic key-space indexes.
             if self.index_is_symbolic_key_space(mapped.constraint) {
+                if let Some(per_key_result) =
+                    super::mapped_template_index::try_evaluate_mapped_template_per_concrete_key(
+                        self.evaluator,
+                        &mapped,
+                    )
+                {
+                    return Some(per_key_result);
+                }
                 return Some(self.instantiate_mapped_template_with_constraint_param(&mapped));
             }
 
@@ -1488,11 +1487,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return None;
         }
 
-        // Check if the type parameter's constraint matches the mapped constraint.
-        // The constraint may be stored in an unevaluated form (e.g., IndexAccess)
-        // that evaluates to the same type as the mapped constraint.
-        let constraint_matches =
-            self.constraints_semantically_match(index_constraint, mapped.constraint);
+        // The constraint may be unevaluated; the index itself can still evaluate
+        // to the mapped constraint while its own constraint stays deferred.
+        let constraint_matches = self
+            .constraints_semantically_match(index_constraint, mapped.constraint)
+            || self.constraints_semantically_match(index_type, mapped.constraint);
 
         if !constraint_matches {
             return None;
@@ -1508,6 +1507,80 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             &mapped,
             index_type,
             value_type,
+        ))
+    }
+
+    fn try_mapped_application_type_param_substitution(
+        &mut self,
+        object_type: TypeId,
+        index_type: TypeId,
+    ) -> Option<TypeId> {
+        if object_type.is_intrinsic() {
+            return None;
+        }
+
+        let application_type = if matches!(
+            self.interner().lookup(object_type),
+            Some(TypeData::Application(_))
+        ) {
+            object_type
+        } else {
+            self.interner()
+                .get_display_alias(object_type)
+                .filter(|&alias| {
+                    matches!(
+                        self.interner().lookup(alias),
+                        Some(TypeData::Application(_))
+                    )
+                })?
+        };
+
+        let instantiated = self.instantiate_mapped_application_preserving_meta(application_type)?;
+        if instantiated == application_type {
+            return None;
+        }
+
+        if !matches!(
+            self.interner().lookup(instantiated),
+            Some(TypeData::Mapped(_))
+        ) {
+            return None;
+        }
+
+        self.try_mapped_type_param_substitution(instantiated, index_type)
+    }
+
+    fn instantiate_mapped_application_preserving_meta(
+        &mut self,
+        application_type: TypeId,
+    ) -> Option<TypeId> {
+        let app_id = match self.interner().lookup(application_type)? {
+            TypeData::Application(app_id) => app_id,
+            _ => return None,
+        };
+        let app = self.interner().type_application(app_id);
+        let def_id = match self.interner().lookup(app.base)? {
+            TypeData::Lazy(def_id) => def_id,
+            TypeData::TypeQuery(sym_ref) => self.resolver().symbol_to_def_id(sym_ref)?,
+            _ => return None,
+        };
+        let type_params = self.resolver().get_lazy_type_params(def_id)?;
+        let resolved = self.resolver().resolve_lazy(def_id, self.interner())?;
+        if !matches!(self.interner().lookup(resolved), Some(TypeData::Mapped(_))) {
+            return None;
+        }
+
+        let expanded_args = self.expand_type_args(&app.args);
+        let mut substitution = TypeSubstitution::new();
+        for (param, &arg) in type_params.iter().zip(expanded_args.iter()) {
+            substitution.insert(param.name, arg);
+        }
+
+        Some(instantiate_type_preserving_meta_cached(
+            self.interner(),
+            self.query_db(),
+            resolved,
+            &substitution,
         ))
     }
 
@@ -1537,6 +1610,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // should produce `(option: T & {kind:K}) => string`, not a union of functions.
         if let Some(mapped_result) =
             self.try_mapped_type_param_substitution(object_type, index_type)
+        {
+            return mapped_result;
+        }
+        if let Some(mapped_result) =
+            self.try_mapped_application_type_param_substitution(object_type, index_type)
         {
             return mapped_result;
         }

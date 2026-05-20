@@ -13,7 +13,7 @@ use tsz_checker::context::LibContext as CheckerLibContext;
 use tsz_checker::diagnostics::Diagnostic;
 use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn diagnostic_contains(diagnostic: &Diagnostic, fragment: &str) -> bool {
     format!("{diagnostic:?}").contains(fragment)
@@ -191,6 +191,73 @@ fn test_ts2304_not_emitted_for_lib_globals_with_lib() {
     );
 }
 
+#[test]
+fn test_ts2661_emitted_for_exporting_lib_global_type() {
+    let diagnostics = check_with_lib("export type { RegExp };");
+
+    let ts2661_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2661 && d.message_text.contains("'RegExp'"))
+        .collect();
+
+    assert!(
+        !ts2661_errors.is_empty(),
+        "Expected TS2661 when exporting a standard-library global type, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2661_emitted_for_type_only_export_specifier_of_lib_global() {
+    let diagnostics = check_with_lib("export { type RegExp };");
+
+    let ts2661_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2661 && d.message_text.contains("'RegExp'"))
+        .collect();
+
+    assert!(
+        !ts2661_errors.is_empty(),
+        "Expected TS2661 when exporting a standard-library global through a type-only specifier, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_type_only_export_specifier_still_reports_missing_name() {
+    let diagnostics = check_with_lib("export { type Missing };");
+
+    let ts2304_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2304 && d.message_text.contains("'Missing'"))
+        .collect();
+
+    assert!(
+        !ts2304_errors.is_empty(),
+        "Expected TS2304 for missing type-only export specifier, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_type_only_export_of_local_declarations_is_allowed() {
+    let diagnostics = check_with_lib(
+        r#"
+type Local = string;
+interface Box {}
+export type { Local };
+export { type Box };
+"#,
+    );
+
+    let export_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2661 || d.code == 2304)
+        .collect();
+
+    assert!(
+        export_errors.is_empty(),
+        "Expected local type-only exports to be accepted, got: {diagnostics:?}"
+    );
+}
+
 // TODO: mapped type key parameter 'Current' used in HandlersFrom<R> is not resolved in
 // scope, causing a false TS2304. Blocked on binder mapped type param fix.
 #[test]
@@ -258,6 +325,34 @@ fn test_ts2304_emitted_for_console_without_lib() {
         !ts2584_errors.is_empty(),
         "Expected TS2584 for console without lib.d.ts, got: {diagnostics:?}"
     );
+}
+
+#[test]
+fn test_ts2304_emitted_for_unclassified_known_globals_without_lib() {
+    let diagnostics = check_without_lib(
+        r#"
+queueMicrotask(() => {});
+structuredClone({});
+atob("x");
+performance.now();
+crypto.getRandomValues(new Uint8Array(1));
+"#,
+    );
+
+    for name in [
+        "queueMicrotask",
+        "structuredClone",
+        "atob",
+        "performance",
+        "crypto",
+    ] {
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.code == 2304 && d.message_text.contains(name)),
+            "Expected TS2304 for missing known global `{name}` under ES5-only libs, got: {diagnostics:?}"
+        );
+    }
 }
 
 /// Test that var declarations in function bodies are hoisted to function scope.

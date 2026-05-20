@@ -1,6 +1,3 @@
-//! Inner implementation of call expression type resolution, including
-//! `get_type_of_call_expression_inner` and the core call computation logic.
-
 use crate::call_checker::CallableContext;
 use crate::context::TypingRequest;
 use crate::query_boundaries::assignability as assign_query;
@@ -17,164 +14,13 @@ use tsz_common::diagnostics::diagnostic_codes;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{FunctionShape, ParamInfo, TypeId};
+use tsz_solver::TypeId;
 
 use super::super::call_result::CallResultContext;
 use super::super::complex::is_contextually_sensitive;
+use super::post_generic::PostGenericCallDiagnostics;
 
 impl<'a> CheckerState<'a> {
-    fn fresh_direct_function_call_signature(
-        &mut self,
-        callee_expression: NodeIndex,
-    ) -> Option<tsz_solver::CallSignature> {
-        let callee_node = self.ctx.arena.get(callee_expression)?;
-        if callee_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
-            return None;
-        }
-
-        let sym_id = self.resolve_identifier_symbol(callee_expression)?;
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        let function_decl_count = symbol
-            .all_declarations()
-            .into_iter()
-            .filter(|&decl_idx| {
-                self.ctx
-                    .arena
-                    .get(decl_idx)
-                    .is_some_and(|node| node.kind == syntax_kind_ext::FUNCTION_DECLARATION)
-            })
-            .count();
-        if function_decl_count > 1 {
-            return None;
-        }
-        let decl_idx = symbol.value_declaration.into_option()?;
-        let decl_node = self.ctx.arena.get(decl_idx)?;
-        if decl_node.kind != syntax_kind_ext::FUNCTION_DECLARATION {
-            return None;
-        }
-        let func = self.ctx.arena.get_function(decl_node).cloned()?;
-
-        let diagnostics_before = self.ctx.snapshot_diagnostics();
-        let fresh_signature = self.call_signature_from_function(&func, decl_idx);
-        self.ctx.rollback_diagnostics(&diagnostics_before);
-
-        Some(fresh_signature)
-    }
-
-    fn direct_function_call_type_for_type_argument_validation(
-        &mut self,
-        callee_expression: NodeIndex,
-    ) -> Option<TypeId> {
-        let fresh_signature = self.fresh_direct_function_call_signature(callee_expression)?;
-        if fresh_signature.type_params.is_empty() {
-            return None;
-        }
-
-        Some(self.ctx.types.factory().function(FunctionShape {
-            type_params: fresh_signature.type_params,
-            params: fresh_signature.params,
-            this_type: fresh_signature.this_type,
-            return_type: fresh_signature.return_type,
-            type_predicate: fresh_signature.type_predicate,
-            is_constructor: false,
-            is_method: fresh_signature.is_method,
-        }))
-    }
-
-    fn refresh_callee_shape_type_param_constraints(
-        &mut self,
-        callee_expression: NodeIndex,
-        mut shape: FunctionShape,
-    ) -> FunctionShape {
-        if shape.type_params.is_empty() {
-            return shape;
-        }
-
-        let Some(fresh_signature) = self.fresh_direct_function_call_signature(callee_expression)
-        else {
-            return shape;
-        };
-        if fresh_signature.type_params.len() != shape.type_params.len() {
-            return shape;
-        }
-
-        for (existing, fresh) in shape
-            .type_params
-            .iter_mut()
-            .zip(fresh_signature.type_params.iter())
-        {
-            let existing_unresolved = existing.constraint.is_none_or(|constraint| {
-                constraint == TypeId::UNKNOWN || constraint == TypeId::ERROR
-            });
-            let fresh_resolved = fresh.constraint.is_some_and(|constraint| {
-                constraint != TypeId::UNKNOWN && constraint != TypeId::ERROR
-            });
-            if existing_unresolved && fresh_resolved {
-                existing.constraint = fresh.constraint;
-            }
-
-            if existing.default.is_none() && fresh.default.is_some() {
-                existing.default = fresh.default;
-            }
-        }
-
-        shape
-    }
-
-    fn setup_higher_order_callee_contextual_type(
-        &mut self,
-        callee_expression: NodeIndex,
-        contextual_type: Option<TypeId>,
-        args: &[NodeIndex],
-    ) -> Option<TypeId> {
-        let ctx_type = contextual_type?;
-        if ctx_type == TypeId::ANY || ctx_type == TypeId::UNKNOWN || args.is_empty() {
-            return None;
-        }
-
-        let mut expr_idx = callee_expression;
-        loop {
-            match self.ctx.arena.get(expr_idx) {
-                Some(n) if n.kind == syntax_kind_ext::CALL_EXPRESSION => break,
-                Some(n) if n.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
-                    expr_idx = self.ctx.arena.get_parenthesized(n)?.expression;
-                }
-                _ => return None,
-            }
-        }
-
-        if args.iter().copied().any(|arg_idx| {
-            self.ctx
-                .arena
-                .get(arg_idx)
-                .is_none_or(|node| node.kind == syntax_kind_ext::SPREAD_ELEMENT)
-                || is_contextually_sensitive(self, arg_idx)
-        }) {
-            return None;
-        }
-
-        let snap = self.ctx.snapshot_diagnostics();
-        let params = args
-            .iter()
-            .copied()
-            .map(|arg_idx| ParamInfo {
-                name: None,
-                type_id: self.get_type_of_node_with_request(arg_idx, &TypingRequest::NONE),
-                optional: false,
-                rest: false,
-            })
-            .collect();
-        self.ctx.rollback_diagnostics(&snap);
-
-        Some(
-            self.ctx
-                .types
-                .factory()
-                .function(FunctionShape::new(params, ctx_type)),
-        )
-    }
-
-    /// Inner implementation of call expression type resolution.
     pub(crate) fn get_type_of_call_expression_inner(
         &mut self,
         idx: NodeIndex,
@@ -338,10 +184,30 @@ impl<'a> CheckerState<'a> {
             Some(a) => a.nodes.as_slice(),
             None => &[],
         };
+        let explicit_call_type_arguments = call.type_arguments.clone().or_else(|| {
+            self.ctx
+                .arena
+                .get(call.expression)
+                .and_then(|node| self.ctx.arena.get_expr_type_args(node))
+                .and_then(|expr_type_args| expr_type_args.type_arguments.clone())
+        });
+
+        if self.callee_name_conflicts_with_namespace_module(call.expression) {
+            self.error_not_callable_at(callee_type, call.expression);
+            let check_excess_properties = false;
+            self.collect_call_argument_types_with_context(
+                args,
+                |_i, _arg_count| Some(TypeId::ANY),
+                check_excess_properties,
+                None,
+                CallableContext::none(),
+            );
+            return TypeId::ERROR;
+        }
 
         // Check if callee is any/error (don't report for those)
         if callee_type == TypeId::ANY {
-            if let Some(ref type_args_list) = call.type_arguments
+            if let Some(ref type_args_list) = explicit_call_type_arguments
                 && !type_args_list.nodes.is_empty()
             {
                 // When the callee is a property access on `this` inside a class and
@@ -391,7 +257,7 @@ impl<'a> CheckerState<'a> {
             self.reemit_namespace_value_error_for_call_callee(call.expression);
             // Still evaluate type arguments to catch TS2304 for unresolved type names
             // (e.g., `this.super<T>(0)` where T is undeclared)
-            if let Some(ref type_args_list) = call.type_arguments {
+            if let Some(ref type_args_list) = explicit_call_type_arguments {
                 for &arg_idx in &type_args_list.nodes {
                     self.get_type_from_type_node(arg_idx);
                 }
@@ -436,9 +302,17 @@ impl<'a> CheckerState<'a> {
         // import), so the call would otherwise resolve to Success and the
         // accompanying TS2349 would be missing. See `typeOnlyMerge3.ts`.
         if callee_emitted_type_only_value_error {
-            self.error_not_callable_at(callee_type, call.expression);
             // Still evaluate arguments so downstream definite-assignment /
             // unresolved-name diagnostics still fire on argument sites.
+            return self.error_not_callable_and_collect_any_args(
+                callee_type,
+                call.expression,
+                args,
+            );
+        }
+
+        if self.callee_name_conflicts_with_namespace_module(call.expression) {
+            self.error_not_callable_at(callee_type, call.expression);
             let check_excess_properties = false;
             self.collect_call_argument_types_with_context(
                 args,
@@ -474,7 +348,7 @@ impl<'a> CheckerState<'a> {
 
         // Validate explicit type arguments against constraints (TS2344)
         let mut type_arg_validation = crate::generic_checker::CallTypeArgumentValidation::default();
-        if let Some(ref type_args_list) = call.type_arguments
+        if let Some(ref type_args_list) = explicit_call_type_arguments
             && !type_args_list.nodes.is_empty()
         {
             let validation_callee_type = if matches!(
@@ -541,8 +415,11 @@ impl<'a> CheckerState<'a> {
         // This ensures that when we have `fn<T>(x: T)` and call it as `fn<number>("string")`,
         // the parameter type becomes `number` (after substituting T=number), and we can
         // correctly check if `"string"` is assignable to `number`.
-        let mut callee_type_for_resolution = if call.type_arguments.is_some() {
-            self.apply_type_arguments_to_callable_type(callee_type, call.type_arguments.as_ref())
+        let mut callee_type_for_resolution = if explicit_call_type_arguments.is_some() {
+            self.apply_type_arguments_to_callable_type(
+                callee_type,
+                explicit_call_type_arguments.as_ref(),
+            )
         } else {
             callee_type
         };
@@ -560,10 +437,10 @@ impl<'a> CheckerState<'a> {
             && let Some(annotated_callee_type) =
                 self.explicit_identifier_callee_annotation_type(call.expression)
         {
-            callee_type_for_resolution = if call.type_arguments.is_some() {
+            callee_type_for_resolution = if explicit_call_type_arguments.is_some() {
                 self.apply_type_arguments_to_callable_type(
                     annotated_callee_type,
-                    call.type_arguments.as_ref(),
+                    explicit_call_type_arguments.as_ref(),
                 )
             } else {
                 annotated_callee_type
@@ -578,10 +455,10 @@ impl<'a> CheckerState<'a> {
             && let Some(direct_callee_type) =
                 self.direct_function_call_type_for_type_argument_validation(call.expression)
         {
-            callee_type_for_resolution = if call.type_arguments.is_some() {
+            callee_type_for_resolution = if explicit_call_type_arguments.is_some() {
                 self.apply_type_arguments_to_callable_type(
                     direct_callee_type,
-                    call.type_arguments.as_ref(),
+                    explicit_call_type_arguments.as_ref(),
                 )
             } else {
                 direct_callee_type
@@ -729,7 +606,7 @@ impl<'a> CheckerState<'a> {
         let is_generic_call = callee_shape
             .as_ref()
             .is_some_and(|s| !s.type_params.is_empty())
-            && call.type_arguments.is_none(); // Only use two-pass if no explicit type args
+            && explicit_call_type_arguments.is_none(); // Only use two-pass if no explicit type args
         // Create contextual context from resolved callee type
         let ctx_helper = ContextualTypeContext::with_expected_and_options(
             self.ctx.types,
@@ -825,9 +702,23 @@ impl<'a> CheckerState<'a> {
                 // Use the raw FunctionShape parameter types (which preserve type parameters)
                 // rather than ctx_helper.get_parameter_type_for_call (which may resolve
                 // through Lazy/Application types and lose type parameter information).
-                let excess_skip: Vec<bool> = {
+                let needs_generic_skip_state = args.iter().copied().any(|arg_idx| {
+                    self.ctx
+                        .arena
+                        .get(self.ctx.arena.skip_parenthesized_and_assertions(arg_idx))
+                        .is_some_and(|node| {
+                            node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                || node.kind == SyntaxKind::StringLiteral as u16
+                                || node.kind == SyntaxKind::NumericLiteral as u16
+                                || node.kind == SyntaxKind::BigIntLiteral as u16
+                                || node.kind == SyntaxKind::TrueKeyword as u16
+                                || node.kind == SyntaxKind::FalseKeyword as u16
+                                || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                        })
+                });
+                if needs_generic_skip_state {
                     let arg_count = args.len();
-                    (0..arg_count)
+                    let excess_skip: Vec<bool> = (0..arg_count)
                         .map(|i| {
                             // Check if the parameter type IS a bare type parameter (T),
                             // not just a complex type that contains type parameters
@@ -849,11 +740,11 @@ impl<'a> CheckerState<'a> {
                                 });
                             from_shape || from_ctx
                         })
-                        .collect()
-                };
-                let has_any_excess_skip = excess_skip.iter().any(|&s| s);
-                if has_any_excess_skip {
-                    self.ctx.generic_excess_skip = Some(excess_skip);
+                        .collect();
+                    let has_any_excess_skip = excess_skip.iter().any(|&s| s);
+                    if has_any_excess_skip {
+                        self.ctx.generic_excess_skip = Some(excess_skip);
+                    }
                 }
 
                 // Pre-compute which arguments are contextually sensitive to avoid borrowing self in closures.
@@ -861,15 +752,16 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .map(|&arg| is_contextually_sensitive(self, arg))
                     .collect();
-                let suppress_generic_return_context = args
-                    .iter()
-                    .copied()
-                    .any(|arg| self.suppress_generic_return_context_for_arg(arg))
-                    || self.suppress_generic_return_context_for_direct_arg_overlap(
-                        &shape,
-                        args,
-                        contextual_type,
-                    );
+                let suppress_generic_return_context = contextual_type.is_some()
+                    && (args
+                        .iter()
+                        .copied()
+                        .any(|arg| self.suppress_generic_return_context_for_arg(arg))
+                        || self.suppress_generic_return_context_for_direct_arg_overlap(
+                            &shape,
+                            args,
+                            contextual_type,
+                        ));
                 let generic_inference_contextual_type = if suppress_generic_return_context {
                     None
                 } else {
@@ -957,7 +849,7 @@ impl<'a> CheckerState<'a> {
                         type_param_names.iter().copied().collect();
 
                     let direct_literal_conflict_type_params = self
-                        .direct_round1_literal_conflict_type_params(
+                        .direct_round1_literal_preservation_type_params(
                             &shape,
                             args,
                             &round1_arg_types,
@@ -1968,7 +1860,11 @@ impl<'a> CheckerState<'a> {
                         .collect();
                     let single_pass_return_context_substitution =
                         if contextual_type.is_some_and(|ctx| {
-                            !common::contains_type_parameters(self.ctx.types, ctx)
+                            let contextual_generic_callable =
+                                call_checker::get_contextual_signature(self.ctx.types, ctx)
+                                    .is_some_and(|shape| !shape.type_params.is_empty());
+                            (!common::contains_type_parameters(self.ctx.types, ctx)
+                                || contextual_generic_callable)
                                 && !common::contains_infer_types(self.ctx.types, ctx)
                                 && !common::contains_type_by_id(
                                     self.ctx.types,
@@ -2418,7 +2314,7 @@ impl<'a> CheckerState<'a> {
         let (generic_inference_arg_types, sanitized_generic_inference) = if is_generic_call {
             self.sanitize_generic_inference_arg_types(call.expression, args, &arg_types)
         } else {
-            (arg_types.clone(), false)
+            (std::borrow::Cow::Borrowed(arg_types.as_slice()), false)
         };
         let generic_inference_arg_source_markers = if is_generic_call {
             self.call_arg_source_type_annotation_markers(args, generic_inference_arg_types.len())
@@ -2600,6 +2496,7 @@ impl<'a> CheckerState<'a> {
             false
         };
 
+        let mut retried_arg_types = None;
         if is_generic_call
             && should_retry_generic_call
             && let Some(instantiated_params) = generic_instantiated_params.as_ref()
@@ -2631,7 +2528,7 @@ impl<'a> CheckerState<'a> {
                 })
                 .collect::<Vec<_>>();
             let retry_arg_diag_snap = self.ctx.snapshot_diagnostics();
-            arg_types = self.collect_call_argument_types_with_context(
+            let refreshed_arg_types = self.collect_call_argument_types_with_context(
                 args,
                 |i, _arg_count| {
                     refreshed_contextual_types
@@ -2651,8 +2548,8 @@ impl<'a> CheckerState<'a> {
                 .copied()
                 .any(|arg_idx| self.is_callback_like_argument(arg_idx));
 
-            let (retry_generic_arg_types, retry_sanitized) =
-                self.sanitize_generic_inference_arg_types(call.expression, args, &arg_types);
+            let (retry_generic_arg_types, retry_sanitized) = self
+                .sanitize_generic_inference_arg_types(call.expression, args, &refreshed_arg_types);
             let retry_arg_source_markers =
                 self.call_arg_source_type_annotation_markers(args, retry_generic_arg_types.len());
             let mut retry = if is_super_call {
@@ -2716,7 +2613,7 @@ impl<'a> CheckerState<'a> {
                         retry.0.clone(),
                         instantiated_params,
                         args,
-                        &arg_types,
+                        &refreshed_arg_types,
                     )
                 } else {
                     retry.0
@@ -2726,6 +2623,7 @@ impl<'a> CheckerState<'a> {
             };
             instantiated_predicate = retry.1;
             generic_instantiated_params = retry.2;
+            retried_arg_types = Some(refreshed_arg_types);
         }
 
         if is_generic_call
@@ -2804,6 +2702,11 @@ impl<'a> CheckerState<'a> {
                         let actual = generic_inference_arg_types
                             .get(i)
                             .copied()
+                            .or_else(|| {
+                                retried_arg_types
+                                    .as_ref()
+                                    .and_then(|types| types.get(i).copied())
+                            })
                             .or_else(|| arg_types.get(i).copied())
                             .unwrap_or(TypeId::UNKNOWN);
                         if matches!(actual, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) {
@@ -2836,7 +2739,26 @@ impl<'a> CheckerState<'a> {
                         result = CallResult::Success(instantiated_return);
                     }
                 }
+                if let CallResult::Success(current_return) = result
+                    && current_return != shape.return_type
+                    && common::contains_type_by_id(self.ctx.types, current_return, TypeId::UNKNOWN)
+                {
+                    let instantiated_return = crate::query_boundaries::common::instantiate_type(
+                        self.ctx.types,
+                        shape.return_type,
+                        &return_context_substitution,
+                    );
+                    if instantiated_return != shape.return_type
+                        && self.is_assignable_to_with_env(instantiated_return, ctx_type)
+                    {
+                        result = CallResult::Success(instantiated_return);
+                    }
+                }
             }
+        }
+        drop(generic_inference_arg_types);
+        if let Some(refreshed_arg_types) = retried_arg_types {
+            arg_types = refreshed_arg_types;
         }
 
         // Store instantiated type predicate from generic call resolution
@@ -2845,8 +2767,21 @@ impl<'a> CheckerState<'a> {
             let stored_predicate =
                 call_checker::extract_predicate_signature(self.ctx.types, callee_type_for_call)
                     .filter(|sig| {
+                        // Only defer to `resolve_generic_predicate` when the type parameter
+                        // actually appears in a parameter type; otherwise use the instantiated
+                        // predicate directly (T appears only in the predicate, not in params).
                         sig.predicate.type_id.is_some_and(|pred_ty| {
-                            common::type_param_info(self.ctx.types, pred_ty).is_some()
+                            common::type_param_info(self.ctx.types, pred_ty).is_some_and(
+                                |tp_info| {
+                                    sig.params.iter().any(|p| {
+                                        common::contains_type_parameter_named(
+                                            self.ctx.types,
+                                            p.type_id,
+                                            tp_info.name,
+                                        )
+                                    })
+                                },
+                            )
                         })
                     })
                     .map(|sig| (sig.predicate, sig.params))
@@ -2892,13 +2827,19 @@ impl<'a> CheckerState<'a> {
         let finalized_contextual_param_types = generic_instantiated_params
             .as_ref()
             .map(|params| self.contextual_param_types_from_instantiated_params(params, args.len()));
-        self.emit_nominal_lib_object_callback_return_errors(
+        self.run_post_generic_call_diagnostics(PostGenericCallDiagnostics {
+            result: &mut result,
+            allow_contextual_mismatch_deferral: &mut allow_contextual_mismatch_deferral,
+            callee_type_for_call,
             args,
-            &arg_types,
-            finalized_contextual_param_types.as_deref(),
-            &base_contextual_param_types,
-            original_callee_shape.as_ref(),
-        );
+            arg_types: &arg_types,
+            base_contextual_param_types: &base_contextual_param_types,
+            finalized_contextual_param_types: finalized_contextual_param_types.as_deref(),
+            original_callee_shape: original_callee_shape.as_ref(),
+            emit_unknown_callback_body_diagnostics: is_generic_call && contextual_type.is_none(),
+            check_excess_properties,
+            callable_ctx,
+        });
         let forced_block_body_callback_mismatch = self
             .current_block_body_callback_return_mismatch_arg(args, |checker, index| {
                 finalized_contextual_param_types
@@ -3020,6 +2961,10 @@ impl<'a> CheckerState<'a> {
                         .get_parameter_type_for_call(index, args.len())
                     });
                 if let Some(expected) = expected
+                    && !(expected == TypeId::NEVER
+                        && common::index_access_parts(self.ctx.types, actual).is_some_and(
+                            |(_, index)| common::contains_type_parameters(self.ctx.types, index),
+                        ))
                     && self
                         .checker_only_assignability_failure_reason(actual, expected)
                         .is_some()

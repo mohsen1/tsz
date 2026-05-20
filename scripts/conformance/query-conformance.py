@@ -61,8 +61,7 @@ from lib.conformance_query import (
 
 # =============================================================================
 # Failure-category definitions (used by --campaign / --campaigns).
-# These are offline analysis buckets; the session-level campaign system
-# itself has been removed. See scripts/session/conformance-agent-prompt.md.
+# These are offline analysis buckets for inspecting snapshot drift.
 # =============================================================================
 
 CAMPAIGNS = {
@@ -240,6 +239,25 @@ NODE_LANE_AREAS = [
     "externalModules/typeOnly",
 ]
 
+DEFAULT_ACCEPTED_REGRESSIONS_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "conformance-accepted-regressions.txt",
+)
+
+
+def load_accepted_regressions(path=DEFAULT_ACCEPTED_REGRESSIONS_PATH):
+    if not os.path.exists(path):
+        return {"path": path, "exists": False, "entries": []}
+
+    entries = []
+    with open(path, encoding="utf-8") as handle:
+        for raw_line in handle:
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            entries.append(line)
+    return {"path": path, "exists": True, "entries": entries}
+
 
 def area_of(path):
     markers = [
@@ -346,16 +364,20 @@ def build_campaign_result(data, name):
 # =============================================================================
 
 
-def show_dashboard(data):
+def show_dashboard(data, accepted_regressions_path=DEFAULT_ACCEPTED_REGRESSIONS_PATH):
     """Show the KPI dashboard that replaces overall conformance % as the daily signal."""
     s = data["summary"]
     failures = data["failures"]
+    accepted = load_accepted_regressions(accepted_regressions_path)
 
     print("=" * 70)
     print("  TSZ CONFORMANCE KPI DASHBOARD")
     print("=" * 70)
     print()
     print(f"  Overall: {s['passed']}/{s['total']} ({s['passed']/s['total']*100:.1f}%)")
+    accepted_count = len(accepted["entries"])
+    accepted_state = "missing" if not accepted["exists"] else f"{accepted_count} listed tests"
+    print(f"  Accepted-regression gate: {accepted_state}")
     print()
 
     # KPI 1: Wrong-code count for big3
@@ -499,7 +521,13 @@ def show_dashboard(data):
     print()
 
     print("=" * 70)
-    print("  Fingerprint parity is 73.6% of remaining work.")
+    if failures:
+        fp_share = len(fp_tests) / len(failures) * 100
+        print(f"  Fingerprint-only failures: {len(fp_tests)}/{len(failures)} ({fp_share:.1f}% of current failures).")
+    else:
+        print("  No conformance failures remain in the current detail snapshot.")
+    if accepted_count:
+        print(f"  Accepted-regression strictness still lists {accepted_count} tests.")
     print("  Track KPIs, not overall %. Fix patterns, not individual tests.")
     print("=" * 70)
 

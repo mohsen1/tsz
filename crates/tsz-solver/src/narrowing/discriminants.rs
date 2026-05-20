@@ -14,7 +14,7 @@ use std::sync::Arc;
 use crate::TypeData;
 use rustc_hash::FxHashMap;
 
-use super::{DiscriminantInfo, NarrowingContext, union_or_single_preserve};
+use super::{CachedPropertyType, DiscriminantInfo, NarrowingContext, union_or_single_preserve};
 use crate::operations::property::{PropertyAccessEvaluator, PropertyAccessResult};
 use crate::relations::subtype::is_subtype_of;
 use crate::type_queries::{
@@ -27,6 +27,7 @@ use crate::visitor::{
     object_with_index_shape_id, union_list_id,
 };
 use rustc_hash::FxHashSet;
+use smallvec::SmallVec;
 use tracing::{Level, span, trace};
 use tsz_common::interner::Atom;
 
@@ -86,7 +87,7 @@ impl<'a> NarrowingContext<'a> {
         // Collect all property names from all members
         let mut all_properties: Vec<Atom> = Vec::new();
         let mut seen_properties: FxHashSet<Atom> = FxHashSet::default();
-        let mut member_props: Vec<Vec<(Atom, TypeId)>> = Vec::new();
+        let mut member_props: Vec<Vec<(Atom, TypeId)>> = Vec::with_capacity(members.len());
 
         for &member in members.iter() {
             if let Some(shape_id) = object_shape_id(self.db, member) {
@@ -111,11 +112,11 @@ impl<'a> NarrowingContext<'a> {
         }
 
         // Check each property to see if it's a valid discriminant
-        let mut discriminants = Vec::new();
+        let mut discriminants = Vec::with_capacity(all_properties.len());
 
         for prop_name in &all_properties {
             let mut is_discriminant = true;
-            let mut variants: Vec<(TypeId, TypeId)> = Vec::new();
+            let mut variants: Vec<(TypeId, TypeId)> = Vec::with_capacity(members.len());
             let mut seen_literals: FxHashSet<TypeId> = FxHashSet::default();
 
             for (i, props) in member_props.iter().enumerate() {
@@ -275,32 +276,46 @@ impl<'a> NarrowingContext<'a> {
     /// `x.kind === "..."` where we only need a direct property read from object-like
     /// union members. Falls back to the general path for complex structures.
     fn get_top_level_property_type_fast(&self, type_id: TypeId, property: Atom) -> Option<TypeId> {
-        let key = (type_id, property);
+        let type_id = self.resolve_type(type_id);
+
+        if matches!(
+            self.db.lookup(type_id),
+            Some(TypeData::Lazy(_) | TypeData::TypeQuery(_))
+        ) {
+            return None;
+        }
+
+        let key = (type_id, self.resolver_generation(), property);
         if let Some(&cached) = self.cache.property_cache.borrow().get(&key) {
             // Don't trust a cached Lazy type — re-resolve in case the TypeEnvironment
             // has been populated since the cache entry was created.
-            if let Some(prop_type) = cached {
+            if let Some(entry) = cached {
+                let prop_type = entry.type_id;
                 if prop_type != TypeId::ERROR
                     && !matches!(
                         self.db.lookup(prop_type),
                         Some(TypeData::Lazy(_) | TypeData::TypeQuery(_))
                     )
                 {
-                    return cached;
+                    return Some(prop_type);
                 }
                 // Re-resolve symbolic/error property types; an earlier no-resolver
                 // lookup may have run before the checker populated the environment.
                 let re_resolved = self.resolve_type(prop_type);
                 if re_resolved != prop_type {
+                    let re_resolved_entry = CachedPropertyType {
+                        type_id: re_resolved,
+                        from_index_signature: entry.from_index_signature,
+                    };
                     self.cache
                         .property_cache
                         .borrow_mut()
-                        .insert(key, Some(re_resolved));
+                        .insert(key, Some(re_resolved_entry));
                     return Some(re_resolved);
                 }
-                return cached;
+                return Some(prop_type);
             }
-            return cached;
+            return None;
         }
 
         // Cache the resolved property type so hot paths avoid an extra resolve pass.
@@ -320,7 +335,10 @@ impl<'a> NarrowingContext<'a> {
             None => true,
         };
         if should_cache {
-            self.cache.property_cache.borrow_mut().insert(key, result);
+            self.cache
+                .property_cache
+                .borrow_mut()
+                .insert(key, result.map(CachedPropertyType::explicit));
         }
         result
     }
@@ -540,7 +558,7 @@ impl<'a> NarrowingContext<'a> {
         } else {
             // Build the discriminant index: literal_value → Vec<matching_members>
             let mut index_map: FxHashMap<TypeId, Vec<TypeId>> = FxHashMap::default();
-            let mut any_unknown_members: Vec<TypeId> = Vec::new();
+            let mut any_unknown_members: Vec<TypeId> = Vec::with_capacity(members.len());
             let mut has_non_indexable = false;
 
             for &member in members {
@@ -778,7 +796,7 @@ impl<'a> NarrowingContext<'a> {
         let (_resolved, members, property_evaluator) =
             self.resolve_members_and_evaluator(union_type);
 
-        let mut matching: Vec<TypeId> = Vec::new();
+        let mut matching: SmallVec<[TypeId; 4]> = SmallVec::new();
 
         for &member in &members {
             if member.is_any_or_unknown() {
@@ -837,7 +855,11 @@ impl<'a> NarrowingContext<'a> {
             return union_type;
         }
 
-        union_or_single_preserve(self.db, matching)
+        match matching.len() {
+            0 => TypeId::NEVER,
+            1 => matching[0],
+            _ => union_or_single_preserve(self.db, matching.into_vec()),
+        }
     }
 
     /// - `union_type`: The union type to narrow
@@ -900,7 +922,7 @@ impl<'a> NarrowingContext<'a> {
             members.len()
         );
 
-        let mut matching: Vec<TypeId> = Vec::new();
+        let mut matching: SmallVec<[TypeId; 4]> = SmallVec::new();
         // Track whether any member actually has the discriminant property.
         // If no member has the property, discriminant narrowing is inapplicable
         // and we should return the original type instead of `never`.
@@ -1061,7 +1083,7 @@ impl<'a> NarrowingContext<'a> {
                 matching.len(),
                 members.len()
             );
-            self.db.union(matching)
+            self.db.union(matching.into_vec())
         }
     }
 
@@ -1132,7 +1154,7 @@ impl<'a> NarrowingContext<'a> {
             members.len()
         );
 
-        let mut remaining: Vec<TypeId> = Vec::new();
+        let mut remaining: Vec<TypeId> = Vec::with_capacity(members.len());
 
         for &member in &members {
             // Special case: any and unknown always kept (could have any property value)
@@ -1289,7 +1311,7 @@ impl<'a> NarrowingContext<'a> {
         // Put excluded values into a HashSet for O(1) lookup
         let excluded_set: FxHashSet<TypeId> = excluded_values.iter().copied().collect();
 
-        let mut remaining: Vec<TypeId> = Vec::new();
+        let mut remaining: Vec<TypeId> = Vec::with_capacity(members.len());
 
         for &member in &members {
             if member.is_any_or_unknown() {

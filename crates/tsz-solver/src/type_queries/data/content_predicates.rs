@@ -3,7 +3,7 @@
 //! Contains `contains_*`, `is_*` predicates, union/intersection member access,
 //! array/tuple extraction, and compound member mapping.
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::def::DefinitionStore;
 use crate::types::{IntrinsicKind, TypeData, TypeId};
 use crate::visitors::visitor_predicates::contains_type_matching;
@@ -70,20 +70,22 @@ pub fn contains_named_or_bound_type_parameters_db(db: &dyn TypeDatabase, type_id
 }
 
 /// Like `contains_type_parameters_db`, but ignores references to a known
-/// locally-bound mapped key parameter.
+/// locally-bound mapped key parameter. See
+/// [`contains_free_type_parameters_except_name`] for the leaf-treatment
+/// rationale.
+///
+/// [`contains_free_type_parameters_except_name`]:
+///     crate::visitors::visitor_predicates::contains_free_type_parameters_except_name
 pub fn contains_type_parameters_except_name_db(
     db: &dyn TypeDatabase,
     type_id: TypeId,
     excluded_name: Atom,
 ) -> bool {
-    if type_id.is_intrinsic() {
-        return false;
-    }
-    contains_type_matching(db, type_id, |key| match key {
-        TypeData::TypeParameter(info) | TypeData::Infer(info) => info.name != excluded_name,
-        TypeData::ThisType | TypeData::BoundParameter(_) => true,
-        _ => false,
-    })
+    crate::visitors::visitor_predicates::contains_free_type_parameters_except_name(
+        db,
+        type_id,
+        excluded_name,
+    )
 }
 
 /// Check if a type contains an indexed access whose object is a type parameter.
@@ -96,6 +98,15 @@ pub fn contains_index_access_with_type_parameter_object(
         type_id,
         |key| matches!(key, TypeData::IndexAccess(object, _) if crate::type_queries::is_type_parameter_like(db, *object)),
     )
+}
+
+/// Check if a type contains a generic indexed access surface.
+pub fn contains_generic_indexed_access_surface(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    let Some(TypeData::IndexAccess(object, index)) = db.lookup(type_id) else {
+        return false;
+    };
+    crate::type_queries::is_type_parameter_like(db, object)
+        || contains_type_parameters_db(db, index)
 }
 
 /// Check if a type contains an indexed access whose object is a variadic tuple
@@ -215,14 +226,17 @@ pub fn contains_infer_types_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id.is_intrinsic() {
         return false;
     }
+    if let Some(cached) = db.contains_infer_types_cached(type_id) {
+        return cached;
+    }
     // Fast path: leaf types (Literal, Object, Function, etc.) that don't
     // contain nested types can't contain Infer. Only composite types
     // (Union, Intersection, Application, etc.) need traversal.
-    match db.lookup(type_id) {
-        Some(TypeData::Infer(_)) => return true,
+    let result = match db.lookup(type_id) {
+        Some(TypeData::Infer(_)) => true,
         Some(TypeData::TypeParameter(tp)) => {
             let name = db.resolve_atom_ref(tp.name);
-            return name.starts_with("__infer_") || name.starts_with("__infer_src_");
+            name.starts_with("__infer_") || name.starts_with("__infer_src_")
         }
         Some(
             TypeData::Literal(_)
@@ -233,17 +247,18 @@ pub fn contains_infer_types_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
             | TypeData::ModuleNamespace(_)
             | TypeData::BoundParameter(_)
             | TypeData::Recursive(_),
-        ) => return false,
-        _ => {}
-    }
-    contains_type_matching(db, type_id, |key| match key {
-        TypeData::Infer(_) => true,
-        TypeData::TypeParameter(tp) => {
-            let name = db.resolve_atom_ref(tp.name);
-            name.starts_with("__infer_") || name.starts_with("__infer_src_")
-        }
-        _ => false,
-    })
+        ) => false,
+        _ => contains_type_matching(db, type_id, |key| match key {
+            TypeData::Infer(_) => true,
+            TypeData::TypeParameter(tp) => {
+                let name = db.resolve_atom_ref(tp.name);
+                name.starts_with("__infer_") || name.starts_with("__infer_src_")
+            }
+            _ => false,
+        }),
+    };
+    db.set_contains_infer_types_cache(type_id, result);
+    result
 }
 
 /// Check if a type contains any unresolved `TypeQuery` references.
@@ -256,8 +271,11 @@ pub fn contains_type_query_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id.is_intrinsic() {
         return false;
     }
-    match db.lookup(type_id) {
-        Some(TypeData::TypeQuery(_)) => return true,
+    if let Some(cached) = db.contains_type_query_cached(type_id) {
+        return cached;
+    }
+    let result = match db.lookup(type_id) {
+        Some(TypeData::TypeQuery(_)) => true,
         Some(
             TypeData::Literal(_)
             | TypeData::Intrinsic(_)
@@ -267,10 +285,11 @@ pub fn contains_type_query_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
             | TypeData::ModuleNamespace(_)
             | TypeData::BoundParameter(_)
             | TypeData::Recursive(_),
-        ) => return false,
-        _ => {}
-    }
-    contains_type_matching(db, type_id, |key| matches!(key, TypeData::TypeQuery(_)))
+        ) => false,
+        _ => contains_type_matching(db, type_id, |key| matches!(key, TypeData::TypeQuery(_))),
+    };
+    db.set_contains_type_query_cache(type_id, result);
+    result
 }
 
 /// Check if a type contains unresolved type parameters other than tsz's internal
@@ -316,6 +335,26 @@ pub fn is_bare_infer_placeholder_db(db: &dyn TypeDatabase, type_id: TypeId) -> b
     }
 }
 
+/// Check whether a type is itself a bare call-local inference placeholder.
+///
+/// Higher-order generic function inference also creates `__infer_src_*`
+/// placeholders for the generic parameters of a source function argument. Those
+/// are not stale call-local placeholders: when they survive into a returned
+/// function type they represent type parameters that should be hoisted.
+pub fn is_bare_current_infer_placeholder_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::Infer(_)) => true,
+        Some(TypeData::TypeParameter(tp)) => {
+            let name = db.resolve_atom_ref(tp.name);
+            name.starts_with("__infer_") && !name.starts_with("__infer_src_")
+        }
+        _ => false,
+    }
+}
+
 /// Check if a type is a spread marker tuple created by the checker.
 pub fn is_spread_marker_tuple(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id.is_intrinsic() {
@@ -355,7 +394,8 @@ pub fn rest_type_needs_aggregate_argument_check(db: &dyn TypeDatabase, type_id: 
                 || rest_type_needs_aggregate_argument_check(db, member)
         }),
         Some(
-            TypeData::Application(_)
+            TypeData::TypeParameter(_)
+            | TypeData::Application(_)
             | TypeData::Conditional(_)
             | TypeData::Intersection(_)
             | TypeData::Lazy(_)
@@ -378,6 +418,24 @@ pub fn contains_infer_placeholder_db(db: &dyn TypeDatabase, type_id: TypeId) -> 
         TypeData::TypeParameter(tp) => {
             let name = db.resolve_atom_ref(tp.name);
             name.starts_with("__infer_") || name.starts_with("__infer_src_")
+        }
+        TypeData::Infer(_) => true,
+        _ => false,
+    })
+}
+
+/// Check if a type contains a call-local inference placeholder.
+///
+/// This intentionally excludes `__infer_src_*` placeholders because those carry
+/// higher-order source generic parameters and are normalized or hoisted later.
+pub fn contains_current_infer_placeholder_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if is_bare_current_infer_placeholder_db(db, type_id) {
+        return true;
+    }
+    contains_type_matching(db, type_id, |key| match key {
+        TypeData::TypeParameter(tp) => {
+            let name = db.resolve_atom_ref(tp.name);
+            name.starts_with("__infer_") && !name.starts_with("__infer_src_")
         }
         TypeData::Infer(_) => true,
         _ => false,
@@ -511,6 +569,36 @@ pub fn contains_application_in_structure(db: &dyn TypeDatabase, type_id: TypeId)
         }
         _ => false,
     }
+}
+
+/// Return true when `type_id` (or any union/intersection member reachable from it)
+/// is a `ConditionalType` whose `extends_type` is still an unevaluated
+/// `Application` type.
+pub fn contains_conditional_with_application_extends(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    fn walk(db: &dyn TypeDatabase, type_id: TypeId, depth: u32) -> bool {
+        if depth > 32 {
+            return false;
+        }
+        if let Some(TypeData::Conditional(cond_id)) = db.lookup(type_id) {
+            let cond = db.get_conditional(cond_id);
+            if matches!(db.lookup(cond.extends_type), Some(TypeData::Application(_))) {
+                return true;
+            }
+        }
+        if let Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) = db.lookup(type_id)
+        {
+            let members = db.type_list(list_id);
+            if members.iter().any(|&member| walk(db, member, depth + 1)) {
+                return true;
+            }
+        }
+        false
+    }
+
+    walk(db, type_id, 0)
 }
 
 // =============================================================================

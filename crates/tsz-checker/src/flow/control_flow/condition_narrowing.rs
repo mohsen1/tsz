@@ -1,15 +1,42 @@
 use super::FlowAnalyzer;
 use crate::query_boundaries::common::is_union_type;
 use crate::query_boundaries::flow as flow_boundary;
-use crate::query_boundaries::flow_analysis::{is_unit_type, is_unknown_narrowing_literal};
+use crate::query_boundaries::flow_analysis::{
+    empty_object_type, is_unit_type, is_unknown_narrowing_literal,
+};
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{FlowNodeId, SymbolId, symbol_flags};
 use tsz_parser::parser::node::BinaryExprData;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{GuardSense, NarrowingContext, TypeGuard, TypeId, TypeofKind};
+use tsz_solver::TypeId;
+use tsz_solver::narrowing::{GuardSense, NarrowingContext, TypeGuard, TypeofKind};
 
 impl<'a> FlowAnalyzer<'a> {
+    fn union_logical_condition_branches(&self, types: Vec<TypeId>) -> TypeId {
+        let mut members = Vec::with_capacity(types.len());
+        let mut saw_reachable = false;
+
+        for ty in types {
+            if ty != TypeId::NEVER {
+                saw_reachable = true;
+            }
+            if !members.contains(&ty) {
+                members.push(ty);
+            }
+        }
+
+        if saw_reachable {
+            members.retain(|&ty| ty != TypeId::NEVER);
+        }
+
+        match members.len() {
+            0 => TypeId::NEVER,
+            1 => members[0],
+            _ => self.interner.union_preserve_members(members),
+        }
+    }
+
     pub(crate) fn narrow_by_switch_true_case_clause(
         &self,
         type_id: TypeId,
@@ -124,29 +151,28 @@ impl<'a> FlowAnalyzer<'a> {
         &self,
         type_id: TypeId,
         switch_expr: NodeIndex,
-        case_block: NodeIndex,
         clause_idx: NodeIndex,
         case_expr: NodeIndex,
         target: NodeIndex,
         narrowing: &NarrowingContext,
+        has_fallthrough: bool,
     ) -> TypeId {
-        let Some(case_block_node) = self.arena.get(case_block) else {
-            return self.narrow_by_switch_clause(
-                type_id,
-                switch_expr,
-                case_expr,
-                target,
-                narrowing,
-            );
+        let fallback =
+            || self.narrow_by_switch_clause(type_id, switch_expr, case_expr, target, narrowing);
+        let Some(case_block) = self
+            .arena
+            .get_extended(clause_idx)
+            .map(|ext| ext.parent)
+            .filter(|parent| parent.is_some())
+        else {
+            return fallback();
         };
-        let Some(case_block_data) = self.arena.get_block(case_block_node) else {
-            return self.narrow_by_switch_clause(
-                type_id,
-                switch_expr,
-                case_expr,
-                target,
-                narrowing,
-            );
+        let Some(case_block_data) = self
+            .arena
+            .get(case_block)
+            .and_then(|node| self.arena.get_block(node))
+        else {
+            return fallback();
         };
 
         if let Some(typeof_operand) = self.get_typeof_operand(self.skip_parenthesized(switch_expr))
@@ -204,10 +230,6 @@ impl<'a> FlowAnalyzer<'a> {
             }
         }
 
-        // OPTIMIZATION: For discriminant switches (switch(x.kind) or switch(x)),
-        // collect all preceding case literal types and exclude them in a single O(N)
-        // pass instead of O(N^2) sequential narrowing. This is critical for large
-        // discriminated unions (e.g., 200-member unions in switch statements).
         let target_is_switch_expr = self.is_matching_reference(switch_expr, target);
         let discriminant_info = if !target_is_switch_expr {
             self.discriminant_property_info(switch_expr, target)
@@ -216,13 +238,51 @@ impl<'a> FlowAnalyzer<'a> {
         };
 
         if target_is_switch_expr || discriminant_info.is_some() {
-            // Collect all preceding case literal types
+            if !has_fallthrough
+                && let Some(current_lit_type) = self.literal_type_from_node(case_expr)
+            {
+                let mut previous_cases_are_distinct_literals = true;
+                for &idx in &case_block_data.statements.nodes {
+                    if idx == clause_idx {
+                        break;
+                    }
+                    let Some(clause_node) = self.arena.get(idx) else {
+                        continue;
+                    };
+                    let Some(clause) = self.arena.get_case_clause(clause_node) else {
+                        continue;
+                    };
+                    if clause.expression.is_none() {
+                        previous_cases_are_distinct_literals = false;
+                        break;
+                    }
+                    let Some(prev_lit_type) = self.literal_type_from_node(clause.expression) else {
+                        previous_cases_are_distinct_literals = false;
+                        break;
+                    };
+                    if prev_lit_type == current_lit_type {
+                        previous_cases_are_distinct_literals = false;
+                        break;
+                    }
+                }
+
+                if previous_cases_are_distinct_literals {
+                    return self.narrow_by_switch_clause(
+                        type_id,
+                        switch_expr,
+                        case_expr,
+                        target,
+                        narrowing,
+                    );
+                }
+            }
+
             let mut excluded_types: Vec<TypeId> = Vec::new();
             let mut all_literals = true;
 
             for &idx in &case_block_data.statements.nodes {
                 if idx == clause_idx {
-                    break; // Stop at current clause
+                    break;
                 }
                 let Some(clause_node) = self.arena.get(idx) else {
                     continue;
@@ -236,13 +296,10 @@ impl<'a> FlowAnalyzer<'a> {
 
                 if let Some(lit_type) = self.literal_type_from_node(clause.expression) {
                     excluded_types.push(lit_type);
-                } else if let Some(node_types) = self.node_types {
-                    if let Some(&expr_type) = node_types.get(&clause.expression.0) {
-                        excluded_types.push(expr_type);
-                    } else {
-                        all_literals = false;
-                        break;
-                    }
+                } else if let Some(node_types) = self.node_types
+                    && let Some(&expr_type) = node_types.get(&clause.expression.0)
+                {
+                    excluded_types.push(expr_type);
                 } else {
                     all_literals = false;
                     break;
@@ -250,7 +307,6 @@ impl<'a> FlowAnalyzer<'a> {
             }
 
             if all_literals {
-                // Batch-exclude all preceding case types, then apply positive match
                 let narrowed = if excluded_types.is_empty() {
                     type_id
                 } else if target_is_switch_expr {
@@ -264,8 +320,6 @@ impl<'a> FlowAnalyzer<'a> {
                 } else {
                     type_id
                 };
-
-                // Apply positive narrowing for current case
                 return self.narrow_by_switch_clause(
                     narrowed,
                     switch_expr,
@@ -587,6 +641,17 @@ impl<'a> FlowAnalyzer<'a> {
             self.make_narrowing_context()
         };
 
+        if type_id == TypeId::UNKNOWN
+            && let Some(current_exclusion) =
+                self.typeof_exclusion_for_condition(condition_idx, target, is_true_branch)
+        {
+            let prior_exclusions = self.antecedent_typeof_exclusion_mask(antecedent_id, target);
+            let exclusions = prior_exclusions | Self::typeof_exclusion_bit(current_exclusion);
+            if exclusions == Self::ALL_TYPEOF_EXCLUSIONS {
+                return empty_object_type(self.interner);
+            }
+        }
+
         if cond_node.kind == SyntaxKind::Identifier as u16
             // Direct truthiness checks (`if (x)`, `x && ...`, `x! && ...`) must narrow
             // the reference itself. Alias recursion is only for `const alias = guard`.
@@ -707,6 +772,15 @@ impl<'a> FlowAnalyzer<'a> {
                                 &guard,
                                 GuardSense::from(effective_sense),
                             );
+                            if effective_sense
+                                && matches!(guard, TypeGuard::Typeof(TypeofKind::Object))
+                                && self.antecedent_chain_excludes_null_for_target(
+                                    antecedent_id,
+                                    target,
+                                )
+                            {
+                                return narrowing.narrow_excluding_type(result, TypeId::NULL);
+                            }
                             return result;
                         }
 
@@ -841,9 +915,7 @@ impl<'a> FlowAnalyzer<'a> {
                 if self.is_matching_reference(condition_ref, target) {
                     if is_true_branch {
                         // Remove null/undefined (truthy narrowing)
-                        let narrowed = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
-                        let narrowed = narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
-                        return narrowed;
+                        return flow_boundary::narrow_non_nullish(self.interner, type_id);
                     }
                     // False branch - keep only falsy types (use Solver for NaN handling)
                     return narrowing.narrow_to_falsy(type_id);
@@ -862,6 +934,22 @@ impl<'a> FlowAnalyzer<'a> {
                         GuardSense::from(is_true_branch),
                     );
                     return narrowed;
+                }
+
+                if let Some((base, prop_name)) = self.binding_element_property_alias(condition_ref)
+                    && self.is_matching_reference(base, target)
+                    && let Some(alias_sym_id) =
+                        self.binder.resolve_identifier(self.arena, condition_ref)
+                    && !self.is_alias_reference_mutated(alias_sym_id, target, antecedent_id)
+                {
+                    let narrowed = narrowing.narrow_by_property_truthiness(
+                        type_id,
+                        &[prop_name],
+                        is_true_branch,
+                    );
+                    if narrowed != TypeId::NEVER || is_union_type(self.interner, type_id) {
+                        return narrowed;
+                    }
                 }
             }
         }
@@ -1181,11 +1269,18 @@ impl<'a> FlowAnalyzer<'a> {
                     .is_some_and(|sid| self.is_unknown_catch_variable_symbol(sid));
                 let typeof_base_type =
                     flow_boundary::catch_variable_typeof_base_from_flow(type_id, is_catch_var);
-                return narrowing.narrow_type(
+                let narrowed = narrowing.narrow_type(
                     typeof_base_type,
                     &TypeGuard::Typeof(typeof_kind),
                     GuardSense::from(effective_truth),
                 );
+                if effective_truth
+                    && typeof_kind == TypeofKind::Object
+                    && self.antecedent_chain_excludes_null_for_target(antecedent_id, target)
+                {
+                    return narrowing.narrow_excluding_type(narrowed, TypeId::NULL);
+                }
+                return narrowed;
             }
             // Non-standard typeof string (e.g. "Object", host-defined types).
             // TypeScript behavior:
@@ -1329,7 +1424,11 @@ impl<'a> FlowAnalyzer<'a> {
                 // The type will be computed from the already-narrowed base or via literal comparison.
             }
 
-            if let Some(literal_type) = self.literal_comparison(bin.left, bin.right, target) {
+            // Loose equality (==) does not narrow non-nullish literals on top types (unknown/any).
+            // Nullish loose equality (x == null) is handled above as NullishEquality.
+            if (is_strict || !type_id.is_any_or_unknown())
+                && let Some(literal_type) = self.literal_comparison(bin.left, bin.right, target)
+            {
                 if effective_truth {
                     let narrowed = narrowing.narrow_to_type(type_id, literal_type);
                     if narrowed != TypeId::NEVER {
@@ -1357,7 +1456,8 @@ impl<'a> FlowAnalyzer<'a> {
             // sources; for any other source, primitive-intrinsic
             // comparands are not narrowing literals (see
             // `is_narrowing_literal`).
-            if (type_id == TypeId::UNKNOWN || type_id == TypeId::ANY)
+            if is_strict
+                && type_id.is_any_or_unknown()
                 && let Some(literal_type) =
                     self.literal_comparison_for_unknown_target(bin.left, bin.right, target)
             {
@@ -1601,10 +1701,7 @@ impl<'a> FlowAnalyzer<'a> {
                 antecedent_id,
                 visited_aliases,
             );
-            return Some(tsz_solver::utils::union_or_single(
-                self.interner,
-                vec![left_false, right_false],
-            ));
+            return Some(self.union_logical_condition_branches(vec![left_false, right_false]));
         }
 
         // For ||= and ??= in condition context: `if (x ||= y)` / `if (x ??= y)`
@@ -1625,9 +1722,7 @@ impl<'a> FlowAnalyzer<'a> {
             };
             if is_true_branch {
                 // x holds the truthy result → remove null/undefined
-                let narrowed = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
-                let narrowed = narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
-                return Some(narrowed);
+                return Some(flow_boundary::narrow_non_nullish(self.interner, type_id));
             }
             // x holds the falsy result → keep only falsy types
             return Some(narrowing.narrow_to_falsy(type_id));
@@ -1662,10 +1757,7 @@ impl<'a> FlowAnalyzer<'a> {
                     antecedent_id,
                     visited_aliases,
                 );
-                return Some(tsz_solver::utils::union_or_single(
-                    self.interner,
-                    vec![left_true, right_true],
-                ));
+                return Some(self.union_logical_condition_branches(vec![left_true, right_true]));
             }
 
             let left_false = self.narrow_type_by_condition_inner(
@@ -1722,10 +1814,7 @@ impl<'a> FlowAnalyzer<'a> {
                     antecedent_id,
                     visited_aliases,
                 );
-                return Some(tsz_solver::utils::union_or_single(
-                    self.interner,
-                    vec![left_true, right_true],
-                ));
+                return Some(self.union_logical_condition_branches(vec![left_true, right_true]));
             }
 
             let left_false = self.narrow_type_by_condition_inner(
@@ -1757,7 +1846,9 @@ impl<'a> FlowAnalyzer<'a> {
         // - RHS (y): For &&= only, the TRUE branch also guarantees y is truthy,
         //   because &&= evaluates y only when x is truthy, and the result IS y.
         //   For ||= and ??=, the TRUE branch doesn't guarantee y was evaluated.
-        if crate::query_boundaries::common::is_logical_compound_assignment_operator(operator) {
+        if crate::query_boundaries::operator_wrappers::is_logical_compound_assignment_operator(
+            operator,
+        ) {
             let matches_lhs = self.is_matching_reference(bin.left, target);
             let matches_rhs = operator == SyntaxKind::AmpersandAmpersandEqualsToken as u16
                 && self.is_matching_reference(bin.right, target);
@@ -1803,6 +1894,11 @@ impl<'a> FlowAnalyzer<'a> {
             return Some(t);
         }
         if let Some(type_id) = self.resolve_const_identifier_type(idx, node) {
+            return is_unknown_narrowing_literal(self.interner, type_id);
+        }
+        if let Some(sym_id) = self.binder.resolve_identifier(self.arena, idx)
+            && let Some(type_id) = self.annotation_comparison_type(sym_id)
+        {
             return is_unknown_narrowing_literal(self.interner, type_id);
         }
         None

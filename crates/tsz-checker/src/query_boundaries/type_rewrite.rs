@@ -1,7 +1,8 @@
 //! Type rewrite helpers that intentionally inspect solver type shapes at the
 //! checker boundary.
 
-use tsz_solver::{QueryDatabase, SymbolRef, TypeData, TypeId};
+use tsz_solver::construction::QueryDatabase;
+use tsz_solver::{SymbolRef, TypeData, TypeId};
 
 pub(crate) fn replace_type_queries_and_lazies_with(
     db: &dyn QueryDatabase,

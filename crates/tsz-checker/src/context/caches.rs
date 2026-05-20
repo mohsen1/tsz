@@ -1,7 +1,18 @@
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 use tsz_binder::SymbolId;
 use tsz_solver::TypeId;
+
+/// Checker-local memos for type-reference argument validation.
+#[derive(Debug, Default)]
+pub struct TypeReferenceValidationCaches {
+    /// Type-reference argument validations that completed without diagnostics
+    /// in the current lexical type-parameter scope.
+    pub arg_validation: FxHashSet<(u32, u32, u64)>,
+    /// Syntax-guided type-reference argument instantiations in the current
+    /// lexical type-parameter scope, including misses.
+    pub syntax_instantiation: FxHashMap<(usize, u32, TypeId, u64), Option<TypeId>>,
+}
 
 /// Sparse cache for node-index-keyed `TypeId` lookups.
 ///

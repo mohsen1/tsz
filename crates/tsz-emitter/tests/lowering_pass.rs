@@ -1,8 +1,9 @@
 use super::*;
 use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::ParserState;
-use tsz_parser::parser::node::NodeArena;
+use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::parser::node_flags;
+use tsz_parser::parser::syntax_kind_ext;
 
 fn parse(source: &str) -> (NodeArena, NodeIndex) {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -88,6 +89,147 @@ fn test_lowering_pass_es2022_accessor_class_skips_private_field_helpers() {
         !helpers.class_private_field_set,
         "ES2022+ target should not emit private field helpers for auto-accessor class"
     );
+}
+
+#[test]
+fn test_lowering_pass_es2015_param_class_temp_uses_body_prologue() {
+    let source = "function foo(y = class { static c = x; get [x]() { return x; } }, x = 1) {}";
+    let (arena, root) = parse(source);
+    let mut ctx = EmitContext::default();
+    ctx.set_target(ScriptTarget::ES2015);
+
+    let lowering = LoweringPass::new(&arena, &ctx);
+    let transforms = lowering.run(root);
+
+    let root_node = arena.get(root).expect("expected source file node");
+    let source_file = arena
+        .get_source_file(root_node)
+        .expect("expected source file data");
+    let function_idx = *source_file
+        .statements
+        .nodes
+        .first()
+        .expect("expected function declaration");
+
+    assert!(
+        matches!(
+            transforms.get(function_idx),
+            Some(TransformDirective::ES5FunctionParameters { .. })
+        ),
+        "ES2015 parameter initializers that need function-scoped class temps should use a body prologue"
+    );
+}
+
+#[test]
+fn test_lowering_pass_es2015_arrow_param_binding_class_temp_uses_body_prologue() {
+    let source = "(({ [class { static x = 1 }.x]: b = \"\" }) => {})();";
+    let (arena, root) = parse(source);
+    let mut ctx = EmitContext::default();
+    ctx.set_target(ScriptTarget::ES2015);
+
+    let lowering = LoweringPass::new(&arena, &ctx);
+    let transforms = lowering.run(root);
+
+    let root_node = arena.get(root).expect("expected source file node");
+    let source_file = arena
+        .get_source_file(root_node)
+        .expect("expected source file data");
+    let stmt_idx = *source_file
+        .statements
+        .nodes
+        .first()
+        .expect("expected expression statement");
+    let stmt_node = arena.get(stmt_idx).expect("expected statement node");
+    let expr_stmt = arena
+        .get_expression_statement(stmt_node)
+        .expect("expected expression statement data");
+    let call_node = arena
+        .get(expr_stmt.expression)
+        .expect("expected call expression node");
+    let call = arena
+        .get_call_expr(call_node)
+        .expect("expected call expression data");
+    let callee_node = arena.get(call.expression).expect("expected callee node");
+    let paren = arena
+        .get_parenthesized(callee_node)
+        .expect("expected parenthesized arrow callee");
+    let arrow_idx = paren.expression;
+    assert!(
+        arena
+            .get(arrow_idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::ARROW_FUNCTION),
+        "expected parenthesized callee to contain arrow function"
+    );
+
+    assert!(
+        matches!(
+            transforms.get(arrow_idx),
+            Some(TransformDirective::ES5FunctionParameters { .. })
+        ),
+        "ES2015 arrow binding parameters that need function-scoped class temps should use a body prologue"
+    );
+}
+
+#[test]
+fn test_lowering_pass_es2015_arrow_param_binding_nullish_key_uses_body_prologue() {
+    assert_es2015_arrow_param_binding_key_uses_body_prologue(
+        "const a = () => undefined; (({ [a() ?? \"d\"]: c = \"\" }) => {})();",
+        "ES2015 arrow binding parameters with downlevel nullish computed keys should use a body prologue",
+    );
+}
+
+#[test]
+fn test_lowering_pass_es2015_arrow_param_binding_wrapped_nullish_keys_use_body_prologue() {
+    for source in [
+        "const a = () => undefined; (({ [+(a() ?? \"d\")]: c = \"\" }) => {})();",
+        "const a = () => undefined; (({ [[a() ?? \"d\"][0]]: c = \"\" }) => {})();",
+        "const a = () => undefined; (({ [{ value: a() ?? \"d\" }.value]: c = \"\" }) => {})();",
+    ] {
+        assert_es2015_arrow_param_binding_key_uses_body_prologue(
+            source,
+            "ES2015 arrow binding parameters with wrapped downlevel computed keys should use a body prologue",
+        );
+    }
+}
+
+#[test]
+fn test_lowering_pass_es2015_arrow_param_binding_optional_chain_key_uses_body_prologue() {
+    assert_es2015_arrow_param_binding_key_uses_body_prologue(
+        "const a = () => undefined; (({ [a()?.d]: c = \"\" }) => {})();",
+        "ES2015 arrow binding parameters with downlevel optional-chain computed keys should use a body prologue",
+    );
+}
+
+fn assert_es2015_arrow_param_binding_key_uses_body_prologue(source: &str, message: &str) {
+    let (arena, root) = parse(source);
+    let mut ctx = EmitContext::default();
+    ctx.set_target(ScriptTarget::ES2015);
+
+    let lowering = LoweringPass::new(&arena, &ctx);
+    let transforms = lowering.run(root);
+
+    let arrow_idx = find_first_arrow_function(&arena, root).expect("expected arrow function");
+    assert!(
+        matches!(
+            transforms.get(arrow_idx),
+            Some(TransformDirective::ES5FunctionParameters { .. })
+        ),
+        "{message}"
+    );
+}
+
+fn find_first_arrow_function(arena: &NodeArena, root: NodeIndex) -> Option<NodeIndex> {
+    let mut stack = vec![root];
+    while let Some(idx) = stack.pop() {
+        let Some(node) = arena.get(idx) else {
+            continue;
+        };
+        if node.kind == syntax_kind_ext::ARROW_FUNCTION {
+            return Some(idx);
+        }
+        stack.extend(arena.get_children(idx));
+    }
+    None
 }
 
 #[test]

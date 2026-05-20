@@ -1,8 +1,8 @@
-use crate::caches::query_cache::subtype_cache_config_from_legacy_flags;
+use crate::construction::{QueryCache, QueryCacheStatistics, RelationCacheProbe};
+use crate::relations::relation_queries::RelationPolicy;
 use crate::{
-    LiteralValue, ObjectFlags, PropertyInfo, QueryCache, QueryCacheStatistics, QueryDatabase,
-    RelationCacheKey, RelationCacheProbe, TupleElement, TypeData, TypeDatabase, TypeId,
-    TypeInterner, Visibility,
+    LiteralValue, ObjectFlags, PropertyInfo, QueryDatabase, RelationCacheConfig, RelationCacheKey,
+    TupleElement, TypeData, TypeDatabase, TypeId, TypeInterner, Visibility,
 };
 
 impl<'a> QueryCache<'a> {
@@ -135,7 +135,7 @@ fn relation_cache_stats_track_hits_and_misses() {
     let key = RelationCacheKey::for_subtype(
         hello,
         TypeId::STRING,
-        subtype_cache_config_from_legacy_flags(0),
+        RelationPolicy::from_flags(0).cache_config(),
     );
 
     assert_eq!(
@@ -283,7 +283,9 @@ fn type_interner_element_access_respects_no_unchecked_indexed_access() {
     db.set_no_unchecked_indexed_access(true);
     let with_flag = db.resolve_element_access_type(array, TypeId::NUMBER, None);
     assert_ne!(with_flag, TypeId::STRING);
-    assert!(crate::type_contains_undefined(&interner, with_flag));
+    assert!(crate::narrowing::type_contains_undefined(
+        &interner, with_flag
+    ));
 }
 
 #[test]
@@ -361,11 +363,14 @@ fn query_cache_estimated_size_grows_with_entries() {
     cache.evaluate_type(num_type);
 
     // Add subtype cache entries
-    cache.insert_subtype_cache(RelationCacheKey::subtype(str_type, num_type, 0, 0), false);
+    cache.insert_subtype_cache(
+        RelationCacheKey::for_subtype(str_type, num_type, RelationCacheConfig::default()),
+        false,
+    );
 
     // Add assignability cache entries
     cache.insert_assignability_cache(
-        RelationCacheKey::assignability(str_type, num_type, 0, 0),
+        RelationCacheKey::for_assignability(str_type, num_type, RelationCacheConfig::default()),
         false,
     );
 
@@ -392,7 +397,7 @@ fn query_cache_estimated_size_resets_on_clear() {
     let str_type = interner.literal_string("test");
     cache.evaluate_type(str_type);
     cache.insert_subtype_cache(
-        RelationCacheKey::subtype(str_type, TypeId::NUMBER, 0, 0),
+        RelationCacheKey::for_subtype(str_type, TypeId::NUMBER, RelationCacheConfig::default()),
         true,
     );
     cache.insert_intersection_merge(str_type, Some(TypeId::STRING));

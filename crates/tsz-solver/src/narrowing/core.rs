@@ -1,3 +1,4 @@
+use crate::construction::{QueryDatabase, TypeDatabase};
 use crate::def::DefId;
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::type_queries::{UnionMembersKind, classify_for_union_members};
@@ -9,8 +10,7 @@ use crate::visitor::{
     lazy_def_id, literal_value, object_shape_id, object_with_index_shape_id, template_literal_id,
     type_param_info, union_list_id,
 };
-use crate::{QueryDatabase, TypeDatabase};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 use std::sync::Arc;
 use tracing::{Level, span, trace};
@@ -18,7 +18,7 @@ use tsz_common::interner::Atom;
 
 /// Describes whether a type guard should be applied in its positive (truthy)
 /// or negative (falsy) sense.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum GuardSense {
     /// The guard condition is true (e.g., `typeof x === "string"`).
     Positive,
@@ -37,6 +37,27 @@ impl From<bool> for GuardSense {
 }
 
 type SplitNullishParts = (Option<TypeId>, Option<TypeId>);
+
+/// Cache key for a successful identifier-rooted optional property chain.
+///
+/// The root is semantic (`TypeId`), while the path uses interned property
+/// atoms plus a bit mask for which path segments used `?.`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct OptionalPropertyChainKey {
+    pub root_type: TypeId,
+    pub properties: Vec<Atom>,
+    pub optional_mask: u64,
+    pub no_unchecked_indexed_access: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct NarrowTypeCacheKey {
+    source_type: TypeId,
+    guard: TypeGuard,
+    sense: GuardSense,
+    compiler_flags: u8,
+    resolver_generation: u64,
+}
 
 /// The result of a `typeof` expression, restricted to the 8 standard JavaScript types.
 ///
@@ -99,7 +120,7 @@ impl TypeofKind {
 /// x                         -> TypeGuard::Truthy
 /// x.kind === "circle"       -> TypeGuard::Discriminant { property: "kind", value: "circle" }
 /// ```
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TypeGuard {
     /// `typeof x === "typename"`
     ///
@@ -279,6 +300,69 @@ pub struct DiscriminantInfo {
 
 type DiscriminantMembers = FxHashMap<TypeId, Vec<TypeId>>;
 type DiscriminantIndex = FxHashMap<(TypeId, Atom), Arc<DiscriminantMembers>>;
+type PropertyCacheKey = (TypeId, u64, Atom);
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CachedPropertyType {
+    pub type_id: TypeId,
+    pub from_index_signature: bool,
+}
+
+impl CachedPropertyType {
+    pub const fn new(type_id: TypeId, from_index_signature: bool) -> Self {
+        Self {
+            type_id,
+            from_index_signature,
+        }
+    }
+
+    pub const fn explicit(type_id: TypeId) -> Self {
+        Self {
+            type_id,
+            from_index_signature: false,
+        }
+    }
+
+    pub const fn index_signature(type_id: TypeId) -> Self {
+        Self {
+            type_id,
+            from_index_signature: true,
+        }
+    }
+}
+
+type NarrowedPropertyCache = FxHashMap<PropertyCacheKey, Option<CachedPropertyType>>;
+type RequiredPropertyCache = FxHashMap<PropertyCacheKey, bool>;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NarrowingCacheStatistics {
+    pub resolve_cache_entries: usize,
+    pub narrowed_property_cache_entries: usize,
+    pub required_property_cache_entries: usize,
+    pub split_nullish_cache_entries: usize,
+    pub contains_type_parameters_cache_entries: usize,
+    pub optional_chain_cache_entries: usize,
+    pub optional_property_chain_cache_entries: usize,
+    pub contextual_resolve_cache_entries: usize,
+    pub discriminant_index_entries: usize,
+    pub narrow_type_cache_entries: usize,
+    pub estimated_size_bytes: usize,
+}
+
+impl NarrowingCacheStatistics {
+    #[must_use]
+    pub const fn total_entries(self) -> usize {
+        self.resolve_cache_entries
+            + self.narrowed_property_cache_entries
+            + self.required_property_cache_entries
+            + self.split_nullish_cache_entries
+            + self.contains_type_parameters_cache_entries
+            + self.optional_chain_cache_entries
+            + self.optional_property_chain_cache_entries
+            + self.contextual_resolve_cache_entries
+            + self.discriminant_index_entries
+            + self.narrow_type_cache_entries
+    }
+}
 
 /// Narrowing context for type guards and control flow analysis.
 /// Shared across multiple narrowing contexts to persist resolution results.
@@ -286,8 +370,16 @@ type DiscriminantIndex = FxHashMap<(TypeId, Atom), Arc<DiscriminantMembers>>;
 pub struct NarrowingCache {
     /// Cache for type resolution (Lazy/App/Template -> Structural)
     pub resolve_cache: RefCell<FxHashMap<TypeId, TypeId>>,
-    /// Cache for top-level property type lookups (TypeId, `PropName`) -> `PropType`
-    pub property_cache: RefCell<FxHashMap<(TypeId, Atom), Option<TypeId>>>,
+    /// In-progress type resolution set. `resolve_cache` only records completed
+    /// resolutions, so recursive `keyof` / indexed-access / conditional graphs
+    /// can re-enter before a cache entry exists. Returning the original deferred
+    /// type on a cycle preserves generic form and prevents stack overflow.
+    pub resolve_visiting: RefCell<FxHashSet<TypeId>>,
+    /// Cache for top-level property type lookups (`TypeId`, resolver generation, `PropName`) -> `PropType`
+    pub property_cache: RefCell<NarrowedPropertyCache>,
+    /// Cache for required-property checks in `in`-operator negative narrowing
+    /// (`obj` in `!("prop" in obj)`).
+    pub required_property_cache: RefCell<RequiredPropertyCache>,
     /// Cache for split-nullish decomposition (TypeId -> (`non_nullish`, nullish)).
     /// Reused by checker optional-chain/property-access hot paths.
     pub split_nullish_cache: RefCell<FxHashMap<TypeId, SplitNullishParts>>,
@@ -300,6 +392,13 @@ pub struct NarrowingCache {
     /// This skips `split_nullish`, `resolve_type`, `contains_type_params`, and property
     /// lookup on cache hits — eliminating 4+ `RefCell` borrows per repeated access.
     pub optional_chain_cache: RefCell<FxHashMap<(TypeId, Atom), TypeId>>,
+    /// Cache for full optional property chains such as
+    /// `options?.nested?.transport?.backoff?.base`.
+    ///
+    /// This is keyed by semantic root type and atomized path rather than by AST
+    /// node, so repeated textual chains in generated code can reuse the final
+    /// successful read result without re-walking every segment.
+    pub optional_property_chain_cache: RefCell<FxHashMap<OptionalPropertyChainKey, TypeId>>,
     /// Cache for contextual type resolution in object literal property typing.
     /// Maps raw contextual TypeId -> fully resolved TypeId after the
     /// evaluate/resolve/lazy/application chain. Avoids repeating the expensive
@@ -310,6 +409,14 @@ pub struct NarrowingCache {
     /// Built once per (union, property) pair, then O(1) lookup per case clause.
     /// Without this, each case clause iterates ALL union members (O(N) per case = O(N²) total).
     pub discriminant_index: RefCell<DiscriminantIndex>,
+    /// Cache for applying a semantic predicate guard to an input type.
+    ///
+    /// Keyed by input `TypeId`, predicate payload, branch sense, compiler
+    /// option bits, and resolver generation so lazy alias changes cannot reuse
+    /// stale predicate results. Other guard kinds keep their existing dynamic
+    /// paths because their results depend on structural lookups that are already
+    /// cached at narrower query boundaries.
+    pub(crate) narrow_type_cache: RefCell<FxHashMap<NarrowTypeCacheKey, TypeId>>,
 }
 
 impl NarrowingCache {
@@ -319,8 +426,13 @@ impl NarrowingCache {
                 1024,
                 Default::default(),
             )),
+            resolve_visiting: RefCell::new(FxHashSet::default()),
             property_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
                 512,
+                Default::default(),
+            )),
+            required_property_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
+                256,
                 Default::default(),
             )),
             split_nullish_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
@@ -335,12 +447,132 @@ impl NarrowingCache {
                 512,
                 Default::default(),
             )),
+            optional_property_chain_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
+                512,
+                Default::default(),
+            )),
             contextual_resolve_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
                 256,
                 Default::default(),
             )),
             discriminant_index: RefCell::new(FxHashMap::default()),
+            narrow_type_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
+                1024,
+                Default::default(),
+            )),
         }
+    }
+
+    #[must_use]
+    pub fn cache_statistics(&self) -> NarrowingCacheStatistics {
+        NarrowingCacheStatistics {
+            resolve_cache_entries: self.resolve_cache.borrow().len(),
+            narrowed_property_cache_entries: self.property_cache.borrow().len(),
+            required_property_cache_entries: self.required_property_cache.borrow().len(),
+            split_nullish_cache_entries: self.split_nullish_cache.borrow().len(),
+            contains_type_parameters_cache_entries: self
+                .contains_type_parameters_cache
+                .borrow()
+                .len(),
+            optional_chain_cache_entries: self.optional_chain_cache.borrow().len(),
+            optional_property_chain_cache_entries: self
+                .optional_property_chain_cache
+                .borrow()
+                .len(),
+            contextual_resolve_cache_entries: self.contextual_resolve_cache.borrow().len(),
+            discriminant_index_entries: self.discriminant_index.borrow().len(),
+            narrow_type_cache_entries: self.narrow_type_cache.borrow().len(),
+            estimated_size_bytes: self.estimated_size_bytes(),
+        }
+    }
+
+    #[must_use]
+    pub fn estimated_size_bytes(&self) -> usize {
+        const BUCKET_OVERHEAD: usize = 64;
+
+        let mut size = std::mem::size_of::<Self>();
+
+        {
+            let map = self.resolve_cache.borrow();
+            size += map.capacity() * (BUCKET_OVERHEAD + std::mem::size_of::<(TypeId, TypeId)>());
+        }
+        {
+            let set = self.resolve_visiting.borrow();
+            size += set.capacity() * (BUCKET_OVERHEAD + std::mem::size_of::<TypeId>());
+        }
+        {
+            let map = self.property_cache.borrow();
+            size += map.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<PropertyCacheKey>()
+                    + std::mem::size_of::<Option<CachedPropertyType>>());
+        }
+        {
+            let map = self.required_property_cache.borrow();
+            size += map.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<PropertyCacheKey>()
+                    + std::mem::size_of::<bool>());
+        }
+        {
+            let map = self.split_nullish_cache.borrow();
+            size += map.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<TypeId>()
+                    + std::mem::size_of::<SplitNullishParts>());
+        }
+        {
+            let map = self.contains_type_parameters_cache.borrow();
+            size += map.capacity() * (BUCKET_OVERHEAD + std::mem::size_of::<(TypeId, bool)>());
+        }
+        {
+            let map = self.optional_chain_cache.borrow();
+            size += map.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<(TypeId, Atom)>()
+                    + std::mem::size_of::<TypeId>());
+        }
+        {
+            let map = self.optional_property_chain_cache.borrow();
+            size += map.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<OptionalPropertyChainKey>()
+                    + std::mem::size_of::<TypeId>());
+            size += map
+                .keys()
+                .map(|key| key.properties.capacity() * std::mem::size_of::<Atom>())
+                .sum::<usize>();
+        }
+        {
+            let map = self.contextual_resolve_cache.borrow();
+            size += map.capacity() * (BUCKET_OVERHEAD + std::mem::size_of::<(TypeId, TypeId)>());
+        }
+        {
+            let map = self.discriminant_index.borrow();
+            size += map.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<(TypeId, Atom)>()
+                    + std::mem::size_of::<Arc<DiscriminantMembers>>());
+            for members in map.values() {
+                size += members.capacity()
+                    * (BUCKET_OVERHEAD
+                        + std::mem::size_of::<TypeId>()
+                        + std::mem::size_of::<Vec<TypeId>>());
+                size += members
+                    .values()
+                    .map(|variants| variants.capacity() * std::mem::size_of::<TypeId>())
+                    .sum::<usize>();
+            }
+        }
+        {
+            let map = self.narrow_type_cache.borrow();
+            size += map.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<NarrowTypeCacheKey>()
+                    + std::mem::size_of::<TypeId>());
+        }
+
+        size
     }
 }
 
@@ -382,6 +614,23 @@ impl<'a> NarrowingContext<'a> {
         self
     }
 
+    fn cache_compiler_flags(&self) -> u8 {
+        let mut flags = 0;
+        if QueryDatabase::no_unchecked_indexed_access(self.db) {
+            flags |= 1 << 0;
+        }
+        if QueryDatabase::exact_optional_property_types(self.db) {
+            flags |= 1 << 1;
+        }
+        flags
+    }
+
+    pub(crate) fn resolver_generation(&self) -> u64 {
+        self.resolver
+            .map(|resolver| resolver.resolver_generation().saturating_add(1))
+            .unwrap_or(0)
+    }
+
     /// Resolve a type to its structural representation.
     ///
     /// Unwraps:
@@ -409,7 +658,11 @@ impl<'a> NarrowingContext<'a> {
             }
         }
 
+        if !self.cache.resolve_visiting.borrow_mut().insert(type_id) {
+            return type_id;
+        }
         let result = self.resolve_type_uncached(type_id);
+        self.cache.resolve_visiting.borrow_mut().remove(&type_id);
         // Only cache if we actually resolved it — don't cache Lazy → Lazy self-mappings
         // since the TypeEnvironment may be populated later with the real mapping.
         let is_unresolved_symbolic = result == type_id
@@ -625,6 +878,18 @@ impl<'a> NarrowingContext<'a> {
                     break;
                 }
 
+                // 10. Mapped types — evaluate after generic instantiation so
+                // homomorphic mapped types over unions can distribute before
+                // property-presence narrowing filters members.
+                Some(TypeData::Mapped(_)) => {
+                    let evaluated = self.db.evaluate_type(type_id);
+                    if evaluated != type_id {
+                        type_id = evaluated;
+                        continue;
+                    }
+                    break;
+                }
+
                 // Structural types (Object, Union, Primitive, etc.) — done
                 _ => break,
             }
@@ -734,6 +999,14 @@ impl<'a> NarrowingContext<'a> {
         if resolved_source == TypeId::ANY {
             trace!("Narrowing any to specific type via type guard");
             return target_type;
+        }
+
+        // Decompose Enum(D, inner) so narrowing-to runs on the inner literal
+        // union and the nominal enum wrapper is preserved.
+        if let Some(narrowed) =
+            self.narrow_enum_to_type(source_type, resolved_source, resolved_target)
+        {
+            return narrowed;
         }
 
         // If source is a union, filter members
@@ -915,6 +1188,14 @@ impl<'a> NarrowingContext<'a> {
         // Lazy type resolution for the top-level source is handled in narrow_type()
         // before dispatching to this function.
 
+        // Decompose `Enum(D, inner)` so exclusion runs on the inner literal
+        // union and the nominal wrapper survives (issue #6823).
+        if let Some(narrowed) =
+            self.narrow_enum_excluding_types(source_type, std::slice::from_ref(&excluded_type))
+        {
+            return narrowed;
+        }
+
         if let Some(members) = intersection_list_id(self.db, source_type) {
             let members = self.db.type_list(members);
             let mut narrowed_members = Vec::with_capacity(members.len());
@@ -1048,6 +1329,11 @@ impl<'a> NarrowingContext<'a> {
             return source_type;
         }
 
+        // Enum decomposition for the batched path (issue #6823).
+        if let Some(narrowed) = self.narrow_enum_excluding_types(source_type, excluded_types) {
+            return narrowed;
+        }
+
         // For small lists, use sequential narrowing (avoids HashSet overhead)
         if excluded_types.len() <= 4 {
             let mut result = source_type;
@@ -1148,6 +1434,77 @@ impl<'a> NarrowingContext<'a> {
         }
 
         Some(self.db.intersection2(source, narrowed_constraint))
+    }
+
+    /// Unwrap `TypeData::Enum(D, inner)` so narrowing-to runs on the inner literal
+    /// union and rewraps the result with the same `DefId`, preserving nominal
+    /// enum identity. If the target is the same enum, its inner literal is used
+    /// as the effective target so narrowing stays within the enum domain.
+    /// Returns `None` for non-enum sources so callers fall through.
+    fn narrow_enum_to_type(
+        &self,
+        original_source: TypeId,
+        resolved_source: TypeId,
+        target_type: TypeId,
+    ) -> Option<TypeId> {
+        let (enum_def, inner) = crate::visitor::enum_components(self.db, resolved_source)?;
+
+        // If target is the same enum, unwrap to narrow within the enum domain.
+        let effective_target = match crate::visitor::enum_components(self.db, target_type) {
+            Some((target_def, target_inner))
+                if self.class_defs_equivalent_for_narrowing(enum_def, target_def) =>
+            {
+                target_inner
+            }
+            _ => target_type,
+        };
+
+        let narrowed_inner = self.narrow_to_type(inner, effective_target);
+
+        if narrowed_inner == TypeId::NEVER {
+            return Some(TypeId::NEVER);
+        }
+        if narrowed_inner == inner {
+            return Some(original_source);
+        }
+        Some(self.db.enum_type(enum_def, narrowed_inner))
+    }
+
+    /// Unwrap `TypeData::Enum(D, inner)` so exclusion runs on the inner literal
+    /// union and rewraps the result with the same `DefId`, preserving nominal
+    /// enum identity. Excluded values of the same nominal enum are normalised
+    /// to their inner literal so identity-based union filtering can drop them.
+    /// Returns `None` for non-enum sources so callers fall through.
+    fn narrow_enum_excluding_types(
+        &self,
+        source_type: TypeId,
+        excluded_types: &[TypeId],
+    ) -> Option<TypeId> {
+        let (enum_def, inner) = crate::visitor::enum_components(self.db, source_type)?;
+
+        let normalized: Vec<TypeId> = excluded_types
+            .iter()
+            .map(
+                |&excluded| match crate::visitor::enum_components(self.db, excluded) {
+                    Some((excluded_def, excluded_inner))
+                        if self.class_defs_equivalent_for_narrowing(enum_def, excluded_def) =>
+                    {
+                        excluded_inner
+                    }
+                    _ => excluded,
+                },
+            )
+            .collect();
+
+        let narrowed_inner = self.narrow_excluding_types(inner, &normalized);
+
+        if narrowed_inner == TypeId::NEVER {
+            return Some(TypeId::NEVER);
+        }
+        if narrowed_inner == inner {
+            return Some(source_type);
+        }
+        Some(self.db.enum_type(enum_def, narrowed_inner))
     }
 
     /// Narrow to function types only.
@@ -1825,6 +2182,35 @@ impl<'a> NarrowingContext<'a> {
     }
 
     pub fn narrow_type(&self, source_type: TypeId, guard: &TypeGuard, sense: GuardSense) -> TypeId {
+        if !matches!(guard, TypeGuard::Predicate { .. }) {
+            return self.narrow_type_uncached(source_type, guard, sense);
+        }
+
+        let key = NarrowTypeCacheKey {
+            source_type,
+            guard: guard.clone(),
+            sense,
+            compiler_flags: self.cache_compiler_flags(),
+            resolver_generation: self.resolver_generation(),
+        };
+        if let Some(cached) = self.cache.narrow_type_cache.borrow().get(&key).copied() {
+            return cached;
+        }
+
+        let narrowed = self.narrow_type_uncached(source_type, guard, sense);
+        self.cache
+            .narrow_type_cache
+            .borrow_mut()
+            .insert(key, narrowed);
+        narrowed
+    }
+
+    fn narrow_type_uncached(
+        &self,
+        source_type: TypeId,
+        guard: &TypeGuard,
+        sense: GuardSense,
+    ) -> TypeId {
         let sense = matches!(sense, GuardSense::Positive);
 
         // For generic IndexAccess types (e.g., `Entries[EntryId]` where EntryId is a
@@ -2227,5 +2613,90 @@ impl<'a> NarrowingContext<'a> {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod cache_visibility_tests {
+    use super::*;
+    use crate::intern::TypeInterner;
+
+    #[test]
+    fn narrowing_cache_statistics_report_entries_and_size() {
+        let db = TypeInterner::new();
+        let prop = db.intern_string("prop");
+        let key = (TypeId::STRING, 7, prop);
+        let chain_key = OptionalPropertyChainKey {
+            root_type: TypeId::STRING,
+            properties: vec![prop],
+            optional_mask: 1,
+            no_unchecked_indexed_access: true,
+        };
+        let cache = NarrowingCache::new();
+        let empty = cache.cache_statistics();
+
+        assert_eq!(empty.total_entries(), 0);
+        assert!(empty.estimated_size_bytes > 0);
+
+        cache
+            .resolve_cache
+            .borrow_mut()
+            .insert(TypeId::STRING, TypeId::NUMBER);
+        cache
+            .property_cache
+            .borrow_mut()
+            .insert(key, Some(CachedPropertyType::explicit(TypeId::BOOLEAN)));
+        cache.required_property_cache.borrow_mut().insert(key, true);
+        cache
+            .split_nullish_cache
+            .borrow_mut()
+            .insert(TypeId::STRING, (Some(TypeId::STRING), Some(TypeId::NULL)));
+        cache
+            .contains_type_parameters_cache
+            .borrow_mut()
+            .insert(TypeId::STRING, false);
+        cache
+            .optional_chain_cache
+            .borrow_mut()
+            .insert((TypeId::STRING, prop), TypeId::BOOLEAN);
+        cache
+            .optional_property_chain_cache
+            .borrow_mut()
+            .insert(chain_key, TypeId::BOOLEAN);
+        cache
+            .contextual_resolve_cache
+            .borrow_mut()
+            .insert(TypeId::STRING, TypeId::BOOLEAN);
+        let mut discriminants = FxHashMap::default();
+        discriminants.insert(TypeId::STRING, vec![TypeId::BOOLEAN]);
+        cache
+            .discriminant_index
+            .borrow_mut()
+            .insert((TypeId::STRING, prop), Arc::new(discriminants));
+        cache.narrow_type_cache.borrow_mut().insert(
+            NarrowTypeCacheKey {
+                source_type: TypeId::STRING,
+                guard: TypeGuard::Truthy,
+                sense: GuardSense::Positive,
+                compiler_flags: 0,
+                resolver_generation: 0,
+            },
+            TypeId::STRING,
+        );
+
+        let stats = cache.cache_statistics();
+        assert_eq!(stats.resolve_cache_entries, 1);
+        assert_eq!(stats.narrowed_property_cache_entries, 1);
+        assert_eq!(stats.required_property_cache_entries, 1);
+        assert_eq!(stats.split_nullish_cache_entries, 1);
+        assert_eq!(stats.contains_type_parameters_cache_entries, 1);
+        assert_eq!(stats.optional_chain_cache_entries, 1);
+        assert_eq!(stats.optional_property_chain_cache_entries, 1);
+        assert_eq!(stats.contextual_resolve_cache_entries, 1);
+        assert_eq!(stats.discriminant_index_entries, 1);
+        assert_eq!(stats.narrow_type_cache_entries, 1);
+        assert_eq!(stats.total_entries(), 10);
+        assert!(stats.estimated_size_bytes > empty.estimated_size_bytes);
+        assert!(cache.estimated_size_bytes() >= stats.estimated_size_bytes);
     }
 }

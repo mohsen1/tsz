@@ -58,61 +58,6 @@ impl<'a> CheckerState<'a> {
         has_global_this && has_global_value && shape.string_index.is_none()
     }
 
-    fn element_access_receiver_declared_element_display(
-        &mut self,
-        idx: NodeIndex,
-        type_id: TypeId,
-    ) -> Option<String> {
-        let receiver = self.access_receiver_for_diagnostic_node(idx)?;
-        let receiver_node = self.ctx.arena.get(receiver)?;
-        if receiver_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
-            return None;
-        }
-
-        let access = self.ctx.arena.get_access_expr(receiver_node)?;
-        let base_expr = self
-            .ctx
-            .arena
-            .skip_parenthesized_and_assertions(access.expression);
-        let base_node = self.ctx.arena.get(base_expr)?;
-        if base_node.kind != SyntaxKind::Identifier as u16 {
-            return None;
-        }
-
-        let sym_id = self.resolve_identifier_symbol(base_expr)?;
-        let declared_type = self.get_type_of_symbol(sym_id);
-        if matches!(declared_type, TypeId::ERROR | TypeId::UNKNOWN) {
-            return None;
-        }
-
-        let declared_element_type =
-            crate::query_boundaries::common::array_element_type(self.ctx.types, declared_type)
-                .or_else(|| {
-                    crate::query_boundaries::common::tuple_elements(self.ctx.types, declared_type)
-                        .map(|elements| {
-                            let element_types: Vec<TypeId> =
-                                elements.iter().map(|elem| elem.type_id).collect();
-                            match element_types.as_slice() {
-                                [] => TypeId::NEVER,
-                                [element_type] => *element_type,
-                                _ => self.ctx.types.factory().union(element_types),
-                            }
-                        })
-                })?;
-
-        let declared_element_type = self.evaluate_type_with_env(declared_element_type);
-        if matches!(declared_element_type, TypeId::ERROR | TypeId::UNKNOWN) {
-            return None;
-        }
-        if !self.is_assignable_to(type_id, declared_element_type)
-            && !self.is_assignable_to(declared_element_type, type_id)
-        {
-            return None;
-        }
-
-        Some(self.format_type_for_assignability_message(declared_element_type))
-    }
-
     fn fresh_empty_object_member_for_missing_union(
         &mut self,
         object_type: TypeId,
@@ -331,7 +276,7 @@ impl<'a> CheckerState<'a> {
                 return annotation_display;
             }
         }
-        Self::collapse_pick_literal_union_display(&inferred_display).unwrap_or(inferred_display)
+        inferred_display
     }
 
     fn same_simple_alias_array_union_display(left: &str, right: &str) -> bool {
@@ -427,28 +372,56 @@ impl<'a> CheckerState<'a> {
         Some(prefix)
     }
 
-    fn collapse_pick_literal_union_display(display: &str) -> Option<String> {
-        let inner = display.strip_prefix("Pick<")?.strip_suffix('>')?;
-        let (base, keys) = inner.split_once(", ")?;
-        if !keys.contains("\" | \"") || !keys.split(" | ").all(|part| part.starts_with('"')) {
+    fn format_pick_over_all_keys_as_keyof(&mut self, target: TypeId) -> Option<String> {
+        if !self.ctx.has_lib_loaded() || self.ctx.actual_lib_file_count == 0 {
             return None;
         }
-        Some(format!("Pick<{base}, keyof {base}>"))
-    }
-
-    fn format_pick_over_all_keys_as_keyof(&mut self, target: TypeId) -> Option<String> {
         let (base, args) =
-            crate::query_boundaries::common::application_info(self.ctx.types, target)?;
-        if args.len() != 2 || self.format_type_diagnostic(base) != "Pick" {
+            crate::query_boundaries::common::application_info(self.ctx.types, target).or_else(
+                || {
+                    let alias = self.ctx.types.get_display_alias(target)?;
+                    crate::query_boundaries::common::application_info(self.ctx.types, alias)
+                },
+            )?;
+        if args.len() != 2 {
+            return None;
+        }
+        let base_def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)?;
+        let is_actual_lib_pick = self
+            .ctx
+            .actual_lib_def_id_for_bare_name("Pick")
+            .is_some_and(|def_id| def_id == base_def_id)
+            || self
+                .ctx
+                .def_symbol_identity(base_def_id)
+                .is_some_and(|(sym_id, _)| {
+                    self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+                        && self
+                            .get_symbol_globally(sym_id)
+                            .is_some_and(|symbol| symbol.escaped_name == "Pick")
+                });
+        if !is_actual_lib_pick {
             return None;
         }
 
         let object_type = args[0];
         let key_type = args[1];
+        let evaluated_object_type = self.evaluate_type_with_env(object_type);
         let shape =
-            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, object_type)?;
-        let keys = crate::query_boundaries::common::union_members(self.ctx.types, key_type)
-            .unwrap_or_else(|| vec![key_type]);
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, object_type)
+                .or_else(|| {
+                    crate::query_boundaries::common::object_shape_for_type(
+                        self.ctx.types,
+                        evaluated_object_type,
+                    )
+                })?;
+        let evaluated_key_type = self.evaluate_type_with_env(key_type);
+        let keys =
+            crate::query_boundaries::common::union_members(self.ctx.types, evaluated_key_type)
+                .or_else(|| {
+                    crate::query_boundaries::common::union_members(self.ctx.types, key_type)
+                })
+                .unwrap_or_else(|| vec![evaluated_key_type]);
         if keys.len() != shape.properties.len() {
             return None;
         }
@@ -501,7 +474,7 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    fn access_receiver_for_diagnostic_node(&self, idx: NodeIndex) -> Option<NodeIndex> {
+    pub(super) fn access_receiver_for_diagnostic_node(&self, idx: NodeIndex) -> Option<NodeIndex> {
         let node = self.ctx.arena.get(idx)?;
         if (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
@@ -999,6 +972,18 @@ impl<'a> CheckerState<'a> {
         {
             return format!("typeof {}", ident.escaped_text);
         }
+        let diagnostic_receiver = self.access_receiver_for_diagnostic_node(idx);
+        let is_direct_element_access_diagnostic = self
+            .ctx
+            .arena
+            .get(idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            || self
+                .ctx
+                .arena
+                .node_info(idx)
+                .and_then(|info| self.ctx.arena.get(info.parent))
+                .is_some_and(|node| node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION);
         let is_element_access_receiver = self
             .ctx
             .arena
@@ -1010,19 +995,23 @@ impl<'a> CheckerState<'a> {
                 .node_info(idx)
                 .and_then(|info| self.ctx.arena.get(info.parent))
                 .is_some_and(|node| node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
-            || self
-                .access_receiver_for_diagnostic_node(idx)
-                .is_some_and(|receiver| {
-                    self.ctx
+            || diagnostic_receiver.is_some_and(|receiver| {
+                self.ctx
+                    .arena
+                    .get(receiver)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                    || self
+                        .ctx
                         .arena
                         .node_info(receiver)
                         .and_then(|info| self.ctx.arena.get(info.parent))
                         .is_some_and(|node| node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
-                });
+            });
 
         if is_element_access_receiver {
-            if let Some(display) =
-                self.element_access_receiver_declared_element_display(idx, type_id)
+            if !is_direct_element_access_diagnostic
+                && let Some(display) =
+                    self.element_access_receiver_declared_element_display(idx, type_id)
             {
                 return display;
             }
@@ -1048,6 +1037,12 @@ impl<'a> CheckerState<'a> {
             {
                 let widened = self.widen_type_for_display(init_type);
                 return self.format_type_diagnostic(widened);
+            }
+            if !self.is_js_file() {
+                let evaluated = self.evaluate_type_for_assignability(type_id);
+                if evaluated != type_id && self.named_type_display_name(evaluated).is_some() {
+                    return self.format_type_for_assignability_message(evaluated);
+                }
             }
             return self.format_type_diagnostic_structural(type_id);
         }
@@ -1150,6 +1145,10 @@ impl<'a> CheckerState<'a> {
         // produces confusing diagnostics. The actual inference/assignability issue should be
         // reported elsewhere.
         if crate::query_boundaries::common::is_bare_infer_placeholder(self.ctx.types, type_id) {
+            return;
+        }
+
+        if self.actual_lib_namespace_merged_type_has_property(type_id, prop_name) {
             return;
         }
 
@@ -1791,6 +1790,65 @@ impl<'a> CheckerState<'a> {
             };
             self.error_at_anchor(idx, DiagnosticAnchorKind::PropertyToken, &message, code);
         }
+    }
+
+    fn actual_lib_namespace_merged_type_has_property(
+        &mut self,
+        type_id: TypeId,
+        prop_name: &str,
+    ) -> bool {
+        let lazy_def_id = query::lazy_def_id(self.ctx.types, type_id);
+        let sym_id = lazy_def_id
+            .and_then(|def_id| self.ctx.def_to_symbol_id(def_id))
+            .or_else(|| query::type_shape_symbol(self.ctx.types, type_id));
+
+        let (export_name, require_symbol_match) = if let Some(sym_id) = sym_id {
+            let lib_binders = self.get_lib_binders();
+            let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {
+                return false;
+            };
+            if self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id) {
+                (symbol.escaped_name.clone(), Some(sym_id))
+            } else if symbol.parent.is_some()
+                && self.ctx.symbol_is_from_actual_or_cloned_lib(symbol.parent)
+            {
+                (symbol.escaped_name.clone(), None)
+            } else {
+                return false;
+            }
+        } else {
+            let Some(def_id) = lazy_def_id else {
+                return false;
+            };
+            let Some(def_info) = self.ctx.definition_store.get(def_id) else {
+                return false;
+            };
+            let name = self.ctx.types.resolve_atom_ref(def_info.name).to_string();
+            if name.is_empty() {
+                return false;
+            }
+            (name, None)
+        };
+
+        let namespace = "Intl";
+        let Some(export_sym_id) = self.resolve_lib_namespace_export_symbol(namespace, &export_name)
+        else {
+            return false;
+        };
+        if require_symbol_match.is_some_and(|sym_id| export_sym_id != sym_id) {
+            return false;
+        }
+
+        let cache_name = format!("{namespace}.{export_name}");
+        self.ctx.lib_type_resolution_cache.remove(&cache_name);
+        let Some(merged_type) =
+            self.resolve_lib_interface_type_by_symbol(&cache_name, export_sym_id)
+        else {
+            return false;
+        };
+        let prop_atom = self.ctx.types.intern_string(prop_name);
+        query::raw_property_type(self.ctx.types.as_type_database(), merged_type, prop_atom)
+            .is_some()
     }
 
     /// Report TS2339 with an explicit type display string instead of formatting from TypeId.

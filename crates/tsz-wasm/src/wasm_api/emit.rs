@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::wasm_bindgen;
 
 use tsz::context::emit::EmitContext;
+#[cfg(feature = "dts")]
 use tsz::declaration_emitter::DeclarationEmitter;
 use tsz::emitter::{ModuleKind, Printer, PrinterOptions, ScriptTarget};
 use tsz::lowering::LoweringPass;
@@ -121,7 +122,9 @@ impl TranspileOptions {
 }
 
 struct TranspileCompilation {
+    #[cfg(feature = "dts")]
     arena: NodeArena,
+    #[cfg(feature = "dts")]
     root_idx: NodeIndex,
     output_text: String,
     file_is_module: bool,
@@ -178,7 +181,9 @@ fn compile_transpile_source(
     drop(printer);
 
     TranspileCompilation {
+        #[cfg(feature = "dts")]
         arena,
+        #[cfg(feature = "dts")]
         root_idx,
         output_text,
         file_is_module,
@@ -270,6 +275,28 @@ fn serialize_transpile_output(result: &TranspileOutput) -> String {
     serde_json::to_string(result).unwrap_or_else(|_| "{}".to_string())
 }
 
+fn declaration_text_for_options(
+    options: &TranspileOptions,
+    compiled: &TranspileCompilation,
+) -> Option<String> {
+    if !options.declaration.unwrap_or(false) {
+        return None;
+    }
+
+    emit_declaration_text(compiled)
+}
+
+#[cfg(feature = "dts")]
+fn emit_declaration_text(compiled: &TranspileCompilation) -> Option<String> {
+    let mut decl_emitter = DeclarationEmitter::new(&compiled.arena);
+    Some(decl_emitter.emit(compiled.root_idx))
+}
+
+#[cfg(not(feature = "dts"))]
+fn emit_declaration_text(_compiled: &TranspileCompilation) -> Option<String> {
+    None
+}
+
 /// Transpile result for single-file transpilation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -312,6 +339,10 @@ pub fn transpile_module(source: &str, options_json: &str) -> String {
     });
 
     let compiled = compile_transpile_source(source, &file_name, printer_opts, request);
+    // Generate declaration file if requested and the lean WASM build includes
+    // the optional DTS emitter.
+    let declaration_text = declaration_text_for_options(&options, &compiled);
+
     let mut output_text =
         preserve_empty_module_output(compiled.output_text, compiled.file_is_module, module_kind);
 
@@ -329,12 +360,6 @@ pub fn transpile_module(source: &str, options_json: &str) -> String {
             source_map_text = Some(map_json);
         }
     }
-
-    // Generate declaration file if requested
-    let declaration_text = options.declaration.unwrap_or(false).then(|| {
-        let mut decl_emitter = DeclarationEmitter::new(&compiled.arena);
-        decl_emitter.emit(compiled.root_idx)
-    });
 
     // Build result
     let result = TranspileOutput {

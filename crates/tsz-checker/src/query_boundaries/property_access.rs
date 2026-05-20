@@ -1,5 +1,6 @@
 use tsz_common::Atom;
-use tsz_solver::{FunctionShape, QueryDatabase, TypeDatabase, TypeId};
+use tsz_solver::construction::{QueryDatabase, TypeDatabase};
+use tsz_solver::{FunctionShape, TypeId};
 
 pub(crate) use super::common::PropertyAccessResult;
 pub(crate) use super::common::intersection_members;
@@ -38,6 +39,16 @@ pub(crate) fn resolve_property_access_with_options(
     evaluator.resolve_property_access(obj_type, prop_name)
 }
 
+pub(crate) fn resolve_private_identifier_property_access(
+    db: &dyn QueryDatabase,
+    obj_type: TypeId,
+    prop_name: &str,
+) -> PropertyAccessResult {
+    let evaluator = tsz_solver::operations::property::PropertyAccessEvaluator::new(db);
+    evaluator.set_allow_private_identifier_properties(true);
+    evaluator.resolve_property_access(obj_type, prop_name)
+}
+
 /// Like [`resolve_property_access`] but preserves raw `ThisType` in the result.
 ///
 /// When `skip_this_binding` is set, the solver does not eagerly bind `this` to
@@ -66,7 +77,7 @@ pub(crate) fn resolve_property_access_raw_this_with_options(
 
 pub(crate) fn resolve_property_access_with_resolver(
     db: &dyn QueryDatabase,
-    resolver: &dyn tsz_solver::TypeResolver,
+    resolver: &dyn tsz_solver::relations::subtype::TypeResolver,
     obj_type: TypeId,
     prop_name: &str,
     no_unchecked_indexed_access: bool,
@@ -79,7 +90,7 @@ pub(crate) fn resolve_property_access_with_resolver(
 
 pub(crate) fn resolve_property_access_raw_this_with_resolver(
     db: &dyn QueryDatabase,
-    resolver: &dyn tsz_solver::TypeResolver,
+    resolver: &dyn tsz_solver::relations::subtype::TypeResolver,
     obj_type: TypeId,
     prop_name: &str,
     no_unchecked_indexed_access: bool,

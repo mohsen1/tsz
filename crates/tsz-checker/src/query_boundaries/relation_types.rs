@@ -98,6 +98,11 @@ pub(crate) enum RelationFailure {
         param_index: usize,
         source_param: TypeId,
         target_param: TypeId,
+        /// Why the inner contravariant check between `target_param` and
+        /// `source_param` failed. Carried so renderers can elaborate the
+        /// failure shape (e.g. distinguish a callback's inner-return
+        /// failure from an inner-parameter failure).
+        inner: Option<Box<RelationFailure>>,
     },
     /// Function parameter count mismatch.
     ParameterCountMismatch {
@@ -116,6 +121,22 @@ pub(crate) enum RelationFailure {
     TypeMismatch {
         source_type: TypeId,
         target_type: TypeId,
+    },
+    /// Two distinct type parameters used as keys of structurally-identical
+    /// indexed-access types — e.g. `JSX.IntrinsicElements[T1]` against
+    /// `JSX.IntrinsicElements[T2]`. tsc elaborates this as the chain
+    /// `Type 'S[T1]' is not assignable to type 'S[T2]'.` followed by
+    /// `Type 'T1' is not assignable to type 'T2'.` and the TS5075
+    /// "is assignable to the constraint of type ... could be instantiated
+    /// with a different subtype of constraint ..." note.
+    IndexAccessTypeParameterMismatch {
+        /// The source type parameter used as the source index access key.
+        source_param: TypeId,
+        /// The target type parameter used as the target index access key.
+        target_param: TypeId,
+        /// The target parameter's constraint (the "constraint" arg of
+        /// TS5075). `None` only when the target parameter is unconstrained.
+        target_constraint: Option<TypeId>,
     },
 }
 
@@ -179,10 +200,12 @@ impl RelationFailure {
                 param_index,
                 source_param,
                 target_param,
+                inner_reason,
             } => Self::ParameterTypeMismatch {
                 param_index,
                 source_param,
                 target_param,
+                inner: inner_reason.map(|r| Box::new(Self::from_solver_reason(*r))),
             },
             SubtypeFailureReason::NoCommonProperties {
                 source_type,
@@ -268,6 +291,15 @@ impl RelationFailure {
             | SubtypeFailureReason::RecursionLimitExceeded => Self::TypeMismatch {
                 source_type: TypeId::ERROR,
                 target_type: TypeId::ERROR,
+            },
+            SubtypeFailureReason::IndexAccessTypeParameterMismatch {
+                source_param,
+                target_param,
+                target_constraint,
+            } => Self::IndexAccessTypeParameterMismatch {
+                source_param,
+                target_param,
+                target_constraint,
             },
         }
     }

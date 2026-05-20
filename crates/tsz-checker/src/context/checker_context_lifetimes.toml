@@ -1,0 +1,246 @@
+# Generated inventory for docs/plan/PERFORMANCE_PLAN.md T2.1.A.
+# Keep one entry per CheckerContext field. The architecture guard fails on
+# missing fields, stale fields, invalid lifetime/capability classes, Unknown,
+# or empty reasons.
+# Valid lifetimes: ProgramStable, WorkerReusable, FileLocalReset,
+# SpeculationScoped, DiagnosticsOnly, LspPersistent. Unknown is forbidden.
+# Valid capabilities: CheckerInputs, ProgramLookupContext, FileTypeCache,
+# SpeculationState, DiagnosticState, FlowSessionState, RelationSessionState,
+# EmitSummaryState. Unknown is forbidden.
+
+arena = { lifetime = "FileLocalReset", capability = "CheckerInputs", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+binder = { lifetime = "FileLocalReset", capability = "CheckerInputs", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+types = { lifetime = "ProgramStable", capability = "CheckerInputs", reason = "shared immutable program data; valid until the compilation or project version changes" }
+file_name = { lifetime = "FileLocalReset", capability = "CheckerInputs", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+compiler_options = { lifetime = "FileLocalReset", capability = "CheckerInputs", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+capabilities = { lifetime = "FileLocalReset", capability = "CheckerInputs", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+no_implicit_override = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+report_unresolved_imports = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+allow_source_file_test_pragmas = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+file_is_esm = { lifetime = "FileLocalReset", capability = "CheckerInputs", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+file_is_esm_map = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+checking_computed_property_name = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+name_resolution_diagnostics = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+types_extending_array = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+recovery_sites = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic recovery bookkeeping used for emission and suppression; clear at file-session boundary" }
+symbol_types = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+symbol_instance_types = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+enum_namespace_types = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+var_decl_types = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+lib_type_resolution_cache = { lifetime = "FileLocalReset", capability = "ProgramLookupContext", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+lib_delegation_cache = { lifetime = "FileLocalReset", capability = "ProgramLookupContext", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+namespace_member_resolution_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+export_equals_named_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+nested_namespace_candidates_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+symbol_name_candidates_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+nested_namespace_candidates_cache_complete = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+lowering_entity_name_resolution_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+namespace_exports_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+shared_lib_type_cache = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+cross_file_type_params_cache = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+skip_lib_type_resolution = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+lib_heritage_in_progress = { lifetime = "FileLocalReset", capability = "ProgramLookupContext", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+node_types = { lifetime = "SpeculationScoped", capability = "SpeculationState", reason = "snapshot/rollback-sensitive state mutated during speculative checking" }
+request_node_types = { lifetime = "SpeculationScoped", capability = "SpeculationState", reason = "snapshot/rollback-sensitive state mutated during speculative checking" }
+object_literal_tracking = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+request_cache_counters = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+type_environment = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+application_eval_set = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+mapped_eval_set = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+type_resolution_visiting = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+pruning_union_members = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+jsdoc_typedef_resolving = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+flow_analysis_cache = { lifetime = "SpeculationScoped", capability = "SpeculationState", reason = "snapshot/rollback-sensitive state mutated during speculative checking" }
+flow_worklist = { lifetime = "WorkerReusable", capability = "FlowSessionState", reason = "scratch allocation that can be cleared and reused by one worker between file sessions" }
+flow_in_worklist = { lifetime = "WorkerReusable", capability = "FlowSessionState", reason = "scratch allocation that can be cleared and reused by one worker between file sessions" }
+flow_visited = { lifetime = "WorkerReusable", capability = "FlowSessionState", reason = "scratch allocation that can be cleared and reused by one worker between file sessions" }
+flow_results = { lifetime = "WorkerReusable", capability = "FlowSessionState", reason = "scratch allocation that can be cleared and reused by one worker between file sessions" }
+narrowing_cache = { lifetime = "FileLocalReset", capability = "FlowSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+narrowable_identifier_cache = { lifetime = "FileLocalReset", capability = "FlowSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+flow_switch_reference_cache = { lifetime = "FileLocalReset", capability = "FlowSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+flow_numeric_atom_cache = { lifetime = "FileLocalReset", capability = "FlowSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+flow_reference_match_cache = { lifetime = "FileLocalReset", capability = "FlowSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+symbol_last_assignment_pos = { lifetime = "FileLocalReset", capability = "FlowSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+symbol_flow_confirmed = { lifetime = "FileLocalReset", capability = "FlowSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+call_type_predicates = { lifetime = "FileLocalReset", capability = "FlowSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+daa_error_nodes = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+deferred_ts2454_errors = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+flow_narrowed_nodes = { lifetime = "FileLocalReset", capability = "FlowSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+refs_resolved = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+application_symbols_resolved = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+application_symbols_resolution_set = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+namespace_module_names = { lifetime = "FileLocalReset", capability = "EmitSummaryState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+js_export_surface_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+js_export_surface_resolution_set = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+expando_property_resolution_set = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+module_specifiers = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+module_path_specifiers = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+class_instance_type_to_decl = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+class_instance_type_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+class_constructor_type_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+class_chain_summary_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+env_eval_cache = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+class_symbol_to_decl_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+heritage_symbol_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+base_constructor_expr_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+base_instance_expr_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+class_decl_miss_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+jsx_intrinsic_props_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+jsx_namespace_symbol_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+jsx_intrinsic_elements_symbol_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+jsx_intrinsic_elements_type_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+jsx_import_source_checked = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+deferred_jsx_import_source_error = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+symbol_dependencies = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+symbol_dependency_stack = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+referenced_symbols = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+written_symbols = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+referenced_as_property = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+destructured_bindings = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+next_binding_group_id = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+destructured_binding_sources = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+has_parse_errors = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+has_syntax_parse_errors = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+syntax_parse_error_positions = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+has_real_syntax_errors = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+has_structural_parse_errors = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+real_syntax_error_positions = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+all_parse_error_positions = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+nullable_type_parse_error_positions = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+diagnostics = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+emitted_diagnostics = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+no_overload_call_nodes = { lifetime = "SpeculationScoped", capability = "SpeculationState", reason = "snapshot/rollback-sensitive state mutated during speculative checking" }
+callback_return_type_errors = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+modules_with_ts2307_emitted = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+deferred_truthiness_diagnostics = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+deferred_excess_property_implicit_any_diagnostics = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+symbol_resolution_stack = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+symbol_resolution_set = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+circular_type_aliases = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+import_conflict_names = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+module_namespace_resolution_set = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+import_type_alias_types = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+merged_value_types = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+class_instance_resolution_set = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+class_constructor_resolution_set = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+jsdoc_enum_resolution_set = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+circular_class_symbols = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+pending_implicit_any_vars = { lifetime = "SpeculationScoped", capability = "SpeculationState", reason = "snapshot/rollback-sensitive state mutated during speculative checking" }
+pending_circular_return_sites = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+non_closure_circular_return_tracking_depth = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+reported_implicit_any_vars = { lifetime = "SpeculationScoped", capability = "SpeculationState", reason = "snapshot/rollback-sensitive state mutated during speculative checking" }
+inheritance_graph = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+node_resolution_stack = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+implicit_any_checked_closures = { lifetime = "SpeculationScoped", capability = "SpeculationState", reason = "snapshot/rollback-sensitive state mutated during speculative checking" }
+implicit_any_contextual_closures = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+deferred_implicit_any_closures = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+speculative_implicit_any_closures = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+closures_with_contextual_this_type = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+checking_classes = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+checked_classes = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+type_parameter_scope = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+type_reference_validation_caches = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local type-reference validation/instantiation memos tied to active file node ids and lexical type-parameter scope" }
+in_conditional_extends_depth = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+typeof_param_scope = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+type_param_constraint_excluded_params = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+contextual_type = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+contextual_type_is_assertion = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+is_checking_statements = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+is_in_ambient_declaration_file = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+in_destructuring_target = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+in_satisfies_operand = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+preserve_destructuring_initializer_overload_diagnostics = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+skip_flow_narrowing = { lifetime = "FileLocalReset", capability = "FlowSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+instantiation_depth = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+depth_exceeded = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+relation_overflow = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "relation-check overflow flags observed during checker-local assignability diagnostics; reset at file-session boundary" }
+skip_callable_type_param_suppression = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+eval_session = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+recursion_depth = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+heritage_merge_depth = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+call_depth = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+circ_ref_depth = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+overlap_depth = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+resolving_jsdoc_typedefs = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+jsdoc_typedef_anchor_pos = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+return_type_stack = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+yield_type_stack = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+generator_next_type_stack = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+generator_yield_operand_types = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+generator_had_ts7057 = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+this_type_stack = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+function_owned_this_stack = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+enclosing_class = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+enclosing_class_chain = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+type_env = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+definition_store = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+share_owner_symbol_type_results = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+symbol_to_def = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+def_to_symbol = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+def_type_params = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+def_no_type_params = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+def_fallback_count = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+local_caches_warmed = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+abstract_constructor_types = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+protected_constructor_types = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+private_constructor_types = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+cross_file_symbol_targets = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+global_symbol_file_index = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+all_arenas = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+all_binders = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+global_file_locals_index = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+global_module_exports_index = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+global_declared_modules = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+global_expando_index = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+global_module_augmentations_index = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+global_augmentation_targets_index = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+global_module_binder_index = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+global_arena_index = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+global_file_name_index = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+program_reexports = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+program_wildcard_reexports = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+program_wildcard_reexports_type_only = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+program_module_exports = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+program_cross_file_node_symbols = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+program_alias_partners = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+resolved_module_paths = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+resolved_module_request_paths = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+resolved_module_ts_extension_flags = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+current_file_idx = { lifetime = "FileLocalReset", capability = "CheckerInputs", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+resolved_modules = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+module_augmentation_value_decls = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+module_augmentation_application_set = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+is_external_module_by_file = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+resolved_module_errors = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+resolved_module_request_errors = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+import_resolution_stack = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+type_only_nodes = { lifetime = "FileLocalReset", capability = "EmitSummaryState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+symbol_resolution_depth = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+max_symbol_resolution_depth = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+lib_contexts = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+lib_binders_cached = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+actual_lib_file_count = { lifetime = "ProgramStable", capability = "CheckerInputs", reason = "shared immutable program data; valid until the compilation or project version changes" }
+typescript_dom_replacement_loaded = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+typescript_dom_replacement_has_window = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+typescript_dom_replacement_has_self = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+flow_graph = { lifetime = "FileLocalReset", capability = "FlowSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+async_depth = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+typeof_resolution_stack = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+inside_closure_depth = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+in_const_assertion = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+preserve_literal_types = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+use_declared_type_for_identifier = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+skip_array_contextual_supertype_collapse = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+generic_excess_skip = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+iteration_depth = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+switch_depth = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+function_depth = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+is_unreachable = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+has_reported_unreachable = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+label_stack = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+had_outer_loop = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+suppress_definite_assignment_errors = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+js_body_uses_arguments = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+emitted_ts2454_errors = { lifetime = "SpeculationScoped", capability = "SpeculationState", reason = "snapshot/rollback-sensitive state mutated during speculative checking" }
+emitted_ts2411_for_iface_prop = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+type_resolution_fuel = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }

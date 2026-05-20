@@ -1,6 +1,5 @@
 use super::super::super::{Printer, ScriptTarget};
 use super::class_has_self_references;
-use super::is_ident_char;
 use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::Node;
@@ -110,21 +109,55 @@ impl<'a> Printer<'a> {
             } else {
                 self.get_identifier_text_idx(class.name)
             };
+            // Constructor parameter decorators also produce a class-level
+            // `__decorate` assignment (`C = __decorate([__param(...)], C)`),
+            // so self-referential static initializers need the same stable
+            // class-value alias as class decorators.
+            let has_ctor_param_decorators = !self
+                .collect_constructor_param_decorators(&class.members.nodes)
+                .is_empty();
+            let needs_class_decorate =
+                !legacy_class_decorators.is_empty() || has_ctor_param_decorators;
 
             if self.ctx.target_es5 {
-                let needs_alias = !legacy_class_decorators.is_empty()
+                let binding_name = self
+                    .ctx
+                    .block_scope_state
+                    .register_block_scoped_class(&class_name);
+                let binding_name = (binding_name != class_name).then_some(binding_name);
+                let needs_alias = needs_class_decorate
                     && class_has_self_references(
                         self.arena,
                         self.source_text_for_map(),
                         &class_name,
                         &class.members.nodes,
                     );
-                let alias_name = needs_alias.then(|| format!("{class_name}_1"));
+                let alias_name = needs_alias.then(|| self.make_unique_name_from_base(&class_name));
                 let mut es5_emitter = ClassES5Emitter::new(self.arena);
                 es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
+                es5_emitter.set_async_generator_inner_name_counts(
+                    self.async_generator_inner_name_counts.clone(),
+                );
+                let blocked_disposable_names = self.blocked_disposable_names_for_transform();
+                es5_emitter.set_disposable_env_context(
+                    self.next_disposable_env_id,
+                    blocked_disposable_names,
+                );
+                let externally_hoisted_decls =
+                    self.es5_computed_auto_accessor_hoisted_decls(idx, &class_name);
+                if !externally_hoisted_decls.is_empty() {
+                    for decl in &externally_hoisted_decls {
+                        if !self.hoisted_assignment_temps.contains(decl) {
+                            self.hoisted_assignment_temps.push(decl.clone());
+                        }
+                    }
+                    es5_emitter.set_externally_hoisted_decls(externally_hoisted_decls);
+                }
                 es5_emitter.set_indent_level(self.writer.indent_level());
                 es5_emitter.set_transforms(self.transforms.clone());
                 es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
+                es5_emitter.set_printer_options(self.ctx.options.clone());
+                es5_emitter.set_module_kind(self.ctx.outer_module_kind());
                 if let Some(text) = self.source_text_for_map() {
                     if self.writer.has_source_map() {
                         es5_emitter
@@ -150,8 +183,12 @@ impl<'a> Printer<'a> {
                 if let Some(alias) = alias_name {
                     es5_emitter.set_class_self_reference_alias(alias);
                 }
-                let output = es5_emitter.emit_class_with_name(idx, &class_name);
-                self.ctx.destructuring_state.temp_var_counter = es5_emitter.temp_var_counter();
+                let output = if let Some(binding_name) = binding_name.as_deref() {
+                    es5_emitter.emit_class_with_binding_name(idx, binding_name)
+                } else {
+                    es5_emitter.emit_class_with_name(idx, &class_name)
+                };
+                self.sync_es5_class_emitter_state(&mut es5_emitter);
                 let mappings = es5_emitter.take_mappings();
                 if !mappings.is_empty() && self.writer.has_source_map() {
                     self.writer.write("");
@@ -173,7 +210,7 @@ impl<'a> Printer<'a> {
             }
 
             if class_name.is_empty() {
-                self.emit_class_es6_with_options(node, idx, false, None, None);
+                self.emit_class_es6_with_options(node, idx, false, None, None, None, false);
                 return;
             }
 
@@ -188,19 +225,10 @@ impl<'a> Printer<'a> {
                     false
                 };
 
-            // Check if the class needs a class-level __decorate call due to constructor
-            // parameter decorators (even without class-level decorators).
-            let has_ctor_param_decorators = !self
-                .collect_constructor_param_decorators(&class.members.nodes)
-                .is_empty();
-            // A class-level __decorate is needed for class decorators OR ctor param decorators
-            let needs_class_decorate =
-                !legacy_class_decorators.is_empty() || has_ctor_param_decorators;
-
             // Detect if the class body has self-references that need aliasing.
             // When a decorated class references itself (e.g. `static x() { return C.y; }`),
             // tsc emits: `var C_1; let C = C_1 = class C { static x() { return C_1.y; } };`
-            let needs_alias = !legacy_class_decorators.is_empty()
+            let needs_alias = needs_class_decorate
                 && class_has_self_references(
                     self.arena,
                     self.source_text_for_map(),
@@ -209,8 +237,15 @@ impl<'a> Printer<'a> {
                 );
 
             let alias_name = if needs_alias {
-                let alias = format!("{class_name}_1");
-                self.hoisted_assignment_temps.push(alias.clone());
+                let alias = if let Some(alias) =
+                    self.preplanned_legacy_decorated_class_aliases.remove(&idx)
+                {
+                    alias
+                } else {
+                    let alias = self.make_unique_name_from_base(&class_name);
+                    self.hoisted_assignment_temps.push(alias.clone());
+                    alias
+                };
                 Some(alias)
             } else {
                 None
@@ -222,76 +257,15 @@ impl<'a> Printer<'a> {
             if needs_class_decorate {
                 if let Some(ref alias) = alias_name {
                     // Emit: `let Name = Name_1 = class Name { ... };`
-                    // First capture the class body, then replace self-refs
-                    let before_len = self.writer.len();
                     self.emit_class_es6_with_options(
                         node,
                         idx,
                         true,
                         Some(("let", class_name.clone())),
                         Some(alias),
+                        Some(alias),
+                        true,
                     );
-                    let after_len = self.writer.len();
-
-                    // Post-process: replace class name with alias in class body
-                    let full_output = self.writer.get_output().to_string();
-                    let emitted_str = &full_output[before_len..after_len];
-
-                    // The emitted text starts with `let Name = class Name {`
-                    // We need to insert `Name_1 = ` after `let Name = `
-                    // and replace body references to Name with Name_1
-                    let prefix = format!("let {class_name} = class {class_name}");
-                    let alias_prefix = format!("let {class_name} = {alias} = class {class_name}");
-
-                    let mut replaced = emitted_str.replacen(&prefix, &alias_prefix, 1);
-
-                    // Replace self-references ONLY inside the class body (between { and };)
-                    // Static fields after the class close brace should keep the original name.
-                    if let Some(brace_pos) = replaced.find('{') {
-                        // Find the matching close of the class expression: `};\n` or `};`
-                        // The class body ends at `\n};` (the closing brace of the class expr)
-                        let close_pattern = "\n};";
-                        let body_end =
-                            if let Some(close_pos) = replaced[brace_pos..].find(close_pattern) {
-                                brace_pos + close_pos + close_pattern.len()
-                            } else {
-                                replaced.len()
-                            };
-
-                        let header = &replaced[..brace_pos];
-                        let class_body = &replaced[brace_pos..body_end];
-                        let after_class = &replaced[body_end..];
-
-                        // Only replace identifiers within the class body
-                        let mut new_body = String::with_capacity(class_body.len());
-                        let name_bytes = class_name.as_bytes();
-                        let body_bytes = class_body.as_bytes();
-                        let mut i = 0;
-                        while i < body_bytes.len() {
-                            if i + name_bytes.len() <= body_bytes.len()
-                                && &body_bytes[i..i + name_bytes.len()] == name_bytes
-                            {
-                                let before_ok = i == 0 || !is_ident_char(body_bytes[i - 1]);
-                                let after_ok = i + name_bytes.len() == body_bytes.len()
-                                    || !is_ident_char(body_bytes[i + name_bytes.len()]);
-                                if before_ok && after_ok {
-                                    new_body.push_str(alias);
-                                    i += name_bytes.len();
-                                    continue;
-                                }
-                            }
-                            new_body.push(body_bytes[i] as char);
-                            i += 1;
-                        }
-                        replaced = format!("{header}{new_body}{after_class}");
-                    }
-
-                    // Replace the emitted range with the modified text.
-                    // Trim trailing newline to avoid double blank line before __decorate.
-                    let replaced = replaced.trim_end_matches('\n');
-                    self.writer.truncate(before_len);
-                    self.write(replaced);
-                    self.write_line();
                 } else {
                     self.emit_class_es6_with_options(
                         node,
@@ -299,10 +273,12 @@ impl<'a> Printer<'a> {
                         true,
                         Some(("let", class_name.clone())),
                         None,
+                        None,
+                        true,
                     );
                 }
             } else {
-                self.emit_class_es6_with_options(node, idx, false, None, None);
+                self.emit_class_es6_with_options(node, idx, false, None, None, None, false);
             }
 
             // Restore anonymous_default_export_name if we temporarily set it
@@ -337,7 +313,10 @@ impl<'a> Printer<'a> {
 
             // Emit __decorate calls for member decorators (methods, properties, accessors)
             if has_legacy_member_decorators {
-                self.emit_legacy_member_decorator_calls(&class_name, &class.members.nodes);
+                self.emit_legacy_member_decorator_calls_without_private_name_scope(
+                    &class_name,
+                    &class.members.nodes,
+                );
             }
 
             let commonjs_exported = self.ctx.is_commonjs()
@@ -349,38 +328,15 @@ impl<'a> Printer<'a> {
                 && self
                     .arena
                     .has_modifier(&class.modifiers, SyntaxKind::DefaultKeyword);
-            if let Some(ref alias) = alias_name {
-                // Emit: `Name = Name_1 = __decorate([...], Name);`
-                // We intercept the normal pattern and insert the alias assignment
-                let before_len = self.writer.len();
-                self.emit_legacy_class_decorator_assignment(
-                    &class_name,
-                    &legacy_class_decorators,
-                    commonjs_exported,
-                    commonjs_default,
-                    false,
-                    &class.members.nodes,
-                );
-                let after_len = self.writer.len();
-                let full_output = self.writer.get_output().to_string();
-                let emitted = &full_output[before_len..after_len];
-
-                // Replace `Name = __decorate` with `Name = Name_1 = __decorate`
-                let pattern = format!("{class_name} = __decorate");
-                let replacement = format!("{class_name} = {alias} = __decorate");
-                let modified = emitted.replacen(&pattern, &replacement, 1);
-                self.writer.truncate(before_len);
-                self.write(&modified);
-            } else {
-                self.emit_legacy_class_decorator_assignment(
-                    &class_name,
-                    &legacy_class_decorators,
-                    commonjs_exported,
-                    commonjs_default,
-                    false,
-                    &class.members.nodes,
-                );
-            }
+            self.emit_legacy_class_decorator_assignment(
+                &class_name,
+                &legacy_class_decorators,
+                commonjs_exported,
+                commonjs_default,
+                false,
+                alias_name.as_deref(),
+                &class.members.nodes,
+            );
 
             // Clear type parameter names after decorator emission
             self.metadata_class_type_params = None;
@@ -391,10 +347,18 @@ impl<'a> Printer<'a> {
         if self.ctx.target_es5 {
             let mut es5_emitter = ClassES5Emitter::new(self.arena);
             es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
+            es5_emitter.set_async_generator_inner_name_counts(
+                self.async_generator_inner_name_counts.clone(),
+            );
+            let blocked_disposable_names = self.blocked_disposable_names_for_transform();
+            es5_emitter
+                .set_disposable_env_context(self.next_disposable_env_id, blocked_disposable_names);
             es5_emitter.set_indent_level(self.writer.indent_level());
             // Pass transform directives to the ClassES5Emitter
             es5_emitter.set_transforms(self.transforms.clone());
             es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
+            es5_emitter.set_printer_options(self.ctx.options.clone());
+            es5_emitter.set_module_kind(self.ctx.outer_module_kind());
             if let Some(text) = self.source_text_for_map() {
                 if self.writer.has_source_map() {
                     es5_emitter.set_source_map_context(text, self.writer.current_source_index());
@@ -408,8 +372,16 @@ impl<'a> Printer<'a> {
             }
             es5_emitter
                 .set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
-            let output = es5_emitter.emit_class(idx);
-            self.ctx.destructuring_state.temp_var_counter = es5_emitter.temp_var_counter();
+            let output = if class.name.is_none() {
+                if let Some(class_name) = self.anonymous_default_export_name.clone() {
+                    es5_emitter.emit_class_with_name(idx, &class_name)
+                } else {
+                    es5_emitter.emit_class(idx)
+                }
+            } else {
+                es5_emitter.emit_class(idx)
+            };
+            self.sync_es5_class_emitter_state(&mut es5_emitter);
             let mappings = es5_emitter.take_mappings();
             if !mappings.is_empty() && self.writer.has_source_map() {
                 self.writer.write("");
@@ -440,7 +412,7 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        self.emit_class_es6_with_options(node, idx, false, None, None);
+        self.emit_class_es6_with_options(node, idx, false, None, None, None, false);
     }
 
     pub(in crate::emitter) fn can_render_simple_tc39_decorated_class_es5(
@@ -499,9 +471,16 @@ impl<'a> Printer<'a> {
 
         let mut es5_emitter = ClassES5Emitter::new(self.arena);
         es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
+        es5_emitter
+            .set_async_generator_inner_name_counts(self.async_generator_inner_name_counts.clone());
+        let blocked_disposable_names = self.blocked_disposable_names_for_transform();
+        es5_emitter
+            .set_disposable_env_context(self.next_disposable_env_id, blocked_disposable_names);
         es5_emitter.set_indent_level(self.writer.indent_level() + 1);
         es5_emitter.set_transforms(self.transforms.clone());
         es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
+        es5_emitter.set_printer_options(self.ctx.options.clone());
+        es5_emitter.set_module_kind(self.ctx.outer_module_kind());
         if let Some(text) = self.source_text_for_map() {
             es5_emitter.set_source_text(text);
         }
@@ -511,7 +490,7 @@ impl<'a> Printer<'a> {
         }
         es5_emitter.set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
         let mut inner_output = es5_emitter.emit_class_with_name(idx, &inner_name);
-        self.ctx.destructuring_state.temp_var_counter = es5_emitter.temp_var_counter();
+        self.sync_es5_class_emitter_state(&mut es5_emitter);
         inner_output = inner_output.trim_end_matches('\n').to_string();
 
         let base_indent = "    ".repeat(self.writer.indent_level() as usize);
@@ -545,14 +524,19 @@ impl<'a> Printer<'a> {
         class_node: NodeIndex,
         display_name: &str,
     ) -> bool {
-        if self.ctx.options.legacy_decorators || self.ctx.options.target == ScriptTarget::ESNext {
+        if self.ctx.options.legacy_decorators
+            || (self.ctx.options.target == ScriptTarget::ESNext
+                && self.ctx.options.use_define_for_class_fields)
+        {
             return false;
         }
 
         let Some(node) = self.arena.get(class_node) else {
             return false;
         };
-        if node.kind != syntax_kind_ext::CLASS_DECLARATION {
+        if node.kind != syntax_kind_ext::CLASS_DECLARATION
+            && node.kind != syntax_kind_ext::CLASS_EXPRESSION
+        {
             return false;
         }
 
@@ -568,6 +552,17 @@ impl<'a> Printer<'a> {
         emitter.set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
         emitter.set_expression_mode(true);
         emitter.set_function_name(display_name.to_string());
+        if let Some(class) = self.arena.get_class(node)
+            && class.name.is_none()
+            && !self.collect_class_decorators(&class.modifiers).is_empty()
+        {
+            let anonymous_name = if display_name == "default" {
+                "default_1".to_string()
+            } else {
+                self.next_tc39_anonymous_class_name()
+            };
+            emitter.set_anonymous_class_name(anonymous_name);
+        }
         if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
             emitter.set_tslib_prefix(true);
             emitter.set_tslib_import_binding(self.commonjs_tslib_import_binding.clone());
@@ -575,34 +570,154 @@ impl<'a> Printer<'a> {
         if let Some(text) = self.source_text_for_map() {
             emitter.set_source_text(text);
         }
+        self.seed_tc39_decorator_function_bodies(&mut emitter, class_node);
 
         let output = emitter.emit_class(class_node);
         if output.is_empty() {
             return false;
         }
 
-        let mut output = output.trim_end_matches('\n').to_string();
-        if display_name == "default" {
-            output = output.replace(
-                "var class_1 = _classThis = class",
-                "var default_1 = _classThis = class",
-            );
-            output = output.replace(
-                "class_1 = _classThis = _classDescriptor.value",
-                "default_1 = _classThis = _classDescriptor.value",
-            );
-            output = output.replace(
-                "return class_1 = _classThis;",
-                "return default_1 = _classThis;",
-            );
-            output = output.replace(
-                "__setFunctionName(_classThis, \"class_1\")",
-                "__setFunctionName(_classThis, \"default\")",
-            );
-        }
-
-        self.write(&output);
+        let output = output.trim_end_matches('\n');
+        self.write(output);
         self.skip_comments_for_erased_node(node);
         true
+    }
+
+    pub(in crate::emitter) fn capture_tc39_decorated_class_expression(
+        &mut self,
+        class_node: NodeIndex,
+        display_name: &str,
+    ) -> Option<String> {
+        let start = self.writer.len();
+        let emitted = self.emit_tc39_decorated_class_expression(class_node, display_name);
+        let expr = emitted.then(|| self.writer.get_output()[start..].trim().to_string());
+        self.writer.truncate(start);
+        expr
+    }
+
+    fn next_tc39_anonymous_class_name(&mut self) -> String {
+        for suffix in 1.. {
+            let candidate = format!("class_{suffix}");
+            if !self.file_identifiers.contains(&candidate)
+                && !self.generated_temp_names.contains(&candidate)
+            {
+                self.generated_temp_names.insert(candidate.clone());
+                return candidate;
+            }
+        }
+        unreachable!("unbounded class temp suffix search should always find a name")
+    }
+
+    pub(in crate::emitter) fn es5_computed_auto_accessor_hoisted_decls(
+        &self,
+        class_idx: NodeIndex,
+        class_name: &str,
+    ) -> Vec<String> {
+        if !self.ctx.target_es5 {
+            return Vec::new();
+        }
+        let Some(class_node) = self.arena.get(class_idx) else {
+            return Vec::new();
+        };
+        let Some(class_data) = self.arena.get_class(class_node) else {
+            return Vec::new();
+        };
+        let has_static_auto_accessor = class_data.members.nodes.iter().any(|&member_idx| {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                return false;
+            };
+            if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                return false;
+            }
+            let Some(prop) = self.arena.get_property_decl(member_node) else {
+                return false;
+            };
+            self.arena
+                .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
+                && self.arena.is_static(&prop.modifiers)
+                && !self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                && !self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+                && self
+                    .arena
+                    .get(prop.name)
+                    .is_none_or(|name| name.kind != SyntaxKind::PrivateIdentifier as u16)
+        });
+        if has_static_auto_accessor {
+            return Vec::new();
+        }
+
+        let generated_name_index = 0u32;
+        for &member_idx in &class_data.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                continue;
+            }
+            let Some(prop) = self.arena.get_property_decl(member_node) else {
+                continue;
+            };
+            if !self
+                .arena
+                .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
+                || self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                || self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+                || self.arena.is_static(&prop.modifiers)
+            {
+                continue;
+            }
+            let Some(name_node) = self.arena.get(prop.name) else {
+                continue;
+            };
+            if name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
+                continue;
+            }
+            if name_node.kind == SyntaxKind::Identifier as u16 {
+                continue;
+            }
+
+            let storage_name = format!(
+                "_{class_name}_{}_accessor_storage",
+                es5_generated_auto_accessor_name(generated_name_index)
+            );
+            let mut decls = vec![storage_name];
+            if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                && let Some(computed) = self.arena.get_computed_property(name_node)
+                && self.arena.get(computed.expression).is_some_and(|expr| {
+                    expr.kind != SyntaxKind::StringLiteral as u16
+                        && expr.kind != SyntaxKind::NumericLiteral as u16
+                        && expr.kind != SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                })
+            {
+                decls.push(es5_temp_name(self.ctx.destructuring_state.temp_var_counter));
+            }
+            return decls;
+        }
+
+        Vec::new()
+    }
+}
+
+fn es5_generated_auto_accessor_name(index: u32) -> String {
+    if index < 26 {
+        format!("_{}", (b'a' + index as u8) as char)
+    } else {
+        format!("_{}", index - 26)
+    }
+}
+
+fn es5_temp_name(index: u32) -> String {
+    if index < 26 {
+        format!("_{}", (b'a' + index as u8) as char)
+    } else {
+        format!("_{index}")
     }
 }

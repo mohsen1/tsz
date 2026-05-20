@@ -219,6 +219,17 @@ impl<'a> CheckerState<'a> {
                 .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
                 .and_then(|binder| binder.get_symbol(sym_id))
         })?;
+        if self.identifier_is_type_only_module_exports_import_projection(expr_idx) {
+            self.error_at_node(
+                expr_idx,
+                &crate::diagnostics::format_message(
+                    crate::diagnostics::diagnostic_messages::CANNOT_BE_USED_AS_A_VALUE_BECAUSE_IT_WAS_EXPORTED_USING_EXPORT_TYPE,
+                    &[class_name],
+                ),
+                crate::diagnostics::diagnostic_codes::CANNOT_BE_USED_AS_A_VALUE_BECAUSE_IT_WAS_EXPORTED_USING_EXPORT_TYPE,
+            );
+            return Some(TypeId::ERROR);
+        }
 
         if self.alias_resolves_to_type_only(sym_id) {
             self.report_wrong_meaning_diagnostic(

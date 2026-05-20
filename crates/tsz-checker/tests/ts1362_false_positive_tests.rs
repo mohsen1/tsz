@@ -167,3 +167,67 @@ B.zzz;
         "Should not emit TS1362 when namespace import merged with interface is re-exported. Got: {ts1362:?}. All: {diagnostics:?}"
     );
 }
+
+#[test]
+fn imported_interface_const_merge_uses_value_side_for_property_access() {
+    let node = r#"
+import { IdentifierNode } from "./identifier.js";
+
+export interface ColumnNode {
+  readonly kind: 'ColumnNode';
+  readonly column: IdentifierNode;
+}
+
+type ColumnNodeFactory = Readonly<{
+  create(column: string): Readonly<ColumnNode>;
+}>;
+
+export const ColumnNode: ColumnNodeFactory = {
+  create(column) {
+    return {
+      kind: 'ColumnNode',
+      column: IdentifierNode.create(column),
+    };
+  },
+};
+"#;
+    let identifier = r#"
+export interface IdentifierNode {
+  readonly kind: 'IdentifierNode';
+  readonly name: string;
+}
+
+type IdentifierNodeFactory = Readonly<{
+  create(name: string): Readonly<IdentifierNode>;
+}>;
+
+export const IdentifierNode: IdentifierNodeFactory = {
+  create(column) {
+    return { kind: 'IdentifierNode', name: column };
+  },
+};
+"#;
+    let lib_files = tsz_checker::test_utils::load_lib_files(&["es5.d.ts"]);
+    let diagnostics = tsz_checker::test_utils::check_multi_file_with_libs(
+        &[("./node.ts", node), ("./identifier.ts", identifier)],
+        "./node.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &lib_files,
+    )
+    .into_iter()
+    .filter(|d| d.code != 2318)
+    .map(|d| (d.code, d.message_text))
+    .collect::<Vec<_>>();
+    let ts2339 = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2339)
+        .collect::<Vec<_>>();
+    assert!(
+        ts2339.is_empty(),
+        "Imported interface+const merge should use the const value side in expression context. Got: {ts2339:?}. All: {diagnostics:?}"
+    );
+}

@@ -27,6 +27,24 @@ fn test_interner_deduplication() {
 }
 
 #[test]
+fn test_fresh_type_param_constructor_preserves_declaration_identity() {
+    let interner = TypeInterner::new();
+    let info = TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: Some(interner.keyof(interner.object(vec![]))),
+        default: None,
+        is_const: false,
+    };
+
+    let first = interner.fresh_type_param(info);
+    let second = interner.fresh_type_param(info);
+
+    assert_ne!(first, second);
+    assert_eq!(interner.lookup(first), Some(TypeData::TypeParameter(info)));
+    assert_eq!(interner.lookup(second), Some(TypeData::TypeParameter(info)));
+}
+
+#[test]
 fn test_interner_fresh_object_distinct_from_non_fresh() {
     let interner = TypeInterner::new();
     let prop = PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER);
@@ -663,7 +681,7 @@ fn test_template_literal_list_interning_deduplication() {
 }
 
 #[test]
-fn test_intersection_visibility_merging() {
+fn test_intersection_private_public_property_conflict_reduces_to_never() {
     let interner = TypeInterner::new();
 
     // Create object { x: number } with private visibility
@@ -689,16 +707,41 @@ fn test_intersection_visibility_merging() {
         TypeId::STRING,
     )]);
 
-    // Intersection should merge visibility (Private > Public = Private)
+    // A private/public same-name property conflict is impossible.
     let intersection = interner.intersection2(obj_private, obj_public);
+    assert_eq!(intersection, TypeId::NEVER);
+}
 
-    if let Some(TypeData::Object(shape_id)) = interner.lookup(intersection) {
-        let shape = interner.object_shape(shape_id);
-        assert_eq!(shape.properties.len(), 1);
-        assert_eq!(shape.properties[0].visibility, Visibility::Private);
-    } else {
-        panic!("Expected object type");
-    }
+#[test]
+fn test_intersection_protected_public_property_merges_as_public() {
+    let interner = TypeInterner::new();
+    let name = interner.intern_string("x");
+
+    let obj_protected = interner.object(vec![PropertyInfo {
+        name,
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Protected,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+        is_symbol_named: false,
+        single_quoted_name: false,
+    }]);
+    let obj_public = interner.object(vec![PropertyInfo::new(name, TypeId::STRING)]);
+
+    let intersection = interner.intersection2(obj_protected, obj_public);
+
+    let Some(TypeData::Object(shape_id)) = interner.lookup(intersection) else {
+        panic!("expected protected/public intersection to remain an object");
+    };
+    let shape = interner.object_shape(shape_id);
+    assert_eq!(shape.properties.len(), 1);
+    assert_eq!(shape.properties[0].visibility, Visibility::Public);
 }
 
 #[test]

@@ -6,20 +6,227 @@
 use std::sync::Arc;
 
 use tsz_binder::SymbolId;
+use tsz_parser::parser::node::NodeAccess;
 
 use super::CheckerContext;
 
 impl<'a> CheckerContext<'a> {
+    pub fn actual_lib_def_id_for_bare_name(&self, name: &str) -> Option<tsz_solver::DefId> {
+        if name.contains('.') {
+            return None;
+        }
+        // This lib alias is an option-dependent intrinsic: it lowers to
+        // `undefined` under `strictBuiltinIteratorReturn` and `any` otherwise.
+        // Returning a stable lib `DefId` here would bypass that policy.
+        if name == "BuiltinIteratorReturn" {
+            return None;
+        }
+
+        if let Some(sym_id) = self.actual_lib_symbol_id_for_bare_name(name) {
+            return Some(self.get_canonical_lib_def_id(name, sym_id));
+        }
+
+        for lib_ctx in self.lib_contexts.iter().take(self.actual_lib_file_count) {
+            if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
+                return Some(self.get_canonical_lib_def_id(name, sym_id));
+            }
+        }
+
+        None
+    }
+
+    pub(crate) fn actual_lib_context_has_bare_name(&self, name: &str) -> bool {
+        !name.contains('.')
+            && name != "BuiltinIteratorReturn"
+            && self
+                .lib_contexts
+                .iter()
+                .take(self.actual_lib_file_count)
+                .any(|lib_ctx| lib_ctx.binder.file_locals.has(name))
+    }
+
+    fn actual_lib_symbol_id_for_bare_name(&self, name: &str) -> Option<SymbolId> {
+        if let Some(sym_id) = self.binder.file_locals.get(name)
+            && self.symbol_is_from_actual_or_cloned_lib(sym_id)
+            && !self.symbol_has_current_file_type_declaration(sym_id, name)
+        {
+            return Some(sym_id);
+        }
+
+        self.global_file_locals_index
+            .as_ref()
+            .and_then(|idx| idx.get(name))
+            .and_then(|entries| {
+                entries
+                    .iter()
+                    .map(|&(_, sym_id)| sym_id)
+                    .filter(|&sym_id| self.symbol_is_from_actual_or_cloned_lib(sym_id))
+                    .max_by_key(|sym_id| sym_id.0)
+            })
+    }
+
+    fn actual_lib_global_type_symbol_id(&self, name: &str) -> Option<SymbolId> {
+        if name.contains('.') {
+            return None;
+        }
+
+        for lib_ctx in self.lib_contexts.iter().take(self.actual_lib_file_count) {
+            if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
+                return Some(sym_id);
+            }
+        }
+
+        self.actual_lib_symbol_id_for_bare_name(name)
+    }
+
     pub fn file_local_type_shadow_for_lib_name(&self, name: &str) -> bool {
         use tsz_binder::symbol_flags;
 
+        if !self.binder.is_external_module() {
+            return false;
+        }
+
+        if self.current_file_type_shadow_for_name(name) {
+            return true;
+        }
+
         self.binder.file_locals.get(name).is_some_and(|sym_id| {
-            !self.symbol_is_from_actual_lib(sym_id)
+            let is_actual_or_merged_lib = self.symbol_is_from_actual_lib(sym_id)
+                || self.binder.lib_symbol_ids.contains(&sym_id);
+            if is_actual_or_merged_lib {
+                return self.symbol_has_current_file_type_declaration(sym_id, name);
+            }
+            !is_actual_or_merged_lib
                 && self
                     .binder
                     .get_symbol(sym_id)
                     .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE))
         })
+    }
+
+    fn current_file_type_shadow_for_name(&self, name: &str) -> bool {
+        use tsz_binder::symbol_flags;
+
+        if !self.binder.is_external_module() {
+            return false;
+        }
+
+        let Some(entries) = self
+            .global_file_locals_index
+            .as_ref()
+            .and_then(|idx| idx.get(name))
+        else {
+            return false;
+        };
+
+        entries.iter().any(|&(file_idx, sym_id)| {
+            if file_idx != self.current_file_idx || self.symbol_is_from_actual_or_cloned_lib(sym_id)
+            {
+                return false;
+            }
+
+            self.get_binder_for_file(file_idx)
+                .or(Some(self.binder))
+                .and_then(|binder| binder.get_symbol(sym_id))
+                .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE))
+        })
+    }
+
+    pub(crate) fn symbol_has_current_file_type_declaration(
+        &self,
+        sym_id: SymbolId,
+        name: &str,
+    ) -> bool {
+        let Some(symbol) = self.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        symbol.declarations.iter().any(|&decl_idx| {
+            if let Some(arenas) = self.binder.declaration_arenas.get(&(sym_id, decl_idx))
+                && arenas.iter().any(|arena| {
+                    if self.is_global_augmentation_declaration(name, arena.as_ref(), decl_idx) {
+                        return false;
+                    }
+                    std::ptr::eq(arena.as_ref(), self.arena)
+                        && self.type_declaration_name_matches(arena.as_ref(), decl_idx, name)
+                })
+            {
+                return true;
+            }
+
+            if self.is_global_augmentation_declaration(name, self.arena, decl_idx) {
+                return false;
+            }
+            self.type_declaration_name_matches(self.arena, decl_idx, name)
+        })
+    }
+
+    fn is_global_augmentation_declaration(
+        &self,
+        name: &str,
+        arena: &tsz_parser::parser::NodeArena,
+        decl_idx: tsz_parser::parser::NodeIndex,
+    ) -> bool {
+        self.binder
+            .global_augmentations
+            .get(name)
+            .is_some_and(|augmentations| {
+                augmentations.iter().any(|augmentation| {
+                    augmentation.node == decl_idx
+                        && augmentation.arena.as_ref().map_or_else(
+                            || std::ptr::eq(arena, self.arena),
+                            |aug_arena| std::ptr::eq(arena, aug_arena.as_ref()),
+                        )
+                })
+            })
+    }
+
+    pub(crate) fn same_file_type_declaration_symbol_for_name(
+        &self,
+        name: &str,
+    ) -> Option<SymbolId> {
+        if !self.binder.is_external_module() {
+            return None;
+        }
+
+        self.arena.nodes.iter().enumerate().find_map(|(idx, _)| {
+            let decl_idx = tsz_parser::NodeIndex(idx as u32);
+            if self.is_global_augmentation_declaration(name, self.arena, decl_idx) {
+                return None;
+            }
+            self.type_declaration_name_matches(self.arena, decl_idx, name)
+                .then(|| self.binder.node_symbols.get(&decl_idx.0).copied())
+                .flatten()
+        })
+    }
+
+    pub(crate) fn same_file_type_declaration_exists(&self, name: &str) -> bool {
+        if !self.binder.is_external_module() {
+            return false;
+        }
+
+        self.arena.nodes.iter().enumerate().any(|(idx, _)| {
+            let decl_idx = tsz_parser::NodeIndex(idx as u32);
+            !self.is_global_augmentation_declaration(name, self.arena, decl_idx)
+                && self.type_declaration_name_matches(self.arena, decl_idx, name)
+        })
+    }
+
+    fn type_declaration_name_matches(
+        &self,
+        arena: &tsz_parser::parser::NodeArena,
+        decl_idx: tsz_parser::parser::NodeIndex,
+        name: &str,
+    ) -> bool {
+        let Some(node) = arena.get(decl_idx) else {
+            return false;
+        };
+        let name_node = arena
+            .get_interface(node)
+            .map(|decl| decl.name)
+            .or_else(|| arena.get_type_alias(node).map(|decl| decl.name))
+            .or_else(|| arena.get_class(node).map(|decl| decl.name))
+            .or_else(|| arena.get_enum(node).map(|decl| decl.name));
+        name_node.is_some_and(|name_node| arena.get_identifier_text(name_node) == Some(name))
     }
 
     /// Check if the Promise constructor VALUE is available.
@@ -43,7 +250,6 @@ impl<'a> CheckerContext<'a> {
                 }
             };
 
-        // Check lib contexts
         for lib_ctx in self.lib_contexts.iter() {
             if let Some(sym_id) = lib_ctx.binder.file_locals.get("Promise")
                 && check_symbol_has_value(sym_id, &lib_ctx.binder)
@@ -52,14 +258,12 @@ impl<'a> CheckerContext<'a> {
             }
         }
 
-        // Check current scope
         if let Some(sym_id) = self.binder.current_scope.get("Promise")
             && check_symbol_has_value(sym_id, self.binder)
         {
             return true;
         }
 
-        // Check file locals
         if let Some(sym_id) = self.binder.file_locals.get("Promise")
             && check_symbol_has_value(sym_id, self.binder)
         {
@@ -81,23 +285,17 @@ impl<'a> CheckerContext<'a> {
     /// Check if Symbol is available in lib files or global scope.
     /// Returns true if Symbol is declared in lib contexts, globals, or type declarations.
     pub fn has_symbol_in_lib(&self) -> bool {
-        // Check lib contexts first
         for lib_ctx in self.lib_contexts.iter() {
             if lib_ctx.binder.file_locals.has("Symbol") {
                 return true;
             }
         }
-
-        // Check if Symbol is available in current scope/global context
         if self.binder.current_scope.has("Symbol") {
             return true;
         }
-
-        // Check current file locals as fallback
         if self.binder.file_locals.has("Symbol") {
             return true;
         }
-
         false
     }
 
@@ -112,16 +310,12 @@ impl<'a> CheckerContext<'a> {
             }
         }
 
-        // Check if symbol is available in current scope/global context
         if self.binder.current_scope.has(name) {
             return true;
         }
-
-        // Check current file locals as fallback
         if self.binder.file_locals.has(name) {
             return true;
         }
-
         false
     }
 
@@ -150,6 +344,44 @@ impl<'a> CheckerContext<'a> {
             .iter()
             .take(self.actual_lib_file_count)
             .any(|lib_ctx| Arc::ptr_eq(&lib_ctx.arena, symbol_arena))
+    }
+
+    /// `SymbolId` of the standard-library `Promise` declaration, if loaded.
+    ///
+    /// Looks only at actual lib contexts or merged/cloned lib symbols. Compare
+    /// the returned id with a `SymbolId` directly to decide whether a symbol IS
+    /// the lib `Promise` — do not re-match on the symbol's name string.
+    pub fn lib_promise_sym_id(&self) -> Option<SymbolId> {
+        self.actual_lib_global_type_symbol_id("Promise")
+    }
+
+    /// True when `sym_id` is the standard-library `Promise` symbol.
+    pub fn sym_id_is_lib_promise(&self, sym_id: SymbolId) -> bool {
+        self.lib_promise_sym_id() == Some(sym_id)
+    }
+
+    fn sym_id_is_lib_promise_like(&self, sym_id: SymbolId) -> bool {
+        self.actual_lib_global_type_symbol_id("PromiseLike") == Some(sym_id)
+    }
+
+    /// True when `sym_id` is the standard-library `Promise` or `PromiseLike` symbol.
+    pub fn sym_id_is_lib_promise_or_promise_like(&self, sym_id: SymbolId) -> bool {
+        self.sym_id_is_lib_promise(sym_id) || self.sym_id_is_lib_promise_like(sym_id)
+    }
+
+    /// Structural predicate for suppressing the simple-object
+    /// `RejectMissingInterfaceDecl` / declaration-provenance residue counter.
+    ///
+    /// Returns true when the symbol has no local interface declaration and
+    /// is, by binder-recorded provenance, an actual or cloned-lib symbol.
+    /// The predicate never inspects the symbol's name: §25 forbids a name
+    /// allowlist here.
+    pub fn simple_object_missing_interface_decl_residue_is_lib_provenance_case(
+        &self,
+        sym_id: SymbolId,
+        has_local_interface_decl: bool,
+    ) -> bool {
+        !has_local_interface_decl && self.symbol_is_from_actual_or_cloned_lib(sym_id)
     }
 
     /// Check if a symbol originates from an actual standard lib file, including

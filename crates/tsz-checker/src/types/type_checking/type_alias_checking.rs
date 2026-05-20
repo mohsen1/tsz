@@ -119,6 +119,17 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    /// Read-and-clear the solver's `tuple_too_large` flag, returning `true`
+    /// only when the flag was set AND `body_type`'s outer shape owns the
+    /// synthesis. Always clears the flag so the next alias starts clean.
+    fn alias_body_owns_too_large_tuple(&self, body_type: TypeId) -> bool {
+        self.ctx.types.take_tuple_too_large()
+            && crate::query_boundaries::type_checking_utilities::is_fresh_tuple_synthesis_site(
+                self.ctx.types,
+                body_type,
+            )
+    }
+
     /// Check a type alias declaration.
     pub(crate) fn check_type_alias_declaration(&mut self, node_idx: NodeIndex) {
         let Some(node) = self.ctx.arena.get(node_idx) else {
@@ -219,6 +230,9 @@ impl<'a> CheckerState<'a> {
         });
         let body_type = {
             let _ = self.ctx.types.take_union_too_complex();
+            // Clear any stale tuple_too_large flag before constructing the body
+            // so that flag reads below are attributable to this alias alone.
+            let _ = self.ctx.types.take_tuple_too_large();
             let body_type = if has_deferred_self_reference {
                 crate::TypeNodeChecker::new(&mut self.ctx).check(alias.type_node)
             } else {
@@ -235,10 +249,19 @@ impl<'a> CheckerState<'a> {
             body_type
         };
         let body_construction_too_complex = self.ctx.types.take_union_too_complex();
-        let body_evaluation_too_complex = if has_deferred_self_reference {
+        let mut body_produced_too_large_tuple = self.alias_body_owns_too_large_tuple(body_type);
+        let has_type_params = alias
+            .type_parameters
+            .as_ref()
+            .is_some_and(|params| !params.nodes.is_empty());
+        // Generic aliases are checked at declaration time, but their bodies are
+        // not fully instantiated until concrete type arguments are supplied.
+        let body_evaluation_too_complex = if has_deferred_self_reference || has_type_params {
             false
         } else {
             let _ = self.evaluate_type_with_env_uncached(body_type);
+            body_produced_too_large_tuple =
+                body_produced_too_large_tuple || self.alias_body_owns_too_large_tuple(body_type);
             self.ctx.types.take_union_too_complex()
         };
         if body_type != TypeId::ERROR
@@ -252,7 +275,7 @@ impl<'a> CheckerState<'a> {
                     body_type,
                 );
             if !type_params.is_empty() || can_register_non_generic_conditional {
-                self.ctx.get_or_create_def_id(alias_sid);
+                let alias_def_id = self.ctx.get_or_create_def_id(alias_sid);
                 let registered_type = if can_register_non_generic_conditional {
                     self.evaluate_type_with_env_uncached(body_type)
                 } else {
@@ -261,10 +284,11 @@ impl<'a> CheckerState<'a> {
                 self.ctx.symbol_types.insert(alias_sid, registered_type);
                 self.ctx
                     .register_resolved_type(alias_sid, registered_type, type_params);
-                self.ctx.env_eval_cache.borrow_mut().clear();
+                self.ctx.clear_type_evaluation_caches_for_def(alias_def_id);
             }
         }
-        if self.type_node_produces_too_large_tuple(alias.type_node) {
+        if body_produced_too_large_tuple || self.type_node_produces_too_large_tuple(alias.type_node)
+        {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             self.error_at_node(
                 alias.type_node,
@@ -309,9 +333,19 @@ impl<'a> CheckerState<'a> {
             } else {
                 Vec::new()
             };
-            if body_refs.contains(&def_id)
+            let has_stable_recursive_ref = body_is_conditional
                 && self
-                    .conditional_body_has_definite_recursive_alias_ref(alias.type_node, alias_sid)
+                    .conditional_body_has_definite_recursive_alias_ref(alias.type_node, alias_sid);
+            let has_unresolved_computed_recursive_ref = body_is_conditional
+                && self.conditional_body_has_unresolved_computed_recursive_alias_ref(
+                    alias.type_node,
+                    alias_sid,
+                );
+            let has_recursive_wrapper_arg = !body_is_conditional
+                && self.type_reference_applies_alias_to_recursive_wrapper_arg(alias.type_node);
+            if (has_stable_recursive_ref && body_refs.contains(&def_id))
+                || has_unresolved_computed_recursive_ref
+                || has_recursive_wrapper_arg
             {
                 // Collect type params that were pushed into scope above
                 let type_params: Vec<tsz_solver::TypeParamInfo> = alias
@@ -342,17 +376,21 @@ impl<'a> CheckerState<'a> {
                     .register_def_auto_params_in_envs(def_id, body_type, type_params);
 
                 // Evaluate with TS2589 detection flag
-                let depth_exceeded = self.evaluate_type_for_ts2589_check(body_type, def_id);
-                if depth_exceeded {
+                let depth_exceeded = (has_stable_recursive_ref || has_recursive_wrapper_arg)
+                    && self.evaluate_type_for_ts2589_check(body_type, def_id);
+                if depth_exceeded || has_unresolved_computed_recursive_ref {
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     // tsc anchors TS2589 at `currentNode` (the inner self-reference
                     // being instantiated when `instantiationDepth === 100` fires).
                     // Conditional-type children are visited in
                     // check→extends→true→false order, so the last self-referential
                     // type reference in source order matches tsc's anchor.
-                    let anchor = self
-                        .find_last_recursive_alias_ref(alias.type_node, alias_sid)
-                        .unwrap_or(alias.type_node);
+                    let anchor = if has_recursive_wrapper_arg {
+                        alias.type_node
+                    } else {
+                        self.find_last_recursive_alias_ref(alias.type_node, alias_sid)
+                            .unwrap_or(alias.type_node)
+                    };
                     self.error_at_node(
                         anchor,
                         diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
@@ -564,6 +602,98 @@ impl<'a> CheckerState<'a> {
         best.map(|(_, idx)| idx)
     }
 
+    fn type_reference_applies_alias_to_recursive_wrapper_arg(&self, body_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(body_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return false;
+        }
+        let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
+            return false;
+        };
+        if !self.type_reference_names_conditional_type_alias(type_ref.type_name) {
+            return false;
+        }
+        let Some(args) = &type_ref.type_arguments else {
+            return false;
+        };
+        args.nodes
+            .iter()
+            .any(|&arg_idx| self.type_reference_is_recursive_wrapper_alias(arg_idx))
+    }
+
+    fn type_reference_names_conditional_type_alias(&self, type_name: NodeIndex) -> bool {
+        let Some(sym_ref) = self.resolve_type_symbol_for_lowering(type_name) else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(tsz_binder::SymbolId(sym_ref)) else {
+            return false;
+        };
+        symbol.declarations.iter().any(|&decl_idx| {
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                return false;
+            };
+            if decl_node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                return false;
+            }
+            let Some(alias) = self.ctx.arena.get_type_alias(decl_node) else {
+                return false;
+            };
+            self.ctx
+                .arena
+                .get(alias.type_node)
+                .is_some_and(|body_node| body_node.kind == syntax_kind_ext::CONDITIONAL_TYPE)
+        })
+    }
+
+    fn type_reference_is_recursive_wrapper_alias(&self, type_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(type_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return false;
+        }
+        let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
+            return false;
+        };
+        let Some(sym_ref) = self.resolve_type_symbol_for_lowering(type_ref.type_name) else {
+            return false;
+        };
+        let alias_sid = tsz_binder::SymbolId(sym_ref);
+        let Some(symbol) = self.ctx.binder.get_symbol(alias_sid) else {
+            return false;
+        };
+        symbol.declarations.iter().any(|&decl_idx| {
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                return false;
+            };
+            if decl_node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                return false;
+            }
+            let Some(alias) = self.ctx.arena.get_type_alias(decl_node) else {
+                return false;
+            };
+            let Some(body_node) = self.ctx.arena.get(alias.type_node) else {
+                return false;
+            };
+            if body_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+                return false;
+            }
+            let Some(body_ref) = self.ctx.arena.get_type_ref(body_node) else {
+                return false;
+            };
+            let Some(body_args) = &body_ref.type_arguments else {
+                return false;
+            };
+            body_args.nodes.iter().any(|&arg_idx| {
+                let mut best = None;
+                self.collect_recursive_alias_refs(arg_idx, alias_sid, &mut best);
+                best.is_some()
+            })
+        })
+    }
+
     fn collect_recursive_alias_refs(
         &self,
         node_idx: NodeIndex,
@@ -617,8 +747,11 @@ impl<'a> CheckerState<'a> {
                 if self.type_args_match_alias_params(alias_sid, type_args) {
                     return true;
                 }
+                if self.type_arg_nodes_all_are_deferred_passthrough_for_depth_check(type_args) {
+                    return false;
+                }
                 return !self
-                    .type_arg_nodes_all_contain_deferred_type_parameter_for_depth_check(type_args);
+                    .type_arg_nodes_contain_scoped_type_parameter_for_depth_check(type_args);
             }
         }
 
@@ -631,23 +764,23 @@ impl<'a> CheckerState<'a> {
             })
     }
 
-    fn type_arg_nodes_all_contain_deferred_type_parameter_for_depth_check(
+    fn type_arg_nodes_all_are_deferred_passthrough_for_depth_check(
         &mut self,
         type_args: &tsz_parser::parser::NodeList,
     ) -> bool {
         !type_args.nodes.is_empty()
-            && type_args.nodes.iter().copied().all(|node_idx| {
-                self.type_node_contains_deferred_type_parameter_for_depth_check(node_idx)
-            })
+            && type_args
+                .nodes
+                .iter()
+                .copied()
+                .all(|node_idx| self.type_node_is_deferred_passthrough_for_depth_check(node_idx))
     }
 
-    fn type_node_contains_deferred_type_parameter_for_depth_check(
-        &mut self,
-        node_idx: NodeIndex,
-    ) -> bool {
+    fn type_node_is_deferred_passthrough_for_depth_check(&mut self, node_idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(node_idx) else {
             return false;
         };
+
         if let Some(identifier) = self.ctx.arena.get_identifier(node)
             && self
                 .ctx
@@ -663,13 +796,107 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+        {
+            if type_ref
+                .type_arguments
+                .as_ref()
+                .is_some_and(|type_args| !type_args.nodes.is_empty())
+            {
+                return false;
+            }
+
+            return self.type_name_is_deferred_passthrough_for_depth_check(type_ref.type_name);
+        }
+
+        false
+    }
+
+    fn conditional_body_has_unresolved_computed_recursive_alias_ref(
+        &mut self,
+        node_idx: NodeIndex,
+        alias_sid: tsz_binder::SymbolId,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+        {
+            let resolved = self
+                .resolve_type_symbol_for_lowering(type_ref.type_name)
+                .map(tsz_binder::SymbolId);
+            if resolved == Some(alias_sid)
+                && let Some(type_args) = &type_ref.type_arguments
+                && !self.type_args_match_alias_params(alias_sid, type_args)
+                && type_args.nodes.iter().copied().any(|arg_idx| {
+                    !self.type_node_is_deferred_passthrough_for_depth_check(arg_idx)
+                        && self
+                            .type_node_contains_unresolved_type_reference_for_depth_check(arg_idx)
+                })
+            {
+                return true;
+            }
+        }
+
         self.ctx
             .arena
             .get_children(node_idx)
             .into_iter()
             .any(|child_idx| {
-                self.type_node_contains_deferred_type_parameter_for_depth_check(child_idx)
+                self.conditional_body_has_unresolved_computed_recursive_alias_ref(
+                    child_idx, alias_sid,
+                )
             })
+    }
+
+    fn type_node_contains_unresolved_type_reference_for_depth_check(
+        &mut self,
+        node_idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+            && self
+                .resolve_type_symbol_for_lowering(type_ref.type_name)
+                .is_none()
+            && self
+                .ctx
+                .arena
+                .kind_at(type_ref.type_name)
+                .is_some_and(|kind| kind == syntax_kind_ext::QUALIFIED_NAME)
+            && !self.type_name_is_deferred_passthrough_for_depth_check(type_ref.type_name)
+        {
+            return true;
+        }
+
+        self.ctx
+            .arena
+            .get_children(node_idx)
+            .into_iter()
+            .any(|child_idx| {
+                self.type_node_contains_unresolved_type_reference_for_depth_check(child_idx)
+            })
+    }
+
+    fn type_name_is_deferred_passthrough_for_depth_check(&mut self, name_idx: NodeIndex) -> bool {
+        let Some(name_node) = self.ctx.arena.get(name_idx) else {
+            return false;
+        };
+        let Some(identifier) = self.ctx.arena.get_identifier(name_node) else {
+            return false;
+        };
+
+        self.ctx
+            .type_parameter_scope
+            .contains_key(&identifier.escaped_text)
+            || self
+                .identifier_references_enclosing_infer_binding(name_idx, &identifier.escaped_text)
     }
 
     fn identifier_references_enclosing_infer_binding(
@@ -704,14 +931,32 @@ impl<'a> CheckerState<'a> {
         let Some(node) = self.ctx.arena.get(node_idx) else {
             return false;
         };
-        if node.kind == syntax_kind_ext::INFER_TYPE
-            && let Some(infer_data) = self.ctx.arena.get_infer_type(node)
-            && let Some(type_param_node) = self.ctx.arena.get(infer_data.type_parameter)
-            && let Some(type_param) = self.ctx.arena.get_type_parameter(type_param_node)
-            && let Some(name_node) = self.ctx.arena.get(type_param.name)
-            && let Some(identifier) = self.ctx.arena.get_identifier(name_node)
+        if node.kind == syntax_kind_ext::TEMPLATE_LITERAL_TYPE_SPAN {
+            return self.ctx.arena.get_template_span(node).is_some_and(|span| {
+                self.type_node_contains_infer_binding_named(span.expression, name)
+            });
+        }
+        if node.kind == syntax_kind_ext::INFER_TYPE {
+            let Some(infer_data) = self.ctx.arena.get_infer_type(node) else {
+                return false;
+            };
+            if let Some(type_param_node) = self.ctx.arena.get(infer_data.type_parameter)
+                && let Some(type_param) = self.ctx.arena.get_type_parameter(type_param_node)
+                && let Some(name_node) = self.ctx.arena.get(type_param.name)
+                && let Some(identifier) = self.ctx.arena.get_identifier(name_node)
+                && identifier.escaped_text == name
+            {
+                return true;
+            }
+            return self.type_node_contains_infer_binding_named(infer_data.type_parameter, name);
+        }
+        if node.kind == syntax_kind_ext::TYPE_PARAMETER
+            && let Some(type_param) = self.ctx.arena.get_type_parameter(node)
         {
-            return identifier.escaped_text == name;
+            return (type_param.constraint != NodeIndex::NONE
+                && self.type_node_contains_infer_binding_named(type_param.constraint, name))
+                || (type_param.default != NodeIndex::NONE
+                    && self.type_node_contains_infer_binding_named(type_param.default, name));
         }
 
         self.ctx
@@ -719,6 +964,104 @@ impl<'a> CheckerState<'a> {
             .get_children(node_idx)
             .into_iter()
             .any(|child_idx| self.type_node_contains_infer_binding_named(child_idx, name))
+    }
+
+    /// Walk `extends_type` collecting every `infer X` binding and push each as a
+    /// provisional type parameter into `type_parameter_scope`. Returns save-state
+    /// for `pop_infer_bindings`.
+    pub(crate) fn push_infer_bindings_from_extends(
+        &mut self,
+        extends_type: NodeIndex,
+    ) -> Vec<(String, Option<TypeId>)> {
+        if extends_type.is_none() {
+            return Vec::new();
+        }
+        // Phase 1: collect the names (immutable AST walk).
+        let mut infer_names: Vec<String> = Vec::new();
+        let mut stack = vec![extends_type];
+        while let Some(idx) = stack.pop() {
+            let Some(node) = self.ctx.arena.get(idx) else {
+                continue;
+            };
+            if node.kind == syntax_kind_ext::TEMPLATE_LITERAL_TYPE_SPAN {
+                // `get_children` does not currently expose the expression of a
+                // template literal type span, but `${infer X}` stores the
+                // binding there.
+                if let Some(span) = self.ctx.arena.get_template_span(node) {
+                    stack.push(span.expression);
+                }
+                continue;
+            } else if node.kind == syntax_kind_ext::INFER_TYPE {
+                if let Some(infer_data) = self.ctx.arena.get_infer_type(node) {
+                    if let Some(tp_node) = self.ctx.arena.get(infer_data.type_parameter)
+                        && let Some(tp_data) = self.ctx.arena.get_type_parameter(tp_node)
+                        && let Some(name_node) = self.ctx.arena.get(tp_data.name)
+                        && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                    {
+                        let name = ident.escaped_text.clone();
+                        if !infer_names.contains(&name) {
+                            infer_names.push(name);
+                        }
+                    }
+                    // The constraint of `infer X extends Constraint` may itself
+                    // contain `infer Y extends C2`; tsc binds those nested names
+                    // in the true branch too. Descend into the type-parameter
+                    // subtree to pick them up.
+                    stack.push(infer_data.type_parameter);
+                }
+                continue;
+            } else if node.kind == syntax_kind_ext::TYPE_PARAMETER {
+                if let Some(type_param) = self.ctx.arena.get_type_parameter(node) {
+                    if type_param.constraint != NodeIndex::NONE {
+                        stack.push(type_param.constraint);
+                    }
+                    if type_param.default != NodeIndex::NONE {
+                        stack.push(type_param.default);
+                    }
+                }
+                continue;
+            }
+            for child in self.ctx.arena.get_children(idx) {
+                stack.push(child);
+            }
+        }
+
+        // Phase 2: compute each name's implicit constraint from the surrounding
+        // pattern (template literal → string, explicit extends → that type, etc.).
+        // Must run before borrowing the factory, since it takes &mut self.
+        let infer_constraints: Vec<Option<TypeId>> = infer_names
+            .iter()
+            .map(|name| self.effective_infer_constraint_from_extends_type(extends_type, name))
+            .collect();
+
+        // Phase 3: intern provisional `TypeParameter`s and install them in scope.
+        let factory = self.ctx.types.factory();
+        let mut pushes: Vec<(String, Option<TypeId>)> = Vec::new();
+        for (name, &constraint) in infer_names.iter().zip(infer_constraints.iter()) {
+            let atom = self.ctx.types.intern_string(name);
+            let provisional = factory.type_param(tsz_solver::TypeParamInfo {
+                name: atom,
+                constraint,
+                default: None,
+                is_const: false,
+            });
+            let previous = self
+                .ctx
+                .type_parameter_scope
+                .insert(name.clone(), provisional);
+            pushes.push((name.clone(), previous));
+        }
+        pushes
+    }
+
+    fn pop_infer_bindings(&mut self, pushes: Vec<(String, Option<TypeId>)>) {
+        for (name, previous) in pushes.into_iter().rev() {
+            if let Some(prev) = previous {
+                self.ctx.type_parameter_scope.insert(name, prev);
+            } else {
+                self.ctx.type_parameter_scope.remove(&name);
+            }
+        }
     }
 
     /// Walk a type argument AST node and return true if it contains a reference
@@ -905,6 +1248,14 @@ impl<'a> CheckerState<'a> {
                     self.check_type_node(arr.element_type);
                 }
             }
+            k if k == syntax_kind_ext::OPTIONAL_TYPE
+                || k == syntax_kind_ext::REST_TYPE
+                || k == syntax_kind_ext::PARENTHESIZED_TYPE =>
+            {
+                if let Some(wrapped) = self.ctx.arena.get_wrapped_type(node) {
+                    self.check_type_node(wrapped.type_node);
+                }
+            }
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
                 if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
                     && let Some(type_arguments) = &type_ref.type_arguments
@@ -1029,6 +1380,11 @@ impl<'a> CheckerState<'a> {
                 //
                 // This minimizes side effects from type resolution while still catching
                 // invalid mapped type keys inside conditional types.
+                //
+                // Infer-binding scope: `infer X` declarations in ExtendsType bind `X` in
+                // TrueType only. Push them as provisional type parameters only while
+                // recursing into TrueType so references to `X` inside FalseType still
+                // report TS2304 like `tsc`.
                 if let Some(cond) = self.ctx.arena.get_conditional_type(node) {
                     let true_is_mapped = self
                         .ctx
@@ -1048,7 +1404,10 @@ impl<'a> CheckerState<'a> {
                                 check_type,
                             );
                         if !check_is_type_param {
+                            let infer_pushes =
+                                self.push_infer_bindings_from_extends(cond.extends_type);
                             self.check_type_node(cond.true_type);
+                            self.pop_infer_bindings(infer_pushes);
                         }
                     }
                     let false_is_mapped = self
@@ -1148,9 +1507,27 @@ impl<'a> CheckerState<'a> {
                 // the time we reach this sibling check the scope no longer contains
                 // the inner signature's type parameters.
                 if let Some(func_type) = self.ctx.arena.get_function_type(node) {
-                    let tp_updates =
-                        self.push_missing_name_type_parameters(&func_type.type_parameters);
-                    self.check_rest_parameter_types(&func_type.parameters.nodes);
+                    let type_parameters = func_type.type_parameters.clone();
+                    let parameters = func_type.parameters.nodes.clone();
+                    let type_annotation = func_type.type_annotation;
+                    let (_type_params, tp_updates) = self.push_type_parameters(&type_parameters);
+                    for &param_idx in &parameters {
+                        let param_type_annotation = (|| {
+                            let param_node = self.ctx.arena.get(param_idx)?;
+                            let param = self.ctx.arena.get_parameter(param_node)?;
+                            param
+                                .type_annotation
+                                .is_some()
+                                .then_some(param.type_annotation)
+                        })();
+                        if let Some(param_type_annotation) = param_type_annotation {
+                            self.check_type_node(param_type_annotation);
+                        }
+                    }
+                    if type_annotation.is_some() {
+                        self.check_type_node(type_annotation);
+                    }
+                    self.check_rest_parameter_types(&parameters);
                     self.pop_type_parameters(tp_updates);
                 }
             }
@@ -1164,7 +1541,16 @@ impl<'a> CheckerState<'a> {
                         self.check_type_node(arg_idx);
                     }
                     let expr_name = type_query.expr_name;
-                    let expr_type = self.get_type_of_node(expr_name);
+                    let expr_type = if self
+                        .ctx
+                        .arena
+                        .get(expr_name)
+                        .is_some_and(|expr| expr.kind == syntax_kind_ext::QUALIFIED_NAME)
+                    {
+                        self.resolve_typeof_qualified_value_chain(expr_name, true)
+                    } else {
+                        self.get_type_of_node(expr_name)
+                    };
                     let num_type_args = args_nodes.len();
                     self.check_instantiation_expression_type_args(
                         expr_type,

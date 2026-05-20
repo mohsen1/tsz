@@ -61,6 +61,7 @@ impl FileDiscoveryOptions {
 
 pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>> {
     let mut files = BTreeSet::new();
+    let mut explicit_files = Vec::new();
 
     for file in &options.files {
         let path = resolve_file_path(&options.base_dir, file);
@@ -69,11 +70,11 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
         // are always compiled, including .js/.jsx/.mjs/.cjs files, regardless of
         // the allowJs setting. This matches tsc behavior where allowJs only controls
         // pattern-matched file discovery (include/exclude), not explicit file lists.
-        if is_ts_file(&path)
+        let is_valid_explicit_file = is_ts_file(&path)
             || is_js_file(&path)
-            || (options.resolve_json_module && is_json_file(&path))
-        {
-            files.insert(path);
+            || (options.resolve_json_module && is_json_file(&path));
+        if is_valid_explicit_file && files.insert(path.clone()) {
+            explicit_files.push(path);
         }
     }
 
@@ -115,38 +116,8 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
                     continue;
                 }
 
-                // Avoid canonicalizing package-link paths whose lexical path is
-                // outside node_modules but whose real target lives under
-                // node_modules. Ordinary resolved package files should still
-                // canonicalize so tempdir aliases like /var -> /private/var
-                // collapse to a stable path.
-                let resolved = if options.follow_links {
-                    let canonical =
-                        std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-                    let path_has_node_modules = path.components().any(|component| {
-                        matches!(
-                            component,
-                            std::path::Component::Normal(part) if part.to_str() == Some("node_modules")
-                        )
-                    });
-                    let canonical_has_node_modules = canonical.components().any(|component| {
-                        matches!(
-                            component,
-                            std::path::Component::Normal(part) if part.to_str() == Some("node_modules")
-                        )
-                    });
-                    let preserve_symlink_identity =
-                        !path_has_node_modules && canonical_has_node_modules;
-                    if preserve_symlink_identity
-                        || path_has_symlinked_package_ancestor(path, &options.base_dir)
-                    {
-                        path.to_path_buf()
-                    } else {
-                        canonical
-                    }
-                } else {
-                    path.to_path_buf()
-                };
+                let resolved =
+                    resolve_discovered_path(path, &options.base_dir, options.follow_links);
                 files.insert(resolved);
             }
         }
@@ -155,11 +126,35 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
     // tsc excludes `.d.ts` files from the program when a corresponding `.ts`
     // (or `.tsx`) source file exists in the same directory.  This prevents the
     // declaration file from shadowing the source file's exports.
-    let files = exclude_shadowed_declaration_files(files);
+    let mut files = exclude_shadowed_declaration_files(files);
 
-    let mut list: Vec<PathBuf> = files.into_iter().collect();
-    list.sort_by(|a, b| a.to_string_lossy().cmp(&b.to_string_lossy()));
+    let mut list = Vec::with_capacity(files.len());
+    for path in explicit_files {
+        if files.remove(&path) {
+            list.push(path);
+        }
+    }
+    list.extend(files);
     Ok(list)
+}
+
+fn resolve_discovered_path(path: &Path, base_dir: &Path, follow_links: bool) -> PathBuf {
+    if !follow_links {
+        return path.to_path_buf();
+    }
+
+    // Avoid canonicalizing package-link paths whose lexical path is outside
+    // node_modules but whose real target lives under node_modules. Ordinary
+    // resolved package files should still canonicalize so tempdir aliases like
+    // /var -> /private/var collapse to a stable path.
+    let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let preserve_symlink_identity =
+        !path_has_node_modules_component(path) && path_has_node_modules_component(&canonical);
+    if preserve_symlink_identity || path_has_symlinked_package_ancestor(path, base_dir) {
+        path.to_path_buf()
+    } else {
+        canonical
+    }
 }
 
 fn path_has_symlinked_package_ancestor(path: &Path, base_dir: &Path) -> bool {
@@ -173,16 +168,20 @@ fn path_has_symlinked_package_ancestor(path: &Path, base_dir: &Path) -> bool {
             .unwrap_or(false)
         {
             let canonical = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
-            return canonical.components().any(|component| {
-                matches!(
-                    component,
-                    std::path::Component::Normal(part) if part.to_str() == Some("node_modules")
-                )
-            });
+            return path_has_node_modules_component(&canonical);
         }
         current = dir.parent();
     }
     false
+}
+
+fn path_has_node_modules_component(path: &Path) -> bool {
+    path.components().any(|component| {
+        matches!(
+            component,
+            std::path::Component::Normal(part) if part.to_str() == Some("node_modules")
+        )
+    })
 }
 
 fn include_walk_roots(base_dir: &Path, include_patterns: &[String]) -> Vec<PathBuf> {
@@ -412,7 +411,15 @@ fn ensure_file_exists(path: &Path, original: &Path) -> Result<()> {
     }
 
     if !path.is_file() {
-        bail!("path is not a file: {}", path.display());
+        // The CLI layer formats this marker into tsc's full TS6231 diagnostic.
+        // tsc normalizes a bare `.` to an empty display path.
+        let display = original.display().to_string();
+        let normalized = if display == "." {
+            String::new()
+        } else {
+            display
+        };
+        bail!("TS6231: {normalized}");
     }
 
     Ok(())
@@ -668,10 +675,36 @@ mod tests {
     }
 
     #[test]
+    fn test_path_has_node_modules_component_matches_whole_component() {
+        assert!(path_has_node_modules_component(Path::new(
+            "project/node_modules/pkg/index.d.ts"
+        )));
+        assert!(path_has_node_modules_component(Path::new(
+            "/repo/node_modules"
+        )));
+        assert!(!path_has_node_modules_component(Path::new(
+            "project/not_node_modules/pkg/index.d.ts"
+        )));
+        assert!(!path_has_node_modules_component(Path::new(
+            "project/node_modules_cache/pkg/index.d.ts"
+        )));
+    }
+
+    #[test]
     fn test_ensure_file_exists_rejects_directory_paths() {
         let dir = unique_temp_dir("directory");
         let err = ensure_file_exists(&dir, Path::new("directory")).unwrap_err();
-        assert!(err.to_string().contains("path is not a file"));
+        let msg = err.to_string();
+        assert_eq!(msg, "TS6231: directory");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_ensure_file_exists_normalizes_current_dir_to_empty() {
+        let dir = unique_temp_dir("dot");
+        let err = ensure_file_exists(&dir, Path::new(".")).unwrap_err();
+        let msg = err.to_string();
+        assert_eq!(msg, "TS6231: ");
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -713,6 +746,36 @@ mod tests {
             result.iter().any(|p| p.ends_with("lib.js")),
             "explicitly listed .js file should be included even without allowJs"
         );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_discover_explicit_files_preserves_list_order() {
+        let dir = std::env::temp_dir().join("tsz_fs_test_explicit_order");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("b.js"), "let a = 10;").unwrap();
+        fs::write(dir.join("a.ts"), "let b = 30;").unwrap();
+
+        let options = FileDiscoveryOptions {
+            base_dir: dir.clone(),
+            files: vec![PathBuf::from("b.js"), PathBuf::from("a.ts")],
+            files_explicitly_set: true,
+            include: None,
+            exclude: None,
+            out_dir: None,
+            follow_links: false,
+            allow_js: false,
+            resolve_json_module: false,
+        };
+
+        let result = discover_ts_files(&options).unwrap();
+        let names: Vec<_> = result
+            .iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(names, vec!["b.js", "a.ts"]);
 
         let _ = fs::remove_dir_all(&dir);
     }

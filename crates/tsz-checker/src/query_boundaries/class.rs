@@ -1,7 +1,8 @@
 use crate::class_checker::ClassMemberInfo;
 use crate::state::CheckerState;
 use tsz_parser::NodeIndex;
-use tsz_solver::{TypeDatabase, TypeId};
+use tsz_solver::TypeId;
+use tsz_solver::construction::TypeDatabase;
 
 fn collect_signature_return_types(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<TypeId> {
     if let Some(signatures) = crate::query_boundaries::common::call_signatures_for_type(db, type_id)
@@ -275,8 +276,18 @@ fn source_this_parameter_is_acceptable_for_target_without_this(
     source: TypeId,
     target: TypeId,
 ) -> bool {
-    fn generic_head(display: &str) -> Option<&str> {
-        display.split_once('<').map(|(head, _)| head.trim())
+    fn return_types_have_matching_application_base(
+        checker: &CheckerState<'_>,
+        source_return: TypeId,
+        target_return: TypeId,
+    ) -> bool {
+        let source_base =
+            crate::query_boundaries::common::application_info(checker.ctx.types, source_return)
+                .map(|(base, _)| base);
+        let target_base =
+            crate::query_boundaries::common::application_info(checker.ctx.types, target_return)
+                .map(|(base, _)| base);
+        source_base.is_some() && source_base == target_base
     }
 
     fn signatures_have_matching_generic_shape(
@@ -289,8 +300,11 @@ fn source_this_parameter_is_acceptable_for_target_without_this(
             && !source_shape.type_params.is_empty()
             && !target_shape.type_params.is_empty()
             && source_shape.params.len() == target_shape.params.len()
-            && generic_head(&checker.format_type(source_shape.return_type))
-                == generic_head(&checker.format_type(target_shape.return_type))
+            && return_types_have_matching_application_base(
+                checker,
+                source_shape.return_type,
+                target_shape.return_type,
+            )
     }
 
     if let (Some(source_shape), Some(target_shape)) = (

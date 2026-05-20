@@ -29,8 +29,8 @@ impl<'a> TypeLowering<'a> {
                 self.add_type_param_binding(name, type_id);
             }
             let true_type = self.lower_type(data.true_type);
-            let false_type = self.lower_type(data.false_type);
             self.pop_type_param_scope();
+            let false_type = self.lower_type(data.false_type);
 
             let cond = ConditionalType {
                 check_type,
@@ -544,6 +544,22 @@ impl<'a> TypeLowering<'a> {
                 }
             }
 
+            // Module resolution requires &mut self (checker state); pick up the
+            // checker's pre-resolved result before falling through to the generic lowering.
+            if let Some(resolver) = self.import_type_resolver
+                && self.has_import_call_in_type_name(data.type_name)
+                && let Some(resolved) = resolver(data.type_name)
+            {
+                if let Some(args) = &data.type_arguments
+                    && !args.nodes.is_empty()
+                {
+                    let type_args: Vec<TypeId> =
+                        args.nodes.iter().map(|&i| self.lower_type(i)).collect();
+                    return self.interner.application(resolved, type_args);
+                }
+                return resolved;
+            }
+
             // For now, just lower the type name as an identifier
             let base_type = self.lower_type(data.type_name);
             if let Some(args) = &data.type_arguments
@@ -563,9 +579,9 @@ impl<'a> TypeLowering<'a> {
                     base_type
                 };
                 // Fill in missing type arguments from defaults (tsc's
-                // fillMissingTypeArguments). When `Effect<void>` is written but
-                // `Effect` has 3 type params with defaults for the last 2, the
-                // Application should be `Application(Effect, [void, never, never])`.
+                // fillMissingTypeArguments). Defaults can reference earlier type
+                // params, so resolve them through the solver helper instead of
+                // copying the raw default type.
                 if let Some(tsz_solver::TypeData::Lazy(def_id)) = self.interner.lookup(base_type)
                     && let Some(resolve_params) = self.lazy_type_params_resolver
                     && let Some(type_params) = resolve_params(def_id)
@@ -573,10 +589,13 @@ impl<'a> TypeLowering<'a> {
                     && type_params[type_args.len()..]
                         .iter()
                         .all(|p| p.default.is_some())
+                    && let Some(defaulted_args) = tsz_solver::computation::fill_application_defaults(
+                        self.interner,
+                        &type_args,
+                        &type_params,
+                    )
                 {
-                    for param in &type_params[type_args.len()..] {
-                        type_args.push(param.default.unwrap());
-                    }
+                    type_args = defaulted_args;
                 }
                 return self.interner.application(base_type, type_args);
             }
@@ -586,11 +605,12 @@ impl<'a> TypeLowering<'a> {
                 && let Some(type_params) = resolve_params(def_id)
                 && !type_params.is_empty()
                 && type_params.iter().all(|param| param.default.is_some())
+                && let Some(default_args) = tsz_solver::computation::fill_application_defaults(
+                    self.interner,
+                    &[],
+                    &type_params,
+                )
             {
-                let default_args = type_params
-                    .into_iter()
-                    .map(|param| param.default.unwrap_or(TypeId::ERROR))
-                    .collect();
                 return self.interner.application(base_type, default_args);
             }
 
@@ -637,6 +657,59 @@ impl<'a> TypeLowering<'a> {
         TypeId::ERROR
     }
 
+    /// Returns `true` when `type_name_idx` is or starts with an `import()` `CALL_EXPRESSION`.
+    ///
+    /// Covers:
+    /// - `import("./m")` — `type_name_idx` is directly a `CALL_EXPRESSION` whose callee is `import`
+    /// - `import("./m").Foo` — `type_name_idx` is a `QUALIFIED_NAME` chain whose leftmost leaf is such a call
+    ///
+    /// Plain identifiers are O(1) false.
+    fn has_import_call_in_type_name(&self, type_name_idx: NodeIndex) -> bool {
+        const MAX_IMPORT_CHAIN_DEPTH: usize = 64;
+        let Some(node) = self.arena.get(type_name_idx) else {
+            return false;
+        };
+        match node.kind {
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                let Some(call) = self.arena.get_call_expr(node) else {
+                    return false;
+                };
+                let Some(callee) = self.arena.get(call.expression) else {
+                    return false;
+                };
+                callee.kind == SyntaxKind::ImportKeyword as u16
+            }
+            k if k == syntax_kind_ext::QUALIFIED_NAME => {
+                let mut current = type_name_idx;
+                for _ in 0..MAX_IMPORT_CHAIN_DEPTH {
+                    let Some(n) = self.arena.get(current) else {
+                        return false;
+                    };
+                    match n.kind {
+                        k if k == syntax_kind_ext::QUALIFIED_NAME => {
+                            let Some(qn) = self.arena.get_qualified_name(n) else {
+                                return false;
+                            };
+                            current = qn.left;
+                        }
+                        k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                            let Some(call) = self.arena.get_call_expr(n) else {
+                                return false;
+                            };
+                            let Some(callee) = self.arena.get(call.expression) else {
+                                return false;
+                            };
+                            return callee.kind == SyntaxKind::ImportKeyword as u16;
+                        }
+                        _ => return false,
+                    }
+                }
+                false // depth limit reached
+            }
+            _ => false,
+        }
+    }
+
     /// Lower an identifier as a type (simple type reference)
     pub(super) fn lower_identifier_type(&self, node_idx: NodeIndex) -> TypeId {
         let node = match self.arena.get(node_idx) {
@@ -649,6 +722,12 @@ impl<'a> TypeLowering<'a> {
 
             if let Some(type_param) = self.lookup_type_param(name) {
                 return type_param;
+            }
+
+            if name == "BuiltinIteratorReturn"
+                && let Some(ty) = self.builtin_iterator_return_type
+            {
+                return ty;
             }
 
             // Check for built-in type names FIRST before attempting symbol resolution.
@@ -776,6 +855,13 @@ impl<'a> TypeLowering<'a> {
             if let Some(override_fn) = &self.type_query_override
                 && let Some(resolved) = override_fn(data.expr_name)
             {
+                if let Some(args) = &data.type_arguments
+                    && !args.nodes.is_empty()
+                {
+                    let type_args: Vec<TypeId> =
+                        args.nodes.iter().map(|&idx| self.lower_type(idx)).collect();
+                    return self.interner.application(resolved, type_args);
+                }
                 return resolved;
             }
             // Create a symbol reference from the expression name
@@ -1076,7 +1162,7 @@ mod numeric_helper_tests {
     use super::*;
     use std::borrow::Cow;
     use tsz_parser::parser::NodeArena;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     // ---- strip_numeric_separators ----
 

@@ -9,6 +9,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, node::PropertyDeclData};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+use tsz_solver::computation::ContextualTypeContext;
 
 /// Result from resolving literal string keys against an object type.
 pub(crate) struct LiteralKeysResult {
@@ -250,6 +251,20 @@ impl<'a> CheckerState<'a> {
         member_idx: NodeIndex,
         prop: &PropertyDeclData,
     ) -> Option<TypeId> {
+        let raw = self.class_property_relation_declared_type(member_idx, prop)?;
+        Some(self.wrap_static_readonly_unique_symbol_type(member_idx, prop, raw))
+    }
+
+    /// Like [`effective_class_property_declared_type`] but returns the raw
+    /// annotation type, without the `static readonly: unique symbol` wrap.
+    /// Used at the declaration-site initializer assignability check, where
+    /// the relation must compare against the lowered `symbol` form so a
+    /// fresh-symbol initializer (`Symbol()`) is accepted.
+    pub(crate) fn class_property_relation_declared_type(
+        &mut self,
+        member_idx: NodeIndex,
+        prop: &PropertyDeclData,
+    ) -> Option<TypeId> {
         if prop.type_annotation.is_some() {
             if self.is_js_file() {
                 // In JS/checkJs, property type syntax still reports TS8010, but it
@@ -265,6 +280,31 @@ impl<'a> CheckerState<'a> {
         } else {
             None
         }
+    }
+
+    /// Lift a `symbol`-typed `static readonly p: unique symbol` annotation to
+    /// `unique_symbol(SymbolRef(prop_sym))` so downstream `typeof Class.p`
+    /// queries see a distinct unique-symbol identity, mirroring the wrapping
+    /// that `get_type_of_variable_declaration` applies to const variables.
+    fn wrap_static_readonly_unique_symbol_type(
+        &mut self,
+        member_idx: NodeIndex,
+        prop: &PropertyDeclData,
+        raw_type: TypeId,
+    ) -> TypeId {
+        if raw_type != TypeId::SYMBOL
+            || !self.has_static_modifier(&prop.modifiers)
+            || !self.has_readonly_modifier(&prop.modifiers)
+            || !self.is_unique_symbol_type_annotation(prop.type_annotation)
+        {
+            return raw_type;
+        }
+        let Some(sym_id) = self.ctx.binder.get_node_symbol(member_idx) else {
+            return raw_type;
+        };
+        self.ctx
+            .types
+            .unique_symbol(tsz_solver::SymbolRef(sym_id.0))
     }
 
     /// Cache parameter types for function parameters.
@@ -557,7 +597,7 @@ impl<'a> CheckerState<'a> {
                     .flatten()
             })?;
         let contextual_type = self.evaluate_contextual_type(contextual_type);
-        let helper = tsz_solver::ContextualTypeContext::with_expected_and_options(
+        let helper = ContextualTypeContext::with_expected_and_options(
             self.ctx.types,
             contextual_type,
             self.ctx.compiler_options.no_implicit_any,
@@ -615,7 +655,7 @@ impl<'a> CheckerState<'a> {
         {
             return Some(rest_tuple_type);
         }
-        let helper = tsz_solver::ContextualTypeContext::with_expected_and_options(
+        let helper = ContextualTypeContext::with_expected_and_options(
             self.ctx.types,
             expected,
             self.ctx.compiler_options.no_implicit_any,
@@ -886,7 +926,7 @@ impl<'a> CheckerState<'a> {
         ) {
             return None;
         }
-        let helper = tsz_solver::ContextualTypeContext::with_expected_and_options(
+        let helper = ContextualTypeContext::with_expected_and_options(
             self.ctx.types,
             expected,
             self.ctx.compiler_options.no_implicit_any,
@@ -928,14 +968,17 @@ impl<'a> CheckerState<'a> {
 
     pub(crate) fn normalize_contextual_signature_with_env(&mut self, expected: TypeId) -> TypeId {
         fn should_preserve_contextual_param_type(
-            db: &dyn tsz_solver::TypeDatabase,
+            db: &dyn tsz_solver::construction::TypeDatabase,
             ty: TypeId,
         ) -> bool {
             // Delegate to solver query: checks if any union member is constructor-like
             crate::query_boundaries::common::is_constructor_like_type(db, ty)
         }
 
-        fn is_tuple_like_rest_param(db: &dyn tsz_solver::TypeDatabase, ty: TypeId) -> bool {
+        fn is_tuple_like_rest_param(
+            db: &dyn tsz_solver::construction::TypeDatabase,
+            ty: TypeId,
+        ) -> bool {
             crate::query_boundaries::common::tuple_elements(db, ty).is_some()
                 || crate::query_boundaries::common::union_members(db, ty).is_some_and(|members| {
                     !members.is_empty()
@@ -1307,7 +1350,7 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        let cached_eval = self.ctx.env_eval_cache.borrow().get(&type_id).copied();
+        let cached_eval = self.ctx.lookup_env_eval_cache(type_id);
         if let Some(cached) = cached_eval
             && cached.result != type_id
         {
@@ -2515,6 +2558,21 @@ impl<'a> CheckerState<'a> {
         }
 
         let unwrapped_type = query::unwrap_readonly_for_lookup(self.ctx.types, check_type);
+
+        if wants_string
+            && let Some(string_index) =
+                crate::query_boundaries::common::IndexSignatureResolver::new(self.ctx.types)
+                    .get_index_info(unwrapped_type)
+                    .string_index
+                    .as_ref()
+            && !crate::query_boundaries::index_signature::index_key_type_satisfies_index_signature(
+                self.ctx.types,
+                index_type,
+                string_index.key_type,
+            )
+        {
+            return true;
+        }
 
         !self.is_element_indexable(unwrapped_type, wants_string, wants_number)
     }

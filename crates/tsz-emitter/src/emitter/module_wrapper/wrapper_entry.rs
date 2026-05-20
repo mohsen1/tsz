@@ -1,4 +1,4 @@
-use super::super::{JsxEmit, Printer};
+use super::super::Printer;
 use super::{SystemDependencyAction, SystemDependencyPlan};
 use crate::emitter::ModuleKind;
 use std::collections::{HashMap, HashSet};
@@ -32,6 +32,10 @@ impl<'a> Printer<'a> {
         source: &tsz_parser::parser::node::SourceFileData,
         source_idx: NodeIndex,
     ) {
+        if !self.ctx.options.no_const_enum_inlining {
+            self.collect_const_enum_values(&source.statements);
+        }
+
         match format {
             crate::context::transform::ModuleFormat::AMD => {
                 self.emit_amd_wrapper(dependencies, source_node, source_idx);
@@ -258,6 +262,12 @@ impl<'a> Printer<'a> {
             self.register_system_import_substitutions(source, &dep_vars, &empty_system_plan);
         }
 
+        if let Some((_, tslib_var)) = value_deps.iter().find(|(dep, _)| dep == "tslib")
+            && !tslib_var.is_empty()
+        {
+            self.commonjs_tslib_import_binding = tslib_var.clone();
+        }
+
         self.emit_module_wrapper_body(source_node, source_idx);
         self.ctx.options.suppress_use_strict = false;
 
@@ -385,6 +395,12 @@ impl<'a> Printer<'a> {
         {
             self.write("\"use strict\";");
             self.write_line();
+            if self.source_has_dynamic_import_call(&source.statements) {
+                self.write(
+                    "var __syncRequire = typeof module === \"object\" && typeof module.exports === \"object\";",
+                );
+                self.write_line();
+            }
             self.ctx.options.suppress_use_strict = true;
         }
 
@@ -408,6 +424,37 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        let mut system_plan = self.collect_system_dependency_plan(dependencies, source);
+        self.add_system_jsx_runtime_dependency(dependencies, &mut system_plan);
+        let mut system_dependencies =
+            self.collect_active_system_dependencies(dependencies, source, &system_plan);
+        // Must run after collect_active_system_dependencies so collect_system_dependency_vars
+        // sees the injected "tslib" entry.
+        let needs_tslib_dependency = self.transforms.helpers_populated()
+            && self.transforms.helpers().any_needed()
+            || self.import_helpers_need_tslib_binding_for_class_emit(&source.statements);
+        if self.ctx.options.import_helpers && needs_tslib_dependency {
+            if !system_dependencies.iter().any(|d| d == "tslib") {
+                system_dependencies.insert(0, "tslib".to_string());
+            }
+            // When the source already supplies an `Assign` for "tslib" (e.g.
+            // `import * as TSLib from "tslib"` registers `Assign("TSLib")`),
+            // helper calls resolve through that binding via the later
+            // `commonjs_tslib_import_binding = dep_vars["tslib"]` update — no
+            // helper-specific setter line is needed. Only inject the helper
+            // `Assign("tslib_1")` when no user `Assign` exists (side-effect
+            // `import "tslib"` or no source import at all). Without it,
+            // `tslib_1.__decorate` references a hoisted-but-never-assigned
+            // binding when the wrapper provides tslib instead of CJS.
+            let actions = system_plan.actions.entry("tslib".to_string()).or_default();
+            let has_assign_action = actions
+                .iter()
+                .any(|action| matches!(action, SystemDependencyAction::Assign(_)));
+            if !has_assign_action {
+                actions.push(SystemDependencyAction::Assign("tslib_1".to_string()));
+            }
+        }
+
         self.write("System.register(");
         if let Some(name) = self.ctx.options.bundled_module_name.clone() {
             self.write("\"");
@@ -415,7 +462,7 @@ impl<'a> Printer<'a> {
             self.write("\", ");
         }
         self.write("[");
-        for (i, dep) in dependencies.iter().enumerate() {
+        for (i, dep) in system_dependencies.iter().enumerate() {
             if i > 0 {
                 self.write(", ");
             }
@@ -428,8 +475,8 @@ impl<'a> Printer<'a> {
         self.increase_indent();
         self.write("\"use strict\";");
         self.write_line();
-        let system_plan = self.collect_system_dependency_plan(dependencies, source);
-        let mut dep_vars = self.collect_system_dependency_vars(dependencies, source);
+        self.emit_system_helpers_if_needed(source);
+        let mut dep_vars = self.collect_system_dependency_vars(&system_dependencies, source);
         for (dep, actions) in &system_plan.actions {
             if let Some(SystemDependencyAction::Assign(dep_var)) = actions
                 .iter()
@@ -455,13 +502,23 @@ impl<'a> Printer<'a> {
         // Hoist exported function declarations to the outer module scope,
         // before the `return { setters, execute }` block.  TSC does the same:
         // function declarations are syntactically hoisted, so they (and their
-        // corresponding `exports_1` calls) live outside `execute`.
+        // corresponding `exports_1` calls) live outside `execute`. The hoisted
+        // bodies need the same wrapper-kind context `emit_system_execute_body`
+        // installs, so `import()` inside them dispatches through the System
+        // branch and emits `context_1.import(...)`.
+        let prev_module = self.ctx.options.module;
+        let prev_original = self.ctx.original_module_kind;
+        self.ctx.original_module_kind = Some(prev_module);
+        self.ctx.options.module = ModuleKind::CommonJS;
         let hoisted_func_stmts = self.emit_system_hoisted_functions(source);
+        self.ctx.options.module = prev_module;
+        self.ctx.original_module_kind = prev_original;
+        self.emit_system_export_star_helpers_if_needed(source, &system_plan);
 
         self.write("return {");
         self.write_line();
         self.increase_indent();
-        self.emit_system_setters(dependencies, &dep_vars, &system_plan);
+        self.emit_system_setters(&system_dependencies, &dep_vars, &system_plan);
         self.write_line();
         let execute_is_async = source.statements.nodes.iter().any(|&stmt_idx| {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
@@ -487,6 +544,10 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
 
+        if let Some(tslib_var) = dep_vars.get("tslib") {
+            self.commonjs_tslib_import_binding = tslib_var.clone();
+        }
+
         self.emit_system_execute_body(source_node, &dep_vars, &hoisted_func_stmts, &system_plan);
 
         self.decrease_indent();
@@ -497,6 +558,7 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.decrease_indent();
         self.write("});");
+        self.write_line();
     }
 
     fn collect_system_hoisted_function_names(
@@ -542,6 +604,75 @@ impl<'a> Printer<'a> {
             }
         }
         names
+    }
+
+    fn collect_active_system_dependencies(
+        &self,
+        dependencies: &[String],
+        source: &tsz_parser::parser::node::SourceFileData,
+        system_plan: &SystemDependencyPlan,
+    ) -> Vec<String> {
+        dependencies
+            .iter()
+            .filter(|dep| {
+                system_plan
+                    .actions
+                    .get(dep.as_str())
+                    .is_some_and(|actions| !actions.is_empty())
+                    || self.system_dependency_needs_empty_setter(dep, source)
+            })
+            .cloned()
+            .collect()
+    }
+
+    fn system_dependency_needs_empty_setter(
+        &self,
+        dep: &str,
+        source: &tsz_parser::parser::node::SourceFileData,
+    ) -> bool {
+        source.statements.nodes.iter().any(|&stmt_idx| {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                return false;
+            };
+            if stmt_node.kind == syntax_kind_ext::IMPORT_DECLARATION {
+                let Some(import_decl) = self.arena.get_import_decl(stmt_node) else {
+                    return false;
+                };
+                if self
+                    .system_module_specifier_text(import_decl.module_specifier)
+                    .as_deref()
+                    != Some(dep)
+                {
+                    return false;
+                }
+                if !self.import_decl_should_schedule_wrapped_dependency(stmt_node, import_decl) {
+                    return false;
+                }
+                return import_decl.import_clause.is_none()
+                    || self
+                        .arena
+                        .get(import_decl.import_clause)
+                        .and_then(|clause_node| self.arena.get_import_clause(clause_node))
+                        .is_some_and(|clause| self.import_clause_is_empty_named_import(clause));
+            }
+
+            if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                let Some(export_decl) = self.arena.get_export_decl(stmt_node) else {
+                    return false;
+                };
+                if self
+                    .system_module_specifier_text(export_decl.module_specifier)
+                    .as_deref()
+                    != Some(dep)
+                {
+                    return false;
+                }
+                return export_decl.export_clause.is_none()
+                    && self.export_decl_has_runtime_value(export_decl);
+            }
+
+            false
+        })
     }
 
     /// Hoist exported function declarations out of `execute` into the outer
@@ -717,754 +848,6 @@ impl<'a> Printer<'a> {
         self.ctx.original_module_kind = prev_original;
     }
 
-    fn collect_system_hoisted_names(
-        &mut self,
-        source: &tsz_parser::parser::node::SourceFileData,
-        system_plan: &SystemDependencyPlan,
-    ) -> Vec<String> {
-        self.system_empty_binding_temps.clear();
-        let mut names = Vec::new();
-        let mut deferred_named_export_names = Vec::new();
-        let mut seen_deferred_named_export_names = HashSet::new();
-        let mut seen = HashSet::new();
-        let mut seen_top_level_using = false;
-        let has_top_level_using = !self.ctx.options.target.supports_es2025()
-            && source
-                .statements
-                .nodes
-                .iter()
-                .filter_map(|&stmt_idx| self.arena.get(stmt_idx))
-                .any(|stmt_node| self.statement_is_top_level_using(stmt_node));
-
-        for &stmt_idx in &source.statements.nodes {
-            let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                continue;
-            };
-            let stmt_is_top_level_using = self.statement_is_top_level_using(stmt_node);
-            if stmt_is_top_level_using {
-                seen_top_level_using = true;
-            }
-            if let Some(dep_var) = system_plan.import_vars.get(&stmt_node.pos)
-                && seen.insert(dep_var.clone())
-            {
-                names.push(dep_var.clone());
-            }
-            if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
-                if stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                    && let Some(class_decl) = self.arena.get_class(stmt_node)
-                {
-                    let class_name = self.get_identifier_text_idx(class_decl.name);
-                    if !class_name.is_empty() && seen.insert(class_name.clone()) {
-                        names.push(class_name);
-                    }
-                    if has_top_level_using
-                        && seen_top_level_using
-                        && self
-                            .arena
-                            .has_modifier(&class_decl.modifiers, SyntaxKind::ExportKeyword)
-                        && self
-                            .arena
-                            .has_modifier(&class_decl.modifiers, SyntaxKind::DefaultKeyword)
-                        && class_decl.name.is_some()
-                        && seen.insert("_default".to_string())
-                    {
-                        // Only hoist `_default` when the default-exported
-                        // class lives AFTER the top-level `using` in source
-                        // and so is reached from inside the synthesized
-                        // try/catch. When the class precedes the using,
-                        // the class name itself is the live binding and
-                        // tsc emits no `_default`.
-                        names.push("_default".to_string());
-                    }
-                }
-                if stmt_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
-                    && let Some(import_decl) = self.arena.get_import_decl(stmt_node)
-                    && self.import_decl_has_runtime_value(import_decl)
-                {
-                    let local_name = self.get_identifier_text_idx(import_decl.import_clause);
-                    if !local_name.is_empty() && seen.insert(local_name.clone()) {
-                        names.push(local_name);
-                    }
-                }
-                if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION
-                    && let Some(module_decl) = self.arena.get_module(stmt_node)
-                {
-                    // Skip ambient/declare module declarations — they don't
-                    // produce runtime code and shouldn't be hoisted.
-                    // e.g., `declare global { interface ImportMeta {...} }`
-                    let is_ambient = self
-                        .arena
-                        .has_modifier(&module_decl.modifiers, SyntaxKind::DeclareKeyword);
-                    if !is_ambient {
-                        let module_name = self.get_identifier_text_idx(module_decl.name);
-                        if !module_name.is_empty() && seen.insert(module_name.clone()) {
-                            names.push(module_name);
-                        }
-                    }
-                }
-                if stmt_node.kind == syntax_kind_ext::ENUM_DECLARATION
-                    && let Some(enum_decl) = self.arena.get_enum(stmt_node)
-                {
-                    let is_erased = self
-                        .arena
-                        .has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
-                        || (self
-                            .arena
-                            .has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword)
-                            && !self.ctx.options.preserve_const_enums);
-                    if !is_erased {
-                        let enum_name = self.get_identifier_text_idx(enum_decl.name);
-                        if !enum_name.is_empty() && seen.insert(enum_name.clone()) {
-                            names.push(enum_name);
-                        }
-                    }
-                }
-                if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
-                    && let Some(export_decl) = self.arena.get_export_decl(stmt_node)
-                    && export_decl.module_specifier.is_none()
-                    && let Some(clause_node) = self.arena.get(export_decl.export_clause)
-                {
-                    // `export default class {}` or `export default class Foo {}` —
-                    // hoist `var default_1;` or `var Foo;` respectively.
-                    if export_decl.is_default_export
-                        && clause_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                    {
-                        if let Some(class_decl) = self.arena.get_class(clause_node) {
-                            let class_name = self.get_identifier_text_idx(class_decl.name);
-                            if has_top_level_using && class_name.is_empty() {
-                                if (self.ctx.target_es5 || self.ctx.options.legacy_decorators)
-                                    && seen.insert("default_1".to_string())
-                                {
-                                    names.push("default_1".to_string());
-                                }
-                                if seen_top_level_using && seen.insert("_default".to_string()) {
-                                    names.push("_default".to_string());
-                                }
-                                continue;
-                            }
-                            let name = if class_name.is_empty() {
-                                "default_1".to_string()
-                            } else {
-                                class_name
-                            };
-                            if seen.insert(name.clone()) {
-                                names.push(name);
-                            }
-                            if has_top_level_using
-                                && seen_top_level_using
-                                && seen.insert("_default".to_string())
-                            {
-                                // Only hoist `_default` when this default-
-                                // exported class lives AFTER the top-level
-                                // `using` in source (so it's reached from
-                                // within the synthesized try/catch).
-                                // Named classes that PRECEDE the using don't
-                                // need the tracker — the class identifier
-                                // is already the live binding.
-                                names.push("_default".to_string());
-                            }
-                        }
-                        continue;
-                    }
-                    if has_top_level_using
-                        && export_decl.is_default_export
-                        && clause_node.kind != syntax_kind_ext::FUNCTION_DECLARATION
-                        && clause_node.kind != syntax_kind_ext::CLASS_DECLARATION
-                        && seen.insert("_default".to_string())
-                    {
-                        let insert_at = names.len().saturating_sub(1);
-                        names.insert(insert_at, "_default".to_string());
-                        continue;
-                    }
-                    if has_top_level_using
-                        && seen_top_level_using
-                        && export_decl.is_default_export
-                        && (clause_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                            || clause_node.kind == syntax_kind_ext::CLASS_DECLARATION)
-                    {
-                        // Only hoist `_default` when this default-export
-                        // sits AFTER the top-level `using` in source — that
-                        // means the class/function is reached from inside
-                        // the synthesized try/catch and needs the tracker
-                        // for the export call. When the default-export
-                        // comes BEFORE the using, the class name (or
-                        // `default_1` placeholder) is the live binding
-                        // and no separate tracker is needed; tsc does not
-                        // hoist `_default` in that case.
-                        let has_local_name =
-                            if clause_node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
-                                self.arena
-                                    .get_function(clause_node)
-                                    .and_then(|func| self.get_identifier_text_opt(func.name))
-                                    .is_some_and(|name| !name.is_empty())
-                            } else {
-                                self.arena
-                                    .get_class(clause_node)
-                                    .and_then(|class| self.get_identifier_text_opt(class.name))
-                                    .is_some_and(|name| !name.is_empty())
-                            };
-                        if has_local_name && seen.insert("_default".to_string()) {
-                            let insert_at = names.len().saturating_sub(1);
-                            names.insert(insert_at, "_default".to_string());
-                        }
-                    }
-                    if export_decl.is_default_export {
-                        continue;
-                    }
-                    if clause_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
-                        self.collect_system_empty_binding_temps_from_variable_statement(
-                            clause_node,
-                            true,
-                            &mut names,
-                            &mut seen,
-                        );
-                        for name in self.collect_variable_names_from_node(clause_node) {
-                            if !name.is_empty() && seen.insert(name.clone()) {
-                                names.push(name);
-                            }
-                        }
-                        continue;
-                    }
-                    if has_top_level_using
-                        && clause_node.kind == syntax_kind_ext::NAMED_EXPORTS
-                        && let Some(named_exports) = self.arena.get_named_imports(clause_node)
-                    {
-                        for &spec_idx in &named_exports.elements.nodes {
-                            if let Some(spec) = self.arena.get_specifier_at(spec_idx) {
-                                let local_name = if spec.property_name.is_some() {
-                                    self.get_identifier_text_idx(spec.property_name)
-                                } else {
-                                    self.get_identifier_text_idx(spec.name)
-                                };
-                                if !local_name.is_empty()
-                                    && seen_deferred_named_export_names.insert(local_name.clone())
-                                {
-                                    deferred_named_export_names.push(local_name);
-                                }
-                            }
-                        }
-                        continue;
-                    }
-                    if clause_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
-                        && let Some(import_decl) = self.arena.get_import_decl(clause_node)
-                        && self.import_decl_has_runtime_value(import_decl)
-                    {
-                        let name = self.get_identifier_text_idx(import_decl.import_clause);
-                        if !name.is_empty() && seen.insert(name.clone()) {
-                            names.push(name);
-                        }
-                        continue;
-                    }
-                    if clause_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        && let Some(class_decl) = self.arena.get_class(clause_node)
-                    {
-                        let name = self.get_identifier_text_idx(class_decl.name);
-                        if !name.is_empty() && seen.insert(name.clone()) {
-                            names.push(name);
-                        }
-                    }
-                    if clause_node.kind == syntax_kind_ext::MODULE_DECLARATION
-                        && let Some(module_decl) = self.arena.get_module(clause_node)
-                    {
-                        let is_ambient = self
-                            .arena
-                            .has_modifier(&module_decl.modifiers, SyntaxKind::DeclareKeyword);
-                        if !is_ambient {
-                            let name = self.get_identifier_text_idx(module_decl.name);
-                            if !name.is_empty() && seen.insert(name.clone()) {
-                                names.push(name);
-                            }
-                        }
-                    }
-                    if clause_node.kind == syntax_kind_ext::ENUM_DECLARATION
-                        && let Some(enum_decl) = self.arena.get_enum(clause_node)
-                    {
-                        let is_erased = self
-                            .arena
-                            .has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
-                            || (self
-                                .arena
-                                .has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword)
-                                && !self.ctx.options.preserve_const_enums);
-                        if !is_erased {
-                            let name = self.get_identifier_text_idx(enum_decl.name);
-                            if !name.is_empty() && seen.insert(name.clone()) {
-                                names.push(name);
-                            }
-                        }
-                    }
-                }
-                // Hoist `var` declarations from for/for-in/for-of loop initializers.
-                // In System modules, `for (var x in ...)` becomes `var x;` at the
-                // module scope and `for (x in ...)` inside execute().
-                if (stmt_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
-                    || stmt_node.kind == syntax_kind_ext::FOR_OF_STATEMENT)
-                    && let Some(for_data) = self.arena.get_for_in_of(stmt_node)
-                {
-                    self.collect_var_names_from_initializer(
-                        for_data.initializer,
-                        &mut names,
-                        &mut seen,
-                    );
-                }
-                if stmt_node.kind == syntax_kind_ext::FOR_STATEMENT
-                    && let Some(loop_data) = self.arena.get_loop(stmt_node)
-                {
-                    self.collect_var_names_from_initializer(
-                        loop_data.initializer,
-                        &mut names,
-                        &mut seen,
-                    );
-                }
-                let names_before_nested = names.len();
-                self.collect_system_nested_top_level_var_hoisted_names(
-                    stmt_idx, &mut names, &mut seen,
-                );
-                // tsc places `env_1` IMMEDIATELY before the first
-                // nested-hoisted var (a `var` declared inside an `if` /
-                // `for` / `try` / etc. that gets hoisted to the System
-                // closure scope). Without this insertion the helper
-                // sits at the end of the var list, which produces
-                // `var z, y, env_1;` instead of tsc's
-                // `var z, env_1, y;` for sources like
-                // `using z = ...; if (false) { var y = 1; }`.
-                if has_top_level_using
-                    && seen_top_level_using
-                    && names.len() > names_before_nested
-                    && seen.insert("env_1".to_string())
-                {
-                    names.insert(names_before_nested, "env_1".to_string());
-                }
-                if has_top_level_using {
-                    let needs_default_temp = (stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
-                        && self
-                            .arena
-                            .get_export_assignment(stmt_node)
-                            .is_some_and(|export_assignment| !export_assignment.is_export_equals))
-                        || (stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
-                            && self
-                                .arena
-                                .get_export_decl(stmt_node)
-                                .is_some_and(|export_decl| {
-                                    export_decl.is_default_export
-                                        && export_decl.module_specifier.is_none()
-                                        && self.arena.get(export_decl.export_clause).is_some_and(
-                                            |clause_node| {
-                                                clause_node.kind
-                                                    != syntax_kind_ext::FUNCTION_DECLARATION
-                                                    && clause_node.kind
-                                                        != syntax_kind_ext::CLASS_DECLARATION
-                                            },
-                                        )
-                                }));
-                    if needs_default_temp && seen.insert("_default".to_string()) {
-                        let insert_at = names.len().saturating_sub(1);
-                        names.insert(insert_at, "_default".to_string());
-                    }
-                }
-                continue;
-            }
-            let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
-                continue;
-            };
-            if self
-                .arena
-                .has_modifier(&var_stmt.modifiers, SyntaxKind::DeclareKeyword)
-            {
-                continue;
-            }
-            let is_exported_variable = self
-                .arena
-                .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword);
-
-            for &decl_list_idx in &var_stmt.declarations.nodes {
-                let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
-                    continue;
-                };
-                let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
-                    continue;
-                };
-
-                for &decl_idx in &decl_list.declarations.nodes {
-                    let Some(decl_node) = self.arena.get(decl_idx) else {
-                        continue;
-                    };
-                    let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
-                        continue;
-                    };
-
-                    if decl.initializer.is_some() && self.binding_pattern_is_empty(decl.name) {
-                        let source_temp = self.make_unique_name();
-                        if seen.insert(source_temp.clone()) {
-                            names.push(source_temp.clone());
-                        }
-                        let export_temp = if is_exported_variable && self.ctx.target_es5 {
-                            let name = self.make_unique_name();
-                            if seen.insert(name.clone()) {
-                                names.push(name.clone());
-                            }
-                            Some(name)
-                        } else {
-                            None
-                        };
-                        if let Some(name_node) = self.arena.get(decl.name) {
-                            self.system_empty_binding_temps
-                                .insert(name_node.pos, (source_temp, export_temp));
-                        }
-                        continue;
-                    }
-
-                    let mut binding_names = Vec::new();
-                    self.collect_binding_names(decl.name, &mut binding_names);
-                    for name in binding_names {
-                        if !name.is_empty() && seen.insert(name.clone()) {
-                            names.push(name);
-                        }
-                    }
-                }
-            }
-        }
-
-        // tsc places the using-block helper `env_1` at the *end* of the
-        // closure's `var` list when nothing nested-hoisted appears between
-        // the using statement and the rest of the closure. The earlier
-        // nested-walk insertion (above) already places `env_1` immediately
-        // before any `var` hoisted from inside an `if` / `for` / `try`,
-        // matching tsc's `var z, env_1, y;` shape for sources like
-        // `using z = ...; if (false) { var y = 1; }`. If no nested-hoisted
-        // var appeared, the `env_1` slot stays free and we land it here at
-        // the trailing position — matching tsc's
-        // `var x, z, y, _default, w, env_1;` shape.
-        if has_top_level_using && seen.insert("env_1".to_string()) {
-            names.push("env_1".to_string());
-        }
-
-        for name in deferred_named_export_names {
-            if seen.insert(name.clone()) {
-                names.push(name);
-            }
-        }
-
-        names
-    }
-
-    fn collect_system_empty_binding_temps_from_variable_statement(
-        &mut self,
-        node: &tsz_parser::parser::node::Node,
-        is_exported: bool,
-        names: &mut Vec<String>,
-        seen: &mut HashSet<String>,
-    ) {
-        let Some(var_stmt) = self.arena.get_variable(node) else {
-            return;
-        };
-        for &decl_list_idx in &var_stmt.declarations.nodes {
-            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
-                continue;
-            };
-            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
-                continue;
-            };
-            for &decl_idx in &decl_list.declarations.nodes {
-                let Some(decl_node) = self.arena.get(decl_idx) else {
-                    continue;
-                };
-                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
-                    continue;
-                };
-                if decl.initializer.is_none() || !self.binding_pattern_is_empty(decl.name) {
-                    continue;
-                }
-                let source_temp = self.make_unique_name();
-                if seen.insert(source_temp.clone()) {
-                    names.push(source_temp.clone());
-                }
-                let export_temp = if is_exported && self.ctx.target_es5 {
-                    let name = self.make_unique_name();
-                    if seen.insert(name.clone()) {
-                        names.push(name.clone());
-                    }
-                    Some(name)
-                } else {
-                    None
-                };
-                if let Some(name_node) = self.arena.get(decl.name) {
-                    self.system_empty_binding_temps
-                        .insert(name_node.pos, (source_temp, export_temp));
-                }
-            }
-        }
-    }
-
-    fn collect_system_nested_top_level_var_hoisted_names(
-        &mut self,
-        idx: NodeIndex,
-        names: &mut Vec<String>,
-        seen: &mut HashSet<String>,
-    ) {
-        if idx.is_none() {
-            return;
-        }
-        let Some(node) = self.arena.get(idx) else {
-            return;
-        };
-
-        match node.kind {
-            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
-                if self.top_level_hoisted_var_statement_is_var(node) {
-                    self.collect_system_variable_hoisted_names(node, names, seen);
-                }
-            }
-            k if k == syntax_kind_ext::BLOCK || k == syntax_kind_ext::CASE_BLOCK => {
-                if let Some(block) = self.arena.get_block(node) {
-                    let statements = block.statements.nodes.clone();
-                    for stmt in statements {
-                        self.collect_system_nested_top_level_var_hoisted_names(stmt, names, seen);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::IF_STATEMENT => {
-                if let Some(if_stmt) = self.arena.get_if_statement(node) {
-                    self.collect_system_nested_top_level_var_hoisted_names(
-                        if_stmt.then_statement,
-                        names,
-                        seen,
-                    );
-                    self.collect_system_nested_top_level_var_hoisted_names(
-                        if_stmt.else_statement,
-                        names,
-                        seen,
-                    );
-                }
-            }
-            k if k == syntax_kind_ext::FOR_STATEMENT
-                || k == syntax_kind_ext::WHILE_STATEMENT
-                || k == syntax_kind_ext::DO_STATEMENT =>
-            {
-                if let Some(loop_data) = self.arena.get_loop(node) {
-                    self.collect_var_names_from_initializer(loop_data.initializer, names, seen);
-                    self.collect_system_nested_top_level_var_hoisted_names(
-                        loop_data.statement,
-                        names,
-                        seen,
-                    );
-                }
-            }
-            k if k == syntax_kind_ext::FOR_IN_STATEMENT
-                || k == syntax_kind_ext::FOR_OF_STATEMENT =>
-            {
-                if let Some(for_data) = self.arena.get_for_in_of(node) {
-                    self.collect_var_names_from_initializer(for_data.initializer, names, seen);
-                    self.collect_system_nested_top_level_var_hoisted_names(
-                        for_data.statement,
-                        names,
-                        seen,
-                    );
-                }
-            }
-            k if k == syntax_kind_ext::SWITCH_STATEMENT => {
-                if let Some(switch_stmt) = self.arena.get_switch(node) {
-                    self.collect_system_nested_top_level_var_hoisted_names(
-                        switch_stmt.case_block,
-                        names,
-                        seen,
-                    );
-                }
-            }
-            k if k == syntax_kind_ext::CASE_CLAUSE || k == syntax_kind_ext::DEFAULT_CLAUSE => {
-                if let Some(clause) = self.arena.get_case_clause(node) {
-                    let statements = clause.statements.nodes.clone();
-                    for stmt in statements {
-                        self.collect_system_nested_top_level_var_hoisted_names(stmt, names, seen);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::TRY_STATEMENT => {
-                if let Some(try_stmt) = self.arena.get_try(node) {
-                    self.collect_system_nested_top_level_var_hoisted_names(
-                        try_stmt.try_block,
-                        names,
-                        seen,
-                    );
-                    self.collect_system_nested_top_level_var_hoisted_names(
-                        try_stmt.catch_clause,
-                        names,
-                        seen,
-                    );
-                    self.collect_system_nested_top_level_var_hoisted_names(
-                        try_stmt.finally_block,
-                        names,
-                        seen,
-                    );
-                }
-            }
-            k if k == syntax_kind_ext::CATCH_CLAUSE => {
-                if let Some(catch_clause) = self.arena.get_catch_clause(node) {
-                    self.collect_system_nested_top_level_var_hoisted_names(
-                        catch_clause.block,
-                        names,
-                        seen,
-                    );
-                }
-            }
-            k if k == syntax_kind_ext::LABELED_STATEMENT => {
-                if let Some(labeled) = self.arena.get_labeled_statement(node) {
-                    if self.collect_system_labeled_variable_names(labeled.statement, names, seen) {
-                        return;
-                    }
-                    self.collect_system_nested_top_level_var_hoisted_names(
-                        labeled.statement,
-                        names,
-                        seen,
-                    );
-                }
-            }
-            k if k == syntax_kind_ext::WITH_STATEMENT => {
-                if let Some(with_stmt) = self.arena.get_with_statement(node) {
-                    self.collect_system_nested_top_level_var_hoisted_names(
-                        with_stmt.then_statement,
-                        names,
-                        seen,
-                    );
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn collect_system_labeled_variable_names(
-        &self,
-        stmt_idx: NodeIndex,
-        names: &mut Vec<String>,
-        seen: &mut HashSet<String>,
-    ) -> bool {
-        let Some(stmt_node) = self.arena.get(stmt_idx) else {
-            return false;
-        };
-        let variable_node = if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
-            stmt_node
-        } else if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
-            let Some(export_decl) = self.arena.get_export_decl(stmt_node) else {
-                return false;
-            };
-            if export_decl.module_specifier.is_some() {
-                return false;
-            }
-            let Some(clause_node) = self.arena.get(export_decl.export_clause) else {
-                return false;
-            };
-            if clause_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
-                return false;
-            }
-            clause_node
-        } else {
-            return false;
-        };
-
-        for name in self.collect_variable_names_from_node(variable_node) {
-            if !name.is_empty() && seen.insert(name.clone()) {
-                names.push(name);
-            }
-        }
-        true
-    }
-
-    fn top_level_hoisted_var_statement_is_var(
-        &self,
-        node: &tsz_parser::parser::node::Node,
-    ) -> bool {
-        let Some(var_stmt) = self.arena.get_variable(node) else {
-            return false;
-        };
-        if self
-            .arena
-            .has_modifier(&var_stmt.modifiers, SyntaxKind::DeclareKeyword)
-        {
-            return false;
-        }
-        var_stmt.declarations.nodes.iter().any(|&decl_list_idx| {
-            self.arena.get(decl_list_idx).is_some_and(|decl_list_node| {
-                !tsz_parser::parser::node_flags::is_let_or_const(decl_list_node.flags as u32)
-            })
-        })
-    }
-
-    fn collect_system_variable_hoisted_names(
-        &self,
-        node: &tsz_parser::parser::node::Node,
-        names: &mut Vec<String>,
-        seen: &mut HashSet<String>,
-    ) {
-        let Some(var_stmt) = self.arena.get_variable(node) else {
-            return;
-        };
-        for &decl_list_idx in &var_stmt.declarations.nodes {
-            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
-                continue;
-            };
-            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
-                continue;
-            };
-            for &decl_idx in &decl_list.declarations.nodes {
-                let Some(decl_node) = self.arena.get(decl_idx) else {
-                    continue;
-                };
-                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
-                    continue;
-                };
-
-                let mut binding_names = Vec::new();
-                self.collect_binding_names(decl.name, &mut binding_names);
-                for name in binding_names {
-                    if !name.is_empty() && seen.insert(name.clone()) {
-                        names.push(name);
-                    }
-                }
-            }
-        }
-    }
-
-    /// Collect variable names from a for/for-in/for-of initializer that is a
-    /// `var` declaration list.  `let`/`const` are block-scoped and are NOT hoisted.
-    fn collect_var_names_from_initializer(
-        &self,
-        initializer: NodeIndex,
-        names: &mut Vec<String>,
-        seen: &mut HashSet<String>,
-    ) {
-        let Some(init_node) = self.arena.get(initializer) else {
-            return;
-        };
-        if init_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-            return;
-        }
-        // Only hoist `var` declarations (not `let`/`const`)
-        let is_var = (init_node.flags as u32
-            & (tsz_parser::parser::node_flags::LET | tsz_parser::parser::node_flags::CONST))
-            == 0;
-        if !is_var {
-            return;
-        }
-        let Some(decl_list) = self.arena.get_variable(init_node) else {
-            return;
-        };
-        for &decl_idx in &decl_list.declarations.nodes {
-            let Some(decl_node) = self.arena.get(decl_idx) else {
-                continue;
-            };
-            let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
-                continue;
-            };
-            let mut binding_names = Vec::new();
-            self.collect_binding_names(decl.name, &mut binding_names);
-            for name in binding_names {
-                if !name.is_empty() && seen.insert(name.clone()) {
-                    names.push(name);
-                }
-            }
-        }
-    }
-
     fn collect_system_dependency_plan(
         &mut self,
         dependencies: &[String],
@@ -1482,7 +865,7 @@ impl<'a> Printer<'a> {
                 let Some(import_decl) = self.arena.get_import_decl(stmt_node) else {
                     continue;
                 };
-                if !self.import_decl_has_runtime_value(import_decl) {
+                if !self.import_decl_should_schedule_wrapped_dependency(stmt_node, import_decl) {
                     continue;
                 }
                 let Some(module_spec) =
@@ -1510,7 +893,7 @@ impl<'a> Printer<'a> {
                 let Some(import_decl) = self.arena.get_import_decl(stmt_node) else {
                     continue;
                 };
-                if !self.import_decl_has_runtime_value(import_decl) {
+                if !self.import_decl_should_schedule_wrapped_dependency(stmt_node, import_decl) {
                     continue;
                 }
                 let Some(module_spec) =
@@ -1580,6 +963,13 @@ impl<'a> Printer<'a> {
                 continue;
             };
             if !dependency_set.contains(module_spec.as_str()) {
+                continue;
+            }
+            if export_decl.export_clause.is_none() {
+                plan.actions
+                    .entry(module_spec)
+                    .or_default()
+                    .push(SystemDependencyAction::ExportStar);
                 continue;
             }
             let Some(clause_node) = self.arena.get(export_decl.export_clause) else {
@@ -1746,6 +1136,52 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// In AMD bundled output (`--outFile`), relative specifiers like `"./m1"`
+    /// must be resolved to their AMD module ID (e.g. `"m1"`), because the
+    /// `define()` dep array uses module IDs, not file-relative paths.
+    /// When not in bundled mode, or for non-relative specifiers, returns the
+    /// input unchanged.
+    fn resolve_amd_bundled_spec(&self, raw: &str) -> String {
+        let Some(module_name) = &self.ctx.options.bundled_module_name else {
+            return raw.to_owned();
+        };
+        if !raw.starts_with('.') {
+            return raw.to_owned();
+        }
+        let base_dir = module_name
+            .rsplit_once('/')
+            .map(|(dir, _)| dir)
+            .unwrap_or("");
+        let mut parts: Vec<&str> = if base_dir.is_empty() {
+            Vec::new()
+        } else {
+            base_dir.split('/').collect()
+        };
+        for part in raw.split('/') {
+            match part {
+                "" | "." => {}
+                ".." => {
+                    if parts.pop().is_none() {
+                        return raw.to_owned();
+                    }
+                }
+                p => parts.push(p),
+            }
+        }
+        if let Some(last) = parts.last_mut() {
+            *last = last
+                .strip_suffix(".ts")
+                .or_else(|| last.strip_suffix(".tsx"))
+                .or_else(|| last.strip_suffix(".js"))
+                .or_else(|| last.strip_suffix(".jsx"))
+                .unwrap_or(last);
+        }
+        if parts.is_empty() {
+            return raw.to_owned();
+        }
+        parts.join("/")
+    }
+
     fn collect_amd_dependency_groups(
         &mut self,
         dependencies: &[String],
@@ -1777,20 +1213,8 @@ impl<'a> Printer<'a> {
                 // When JSX mode requires a factory, don't elide imports matching
                 // the factory name — JSX elements implicitly reference it but the
                 // text-based heuristic won't find it in the source.
-                let is_jsx_factory = matches!(
-                    self.ctx.options.jsx,
-                    JsxEmit::Preserve | JsxEmit::React | JsxEmit::ReactNative
-                ) && {
-                    let import_name = self.get_identifier_text_idx(import_decl.import_clause);
-                    let factory_root = self
-                        .ctx
-                        .options
-                        .jsx_factory
-                        .as_deref()
-                        .and_then(|f| f.split('.').next())
-                        .unwrap_or("React");
-                    import_name == factory_root
-                };
+                let import_name = self.get_identifier_text_idx(import_decl.import_clause);
+                let is_jsx_factory = self.is_classic_jsx_factory_root(&import_name);
                 // Check value-level usage: `import x = require("m")` where
                 // `x` is only used in type positions should not be included in
                 // AMD deps (tsc elides these).
@@ -1805,15 +1229,16 @@ impl<'a> Printer<'a> {
                     if let Some(spec) =
                         self.system_module_specifier_text(import_decl.module_specifier)
                     {
-                        rejected_deps.insert(spec);
+                        rejected_deps.insert(self.resolve_amd_bundled_spec(&spec));
                     }
                     continue;
                 }
-                let Some(module_spec) =
+                let Some(raw_spec) =
                     self.system_module_specifier_text(import_decl.module_specifier)
                 else {
                     continue;
                 };
+                let module_spec = self.resolve_amd_bundled_spec(&raw_spec);
                 let local_name = self.get_identifier_text_idx(import_decl.import_clause);
                 if local_name.is_empty() {
                     continue;
@@ -1838,9 +1263,10 @@ impl<'a> Printer<'a> {
                 if !self.export_decl_has_runtime_value(export_decl) {
                     continue;
                 }
-                if let Some(module_spec) =
+                if let Some(raw_spec) =
                     self.system_module_specifier_text(export_decl.module_specifier)
                 {
+                    let module_spec = self.resolve_amd_bundled_spec(&raw_spec);
                     seen_value.insert(module_spec.clone());
                     if collect_for_amd {
                         let dep_var = self.next_commonjs_module_var(&module_spec);
@@ -1863,10 +1289,11 @@ impl<'a> Printer<'a> {
             if !self.import_decl_has_runtime_value(import_decl) {
                 continue;
             }
-            let Some(module_spec) = self.system_module_specifier_text(import_decl.module_specifier)
+            let Some(raw_spec) = self.system_module_specifier_text(import_decl.module_specifier)
             else {
                 continue;
             };
+            let module_spec = self.resolve_amd_bundled_spec(&raw_spec);
             let Some(clause_node) = self.arena.get(import_decl.import_clause) else {
                 if seen_side_effect.insert(module_spec.clone()) {
                     side_effect_deps.push(module_spec);
@@ -1916,34 +1343,7 @@ impl<'a> Printer<'a> {
             // not appear in AMD deps (tsc uses checker info to elide these).
             // Skip this check for JSX factory imports which are implicitly
             // referenced by JSX elements.
-            let is_jsx_factory_import = matches!(
-                self.ctx.options.jsx,
-                JsxEmit::Preserve | JsxEmit::React | JsxEmit::ReactNative
-            ) && {
-                let factory_root = self
-                    .ctx
-                    .options
-                    .jsx_factory
-                    .as_deref()
-                    .and_then(|f| f.split('.').next())
-                    .unwrap_or("React");
-                let mut is_factory = false;
-                // Check default import name
-                if clause.name.is_some() {
-                    let name = self.get_identifier_text_idx(clause.name);
-                    if name == factory_root {
-                        is_factory = true;
-                    }
-                }
-                // Check namespace import name (`import * as React`)
-                if !is_factory
-                    && let Some(ns) = &namespace_name
-                    && ns == factory_root
-                {
-                    is_factory = true;
-                }
-                is_factory
-            };
+            let is_jsx_factory_import = self.is_jsx_factory_import_clause(clause);
 
             if !is_jsx_factory_import && !self.import_has_value_usage_after_node(stmt_node, clause)
             {
@@ -1975,15 +1375,34 @@ impl<'a> Printer<'a> {
         }
 
         for dep in dependencies {
-            if seen_value.contains(dep)
-                || seen_side_effect.contains(dep)
-                || rejected_deps.contains(dep)
+            let resolved = self.resolve_amd_bundled_spec(dep);
+            if seen_value.contains(&resolved)
+                || seen_side_effect.contains(&resolved)
+                || rejected_deps.contains(&resolved)
             {
                 continue;
             }
-            if seen_side_effect.insert(dep.clone()) {
-                side_effect_deps.push(dep.clone());
+            if seen_side_effect.insert(resolved.clone()) {
+                side_effect_deps.push(resolved);
             }
+        }
+
+        // Must run after the main loops so the seen_value guard prevents double-insertion
+        // when "tslib" was already present as a source import.
+        let needs_tslib_dependency = self.transforms.helpers_populated()
+            && self.transforms.helpers().any_needed()
+            || self.import_helpers_need_tslib_binding_for_class_emit(&source.statements);
+        if (collect_for_amd || collect_for_umd)
+            && self.ctx.options.import_helpers
+            && needs_tslib_dependency
+            && !seen_value.contains("tslib")
+        {
+            let tslib_var = if collect_for_amd {
+                self.next_commonjs_module_var("tslib")
+            } else {
+                String::new()
+            };
+            value_deps.insert(0, ("tslib".to_string(), tslib_var));
         }
 
         (value_deps, side_effect_deps, dep_vars)

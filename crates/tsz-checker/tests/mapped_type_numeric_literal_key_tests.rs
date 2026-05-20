@@ -1,0 +1,597 @@
+//! Tests for issue #6633: numeric literal keys in mapped types must be
+//! substituted as numeric-literal `TypeId`s, not as the stringified atom.
+//!
+//! Structural rule: when a mapped type's constraint iterates over a numeric
+//! literal type (a literal like `1`, the result of `T[number]` over a numeric
+//! tuple, or a property declared with a bare numeric name such as `{ 1: ... }`),
+//! the iteration must bind `K` to the matching `LiteralValue::Number` so that
+//! the template body — and any value-position appearance of `K` in it —
+//! retains the original numeric type. Substituting the property-name atom as a
+//! string literal silently turns `[K in 1 | 2 | 3]: K` into `{ 1: "1"; 2: "2";
+//! 3: "3" }`.
+//!
+//! The tests deliberately vary type-parameter names, alias spellings, and
+//! constraint shapes so the fix expresses the structural rule rather than the
+//! original reproduction's exact identifiers.
+
+use tsz_checker::test_utils::{check_source_diagnostics, check_source_with_libs, load_lib_files};
+
+fn assert_no_errors(label: &str, source: &str) {
+    let diags = check_source_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "{label}: expected no diagnostics, got {diags:#?}"
+    );
+}
+
+fn assert_no_error_code(label: &str, source: &str, forbidden: u32) {
+    let diags = check_source_diagnostics(source);
+    assert!(
+        diags.iter().all(|d| d.code != forbidden),
+        "{label}: did not expect TS{forbidden}, got {diags:#?}"
+    );
+}
+
+fn assert_no_errors_with_symbol_lib(label: &str, source: &str) {
+    let libs = load_lib_files(&["es5.d.ts", "es2015.symbol.d.ts"]);
+    let diags = check_source_with_libs(
+        source,
+        "test.ts",
+        tsz_checker::context::CheckerOptions::default(),
+        &libs,
+    );
+    assert!(
+        diags.is_empty(),
+        "{label}: expected no diagnostics, got {diags:#?}"
+    );
+}
+
+#[test]
+fn original_repro_tuple_to_object_numeric_literal_keys() {
+    assert_no_errors(
+        "TupleToObject<readonly [1,2,3]>",
+        r#"
+        type TupleToObject<T extends readonly any[]> = { [K in T[number]]: K };
+        const numTuple = [1, 2, 3] as const;
+        type NumResult = TupleToObject<typeof numTuple>;
+        const nr: NumResult = { 1: 1, 2: 2, 3: 3 };
+        "#,
+    );
+}
+
+#[test]
+fn iteration_variable_rename_invariance() {
+    // Same rule, different iteration variable name. If the fix were keyed on
+    // the literal spelling `K`, this would fail.
+    assert_no_errors(
+        "iteration variable name `P`",
+        r#"
+        type TupleToObjectP<T extends readonly any[]> = { [P in T[number]]: P };
+        const t = [10, 20, 30] as const;
+        const r: TupleToObjectP<typeof t> = { 10: 10, 20: 20, 30: 30 };
+        "#,
+    );
+}
+
+#[test]
+fn direct_numeric_literal_union_constraint() {
+    assert_no_errors(
+        "[K in 1 | 2 | 3]: K",
+        r#"
+        type M = { [K in 1 | 2 | 3]: K };
+        declare const m: M;
+        const v1: 1 = m[1];
+        const v2: 2 = m[2];
+        const v3: 3 = m[3];
+        const lit: M = { 1: 1, 2: 2, 3: 3 };
+        "#,
+    );
+}
+
+#[test]
+fn single_numeric_literal_constraint() {
+    // Single numeric constraints and numeric unions exercise separate mapped-key
+    // collection paths. Both must use the numeric-literal substitution.
+    assert_no_errors(
+        "[K in 5]: K",
+        r#"
+        type M = { [K in 5]: K };
+        declare const m: M;
+        const v: 5 = m[5];
+        const lit: M = { 5: 5 };
+        "#,
+    );
+}
+
+#[test]
+fn string_literal_keys_remain_strings() {
+    // Regression guard: keys whose origin is a string literal must keep
+    // substituting `K` as a string literal, even when the atom happens to look
+    // numeric. Switching the origin to numeric would corrupt every existing
+    // `[K in "a" | "b"]: K`-style alias.
+    assert_no_errors(
+        "[K in \"a\" | \"b\"]: K (identifier-shaped string keys)",
+        r#"
+        type M = { [K in "a" | "b"]: K };
+        declare const m: M;
+        const a: "a" = m.a;
+        const b: "b" = m.b;
+        "#,
+    );
+    assert_no_errors(
+        "[K in \"1\" | \"2\"]: K (numeric-looking string keys)",
+        r#"
+        type M = { [K in "1" | "2"]: K };
+        declare const m: M;
+        const a: "1" = m["1"];
+        const b: "2" = m["2"];
+        "#,
+    );
+}
+
+#[test]
+fn mixed_string_and_numeric_keys() {
+    // Each key carries its own origin-kind; substitution must be per-key, not
+    // a single flag for the whole iteration.
+    assert_no_errors(
+        "[K in \"a\" | 1]: K",
+        r#"
+        type M = { [K in "a" | 1]: K };
+        declare const m: M;
+        const k1: 1 = m[1];
+        const ka: "a" = m.a;
+        "#,
+    );
+}
+
+#[test]
+fn numeric_keys_through_indexed_access() {
+    // `T[number]` over a tuple of numeric literals produces a numeric-literal
+    // union — exercising the path that originally surfaced #6633.
+    assert_no_errors(
+        "FromObj[keyof FromObj] with numeric literal values",
+        r#"
+        type FromObj = { x: 1; y: 2 };
+        type Vals = FromObj[keyof FromObj];
+        type M = { [K in Vals]: K };
+        declare const m: M;
+        const v1: 1 = m[1];
+        const v2: 2 = m[2];
+        "#,
+    );
+}
+
+#[test]
+fn generic_tuple_to_object_preserves_unique_symbol_keys() {
+    assert_no_errors(
+        "TupleToObject<readonly [typeof sym, \"foo\"]>",
+        r#"
+        type Equal<X, Y> =
+          (<T>() => T extends X ? 1 : 2) extends
+          (<T>() => T extends Y ? 1 : 2) ? true : false;
+        type Expect<T extends true> = T;
+
+        declare const sym: unique symbol;
+
+        type TupleToObject<T extends readonly (string | number | symbol)[]> = {
+          [K in T[number]]: K
+        };
+        type Result = TupleToObject<readonly [typeof sym, "foo"]>;
+        type Expected = { [sym]: typeof sym; foo: "foo" };
+        type Case = Expect<Equal<Result, Expected>>;
+
+        declare const r: Result;
+        const symbolValue: typeof sym = r[sym];
+        const stringValue: "foo" = r.foo;
+        const literal: Result = { [sym]: sym, foo: "foo" };
+        "#,
+    );
+}
+
+#[test]
+fn renamed_mapped_variable_preserves_multiple_unique_symbol_keys() {
+    assert_no_errors(
+        "renamed mapped variable over two unique-symbol tuple elements",
+        r#"
+        type Equal<X, Y> =
+          (<T>() => T extends X ? 1 : 2) extends
+          (<T>() => T extends Y ? 1 : 2) ? true : false;
+        type Expect<T extends true> = T;
+
+        declare const first: unique symbol;
+        declare const second: unique symbol;
+
+        type TupleToObject<U extends readonly (string | number | symbol)[]> = {
+          [P in U[number]]: P
+        };
+        type Result = TupleToObject<readonly [typeof first, typeof second, "foo"]>;
+        type Expected = {
+          [first]: typeof first;
+          [second]: typeof second;
+          foo: "foo";
+        };
+        type Case = Expect<Equal<Result, Expected>>;
+
+        declare const r: Result;
+        const firstValue: typeof first = r[first];
+        const secondValue: typeof second = r[second];
+        const stringValue: "foo" = r.foo;
+        "#,
+    );
+}
+
+#[test]
+fn unannotated_const_symbol_initializers_preserve_tuple_mapped_key_identity() {
+    assert_no_errors_with_symbol_lib(
+        "unannotated const Symbol() tuple elements",
+        r#"
+        type Equal<X, Y> =
+          (<T>() => T extends X ? 1 : 2) extends
+          (<T>() => T extends Y ? 1 : 2) ? true : false;
+        type Expect<T extends true> = T;
+
+        const sym1 = Symbol(1);
+        const sym2 = Symbol(2);
+
+        type TupleToObject<T extends readonly (string | number | symbol)[]> = {
+          [Key in T[number]]: Key
+        };
+        type Result = TupleToObject<readonly [typeof sym1, typeof sym2]>;
+        type Expected = { [sym1]: typeof sym1; [sym2]: typeof sym2 };
+        type Case = Expect<Equal<Result, Expected>>;
+
+        declare const r: Result;
+        const firstValue: typeof sym1 = r[sym1];
+        const secondValue: typeof sym2 = r[sym2];
+        "#,
+    );
+}
+
+#[test]
+fn generic_tuple_to_object_preserves_typeof_tuple_unique_symbol_keys() {
+    assert_no_errors_with_symbol_lib(
+        "TupleToObject<typeof tupleSymbol> preserves unique-symbol keys",
+        r#"
+        type Equal<X, Y> =
+          (<T>() => T extends X ? 1 : 2) extends
+          (<T>() => T extends Y ? 1 : 2) ? true : false;
+        type Expect<T extends true> = T;
+
+        const sym1 = Symbol(1);
+        const sym2 = Symbol(2);
+        const tupleSymbol = [sym1, sym2] as const;
+
+        type TupleToObject<T extends readonly (string | number | symbol)[]> = {
+          [Key in T[number]]: Key
+        };
+        type Expected = { [sym1]: typeof sym1; [sym2]: typeof sym2 };
+        type Case = Expect<Equal<TupleToObject<typeof tupleSymbol>, Expected>>;
+        "#,
+    );
+}
+
+#[test]
+fn inline_expected_unique_symbol_object_literal_preserves_computed_keys() {
+    assert_no_errors_with_symbol_lib(
+        "inline computed-symbol expected object in Equal",
+        r#"
+        type Equal<X, Y> =
+          (<T>() => T extends X ? 1 : 2) extends
+          (<T>() => T extends Y ? 1 : 2) ? true : false;
+        type Expect<T extends true> = T;
+
+        declare const sym1: unique symbol;
+        declare const sym2: unique symbol;
+
+        type TupleToObject<T extends readonly (string | number | symbol)[]> = {
+          [K in T[number]]: K
+        };
+        type Case = Expect<Equal<
+          TupleToObject<readonly [typeof sym1, typeof sym2]>,
+          { [sym1]: typeof sym1; [sym2]: typeof sym2 }
+        >>;
+        "#,
+    );
+}
+
+#[test]
+fn type_challenges_tuple_to_object_symbol_cases_use_typeof_tuple() {
+    assert_no_errors_with_symbol_lib(
+        "Type Challenges tuple-to-object symbol and mixed cases",
+        r#"
+        type Equal<X, Y> =
+          (<T>() => T extends X ? 1 : 2) extends
+          (<T>() => T extends Y ? 1 : 2) ? true : false;
+        type Expect<T extends true> = T;
+
+        type TupleToObject<T extends readonly (string | number | symbol)[]> = {
+          [K in T[number]]: K
+        };
+
+        const sym1 = Symbol(1);
+        const sym2 = Symbol(2);
+        const tupleSymbol = [sym1, sym2] as const;
+        const tupleMix = [1, "2", 3, "4", sym1] as const;
+
+        type cases = [
+          Expect<Equal<TupleToObject<typeof tupleSymbol>, { [sym1]: typeof sym1; [sym2]: typeof sym2 }>>,
+          Expect<Equal<TupleToObject<typeof tupleMix>, { 1: 1; "2": "2"; 3: 3; "4": "4"; [sym1]: typeof sym1 }>>,
+        ];
+        "#,
+    );
+}
+
+#[test]
+fn tuple_to_object_inline_unique_symbol_expected_type_standalone() {
+    assert_no_errors_with_symbol_lib(
+        "standalone Expect with inline unique-symbol expected type",
+        r#"
+        type Equal<X, Y> =
+          (<T>() => T extends X ? 1 : 2) extends
+          (<T>() => T extends Y ? 1 : 2) ? true : false;
+        type Expect<T extends true> = T;
+
+        const sym1 = Symbol(1);
+        const sym2 = Symbol(2);
+        const tupleSymbol = [sym1, sym2] as const;
+
+        type TupleToObject<T extends readonly (string | number | symbol)[]> = {
+          [Key in T[number]]: Key
+        };
+
+        type Case = Expect<Equal<TupleToObject<typeof tupleSymbol>, { [sym1]: typeof sym1; [sym2]: typeof sym2 }>>;
+        "#,
+    );
+}
+
+#[test]
+fn tuple_to_object_inline_static_unique_symbol_expected_type_standalone() {
+    assert_no_errors(
+        "standalone Expect with inline static unique-symbol expected type",
+        r#"
+        type Equal<X, Y> =
+          (<T>() => T extends X ? 1 : 2) extends
+          (<T>() => T extends Y ? 1 : 2) ? true : false;
+        type Expect<T extends true> = T;
+
+        class Keys {
+          static readonly one: unique symbol;
+        }
+
+        type TupleToObject<T extends readonly (string | number | symbol)[]> = {
+          [Key in T[number]]: Key
+        };
+
+        type Case = Expect<Equal<
+          TupleToObject<readonly [typeof Keys.one, "foo"]>,
+          { [Keys.one]: typeof Keys.one; foo: "foo" }
+        >>;
+        "#,
+    );
+}
+
+#[test]
+fn tuple_to_object_typeof_static_unique_symbol_tuple_preserves_keys() {
+    assert_no_errors(
+        "TupleToObject<typeof tuple> preserves static unique-symbol tuple elements",
+        r#"
+        type Equal<X, Y> =
+          (<T>() => T extends X ? 1 : 2) extends
+          (<T>() => T extends Y ? 1 : 2) ? true : false;
+        type Expect<T extends true> = T;
+
+        class Keys {
+          static readonly one: unique symbol;
+          static readonly two: unique symbol;
+        }
+        const tupleSymbol = [Keys.one, Keys.two] as const;
+
+        type TupleToObject<T extends readonly (string | number | symbol)[]> = {
+          [Key in T[number]]: Key
+        };
+
+        type Case = Expect<Equal<
+          TupleToObject<typeof tupleSymbol>,
+          { [Keys.one]: typeof Keys.one; [Keys.two]: typeof Keys.two }
+        >>;
+        "#,
+    );
+}
+
+#[test]
+fn tuple_to_object_typeof_tuple_assigns_to_inline_unique_symbol_type() {
+    assert_no_errors_with_symbol_lib(
+        "TupleToObject<typeof tupleSymbol> assigns to inline unique-symbol computed type",
+        r#"
+        const sym1 = Symbol(1);
+        const sym2 = Symbol(2);
+        const tupleSymbol = [sym1, sym2] as const;
+
+        type TupleToObject<T extends readonly (string | number | symbol)[]> = {
+          [Key in T[number]]: Key
+        };
+
+        declare const actual: TupleToObject<typeof tupleSymbol>;
+        const expected: { [sym1]: typeof sym1; [sym2]: typeof sym2 } = actual;
+        const roundTrip: TupleToObject<typeof tupleSymbol> = expected;
+        "#,
+    );
+}
+
+#[test]
+fn equal_accepts_identical_inline_unique_symbol_type_literals() {
+    assert_no_errors_with_symbol_lib(
+        "Equal handles identical inline unique-symbol computed type literals",
+        r#"
+        type Equal<X, Y> =
+          (<T>() => T extends X ? 1 : 2) extends
+          (<T>() => T extends Y ? 1 : 2) ? true : false;
+
+        const sym1 = Symbol(1);
+        const sym2 = Symbol(2);
+
+        const ok: Equal<
+          { [sym1]: typeof sym1; [sym2]: typeof sym2 },
+          { [sym1]: typeof sym1; [sym2]: typeof sym2 }
+        > = true;
+        "#,
+    );
+}
+
+#[test]
+fn shadowed_symbol_initializer_keeps_local_return_type_in_tuple_mapped_keys() {
+    assert_no_errors(
+        "shadowed Symbol() tuple element stays string-literal key",
+        r#"
+        type Equal<X, Y> =
+          (<T>() => T extends X ? 1 : 2) extends
+          (<T>() => T extends Y ? 1 : 2) ? true : false;
+        type Expect<T extends true> = T;
+
+        function Symbol(_desc?: unknown): "local" {
+          return "local";
+        }
+        const sym = Symbol(1);
+
+        type TupleToObject<T extends readonly (string | number | symbol)[]> = {
+          [Key in T[number]]: Key
+        };
+        type Result = TupleToObject<readonly [typeof sym]>;
+        type Expected = { local: "local" };
+        type Case = Expect<Equal<Result, Expected>>;
+        "#,
+    );
+}
+
+#[test]
+fn static_readonly_unique_symbol_owner_preserves_mapped_key_identity() {
+    assert_no_errors(
+        "static readonly unique-symbol owner in generic tuple mapped key",
+        r#"
+        type Equal<X, Y> =
+          (<T>() => T extends X ? 1 : 2) extends
+          (<T>() => T extends Y ? 1 : 2) ? true : false;
+        type Expect<T extends true> = T;
+
+        class Keys {
+          static readonly one: unique symbol;
+        }
+
+        type TupleToObject<U extends readonly (string | number | symbol)[]> = {
+          [Key in U[number]]: Key
+        };
+        type Result = TupleToObject<readonly [typeof Keys.one, "foo"]>;
+        type Expected = { [Keys.one]: typeof Keys.one; foo: "foo" };
+        type Case = Expect<Equal<Result, Expected>>;
+
+        declare const r: Result;
+        const value: typeof Keys.one = r[Keys.one];
+        const literal: Result = { [Keys.one]: Keys.one, foo: "foo" };
+        "#,
+    );
+}
+
+#[test]
+fn parameter_unique_symbol_annotation_does_not_mint_distinct_typeof_identity() {
+    assert_no_error_code(
+        "parameters annotated as unique symbol are invalid owners",
+        r#"
+        function compare(first: unique symbol, second: unique symbol) {
+          type Same = typeof first extends typeof second ? true : false;
+          const same: Same = true;
+        }
+        "#,
+        2322,
+    );
+}
+
+#[test]
+fn let_unique_symbol_annotation_does_not_mint_distinct_typeof_identity() {
+    assert_no_error_code(
+        "let bindings annotated as unique symbol are invalid owners",
+        r#"
+        let first: unique symbol;
+        let second: unique symbol;
+        type Same = typeof first extends typeof second ? true : false;
+        const same: Same = true;
+        "#,
+        2322,
+    );
+}
+
+#[test]
+fn unique_symbol_tuple_mapped_type_rejects_unrelated_symbol_key() {
+    let diags = check_source_diagnostics(
+        r#"
+        declare const sym: unique symbol;
+        declare const other: unique symbol;
+
+        type TupleToObject<T extends readonly (string | number | symbol)[]> = {
+          [K in T[number]]: K
+        };
+        declare const r: TupleToObject<readonly [typeof sym, "foo"]>;
+        const missing = r[other];
+        "#,
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 7053),
+        "expected TS7053 for unrelated unique-symbol key, got: {diags:#?}"
+    );
+}
+
+#[test]
+fn homomorphic_over_numeric_named_properties_preserves_numeric_keys() {
+    // `[K in keyof T]: T[K]` over `{ 1: ...; 2: ... }` exercises the
+    // collect-properties path of `extract_mapped_keys`. The property's
+    // `is_string_named=false` plus a numeric-looking atom must drive the
+    // numeric-literal substitution for `K`.
+    assert_no_errors(
+        "Cloned numeric-keyed object via [K in keyof T]: T[K]",
+        r#"
+        type Source = { 100: string; 200: number };
+        type Cloned = { [K in keyof Source]: Source[K] };
+        const c: Cloned = { 100: "x", 200: 42 };
+        "#,
+    );
+}
+
+#[test]
+fn keyof_over_numeric_named_properties_yields_numeric_literals() {
+    // Generalization: the same structural rule that drives mapped-type
+    // key substitution also applies to `keyof T` over a numeric-keyed
+    // object. Before the fix, `keyof { 1: ...; 2: ... }` produced the
+    // string-literal union `"1" | "2"`; tsc produces the number-literal
+    // union `1 | 2`.
+    assert_no_errors(
+        "keyof numeric-keyed object produces numeric literals",
+        r#"
+        type N = { 1: string; 2: number };
+        type K = keyof N;
+        const a: 1 | 2 = 1;
+        const b: 1 | 2 = 2;
+        const fromK: K = 1;
+        function pick<P extends K>(p: P) {
+            const known: 1 | 2 = p;
+        }
+        "#,
+    );
+}
+
+#[test]
+fn negative_case_still_errors() {
+    // After the fix, mapped-type evaluation must still emit TS2345 for an
+    // index that is not part of the numeric key union. This guards against an
+    // overly-permissive fix that simply silenced the diagnostic.
+    let diags = check_source_diagnostics(
+        r#"
+        type TupleToObject<T extends readonly any[]> = { [K in T[number]]: K };
+        const t = [1, 2, 3] as const;
+        declare const r: TupleToObject<typeof t>;
+        const bad: 4 = r[1];
+        "#,
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2322),
+        "expected TS2322 for assigning value-type 1 to expected type 4, got: {diags:#?}"
+    );
+}

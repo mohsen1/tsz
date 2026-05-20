@@ -3,6 +3,7 @@
 use super::CallableContext;
 use crate::computation::complex::is_contextually_sensitive;
 use crate::context::TypingRequest;
+use crate::context::speculation::DiagnosticSpeculationSnapshot;
 use crate::diagnostics::diagnostic_codes;
 use crate::query_boundaries::checkers::call::{
     array_element_type_for_type, contains_index_access_with_type_parameter_object,
@@ -12,6 +13,8 @@ use crate::query_boundaries::checkers::call::{
 use crate::query_boundaries::common::ContextualTypeContext;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::Node;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{TupleElement, TypeId};
 
@@ -105,14 +108,45 @@ impl<'a> CheckerState<'a> {
         args: &[NodeIndex],
         arg_type_count: usize,
     ) -> Vec<bool> {
-        if args.len() != arg_type_count {
-            return vec![false; arg_type_count];
+        if args.len() == arg_type_count {
+            return args
+                .iter()
+                .map(|&arg_idx| {
+                    self.call_arg_source_is_type_assertion(arg_idx)
+                        || self.call_arg_source_is_typed_identifier(arg_idx)
+                })
+                .collect();
         }
-        args.iter()
-            .map(|&arg_idx| self.call_arg_source_is_type_assertion(arg_idx))
-            .collect()
+
+        let mut markers = Vec::with_capacity(arg_type_count);
+        for &arg_idx in args {
+            if let Some(arg_node) = self.ctx.arena.get(arg_idx)
+                && arg_node.kind == syntax_kind_ext::SPREAD_ELEMENT
+                && let Some(spread_expression) = self.spread_expression_from_node(arg_idx, arg_node)
+                && let Some((elements, const_asserted)) =
+                    self.const_asserted_array_literal_spread_elements(spread_expression)
+            {
+                markers.extend(
+                    elements
+                        .into_iter()
+                        .filter(|idx| idx.is_some())
+                        .map(|_| const_asserted),
+                );
+                continue;
+            }
+            markers.push(
+                self.call_arg_source_is_type_assertion(arg_idx)
+                    || self.call_arg_source_is_typed_identifier(arg_idx),
+            );
+        }
+        markers.resize(arg_type_count, false);
+        markers
     }
 
+    /// True when the argument node is an explicit user-written type assertion
+    /// (`as T`, `<T>expr`, or `expr satisfies T`). These mark the argument as a
+    /// type-annotated source: generic inference must not re-widen its literal
+    /// members.
     fn call_arg_source_is_type_assertion(&self, arg_idx: NodeIndex) -> bool {
         let idx = self.ctx.arena.skip_parenthesized(arg_idx);
         let Some(node) = self.ctx.arena.get(idx) else {
@@ -120,6 +154,7 @@ impl<'a> CheckerState<'a> {
         };
         if node.kind != syntax_kind_ext::AS_EXPRESSION
             && node.kind != syntax_kind_ext::TYPE_ASSERTION
+            && node.kind != syntax_kind_ext::SATISFIES_EXPRESSION
         {
             return false;
         }
@@ -127,6 +162,82 @@ impl<'a> CheckerState<'a> {
             .arena
             .get_type_assertion(node)
             .is_some_and(|assertion| assertion.type_node.is_some())
+    }
+
+    fn local_symbol_value_declaration_is_plain_parameter(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> bool {
+        if self.ctx.symbol_is_from_lib(sym_id) {
+            return false;
+        }
+        if self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
+        {
+            return false;
+        }
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let Some(decl_idx) = symbol.value_declaration.into_option() else {
+            return false;
+        };
+        self.ctx
+            .arena
+            .get(decl_idx)
+            .is_some_and(|decl| decl.kind == syntax_kind_ext::PARAMETER)
+            && symbol
+                .declarations
+                .iter()
+                .copied()
+                .chain(std::iter::once(decl_idx))
+                .filter(|idx| idx.is_some())
+                .all(|idx| {
+                    self.ctx
+                        .arena
+                        .get(idx)
+                        .is_none_or(|decl| self.ctx.arena.get_variable_declaration(decl).is_none())
+                })
+    }
+
+    fn call_arg_source_is_typed_identifier(&self, arg_idx: NodeIndex) -> bool {
+        let idx = self.ctx.arena.skip_parenthesized(arg_idx);
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(sym_id) = self.resolve_identifier_symbol(idx) else {
+            return false;
+        };
+        if self.local_symbol_value_declaration_is_plain_parameter(sym_id) {
+            return false;
+        }
+        let Some(symbol) = self
+            .get_cross_file_symbol(sym_id)
+            .or_else(|| self.ctx.binder.get_symbol(sym_id))
+        else {
+            return false;
+        };
+        symbol
+            .stable_declarations
+            .iter()
+            .copied()
+            .chain(std::iter::once(symbol.stable_value_declaration))
+            .filter(|loc| loc.is_known())
+            .any(|loc| {
+                self.ctx
+                    .node_at_stable_location(loc)
+                    .is_some_and(|(decl_idx, arena)| {
+                        arena
+                            .get(decl_idx)
+                            .and_then(|decl_node| arena.get_variable_declaration(decl_node))
+                            .is_some_and(|decl| decl.type_annotation.is_some())
+                    })
+            })
     }
 
     /// Collect argument types with contextual typing from expected parameter types.
@@ -190,20 +301,32 @@ impl<'a> CheckerState<'a> {
         for &arg_idx in args {
             if let Some(arg_node) = self.ctx.arena.get(arg_idx)
                 && arg_node.kind == syntax_kind_ext::SPREAD_ELEMENT
-                && let Some(spread_data) = self.ctx.arena.get_spread(arg_node)
+                && let Some(spread_expression) = self.spread_expression_from_node(arg_idx, arg_node)
             {
-                let spread_type = self.normalized_spread_argument_type(spread_data.expression);
+                let spread_type = self.normalized_spread_argument_type(spread_expression);
+                if let Some((elements, _)) =
+                    self.const_asserted_array_literal_spread_elements(spread_expression)
+                {
+                    expanded_count += elements.len();
+                    continue;
+                }
                 if let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type) {
-                    expanded_count += elems.len();
+                    expanded_count += self.expanded_tuple_spread_len(&elems);
                     continue;
                 }
                 // Check if it's an array literal spread (skip parentheses)
                 if array_element_type_for_type(self.ctx.types, spread_type).is_some() {
-                    let inner_idx = self.ctx.arena.skip_parenthesized(spread_data.expression);
+                    let inner_idx = self.ctx.arena.skip_parenthesized(spread_expression);
                     if let Some(expr_node) = self.ctx.arena.get(inner_idx)
                         && let Some(literal) = self.ctx.arena.get_literal_expr(expr_node)
                     {
                         expanded_count += literal.elements.nodes.len();
+                        continue;
+                    }
+                    if let Some((elements, _)) =
+                        self.const_asserted_array_literal_spread_elements(spread_expression)
+                    {
+                        expanded_count += elements.len();
                         continue;
                     }
                 }
@@ -242,9 +365,10 @@ impl<'a> CheckerState<'a> {
             if let Some(arg_node) = self.ctx.arena.get(arg_idx) {
                 // Handle spread elements specially - expand tuple types
                 if arg_node.kind == syntax_kind_ext::SPREAD_ELEMENT
-                    && let Some(spread_data) = self.ctx.arena.get_spread(arg_node)
+                    && let Some(spread_expression) =
+                        self.spread_expression_from_node(arg_idx, arg_node)
                 {
-                    let spread_type = self.normalized_spread_argument_type(spread_data.expression);
+                    let spread_type = self.normalized_spread_argument_type(spread_expression);
                     let expected_at_spread = expected_for_index(effective_index, expanded_count);
                     let recursive_mapped_tuple_depth = expected_at_spread.is_some_and(|expected| {
                         Self::recursive_mapped_tuple_spread_may_exceed_depth_in_types(
@@ -254,7 +378,7 @@ impl<'a> CheckerState<'a> {
                         )
                     });
                     if recursive_mapped_tuple_depth {
-                        let anchor = self.spread_iterability_error_anchor(spread_data.expression);
+                        let anchor = self.spread_iterability_error_anchor(spread_expression);
                         if let Some((start, end)) = self.get_node_span(anchor)
                             && !self.has_diagnostic_code_within_span(
                                 start,
@@ -271,18 +395,47 @@ impl<'a> CheckerState<'a> {
                     }
 
                     // Check if spread argument is iterable, emit TS2488 if not
-                    self.check_spread_iterability(spread_type, spread_data.expression);
+                    self.check_spread_iterability(spread_type, spread_expression);
 
-                    if self
-                        .aggregate_rest_type_for_spread(
-                            callable_ctx,
-                            effective_index,
-                            expanded_count,
-                        )
-                        .is_some()
+                    if let Some((elements, const_asserted)) =
+                        self.const_asserted_array_literal_spread_elements(spread_expression)
                     {
-                        arg_types.push(self.spread_argument_marker_type(spread_type));
-                        effective_index += 1;
+                        for elem_idx in elements {
+                            if elem_idx.is_none() {
+                                continue;
+                            }
+                            if let Some(elem_node) = self.ctx.arena.get(elem_idx)
+                                && elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT
+                            {
+                                if let Some(elem_type) =
+                                    array_element_type_for_type(self.ctx.types, spread_type)
+                                {
+                                    arg_types.push(elem_type);
+                                    effective_index += 1;
+                                }
+                                continue;
+                            }
+                            let elem_type = if const_asserted {
+                                self.literal_type_from_initializer(elem_idx)
+                                    .unwrap_or_else(|| {
+                                        let previous_const_assertion = self.ctx.in_const_assertion;
+                                        let previous_preserve_literals =
+                                            self.ctx.preserve_literal_types;
+                                        self.ctx.in_const_assertion = true;
+                                        self.ctx.preserve_literal_types = true;
+                                        self.invalidate_expression_for_contextual_retry(elem_idx);
+                                        let elem_type = self.get_type_of_node(elem_idx);
+                                        self.ctx.in_const_assertion = previous_const_assertion;
+                                        self.ctx.preserve_literal_types =
+                                            previous_preserve_literals;
+                                        elem_type
+                                    })
+                            } else {
+                                self.get_type_of_node(elem_idx)
+                            };
+                            arg_types.push(elem_type);
+                            effective_index += 1;
+                        }
                         continue;
                     }
 
@@ -291,15 +444,11 @@ impl<'a> CheckerState<'a> {
                         for elem in &elems {
                             if elem.rest {
                                 // Rest element (e.g., `...boolean[]` in `[number, string, ...boolean[]]`).
-                                // Extract the array element type and push one representative
-                                // argument so the solver matches it against the rest parameter's
-                                // element type rather than the whole array type.
-                                if let Some(inner) =
-                                    array_element_type_for_type(self.ctx.types, elem.type_id)
-                                {
-                                    arg_types.push(inner);
-                                    effective_index += 1;
-                                } else if let Some(sub_elems) =
+                                // If the rest element is itself a concrete tuple (including
+                                // readonly tuple wrappers), expand that tuple first. Only fall
+                                // back to one representative array element for genuinely
+                                // variadic array rests.
+                                if let Some(sub_elems) =
                                     tuple_elements_for_type(self.ctx.types, elem.type_id)
                                 {
                                     // Rest element is a nested tuple (variadic tuple spread).
@@ -327,6 +476,11 @@ impl<'a> CheckerState<'a> {
                                             effective_index += 1;
                                         }
                                     }
+                                } else if let Some(inner) =
+                                    array_element_type_for_type(self.ctx.types, elem.type_id)
+                                {
+                                    arg_types.push(inner);
+                                    effective_index += 1;
                                 }
                                 // else: unknown rest type — skip (no args pushed)
                             } else {
@@ -342,6 +496,19 @@ impl<'a> CheckerState<'a> {
                                 effective_index += 1;
                             }
                         }
+                        continue;
+                    }
+
+                    if self
+                        .aggregate_rest_type_for_spread(
+                            callable_ctx,
+                            effective_index,
+                            expanded_count,
+                        )
+                        .is_some()
+                    {
+                        arg_types.push(self.spread_argument_marker_type(spread_type));
+                        effective_index += 1;
                         continue;
                     }
 
@@ -381,7 +548,7 @@ impl<'a> CheckerState<'a> {
                     // For non-literal arrays, treat as variadic (check element type against remaining params)
                     if array_element_type_for_type(self.ctx.types, spread_type).is_some() {
                         // Check if the spread expression is an array literal (skip parentheses)
-                        let inner_idx = self.ctx.arena.skip_parenthesized(spread_data.expression);
+                        let inner_idx = self.ctx.arena.skip_parenthesized(spread_expression);
                         if let Some(expr_node) = self.ctx.arena.get(inner_idx)
                             && let Some(literal) = self.ctx.arena.get_literal_expr(expr_node)
                         {
@@ -410,6 +577,51 @@ impl<'a> CheckerState<'a> {
                             }
                             continue;
                         }
+                        if let Some((elements, const_asserted)) =
+                            self.const_asserted_array_literal_spread_elements(spread_expression)
+                        {
+                            for elem_idx in elements {
+                                if elem_idx.is_none() {
+                                    continue;
+                                }
+                                if let Some(elem_node) = self.ctx.arena.get(elem_idx)
+                                    && elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT
+                                {
+                                    if let Some(elem_type) =
+                                        array_element_type_for_type(self.ctx.types, spread_type)
+                                    {
+                                        arg_types.push(elem_type);
+                                        effective_index += 1;
+                                    }
+                                    continue;
+                                }
+                                let elem_type = if const_asserted {
+                                    self.literal_type_from_initializer(elem_idx).unwrap_or_else(
+                                        || {
+                                            let previous_const_assertion =
+                                                self.ctx.in_const_assertion;
+                                            let previous_preserve_literals =
+                                                self.ctx.preserve_literal_types;
+                                            self.ctx.in_const_assertion = true;
+                                            self.ctx.preserve_literal_types = true;
+                                            self.invalidate_expression_for_contextual_retry(
+                                                elem_idx,
+                                            );
+                                            let elem_type = self.get_type_of_node(elem_idx);
+                                            self.ctx.in_const_assertion = previous_const_assertion;
+                                            self.ctx.preserve_literal_types =
+                                                previous_preserve_literals;
+                                            elem_type
+                                        },
+                                    )
+                                } else {
+                                    self.get_type_of_node(elem_idx)
+                                };
+                                arg_types.push(elem_type);
+                                effective_index += 1;
+                            }
+                            continue;
+                        }
 
                         // Not an array literal - treat as variadic (element type applies to all remaining params)
                         // But first, emit TS2556 error: spread must be tuple or rest parameter.
@@ -427,7 +639,7 @@ impl<'a> CheckerState<'a> {
                             // fall back to the large-index probe heuristic.
                             let at_rest_position =
                                 if let Some(callable_type) = callable_ctx.callable_type {
-                                    let ctx = tsz_solver::ContextualTypeContext::with_expected(
+                                    let ctx = ContextualTypeContext::with_expected(
                                         self.ctx.types,
                                         callable_type,
                                     );
@@ -493,10 +705,8 @@ impl<'a> CheckerState<'a> {
                         let at_rest_position = if let Some(callable_type) =
                             callable_ctx.callable_type
                         {
-                            let ctx = tsz_solver::ContextualTypeContext::with_expected(
-                                self.ctx.types,
-                                callable_type,
-                            );
+                            let ctx =
+                                ContextualTypeContext::with_expected(self.ctx.types, callable_type);
                             ctx.allows_non_tuple_spread_position(effective_index, expanded_count)
                         } else {
                             // No callable type → callee is any/error/unknown; accept spread
@@ -585,7 +795,13 @@ impl<'a> CheckerState<'a> {
             let skip_bare_type_param_context_for_generic_function = expected_is_bare_type_param
                 && generic_arg_has_own_type_params
                 && !annotated_generic_arg_can_use_return_context;
-            let apply_contextual = self.argument_needs_contextual_type(arg_idx)
+            let needs_contextual_generic_call_instantiation = self
+                .call_expression_needs_contextual_generic_instantiation(
+                    arg_idx,
+                    expected_context_type,
+                );
+            let apply_contextual = (self.argument_needs_contextual_type(arg_idx)
+                || needs_contextual_generic_call_instantiation)
                 && !skip_bare_type_param_context_for_generic_function
                 && !skip_generic_callable_context_for_annotated_generic_function
                 && (!unresolved_refresh_context || can_apply_contextual_despite_unresolved);
@@ -599,7 +815,7 @@ impl<'a> CheckerState<'a> {
             let callable_context_requires_generic_epc_skip =
                 callable_ctx.callable_type.is_some_and(|callable_type| {
                     let ctx =
-                        tsz_solver::ContextualTypeContext::with_expected(self.ctx.types, callable_type);
+                        ContextualTypeContext::with_expected(self.ctx.types, callable_type);
                     ctx.get_parameter_type_for_call(effective_index, expanded_count)
                         .is_some_and(|param_type| {
                             crate::query_boundaries::common::contains_type_parameters(
@@ -708,10 +924,7 @@ impl<'a> CheckerState<'a> {
                 // like tuples, const assertion flows through contextual typing of
                 // each element, not globally at the argument level.
                 if !should_enable_const && let Some(callable_type) = callable_ctx.callable_type {
-                    let ctx = tsz_solver::ContextualTypeContext::with_expected(
-                        self.ctx.types,
-                        callable_type,
-                    );
+                    let ctx = ContextualTypeContext::with_expected(self.ctx.types, callable_type);
                     if let Some(param_type) =
                         ctx.get_parameter_type_for_call(effective_index, expanded_count)
                         && Self::direct_const_type_param_requires_readonly_argument_context(
@@ -726,7 +939,7 @@ impl<'a> CheckerState<'a> {
                     self.ctx.in_const_assertion = true;
                 }
             }
-            let arg_snap = self.ctx.snapshot_diagnostics();
+            let arg_snap = DiagnosticSpeculationSnapshot::new(&self.ctx);
             let raw_arg_type = self.get_type_of_node_with_request(arg_idx, &request);
             let arg_type = if let Some(expected) = expected_context_type.or(expected_type) {
                 let expected_eval = self.evaluate_type_with_env(expected);
@@ -828,7 +1041,7 @@ impl<'a> CheckerState<'a> {
                     == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                     && self
                         .ctx
-                        .speculative_diagnostics_since(&arg_snap)
+                        .speculative_diagnostics_since(arg_snap.snapshot())
                         .iter()
                         .any(|diag| {
                             diag.code
@@ -841,14 +1054,14 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .diagnostics
                     .iter()
-                    .take(arg_snap.diagnostics_len)
+                    .take(arg_snap.checkpoint())
                     .map(|d| (d.code, d.start, d.length, d.message_text.clone()))
                     .collect();
                 let mut seen_diag_keys = existing_diag_keys;
                 let preserve_destructuring_initializer_overload_diagnostics = self
                     .ctx
                     .preserve_destructuring_initializer_overload_diagnostics;
-                self.ctx.rollback_diagnostics_filtered(&arg_snap, |diag| {
+                arg_snap.rollback_filtered_reusable(&mut self.ctx.diagnostic_state(), |diag| {
                     if Self::should_preserve_speculative_call_diagnostic(diag) {
                         return true;
                     }
@@ -978,11 +1191,11 @@ impl<'a> CheckerState<'a> {
                 && is_direct_function_arg
                 && let Some((s, e)) = function_arg_span
             {
-                let count_before = self.ctx.diagnostics.len();
+                let diag_count_before = self.ctx.diagnostics.len();
                 let callback_indices = self.callback_function_indices(arg_idx);
                 let contextual_param_spans = contextual_callback_param_spans;
                 let had_contextual_callbacks = !contextual_callback_indices.is_empty();
-                self.ctx.rollback_diagnostics_filtered(&arg_snap, |d| {
+                arg_snap.rollback_filtered_reusable(&mut self.ctx.diagnostic_state(), |d| {
                     !(matches!(d.code, 7006 | 7019 | 7031 | 7051)
                         && d.start >= s
                         && d.start < e
@@ -990,7 +1203,8 @@ impl<'a> CheckerState<'a> {
                             .iter()
                             .any(|(start, end)| d.start >= *start && d.start < *end))
                 });
-                if had_contextual_callbacks || self.ctx.diagnostics.len() < count_before {
+                let diagnostics_were_removed = self.ctx.diagnostics.len() < diag_count_before;
+                if had_contextual_callbacks || diagnostics_were_removed {
                     for callback_idx in callback_indices {
                         self.ctx.implicit_any_checked_closures.remove(&callback_idx);
                     }
@@ -1048,6 +1262,9 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let rest_type = ctx.get_rest_parameter_type(effective_index)?;
+        if self.rest_type_is_declared_on_callable(callable_type, rest_type) {
+            return None;
+        }
         let needs_aggregate =
             crate::query_boundaries::checkers::call::rest_type_needs_aggregate_argument_check(
                 self.ctx.types,
@@ -1062,6 +1279,108 @@ impl<'a> CheckerState<'a> {
         needs_aggregate.then_some(rest_type)
     }
 
+    fn const_asserted_array_literal_spread_elements(
+        &self,
+        expr: NodeIndex,
+    ) -> Option<(Vec<NodeIndex>, bool)> {
+        let direct_const_asserted = self.expression_is_const_assertion(expr);
+        let expr = self.ctx.arena.skip_parenthesized_and_assertions(expr);
+        if let Some(node) = self.ctx.arena.get(expr)
+            && node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+        {
+            let literal = self.ctx.arena.get_literal_expr(node)?;
+            return direct_const_asserted.then(|| (literal.elements.nodes.clone(), true));
+        }
+
+        let node = self.ctx.arena.get(expr)?;
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let symbol_id = self
+            .ctx
+            .binder
+            .get_node_symbol(expr)
+            .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, expr))?;
+        let symbol = self.ctx.binder.get_symbol(symbol_id)?;
+        let mut var_decl = None;
+        for candidate in
+            std::iter::once(symbol.value_declaration).chain(symbol.declarations.iter().copied())
+        {
+            let mut current = candidate;
+            for _ in 0..crate::state::MAX_TREE_WALK_ITERATIONS {
+                if current.is_none() {
+                    break;
+                }
+                let Some(current_node) = self.ctx.arena.get(current) else {
+                    break;
+                };
+                if let Some(decl) = self.ctx.arena.get_variable_declaration(current_node) {
+                    var_decl = Some(decl);
+                    break;
+                }
+                current = self.ctx.arena.get_extended(current)?.parent;
+            }
+            if var_decl.is_some() {
+                break;
+            }
+        }
+        let var_decl = var_decl?;
+        let init = var_decl.initializer;
+        if init.is_none() || !self.expression_is_const_assertion(init) {
+            return None;
+        }
+        let init = self.ctx.arena.skip_parenthesized_and_assertions(init);
+        let init_node = self.ctx.arena.get(init)?;
+        if init_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            return None;
+        }
+        let literal = self.ctx.arena.get_literal_expr(init_node)?;
+        Some((literal.elements.nodes.clone(), true))
+    }
+
+    fn expanded_tuple_spread_len(&self, elems: &[TupleElement]) -> usize {
+        let mut count = 0;
+        for elem in elems {
+            if elem.rest
+                && let Some(sub_elems) = tuple_elements_for_type(self.ctx.types, elem.type_id)
+            {
+                count += self.expanded_tuple_spread_len(&sub_elems);
+            } else {
+                count += 1;
+            }
+        }
+        count
+    }
+
+    fn spread_expression_from_node(
+        &self,
+        spread_idx: NodeIndex,
+        spread_node: &Node,
+    ) -> Option<NodeIndex> {
+        self.ctx
+            .arena
+            .get_spread(spread_node)
+            .map(|spread| spread.expression)
+            .or_else(|| self.ctx.arena.get_children(spread_idx).first().copied())
+    }
+
+    fn rest_type_is_declared_on_callable(&self, callable_type: TypeId, rest_type: TypeId) -> bool {
+        let rest_type =
+            crate::query_boundaries::common::unwrap_readonly_or_noinfer(self.ctx.types, rest_type)
+                .unwrap_or(rest_type);
+        let Some(rest_param) =
+            crate::query_boundaries::common::type_param_info(self.ctx.types, rest_type)
+        else {
+            return false;
+        };
+        crate::query_boundaries::common::extract_contextual_type_params(
+            self.ctx.types,
+            callable_type,
+        )
+        .is_some_and(|params| params.iter().any(|param| param.name == rest_param.name))
+    }
+
     fn spread_argument_marker_type(&mut self, spread_type: TypeId) -> TypeId {
         let marker_name = self.ctx.types.intern_string(SPREAD_ARGUMENT_MARKER_NAME);
         self.ctx.types.tuple(vec![TupleElement {
@@ -1073,7 +1392,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn recursive_mapped_tuple_spread_may_exceed_depth_in_types(
-        db: &dyn tsz_solver::TypeDatabase,
+        db: &dyn tsz_solver::construction::TypeDatabase,
         spread_type: TypeId,
         expected_type: TypeId,
     ) -> bool {
@@ -1113,7 +1432,7 @@ impl<'a> CheckerState<'a> {
     /// allows readonly literal inference.
     /// Used to propagate const assertion context into call argument expressions.
     fn type_references_const_type_param_requiring_readonly_argument_context(
-        db: &dyn tsz_solver::TypeDatabase,
+        db: &dyn tsz_solver::construction::TypeDatabase,
         type_id: TypeId,
     ) -> bool {
         use crate::query_boundaries::common;
@@ -1131,7 +1450,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn direct_const_type_param_requires_readonly_argument_context(
-        db: &dyn tsz_solver::TypeDatabase,
+        db: &dyn tsz_solver::construction::TypeDatabase,
         type_id: TypeId,
     ) -> bool {
         use crate::query_boundaries::common;
@@ -1148,7 +1467,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(super) fn constraint_allows_mutable_array_like(
-        db: &dyn tsz_solver::TypeDatabase,
+        db: &dyn tsz_solver::construction::TypeDatabase,
         type_id: TypeId,
     ) -> bool {
         crate::query_boundaries::common::constraint_allows_mutable_array_like(db, type_id)
@@ -1166,6 +1485,9 @@ impl<'a> CheckerState<'a> {
         let arg_count = args.len();
         for (i, &arg_idx) in args.iter().enumerate() {
             let expected = expected_for_index(i, arg_count);
+            if let Some(expected) = expected {
+                self.try_emit_polymorphic_this_object_literal_arg_errors(arg_idx, expected);
+            }
             if let Some(expected) = expected
                 && expected != TypeId::ANY
                 && expected != TypeId::UNKNOWN
@@ -1340,5 +1662,214 @@ impl<'a> CheckerState<'a> {
         }
 
         prior_non_tuple_spread
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::CheckerOptions;
+    use crate::module_resolution::build_module_resolution_maps;
+    use std::sync::Arc;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+    use tsz_solver::construction::TypeInterner;
+
+    fn first_argument_for_call(checker: &CheckerState<'_>, callee_name: &str) -> NodeIndex {
+        checker
+            .ctx
+            .arena
+            .nodes
+            .iter()
+            .find_map(|node| {
+                if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+                    return None;
+                }
+                let call = checker.ctx.arena.get_call_expr(node)?;
+                let callee_node = checker.ctx.arena.get(call.expression)?;
+                let callee_ident = checker.ctx.arena.get_identifier(callee_node)?;
+                if callee_ident.escaped_text != callee_name {
+                    return None;
+                }
+                call.arguments.as_ref()?.nodes.first().copied()
+            })
+            .expect("expected call argument")
+    }
+
+    #[test]
+    fn generic_call_source_markers_fast_fail_parameter_identifiers() {
+        let source = r#"
+declare function fromParam<T>(value: T): T;
+declare function fromPayload<U>(value: U): U;
+declare function fromTyped<V>(value: V): V;
+declare function fromAssertion<W>(value: W): W;
+declare function fromRedeclared<X>(value: X): X;
+declare function fromDestructured<Y>(value: Y): Y;
+
+function run<T, U>(input: T, payload: U) {
+    const typed: { a: 1 } = { a: 1 };
+    fromParam(input);
+    fromPayload(payload);
+    fromTyped(typed);
+    fromAssertion(input as T);
+}
+
+function redeclared(input: unknown) {
+    var input: { a: 1 };
+    fromRedeclared(input);
+}
+
+function destructured({ item }: { item: { a: 1 } }) {
+    fromDestructured(item);
+}
+"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena().clone();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(&arena, root);
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            &arena,
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        checker.check_source_file(root);
+
+        let param_arg = first_argument_for_call(&checker, "fromParam");
+        let renamed_param_arg = first_argument_for_call(&checker, "fromPayload");
+        let typed_arg = first_argument_for_call(&checker, "fromTyped");
+        let asserted_arg = first_argument_for_call(&checker, "fromAssertion");
+        let redeclared_arg = first_argument_for_call(&checker, "fromRedeclared");
+        let destructured_arg = first_argument_for_call(&checker, "fromDestructured");
+        let param_sym = checker
+            .resolve_identifier_symbol(param_arg)
+            .expect("parameter argument should resolve");
+        let typed_sym = checker
+            .resolve_identifier_symbol(typed_arg)
+            .expect("typed local argument should resolve");
+        let redeclared_sym = checker
+            .resolve_identifier_symbol(redeclared_arg)
+            .expect("redeclared argument should resolve");
+
+        assert!(
+            checker.local_symbol_value_declaration_is_plain_parameter(param_sym),
+            "plain local parameters should take the fast-fail path"
+        );
+        assert!(
+            !checker.local_symbol_value_declaration_is_plain_parameter(typed_sym),
+            "typed locals are not parameter fast-fail candidates"
+        );
+        assert!(
+            !checker.local_symbol_value_declaration_is_plain_parameter(redeclared_sym),
+            "parameter symbols with typed variable declarations must stay on the full scan"
+        );
+
+        assert_eq!(
+            checker.call_arg_source_type_annotation_markers(&[param_arg], 1),
+            vec![false],
+            "parameter identifiers are not variable-declaration type annotation sources"
+        );
+        assert_eq!(
+            checker.call_arg_source_type_annotation_markers(&[renamed_param_arg], 1),
+            vec![false],
+            "renamed parameter identifiers should take the same fast-fail path"
+        );
+        assert_eq!(
+            checker.call_arg_source_type_annotation_markers(&[typed_arg], 1),
+            vec![true],
+            "typed local variable identifiers must still mark generic inference sources"
+        );
+        assert_eq!(
+            checker.call_arg_source_type_annotation_markers(&[asserted_arg], 1),
+            vec![true],
+            "explicit type assertions must still mark generic inference sources"
+        );
+        assert_eq!(
+            checker.call_arg_source_type_annotation_markers(&[redeclared_arg], 1),
+            vec![true],
+            "parameter symbols that also have typed variable declarations should keep old marker behavior"
+        );
+        assert_eq!(
+            checker.call_arg_source_type_annotation_markers(&[destructured_arg], 1),
+            vec![false],
+            "destructured parameter bindings are not variable-declaration type annotation sources"
+        );
+    }
+
+    #[test]
+    fn generic_call_source_markers_keep_cross_file_typed_identifier_sources() {
+        let files = [
+            (
+                "consumer.ts",
+                r#"
+declare function fromTyped<T>(value: T): T;
+
+function run(local: unknown) {
+    fromTyped(typedGlobal);
+}
+"#,
+            ),
+            (
+                "shared.ts",
+                r#"
+declare const typedGlobal: { a: 1 };
+"#,
+            ),
+        ];
+
+        let mut arenas = Vec::with_capacity(files.len());
+        let mut binders = Vec::with_capacity(files.len());
+        let mut roots = Vec::with_capacity(files.len());
+        let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
+        for (file_idx, (name, source)) in files.iter().enumerate() {
+            let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
+            let root = parser.parse_source_file();
+            let mut binder = BinderState::new();
+            binder.set_file_idx(file_idx as u32);
+            binder.bind_source_file(parser.get_arena(), root);
+            arenas.push(Arc::new(parser.get_arena().clone()));
+            binders.push(Arc::new(binder));
+            roots.push(root);
+        }
+
+        let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
+        let all_arenas = Arc::new(arenas);
+        let all_binders = Arc::new(binders);
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            all_arenas[0].as_ref(),
+            all_binders[0].as_ref(),
+            &types,
+            file_names[0].clone(),
+            CheckerOptions::default(),
+        );
+        checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+        checker.ctx.set_all_binders(Arc::clone(&all_binders));
+        checker.ctx.set_current_file_idx(0);
+        checker.ctx.set_lib_contexts(Vec::new());
+        checker
+            .ctx
+            .set_resolved_module_paths(Arc::new(resolved_module_paths));
+        checker.ctx.set_resolved_modules(resolved_modules);
+
+        checker.check_source_file(roots[0]);
+
+        let typed_arg = first_argument_for_call(&checker, "fromTyped");
+        let typed_sym = checker
+            .resolve_identifier_symbol(typed_arg)
+            .expect("cross-file typed argument should resolve");
+        assert!(
+            !checker.local_symbol_value_declaration_is_plain_parameter(typed_sym),
+            "cross-file typed variables must not collide with local parameter fast-fail"
+        );
+        assert_eq!(
+            checker.call_arg_source_type_annotation_markers(&[typed_arg], 1),
+            vec![true],
+            "cross-file typed variable identifiers must keep old marker behavior"
+        );
     }
 }

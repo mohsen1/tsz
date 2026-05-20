@@ -1,7 +1,55 @@
 use crate::emitter::ModuleKind;
 use crate::output::printer::{PrintOptions, Printer};
 use tsz_common::ScriptTarget;
-use tsz_parser::ParserState;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
+
+#[test]
+fn namespace_recovers_malformed_export_function_arrow_body() {
+    let source = "namespace M {\n    export namespace N {\n        export function f(x:number)=>2*x;\n    }\n}";
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("2 * x;"),
+        "Recovered malformed function arrow body should emit as a statement.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("function f"),
+        "Recovered malformed function arrow body should not emit a function declaration.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("N.f = f"),
+        "Recovered malformed function arrow body should not emit a namespace export assignment.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn namespace_recovers_malformed_export_function_arrow_object_literal_body() {
+    let source = "namespace M {\n    export namespace N {\n        export function f()=>({ a: 1 });\n    }\n}";
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("({ a: 1 });"),
+        "Recovered object-literal arrow body must stay parenthesized in statement position.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("\n        { a: 1 };"),
+        "Recovered object-literal arrow body must not emit as a bare block statement.\nOutput:\n{output}"
+    );
+}
 
 /// Regression test: type-only import-equals inside a namespace must not
 /// leave a phantom blank line. The import `import T = M1.I;` produces no
@@ -12,8 +60,7 @@ use tsz_parser::ParserState;
 fn no_blank_line_for_type_only_import_alias_in_namespace() {
     let source = "namespace M1 {\n    export interface I {\n        foo();\n    }\n}\n\nnamespace M2 {\n    import T = M1.I;\n    class C implements T {\n        foo() {}\n    }\n}";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::new(&parser.arena, PrintOptions::default());
     printer.set_source_text(source);
@@ -34,10 +81,43 @@ fn no_blank_line_for_type_only_import_alias_in_namespace() {
 }
 
 #[test]
+fn namespace_anonymous_default_class_gets_synthetic_export_binding() {
+    let source = "namespace ns_class {\n    export default class {}\n}\n\nnamespace ns_abstract_class {\n    export default abstract class {}\n}";
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::new(
+        &parser.arena,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("class default_1"),
+        "First anonymous default class should get default_1 binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("ns_class.default_1 = default_1;"),
+        "Namespace should export the first synthetic class binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("class default_2"),
+        "Second anonymous default class should get default_2 binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("ns_abstract_class.default_2 = default_2;"),
+        "Namespace should export the second synthetic class binding.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn namespace_exported_destructuring_uses_temp_in_esnext_path() {
     let source = "namespace M {\n    export var [a, b] = [1, 2];\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::new(&parser.arena, PrintOptions::default());
     printer.set_source_text(source);
@@ -55,10 +135,34 @@ fn namespace_exported_destructuring_uses_temp_in_esnext_path() {
 }
 
 #[test]
+fn namespace_single_exported_destructuring_reads_initializer_directly() {
+    let source =
+        "namespace M {\n    export let [bar5] = [1];\n    export const { a: bar7 } = { a: 1 };\n}";
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("M.bar5 = [1][0];"),
+        "Single array binding export should read by element index without a temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("M.bar7 = { a: 1 }.a;"),
+        "Single object binding export should read by property name without a temp.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var _a;"),
+        "Single binding exports should not reserve a namespace destructuring temp.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn namespace_exported_destructuring_temp_hoists_before_class() {
     let source = "namespace m {\n    export class c {}\n    export var [x, y] = [10, new c()];\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::new(&parser.arena, PrintOptions::default());
     printer.set_source_text(source);
@@ -81,8 +185,7 @@ fn namespace_exported_destructuring_temp_hoists_before_class() {
 fn top_level_import_alias_to_ambient_namespace_value_emits_runtime_alias() {
     let source = "declare namespace foo { const await: any; }\n\n// await allowed in import=namespace when not a module\nimport await = foo.await;\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::new(
         &parser.arena,
@@ -105,8 +208,7 @@ fn top_level_import_alias_to_ambient_namespace_value_emits_runtime_alias() {
 fn top_level_import_alias_to_ambient_namespace_value_is_erased_in_modules() {
     let source = "export {};\ndeclare namespace foo { const await: any; }\n\n// await disallowed in import=namespace when in a module\nimport await = foo.await;\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::new(
         &parser.arena,
@@ -136,8 +238,7 @@ fn top_level_import_alias_to_ambient_namespace_value_is_erased_in_modules() {
 fn namespace_iife_param_renamed_for_variable_conflict() {
     let source = "namespace m {\n  export var m = '';\n}";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::new(&parser.arena, PrintOptions::default());
     printer.set_source_text(source);
@@ -154,6 +255,69 @@ fn namespace_iife_param_renamed_for_variable_conflict() {
     );
 }
 
+#[test]
+fn namespace_iife_param_not_renamed_for_class_member_conflict() {
+    let source = "namespace m {\n  class City {\n    public m = () => 1;\n  }\n  export var v = () => new City();\n}";
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("(function (m)"),
+        "Class field names do not bind in the namespace IIFE scope, so the parameter should stay `m`.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("(function (m_1)"),
+        "Class field names should not trigger namespace IIFE parameter renaming.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn namespace_iife_param_renamed_for_direct_nested_namespace_conflict() {
+    let source = "namespace M {\n  namespace M {\n    export function eF() {}\n  }\n}";
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("(function (M_1)"),
+        "Direct same-name nested namespaces emit a local binding, so the outer IIFE parameter should be renamed.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("(function (M)"),
+        "The nested namespace should still reuse its own local namespace binding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("(function (M_2)"),
+        "The nested namespace's own parameter should not be renamed again by the fallback scan.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn namespace_iife_param_renamed_for_parameter_property_conflict() {
+    let source = "namespace m {\n  class City {\n    constructor(public m = 1) {}\n  }\n  export var v = () => new City();\n}";
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("(function (m_1)"),
+        "Constructor parameter properties bind in function scope, so the namespace parameter should still be renamed.\nOutput:\n{output}"
+    );
+}
+
 /// When a namespace body has an import-equals with the same name as the namespace,
 /// the IIFE parameter must be renamed.
 /// E.g., `namespace A.M { import M = Z.M; ... }` should emit `(function (M_1) { ... })`.
@@ -161,8 +325,7 @@ fn namespace_iife_param_renamed_for_variable_conflict() {
 fn namespace_iife_param_renamed_for_import_equals_conflict() {
     let source = "namespace Z {\n  export namespace M {\n    export function bar() { return ''; }\n  }\n}\nnamespace A {\n  export namespace M {\n    import M = Z.M;\n    export function bar() {}\n    M.bar();\n  }\n}";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::new(&parser.arena, PrintOptions::default());
     printer.set_source_text(source);
@@ -185,8 +348,7 @@ fn namespace_iife_param_renamed_for_import_equals_conflict() {
 fn dotted_namespace_inner_iife_uses_outer_renamed_param_in_argument() {
     let source = "namespace Y.Y {\n  export enum Y { Red, Blue }\n}";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::new(&parser.arena, PrintOptions::default());
     printer.set_source_text(source);
@@ -207,8 +369,7 @@ fn dotted_namespace_inner_iife_uses_outer_renamed_param_in_argument() {
 fn dotted_namespace_reference_to_sibling_qualifies_parent_namespace() {
     let source = "function foo(title: string) {}\nnamespace foo.Bar {\n  export function f() {}\n}\nnamespace foo.Baz {\n  export function g() {\n    Bar.f();\n  }\n}";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::new(&parser.arena, PrintOptions::default());
     printer.set_source_text(source);
@@ -229,8 +390,7 @@ fn dotted_namespace_reference_to_sibling_qualifies_parent_namespace() {
 fn dotted_namespace_reopen_qualifies_prior_value_exports() {
     let source = "namespace X.Y {\n  class A {\n    m(Y: any) {\n      new B();\n    }\n  }\n}\nnamespace X.Y {\n  export class B {}\n}\nnamespace my.data {\n  export function buz() {}\n}\nnamespace my.data.foo {\n  function data(my, foo) {\n    buz();\n  }\n}";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::new(&parser.arena, PrintOptions::default());
     printer.set_source_text(source);
@@ -254,8 +414,7 @@ fn dotted_namespace_reopen_qualifies_prior_value_exports() {
 #[test]
 fn namespace_exported_var_rewrites_computed_class_method_name() {
     let source = "namespace M {\n    export var Symbol;\n\n    class C {\n        [Symbol.iterator]() { }\n    }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::new(&parser.arena, PrintOptions::default());
     printer.set_source_text(source);
@@ -291,8 +450,7 @@ fn namespace_exported_var_rewrites_computed_class_method_name() {
 fn reopened_dotted_namespace_qualifies_merged_exports_by_source_path() {
     let source = "namespace my.data.foo {\n  export function child() {}\n}\nnamespace my.data {\n  export function buz() {}\n}\nnamespace my.data {\n  function data(my) {\n    foo.child();\n  }\n}\nnamespace my.data.foo {\n  function data(my, foo) {\n    buz();\n  }\n}";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::new(&parser.arena, PrintOptions::default());
     printer.set_source_text(source);
@@ -326,8 +484,7 @@ fn same_block_class_extends_class_uses_unqualified_name() {
     // branch wins and the output incorrectly becomes `extends X.A`.
     let source = "namespace X {\n  export class A {}\n}\nnamespace X {\n  export class A {}\n  export class B extends A {}\n}";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::new(&parser.arena, PrintOptions::default());
     printer.set_source_text(source);
@@ -348,8 +505,7 @@ fn same_block_class_extends_class_uses_unqualified_name() {
 fn nested_namespace_does_not_qualify_own_leaf_name_from_parent_exports() {
     let source = "namespace X.Y {\n  export namespace Point {\n    export var Origin = new Point(0, 0);\n  }\n}\nnamespace X.Y {\n  export class Point {}\n}";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::new(&parser.arena, PrintOptions::default());
     printer.set_source_text(source);
@@ -370,8 +526,7 @@ fn nested_namespace_does_not_qualify_own_leaf_name_from_parent_exports() {
 fn nested_namespace_uses_parent_current_class_lexically() {
     let source = "namespace A {\n  export class Point {\n    constructor(public x: number, public y: number) {}\n  }\n\n  export namespace B {\n    export var Origin: Point = new Point(0, 0);\n  }\n}";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::new(&parser.arena, PrintOptions::default());
     printer.set_source_text(source);
@@ -385,5 +540,89 @@ fn nested_namespace_uses_parent_current_class_lexically() {
     assert!(
         !output.contains("B.Origin = new A.Point(0, 0);"),
         "Current-block parent class should not be treated as a prior namespace-object export.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn nested_namespace_uses_parent_current_namespace_lexically() {
+    let source = "namespace A {\n  export declare namespace BB {\n    export var Elephant: any;\n  }\n  export namespace B {\n    export class C {\n      x = BB.Elephant.X;\n    }\n  }\n}";
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::new(
+        &parser.arena,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("this.x = BB.Elephant.X;"),
+        "Nested namespace should use parent current-block namespaces through lexical scope.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("this.x = A.BB.Elephant.X;"),
+        "Current-block parent namespace should not be qualified through the parent object.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn namespace_default_function_recovery_emits_default_assignment() {
+    let source = "namespace ns_function {\n    export default function () {}\n}\n\nnamespace ns_async_function {\n    export default async function () {}\n}";
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::new(
+        &parser.arena,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("default function () { }\n    ns_function.default_1 = default_1;"),
+        "Recovered namespace default function should keep tsc's default-function recovery and export assignment.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("default function () {\n        return __awaiter(this, void 0, void 0, function* () { });\n    }\n    ns_async_function.default_2 = default_2;"),
+        "Recovered async namespace default function should lower async body and export assignment.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn namespace_invalid_default_expression_export_is_preserved_verbatim() {
+    let source =
+        "namespace Foo {\n  export default foo;\n}\n\nnamespace Bar {\n  export default bar;\n}";
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::new(
+        &parser.arena,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("export default foo;"),
+        "Invalid namespace default expression export should be printed verbatim.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("export default bar;"),
+        "Invalid namespace default expression export should preserve each recovered statement.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("Foo.foo = foo;"),
+        "Invalid default expression export should not become a namespace property assignment.\nOutput:\n{output}"
     );
 }

@@ -556,6 +556,40 @@ export class UnionBox<T extends [BoxedAny, ...BoxedAny[]]> extends Boxed<T[numbe
 }
 
 #[test]
+fn generic_application_with_source_any_arg_assigns_to_same_generic_target() {
+    let source = r#"
+type Formatted<T> = T extends object
+    ? { [K in keyof T]?: Formatted<T[K]> }
+    : { _errors: string[] };
+
+class Box<T = any> {
+    format = (): Formatted<T> => ({ _errors: [] } as any);
+}
+
+function make<Input>(): { success: false; error: Box<Input> } {
+    const error = new Box();
+    return { success: false, error };
+}
+"#;
+
+    let diags = crate::test_utils::check_source_diagnostics(source);
+    let ts2322 = diags
+        .iter()
+        .filter(|diag| diag.code == 2322)
+        .map(|diag| diag.message_text.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(
+        ts2322.is_empty(),
+        "`Box<any>` should be assignable to `Box<Input>` under TypeScript any propagation; got diagnostics: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_ts2313_non_cyclic_chain_not_flagged() {
     // U extends T, T extends V, V extends T: U is NOT part of the cycle
     let source = r"
@@ -775,6 +809,36 @@ interface ITest<P extends Prefixes, E extends AllPrefixData = PrefixData<P>> { }
     assert!(
         ts2344_messages.is_empty(),
         "Expected no TS2344 diagnostics for self or derived generic defaults, got {ts2344_messages:?}"
+    );
+}
+
+#[test]
+fn test_tuple_default_matching_constraint_union_member_no_ts2344() {
+    let source = r#"
+export {};
+interface Schema { readonly _output: unknown; }
+type SchemaAny = Schema;
+type TupleItems = [SchemaAny, ...SchemaAny[]];
+interface TupleDef<T extends TupleItems | [] = TupleItems> {
+    items: T;
+}
+class Tuple<
+    T extends [SchemaAny, ...SchemaAny[]] | [] = [SchemaAny, ...SchemaAny[]]
+> {
+    readonly def!: TupleDef<T>;
+}
+"#;
+
+    let diagnostics = crate::test_utils::check_source_diagnostics(source);
+    let ts2344_messages = diagnostics
+        .iter()
+        .filter(|d| d.code == 2344)
+        .map(|d| d.message_text.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(
+        ts2344_messages.is_empty(),
+        "tuple defaults that syntactically match a constraint union member should not emit TS2344; got {ts2344_messages:?}"
     );
 }
 

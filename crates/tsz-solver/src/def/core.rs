@@ -7,14 +7,6 @@
 //! - **Testing**: Types can be created and tested without a full Binder
 //! - **Caching**: `DefId` provides a stable key for Salsa memoization
 //!
-//! ## Migration Path
-//!
-//! The transition from `SymbolRef` to `DefId` happens incrementally:
-//!
-//! 1. `TypeData::Ref(SymbolRef)` remains for backward compatibility
-//! 2. New `TypeData::Lazy(DefId)` is added for migrated code
-//! 3. Eventually, `Ref(SymbolRef)` is removed entirely
-//!
 //! ## `DefId` Allocation Strategies
 //!
 //! | Mode | Strategy | Use Case |
@@ -40,6 +32,7 @@ type CrossFileQueryCacheKey = (u8, u32, u32, u32, u64);
 type CrossFileQueryCacheValue = (TypeId, Arc<Vec<TypeParamInfo>>);
 type DefDashMap<K, V> = DashMap<K, V, FxBuildHasher>;
 type DefDashSet<K> = DashSet<K, FxBuildHasher>;
+type SymbolMappingsSnapshot = Arc<[(u32, DefId)]>;
 
 // =============================================================================
 // DefId - Solver-Owned Definition Identifier
@@ -406,6 +399,111 @@ impl DefinitionInfo {
         self.span = Some((start, end));
         self
     }
+
+    /// Convert `SemanticDefKind` to `DefKind`.
+    pub const fn kind_from_semantic(kind: tsz_binder::SemanticDefKind) -> DefKind {
+        match kind {
+            tsz_binder::SemanticDefKind::TypeAlias => DefKind::TypeAlias,
+            tsz_binder::SemanticDefKind::Interface => DefKind::Interface,
+            tsz_binder::SemanticDefKind::Class => DefKind::Class,
+            tsz_binder::SemanticDefKind::Enum => DefKind::Enum,
+            tsz_binder::SemanticDefKind::Namespace => DefKind::Namespace,
+            tsz_binder::SemanticDefKind::Function => DefKind::Function,
+            tsz_binder::SemanticDefKind::Variable => DefKind::Variable,
+        }
+    }
+
+    /// Create a `DefinitionInfo` from a binder `SemanticDefEntry`.
+    ///
+    /// Centralizes the conversion used by both `DefinitionStore::from_semantic_def_entries`
+    /// (merge pipeline) and `CheckerContext::populate_def_ids_from_semantic_defs`
+    /// (per-file checker construction). Single conversion path prevents field
+    /// divergence between the two code paths.
+    pub fn from_semantic_def(
+        entry: &tsz_binder::SemanticDefEntry,
+        sym_id: u32,
+        intern_string: &dyn Fn(&str) -> Atom,
+    ) -> Self {
+        let kind = Self::kind_from_semantic(entry.kind);
+        let name = intern_string(&entry.name);
+
+        let type_params = if entry.type_param_count > 0 {
+            (0..entry.type_param_count)
+                .map(|i| {
+                    let param_name = entry
+                        .type_param_names
+                        .get(i as usize)
+                        .map(|n| intern_string(n))
+                        .unwrap_or(Atom(0));
+                    crate::TypeParamInfo {
+                        name: param_name,
+                        constraint: None,
+                        default: None,
+                        is_const: false,
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        let enum_members: Vec<(Atom, EnumMemberValue)> = entry
+            .enum_member_names
+            .iter()
+            .map(|n| (intern_string(n), EnumMemberValue::Computed))
+            .collect();
+
+        Self {
+            kind,
+            name,
+            type_params,
+            body: None,
+            instance_shape: None,
+            static_shape: None,
+            extends: None,
+            implements: Vec::new(),
+            enum_members,
+            exports: Vec::new(),
+            file_id: Some(entry.file_id),
+            span: Some((entry.span_start, entry.span_start)),
+            symbol_id: Some(sym_id),
+            heritage_names: entry.heritage_names(),
+            is_abstract: entry.is_abstract,
+            is_const: entry.is_const,
+            is_exported: entry.is_exported,
+            is_global_augmentation: entry.is_global_augmentation,
+            is_declare: entry.is_declare,
+        }
+    }
+
+    /// Create a `ClassConstructor` companion from a class `SemanticDefEntry`.
+    pub fn class_constructor_from_semantic_def(
+        entry: &tsz_binder::SemanticDefEntry,
+        sym_id: u32,
+        intern_string: &dyn Fn(&str) -> Atom,
+    ) -> Self {
+        Self {
+            kind: DefKind::ClassConstructor,
+            name: intern_string(&entry.name),
+            type_params: Vec::new(),
+            body: None,
+            instance_shape: None,
+            static_shape: None,
+            extends: None,
+            implements: Vec::new(),
+            enum_members: Vec::new(),
+            exports: Vec::new(),
+            file_id: Some(entry.file_id),
+            span: Some((entry.span_start, entry.span_start)),
+            symbol_id: Some(sym_id),
+            heritage_names: Vec::new(),
+            is_abstract: entry.is_abstract,
+            is_const: false,
+            is_exported: entry.is_exported,
+            is_global_augmentation: false,
+            is_declare: entry.is_declare,
+        }
+    }
 }
 
 // =============================================================================
@@ -442,6 +540,9 @@ pub struct DefinitionStore {
     /// Next available `DefId`
     next_id: AtomicU32,
 
+    /// Monotonic revision for resolver-visible definition-store mutations.
+    generation: AtomicU64,
+
     /// Reverse map: `TypeId` -> `DefId` for named types.
     ///
     /// When a class/interface instance type is computed, the checker registers it here
@@ -472,6 +573,13 @@ pub struct DefinitionStore {
     ///
     /// Replaces the O(N) linear scan in the previous `find_def_by_symbol`.
     symbol_only_index: DefDashMap<u32, DefId>,
+
+    /// Generation-keyed immutable snapshot of `symbol_only_index`.
+    ///
+    /// Project checking warms many per-file checker contexts from the same shared
+    /// store. Caching this snapshot avoids collecting the same `DashMap` into a
+    /// fresh `Vec` for every checker while preserving generation-based invalidation.
+    symbol_mappings_snapshot: Mutex<Option<(u64, SymbolMappingsSnapshot)>>,
 
     /// Reverse index: body `TypeId` -> `DefId` for non-generic type aliases.
     ///
@@ -538,6 +646,11 @@ pub struct DefinitionStore {
     /// `SYMBOL_TYPE` bucket replaces the previous standalone
     /// `resolved_symbol_types` map.
     resolved_cross_file_queries: DefDashMap<CrossFileQueryCacheKey, CrossFileQueryCacheValue>,
+
+    /// Program-local scope mixed into source-file symbol-type query keys.
+    /// Batch drivers stamp this from `ProgramContext` so reused shared stores
+    /// cannot read stale entries from an earlier virtual program.
+    source_file_symbol_type_cache_scope: AtomicU64,
 
     /// Per-file mutual exclusion locks for cross-file type delegation.
     /// Prevents concurrent delegation to the same target file.
@@ -709,12 +822,14 @@ impl DefinitionStore {
             instance_id,
             definitions: DefDashMap::with_capacity_and_hasher(id_capacity, Default::default()),
             next_id: AtomicU32::new(DefId::FIRST_VALID),
+            generation: AtomicU64::new(1),
             type_to_def: DefDashMap::default(),
             symbol_def_index: DefDashMap::with_capacity_and_hasher(id_capacity, Default::default()),
             symbol_only_index: DefDashMap::with_capacity_and_hasher(
                 id_capacity,
                 Default::default(),
             ),
+            symbol_mappings_snapshot: Mutex::new(None),
             body_to_alias: DefDashMap::default(),
             computed_alias_bodies: DefDashSet::default(),
             shape_to_def: DefDashMap::default(),
@@ -725,6 +840,7 @@ impl DefinitionStore {
             ),
             name_to_defs: DefDashMap::with_capacity_and_hasher(id_capacity, Default::default()),
             resolved_cross_file_queries: DefDashMap::default(),
+            source_file_symbol_type_cache_scope: AtomicU64::new(1),
             file_delegation_locks: DefDashMap::default(),
             fully_populated: std::sync::atomic::AtomicBool::new(false),
             circular_def_ids: DefDashSet::default(),
@@ -748,6 +864,15 @@ impl DefinitionStore {
             "DefinitionStore::allocate"
         );
         DefId(id)
+    }
+
+    fn bump_generation(&self) {
+        self.generation.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Current resolver-visible generation for this store.
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Relaxed)
     }
 
     /// Register a new definition and return its `DefId`.
@@ -789,6 +914,7 @@ impl DefinitionStore {
         self.name_to_defs.entry(info.name).or_default().push(id);
 
         self.definitions.insert(id, info);
+        self.bump_generation();
         id
     }
 
@@ -801,6 +927,7 @@ impl DefinitionStore {
         self.register_symbol_file_mapping(symbol_id, file_idx, def_id);
         // Also maintain the file-agnostic index (keeps the first registered DefId).
         self.symbol_only_index.entry(symbol_id).or_insert(def_id);
+        self.bump_generation();
     }
 
     fn register_symbol_file_mapping(&self, symbol_id: u32, file_idx: u32, def_id: DefId) {
@@ -866,6 +993,7 @@ impl DefinitionStore {
         if let Some(mut entry) = self.definitions.get_mut(&id) {
             entry.extends = extends;
             entry.implements = implements;
+            self.bump_generation();
         }
     }
 
@@ -883,6 +1011,7 @@ impl DefinitionStore {
             if entry.kind == DefKind::TypeAlias && entry.type_params.is_empty() {
                 self.body_to_alias.entry(body).or_insert(id);
             }
+            self.bump_generation();
         } else {
             // Create a minimal entry for DefIds created via get_or_create_def_id
             // (which only populates symbol_to_def/def_to_symbol, not definitions).
@@ -912,6 +1041,7 @@ impl DefinitionStore {
                     is_declare: false,
                 },
             );
+            self.bump_generation();
         }
     }
 
@@ -947,6 +1077,17 @@ impl DefinitionStore {
         self.file_delegation_locks
             .get(&file_idx)
             .map(|r| Arc::clone(r.value()))
+    }
+
+    pub fn source_file_symbol_type_cache_scope(&self) -> u64 {
+        self.source_file_symbol_type_cache_scope
+            .load(Ordering::Relaxed)
+            .max(1)
+    }
+
+    pub fn set_source_file_symbol_type_cache_scope(&self, scope: u64) {
+        self.source_file_symbol_type_cache_scope
+            .store(scope.max(1), Ordering::Relaxed);
     }
 
     /// Look up a previously resolved cross-file query result.
@@ -1010,6 +1151,7 @@ impl DefinitionStore {
                 self.body_to_alias.remove(&body);
             }
             entry.type_params = params;
+            self.bump_generation();
         }
     }
 
@@ -1031,6 +1173,7 @@ impl DefinitionStore {
             if !implements.is_empty() {
                 entry.implements = implements;
             }
+            self.bump_generation();
         }
     }
 
@@ -1043,6 +1186,7 @@ impl DefinitionStore {
             let hash = Self::hash_shape(&shape);
             entry.instance_shape = Some(shape);
             self.shape_to_def.entry(hash).or_insert(id);
+            self.bump_generation();
         }
     }
 
@@ -1069,6 +1213,7 @@ impl DefinitionStore {
         self.class_to_constructor.clear();
         self.name_to_defs.clear();
         self.next_id.store(DefId::FIRST_VALID, Ordering::SeqCst);
+        self.bump_generation();
     }
 
     /// Register a mapping from a `TypeId` to its defining `DefId`.
@@ -1115,6 +1260,7 @@ impl DefinitionStore {
                 }
             }
         }
+        self.bump_generation();
     }
 
     /// Look up the `DefId` that produced the given `TypeId`.
@@ -1131,6 +1277,7 @@ impl DefinitionStore {
     /// companion with `get_constructor_def` and reuse the stable identity.
     pub fn register_constructor_companion(&self, class_def: DefId, ctor_def: DefId) {
         self.class_to_constructor.insert(class_def, ctor_def);
+        self.bump_generation();
     }
 
     /// Look up the pre-populated `ClassConstructor` `DefId` for a class.
@@ -1156,6 +1303,7 @@ impl DefinitionStore {
     pub fn add_export(&self, id: DefId, name: Atom, export_def: DefId) {
         if let Some(mut entry) = self.definitions.get_mut(&id) {
             entry.add_export(name, export_def);
+            self.bump_generation();
         }
     }
 
@@ -1166,6 +1314,7 @@ impl DefinitionStore {
     pub fn set_extends(&self, id: DefId, extends: DefId) {
         if let Some(mut entry) = self.definitions.get_mut(&id) {
             entry.extends = Some(extends);
+            self.bump_generation();
         }
     }
 
@@ -1176,6 +1325,7 @@ impl DefinitionStore {
     pub fn set_implements(&self, id: DefId, implements: Vec<DefId>) {
         if let Some(mut entry) = self.definitions.get_mut(&id) {
             entry.implements = implements;
+            self.bump_generation();
         }
     }
 
@@ -1214,10 +1364,57 @@ impl DefinitionStore {
     /// collected into a `Vec` to avoid holding `DashMap` read locks across the
     /// caller's mutation of its own maps.
     pub fn all_symbol_mappings(&self) -> Vec<(u32, DefId)> {
-        self.symbol_only_index
-            .iter()
-            .map(|entry| (*entry.key(), *entry.value()))
-            .collect()
+        self.all_symbol_mappings_snapshot().to_vec()
+    }
+
+    /// Return a generation-keyed immutable snapshot of all `(raw_symbol_id, DefId)`
+    /// pairs from the symbol-only index.
+    ///
+    /// The snapshot is rebuilt only when the store generation changes. If a writer
+    /// mutates the store while we are collecting, we retry so the cached generation
+    /// cannot point at a partially stale snapshot.
+    pub fn all_symbol_mappings_snapshot(&self) -> SymbolMappingsSnapshot {
+        loop {
+            let generation_before = self.generation();
+            if let Some(snapshot) = self.cached_symbol_mappings_snapshot(generation_before) {
+                return snapshot;
+            }
+
+            let mappings: SymbolMappingsSnapshot = self
+                .symbol_only_index
+                .iter()
+                .map(|entry| (*entry.key(), *entry.value()))
+                .collect::<Vec<_>>()
+                .into();
+
+            let generation_after = self.generation();
+            if generation_before != generation_after {
+                continue;
+            }
+
+            let mut cached = self
+                .symbol_mappings_snapshot
+                .lock()
+                .expect("symbol mappings snapshot lock poisoned");
+            if let Some((cached_generation, snapshot)) = cached.as_ref()
+                && *cached_generation == generation_after
+            {
+                return Arc::clone(snapshot);
+            }
+
+            *cached = Some((generation_after, Arc::clone(&mappings)));
+            return mappings;
+        }
+    }
+
+    fn cached_symbol_mappings_snapshot(&self, generation: u64) -> Option<SymbolMappingsSnapshot> {
+        let cached = self
+            .symbol_mappings_snapshot
+            .lock()
+            .expect("symbol mappings snapshot lock poisoned");
+        cached.as_ref().and_then(|(cached_generation, snapshot)| {
+            (*cached_generation == generation).then(|| Arc::clone(snapshot))
+        })
     }
 
     /// Find a type alias `DefId` whose body matches the given `TypeId`.
@@ -1248,6 +1445,7 @@ impl DefinitionStore {
     /// intersection reduction or conditional evaluation.
     pub fn mark_body_as_computed(&self, body: TypeId) {
         self.computed_alias_bodies.insert(body);
+        self.bump_generation();
     }
 
     /// Check if a body `TypeId` was marked as "computed".
@@ -1256,14 +1454,15 @@ impl DefinitionStore {
     }
 
     /// Find all `DefId`s registered under the given name.
-    ///
-    /// Returns `None` if no definitions exist with that name. Multiple
-    /// definitions may share a name (e.g., interface merging across files,
-    /// or same-named types in different modules).
-    ///
-    /// O(1) via `name_to_defs` index.
     pub fn find_defs_by_name(&self, name: Atom) -> Option<Vec<DefId>> {
         self.name_to_defs.get(&name).map(|r| r.clone())
+    }
+
+    pub fn all_type_alias_defs(&self) -> Vec<DefId> {
+        self.definitions
+            .iter()
+            .filter_map(|entry| (entry.value().kind == DefKind::TypeAlias).then_some(*entry.key()))
+            .collect()
     }
 
     /// Resolve heritage names to `DefId`s using an intern function for
@@ -1289,7 +1488,7 @@ impl DefinitionStore {
             _ => return Vec::new(),
         };
 
-        let mut resolved = Vec::new();
+        let mut resolved = Vec::with_capacity(heritage_names.len());
         for name_str in &heritage_names {
             let name_atom = intern_fn(name_str);
             if let Some(candidates) = self.name_to_defs.get(&name_atom) {
@@ -1695,65 +1894,8 @@ impl DefinitionStore {
 
         // Pass 1: Create DefIds and DefinitionInfo for each entry.
         for (sym_id, entry) in semantic_defs {
-            let kind = match entry.kind {
-                tsz_binder::SemanticDefKind::TypeAlias => DefKind::TypeAlias,
-                tsz_binder::SemanticDefKind::Interface => DefKind::Interface,
-                tsz_binder::SemanticDefKind::Class => DefKind::Class,
-                tsz_binder::SemanticDefKind::Enum => DefKind::Enum,
-                tsz_binder::SemanticDefKind::Namespace => DefKind::Namespace,
-                tsz_binder::SemanticDefKind::Function => DefKind::Function,
-                tsz_binder::SemanticDefKind::Variable => DefKind::Variable,
-            };
-
-            let name = intern_string(&entry.name);
-
-            let type_params = if entry.type_param_count > 0 {
-                (0..entry.type_param_count)
-                    .map(|i| {
-                        let param_name = entry
-                            .type_param_names
-                            .get(i as usize)
-                            .map(|n| intern_string(n))
-                            .unwrap_or(Atom(0));
-                        crate::TypeParamInfo {
-                            name: param_name,
-                            constraint: None,
-                            default: None,
-                            is_const: false,
-                        }
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            };
-
-            let enum_members: Vec<(Atom, EnumMemberValue)> = entry
-                .enum_member_names
-                .iter()
-                .map(|n| (intern_string(n), EnumMemberValue::Computed))
-                .collect();
-
-            let info = DefinitionInfo {
-                kind,
-                name,
-                type_params,
-                body: None,
-                instance_shape: None,
-                static_shape: None,
-                extends: None,
-                implements: Vec::new(),
-                enum_members,
-                exports: Vec::new(),
-                file_id: Some(entry.file_id),
-                span: Some((entry.span_start, entry.span_start)),
-                symbol_id: Some(sym_id.0),
-                heritage_names: entry.heritage_names(),
-                is_abstract: entry.is_abstract,
-                is_const: entry.is_const,
-                is_exported: entry.is_exported,
-                is_global_augmentation: entry.is_global_augmentation,
-                is_declare: entry.is_declare,
-            };
+            let info = DefinitionInfo::from_semantic_def(entry, sym_id.0, &intern_string);
+            let kind = info.kind;
 
             let def_id = DefId(next_id);
             next_id = next_id.saturating_add(1);
@@ -1768,31 +1910,14 @@ impl DefinitionStore {
                 info,
             );
 
-            // For classes, create a ClassConstructor companion DefId.
             if kind == DefKind::Class {
                 let ctor_def_id = DefId(next_id);
                 next_id = next_id.saturating_add(1);
-                let ctor_info = DefinitionInfo {
-                    kind: DefKind::ClassConstructor,
-                    name,
-                    type_params: Vec::new(),
-                    body: None,
-                    instance_shape: None,
-                    static_shape: None,
-                    extends: None,
-                    implements: Vec::new(),
-                    enum_members: Vec::new(),
-                    exports: Vec::new(),
-                    file_id: Some(entry.file_id),
-                    span: Some((entry.span_start, entry.span_start)),
-                    symbol_id: Some(sym_id.0),
-                    heritage_names: Vec::new(),
-                    is_abstract: entry.is_abstract,
-                    is_const: false,
-                    is_exported: entry.is_exported,
-                    is_global_augmentation: false,
-                    is_declare: entry.is_declare,
-                };
+                let ctor_info = DefinitionInfo::class_constructor_from_semantic_def(
+                    entry,
+                    sym_id.0,
+                    &intern_string,
+                );
                 record_preloaded_definition(
                     &mut def_infos,
                     &mut file_to_defs,
@@ -1863,7 +1988,7 @@ impl DefinitionStore {
 
             // Resolve implements_names → DefinitionInfo.implements
             if !entry.implements_names.is_empty() {
-                let mut resolved_implements = Vec::new();
+                let mut resolved_implements = Vec::with_capacity(entry.implements_names.len());
                 for name_str in &entry.implements_names {
                     if name_str.contains('.') {
                         continue;

@@ -24,9 +24,7 @@
 //! and `K`/`V`) to verify the rule is structural, not bound to a particular
 //! identifier — see `.claude/CLAUDE.md` §25.
 
-fn diagnostics(source: &str) -> Vec<(u32, String)> {
-    tsz_checker::test_utils::check_source_code_messages(source)
-}
+use tsz_checker::test_utils::check_source_code_messages as diagnostics;
 
 fn ts2345_messages(source: &str) -> Vec<String> {
     diagnostics(source)
@@ -89,6 +87,21 @@ f("");
         msgs[0].contains("Argument of type 'string'")
             && msgs[0].contains("parameter of type 'number'"),
         "direct primitive constraint should widen, got: {msgs:#?}"
+    );
+}
+
+#[test]
+fn union_parameter_collapsed_to_primitive_widens_literal_source() {
+    let source = r#"
+declare function f1<T>(x: T, y: string | T): T;
+f1("hello", 1);
+"#;
+    let msgs = ts2345_messages(source);
+    assert_eq!(msgs.len(), 1, "expected one TS2345, got: {msgs:#?}");
+    assert!(
+        msgs[0].contains("Argument of type 'number'")
+            && msgs[0].contains("parameter of type 'string'"),
+        "collapsed primitive union target should widen mismatching literal source, got: {msgs:#?}"
     );
 }
 

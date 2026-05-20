@@ -193,7 +193,7 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .binder
                 .get_symbol(parent)
-                .is_some_and(|p| (p.flags & NESTED_CALLABLE_PARENT_MASK) != 0)
+                .is_some_and(|p| p.has_any_flags(NESTED_CALLABLE_PARENT_MASK))
         };
         if self.ctx.binder.lib_symbols_are_merged() {
             for &lib_id in self.ctx.binder.lib_symbol_ids.iter() {
@@ -222,7 +222,7 @@ impl<'a> CheckerState<'a> {
                     let parent_is_callable_legacy = parent.is_some()
                         && lib_binder
                             .get_symbol(parent)
-                            .is_some_and(|p| (p.flags & NESTED_CALLABLE_PARENT_MASK) != 0);
+                            .is_some_and(|p| p.has_any_flags(NESTED_CALLABLE_PARENT_MASK));
                     if !parent_is_callable_legacy {
                         return Some(sym_id);
                     }
@@ -448,6 +448,10 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
+        self.is_unresolved_import_symbol_id(sym_id)
+    }
+
+    pub(crate) fn is_unresolved_import_symbol_id(&self, sym_id: SymbolId) -> bool {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return false;
         };

@@ -39,6 +39,33 @@ DRY_RUN=false
 QUIET=false
 FULL=false
 
+usage() {
+  cat <<'USAGE'
+Clean git-ignored artifacts from the current tsz repository.
+
+Usage:
+  scripts/setup/clean.sh [OPTIONS]
+
+Options:
+  --dry-run    Show what would be cleaned without deleting anything
+  --full       Also remove Rust build caches (.target/, .target-bench/)
+  --quiet      Suppress output (for use in git hooks)
+  -h, --help   Show this help
+
+Protected (never deleted without --full):
+  .target/, .target-bench/ — Rust incremental build caches
+
+Protected (never deleted):
+  .env, .env.local, .env.* — environment config files
+
+Examples:
+  scripts/setup/clean.sh --dry-run    # Preview what would be removed
+  scripts/setup/clean.sh              # Clean debris, keep build caches
+  scripts/setup/clean.sh --full       # Nuke everything including build caches
+  scripts/setup/clean.sh --quiet      # Silent mode (git hooks)
+USAGE
+}
+
 # ── Argument parsing ────────────────────────────────────────────────────────
 
 while [[ $# -gt 0 ]]; do
@@ -46,8 +73,8 @@ while [[ $# -gt 0 ]]; do
     --dry-run) DRY_RUN=true; shift ;;
     --full)    FULL=true; shift ;;
     --quiet)   QUIET=true; shift ;;
-    -h|--help) sed -n '2,/^[^#]/{ /^#/s/^# \?//p; }' "$0"; exit 0 ;;
-    *)         echo "Unknown option: $1 (try --help)"; exit 1 ;;
+    -h|--help) usage; exit 0 ;;
+    *)         echo "Unknown option: $1 (try --help)" >&2; exit 1 ;;
   esac
 done
 
@@ -202,8 +229,8 @@ rm -f "$REPO_ROOT"/tsc-cache*.json 2>/dev/null || true
 git -C "$REPO_ROOT" checkout -- scripts/conformance/tsc-cache-full.json 2>/dev/null || true
 
 # Phase 11: Reset TypeScript submodule to clean state.
-# Skip when TypeScript is a symlink — it points at the primary checkout's
-# submodule, which a worktree must not mutate (see link-ts-submodule.sh).
+# Skip when TypeScript is a symlink — it points at a shared checkout that this
+# worktree must not mutate (see link-ts-submodule.sh).
 if [ ! -L "$REPO_ROOT/TypeScript" ]; then
   git -C "$REPO_ROOT" submodule update --force 2>/dev/null || true
 fi

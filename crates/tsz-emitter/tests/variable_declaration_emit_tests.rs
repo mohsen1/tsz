@@ -2,7 +2,26 @@
 mod test_support;
 
 use test_support::{parse_and_lower_print, parse_and_print};
+use tsz_common::common::ScriptTarget;
+use tsz_emitter::emitter::{Printer as EmitterPrinter, PrinterOptions};
 use tsz_emitter::output::printer::PrintOptions;
+use tsz_parser::ParserState;
+
+fn parse_and_emit_strict_es2015(source: &str) -> String {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut printer = EmitterPrinter::with_options(
+        &parser.arena,
+        PrinterOptions {
+            always_strict: true,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    printer.get_output().to_string()
+}
 
 #[test]
 fn empty_let_declaration_has_no_space_before_semicolon() {
@@ -54,6 +73,20 @@ fn recovered_empty_variable_initializer_preserves_equals() {
 }
 
 #[test]
+fn recovered_generated_type_member_tail_emits_runtime_minus_statement() {
+    let source = "var f: {\n    x: number;\n    <-\n};";
+    let output = parse_and_emit_strict_es2015(source);
+    assert_eq!(output.trim_end(), "\"use strict\";\nvar f;\n-;\n;");
+}
+
+#[test]
+fn recovered_generated_type_member_tail_allows_spacing_and_renamed_members() {
+    let source = "var renamed: {\n    value: string;\n    <   -\n};";
+    let output = parse_and_emit_strict_es2015(source);
+    assert_eq!(output.trim_end(), "\"use strict\";\nvar renamed;\n-;\n;");
+}
+
+#[test]
 fn malformed_void_qualified_type_recovers_following_declaration() {
     let source = "\"use strict\";\nvar v : void.x;";
     let output = parse_and_print(source);
@@ -61,6 +94,54 @@ fn malformed_void_qualified_type_recovers_following_declaration() {
     assert!(
         output.contains("\"use strict\";\nvar v, x;"),
         "unexpected output: {output}"
+    );
+}
+
+#[test]
+fn invalid_unicode_escape_declaration_tail_recovers_as_same_var_list() {
+    let output = parse_and_print(r"var arg\u003");
+
+    assert!(
+        output.contains("var arg, u003;"),
+        "malformed unicode escape after a declarator should recover as a following declarator.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var arg;\nu003;"),
+        "malformed unicode escape tail must not fall out as a separate expression statement.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn invalid_unicode_escape_declaration_tail_keeps_non_hex_debris() {
+    let output = parse_and_print(r"var arg\uxxxx");
+
+    assert!(
+        output.contains("var arg, uxxxx;"),
+        "non-hex unicode escape debris after a declarator should recover as a following declarator.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn invalid_unicode_escape_declaration_name_merges_adjacent_identifier_part() {
+    let output = parse_and_print(r"var \u0031a; // 1a is an invalid identifier");
+
+    assert!(
+        output.contains("var u0031a; // 1a is an invalid identifier"),
+        "invalid unicode escape at declaration-name start should drop only the leading backslash and keep adjacent identifier text.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var a;"),
+        "invalid declaration-name recovery must not emit only the adjacent identifier token.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn valid_unicode_escape_inside_identifier_is_unchanged() {
+    let output = parse_and_print(r"var a\u0031; // a1 is a valid identifier");
+
+    assert!(
+        output.contains(r"var a\u0031; // a1 is a valid identifier"),
+        "valid identifier unicode escapes should keep the normal scanner/parser spelling.\nOutput:\n{output}"
     );
 }
 

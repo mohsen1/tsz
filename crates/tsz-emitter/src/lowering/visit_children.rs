@@ -17,11 +17,15 @@ impl<'a> LoweringPass<'a> {
             k if k == syntax_kind_ext::SOURCE_FILE => {
                 if let Some(sf) = self.arena.get_source_file(node) {
                     let previous_source_text = self.current_source_text;
+                    let previous_jsx_pragmas = self.current_jsx_pragmas.clone();
                     self.current_source_text = Some(sf.text.as_ref());
+                    self.current_jsx_pragmas =
+                        crate::jsx_pragmas::JsxPragmaFacts::from_source(sf.text.as_ref());
                     for &stmt in &sf.statements.nodes {
                         self.visit(stmt);
                     }
                     self.current_source_text = previous_source_text;
+                    self.current_jsx_pragmas = previous_jsx_pragmas;
                 }
             }
             k if k == syntax_kind_ext::BLOCK
@@ -63,10 +67,6 @@ impl<'a> LoweringPass<'a> {
                                     if let Some(decl) =
                                         self.arena.get_variable_declaration(decl_node)
                                     {
-                                        if decl.initializer.is_none() {
-                                            return false;
-                                        }
-
                                         self.arena.get(decl.name).is_some_and(|name_node| {
                                             name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
                                         })
@@ -79,7 +79,7 @@ impl<'a> LoweringPass<'a> {
                             });
 
                         if need_downlevel_read {
-                            self.transforms.helpers_mut().read = true;
+                            self.transforms.helpers_mut().mark_read();
                         }
                     }
                     for &decl in &decl_list.declarations.nodes {
@@ -98,6 +98,11 @@ impl<'a> LoweringPass<'a> {
             k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
                 if let Some(expr_stmt) = self.arena.get_expression_statement(node) {
                     self.visit(expr_stmt.expression);
+                }
+            }
+            k if k == syntax_kind_ext::LABELED_STATEMENT => {
+                if let Some(labeled) = self.arena.get_labeled_statement(node) {
+                    self.visit(labeled.statement);
                 }
             }
             k if k == syntax_kind_ext::EXPORT_ASSIGNMENT => {
@@ -126,6 +131,16 @@ impl<'a> LoweringPass<'a> {
                                 || n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                         });
                     if is_destructuring_assignment
+                        && self.ctx.target_es5
+                        && self.ctx.options.downlevel_iteration
+                        && self
+                            .arena
+                            .get(bin.left)
+                            .is_some_and(|n| n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
+                    {
+                        self.transforms.helpers_mut().mark_read();
+                    }
+                    if is_destructuring_assignment
                         && self.ctx.needs_es2018_lowering
                         && self.arena.get(bin.left).is_some_and(|n| {
                             n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
@@ -137,7 +152,7 @@ impl<'a> LoweringPass<'a> {
                                 })
                         })
                     {
-                        self.transforms.helpers_mut().rest = true;
+                        self.transforms.helpers_mut().mark_rest();
                     }
                     if is_destructuring_assignment {
                         let prev = self.in_assignment_target;
@@ -160,8 +175,23 @@ impl<'a> LoweringPass<'a> {
             }
             k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
                 if let Some(prop) = self.arena.get_property_assignment(node) {
+                    if self.is_tc39_decorated_anonymous_class_expression(prop.initializer)
+                        && self.arena.get(prop.name).is_some_and(|name_node| {
+                            name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                        })
+                    {
+                        self.transforms.helpers_mut().prop_key = true;
+                    }
                     self.visit(prop.name);
                     self.visit(prop.initializer);
+                }
+            }
+            k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                if let Some(prop) = self.arena.get_shorthand_property(node) {
+                    self.visit(prop.name);
+                    if prop.object_assignment_initializer.is_some() {
+                        self.visit(prop.object_assignment_initializer);
+                    }
                 }
             }
             k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
@@ -178,6 +208,14 @@ impl<'a> LoweringPass<'a> {
                         })
                     {
                         self.transforms.helpers_mut().metadata = true;
+                    }
+                    if prop.initializer.is_some()
+                        && self.is_tc39_decorated_anonymous_class_expression(prop.initializer)
+                        && self.arena.get(prop.name).is_some_and(|name_node| {
+                            name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                        })
+                    {
+                        self.transforms.helpers_mut().prop_key = true;
                     }
                     if let Some(mods) = &prop.modifiers {
                         for &mod_idx in &mods.nodes {
@@ -199,12 +237,13 @@ impl<'a> LoweringPass<'a> {
                                 .is_some_and(|n| n.kind == SyntaxKind::AsyncKeyword as u16)
                         })
                     });
-                    if is_async_method && self.ctx.needs_async_lowering && method.body.is_some() {
+                    if is_async_method
+                        && method.body.is_some()
+                        && ((method.asterisk_token && self.ctx.needs_es2018_lowering)
+                            || (!method.asterisk_token && self.ctx.needs_async_lowering))
+                    {
                         if method.asterisk_token {
                             // Async generator method: needs __asyncGenerator + __await
-                            if self.ctx.target_es5 {
-                                self.mark_async_helpers();
-                            }
                             self.mark_async_generator_helpers();
                         } else {
                             // Non-generator async method: needs __awaiter
@@ -244,6 +283,9 @@ impl<'a> LoweringPass<'a> {
                         && (has_method_decorator || has_parameter_decorator)
                     {
                         self.transforms.helpers_mut().metadata = true;
+                    }
+                    if method.body.is_some() {
+                        self.mark_function_parameter_transform_helpers(&method.parameters);
                     }
                     if let Some(mods) = &method.modifiers {
                         // For overload signatures (no body), save/restore the decorate
@@ -317,10 +359,25 @@ impl<'a> LoweringPass<'a> {
             }
             k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
                 if let Some(accessor) = self.arena.get_accessor(node) {
+                    if self.ctx.options.legacy_decorators
+                        && self.ctx.options.emit_decorator_metadata
+                        && accessor.modifiers.as_ref().is_some_and(|m| {
+                            m.nodes.iter().any(|&mod_idx| {
+                                self.arena
+                                    .get(mod_idx)
+                                    .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                            })
+                        })
+                    {
+                        self.transforms.helpers_mut().metadata = true;
+                    }
                     if let Some(mods) = &accessor.modifiers {
                         for &mod_idx in &mods.nodes {
                             self.visit(mod_idx);
                         }
+                    }
+                    if accessor.body.is_some() {
+                        self.mark_function_parameter_transform_helpers(&accessor.parameters);
                     }
                     self.visit(accessor.name);
                     for &param_idx in &accessor.parameters.nodes {
@@ -368,40 +425,15 @@ impl<'a> LoweringPass<'a> {
             k if k == syntax_kind_ext::CLASS_EXPRESSION => {
                 if let Some(class_data) = self.arena.get_class(node) {
                     // TC39 (non-legacy) decorator detection for class expressions
-                    let target_supports_native_decorators =
-                        self.ctx.options.target == tsz_common::ScriptTarget::ESNext;
+                    let target_supports_native_decorators = self.ctx.options.target
+                        == tsz_common::ScriptTarget::ESNext
+                        && self.ctx.options.use_define_for_class_fields;
                     let has_tc39_decorators = !self.ctx.options.legacy_decorators
                         && !target_supports_native_decorators
                         && self.class_has_decorators(class_data);
 
                     if has_tc39_decorators {
-                        let needs_prop_key = self.class_has_computed_decorated_member(class_data);
-                        let needs_set_function_name =
-                            self.class_has_private_decorated_member(class_data);
-                        let has_class_decorators =
-                            class_data.modifiers.as_ref().is_some_and(|mods| {
-                                mods.nodes.iter().any(|&mod_idx| {
-                                    self.arena
-                                        .get(mod_idx)
-                                        .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
-                                })
-                            });
-                        // The class-decorator path only writes the
-                        // `__setFunctionName(_classThis, ...)` static block when
-                        // the source class is *anonymous* (a named class
-                        // expression carries its own name to the engine). Match
-                        // that here so we don't drop a phantom helper preamble
-                        // for `const C = @dec class C {}`.
-                        let class_is_anonymous = class_data.name.is_none();
-                        let helpers = self.transforms.helpers_mut();
-                        helpers.es_decorate = true;
-                        helpers.run_initializers = true;
-                        if needs_prop_key {
-                            helpers.prop_key = true;
-                        }
-                        if needs_set_function_name || (has_class_decorators && class_is_anonymous) {
-                            helpers.set_function_name = true;
-                        }
+                        self.mark_tc39_decorator_helpers(class_data);
                     }
                     if self.class_expr_static_comma_needs_set_function_name(idx, class_data) {
                         self.transforms.helpers_mut().set_function_name = true;
@@ -490,7 +522,7 @@ impl<'a> LoweringPass<'a> {
                                 .is_some_and(|elem| elem.dot_dot_dot_token)
                         })
                     {
-                        self.transforms.helpers_mut().rest = true;
+                        self.transforms.helpers_mut().mark_rest();
                     }
                     for &elem in &pattern.elements.nodes {
                         self.visit(elem);
@@ -543,7 +575,7 @@ impl<'a> LoweringPass<'a> {
                 }
             }
             k if k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION => {
-                if self.ctx.target_es5 {
+                if self.tagged_template_needs_template_object_lowering(node) {
                     self.transforms.insert(
                         idx,
                         TransformDirective::ES5TemplateLiteral { template_node: idx },
@@ -617,7 +649,7 @@ impl<'a> LoweringPass<'a> {
                         && self.ctx.needs_es2018_lowering
                         && self.assignment_pattern_has_object_rest(idx)
                     {
-                        self.transforms.helpers_mut().rest = true;
+                        self.transforms.helpers_mut().mark_rest();
                     }
 
                     // Skip transform if this is the left side of a destructuring assignment
@@ -660,11 +692,11 @@ impl<'a> LoweringPass<'a> {
                             TransformDirective::ES5ArrayLiteral { array_literal: idx },
                         );
                         // Flag that __spreadArray helper is needed
-                        self.transforms.helpers_mut().spread_array = true;
+                        self.transforms.helpers_mut().mark_spread_array();
                         // When downlevelIteration is enabled, spread on iterables
                         // needs __read to convert iterator results to arrays.
                         if self.ctx.options.downlevel_iteration {
-                            self.transforms.helpers_mut().read = true;
+                            self.transforms.helpers_mut().mark_read();
                         }
                     }
 
@@ -792,6 +824,51 @@ impl<'a> LoweringPass<'a> {
                 }
             }
             _ => {}
+        }
+    }
+
+    fn tagged_template_needs_template_object_lowering(&self, node: &Node) -> bool {
+        if self.ctx.target_es5 {
+            return true;
+        }
+
+        !self.ctx.options.target.supports_es2018()
+            && self
+                .arena
+                .get_tagged_template(node)
+                .is_some_and(|tagged| self.template_has_invalid_escape(tagged.template))
+    }
+
+    fn template_has_invalid_escape(&self, template_idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(template_idx) else {
+            return false;
+        };
+
+        match node.kind {
+            k if k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                || k == SyntaxKind::TemplateHead as u16
+                || k == SyntaxKind::TemplateMiddle as u16
+                || k == SyntaxKind::TemplateTail as u16 =>
+            {
+                self.arena
+                    .get_literal(node)
+                    .is_some_and(|lit| lit.has_invalid_escape)
+            }
+            k if k == syntax_kind_ext::TEMPLATE_EXPRESSION => {
+                let Some(template) = self.arena.get_template_expr(node) else {
+                    return false;
+                };
+                if self.template_has_invalid_escape(template.head) {
+                    return true;
+                }
+                template.template_spans.nodes.iter().any(|&span_idx| {
+                    self.arena
+                        .get(span_idx)
+                        .and_then(|span_node| self.arena.get_template_span(span_node))
+                        .is_some_and(|span| self.template_has_invalid_escape(span.literal))
+                })
+            }
+            _ => false,
         }
     }
 }

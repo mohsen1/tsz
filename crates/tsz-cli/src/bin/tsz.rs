@@ -14,12 +14,26 @@ use tsz::checker::diagnostics::DiagnosticCategory;
 use tsz_cli::args::CliArgs;
 use tsz_cli::help::{self, TSC_VERSION};
 use tsz_cli::{driver, locale, reporter::Reporter, watch};
+use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
 
 /// tsc exit status codes (matching TypeScript's `ExitStatus` enum)
 const EXIT_SUCCESS: i32 = 0;
 const EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED: i32 = 1;
 const EXIT_DIAGNOSTICS_OUTPUTS_GENERATED: i32 = 2;
 const TS5112_COMMAND_LINE_FILES_MESSAGE: &str = "tsconfig.json is present but will not be loaded if files are specified on commandline. Use '--ignoreConfig' to skip this error.";
+
+/// Extensions tsc lists in TS6231 "could not resolve path" messages, in tsc's display order.
+const TS6231_EXTENSIONS: &str = "'.ts', '.tsx', '.d.ts', '.cts', '.d.cts', '.mts', '.d.mts'";
+
+/// Prints a root-file resolution failure in tsc's format and exits with the diagnostics
+/// status code. Keeps the "file is in the program because" context consistent across all
+/// root-file error codes.
+fn report_root_file_diagnostic(code: u32, message: &str) -> ! {
+    println!("error TS{code}: {message}");
+    println!("  The file is in the program because:");
+    println!("    Root file specified for compilation\n");
+    std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_GENERATED)
+}
 
 fn main() -> Result<()> {
     // Initialize tracing if TSZ_LOG or RUST_LOG is set (zero cost otherwise).
@@ -43,12 +57,6 @@ fn main() -> Result<()> {
     let cwd = std::env::current_dir().context("failed to resolve current directory")?;
     let use_large_stack_thread = should_use_large_stack_thread(&args);
 
-    if use_large_stack_thread {
-        // Initialize Rayon before any driver path can accidentally create the
-        // default pool with platform-default worker stacks.
-        tsz::parallel::ensure_rayon_global_pool();
-    }
-
     // Run on a larger stack for project-sized and multi-file workflows.
     // Single-file CLI probes avoid this extra thread hop for lower startup overhead.
     if use_large_stack_thread {
@@ -63,7 +71,21 @@ fn main() -> Result<()> {
     }
 }
 
-fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
+fn actual_main(mut args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
+    if let Some(locale_id) = args.locale.as_deref()
+        && !locale::is_valid_locale_shape(locale_id)
+    {
+        let message =
+            diagnostic_messages::LOCALE_MUST_BE_OF_THE_FORM_LANGUAGE_OR_LANGUAGE_TERRITORY_FOR_EXAMPLE_OR
+                .replace("{0}", "en")
+                .replace("{1}", "ja-jp");
+        println!(
+            "error TS{}: {message}",
+            diagnostic_codes::LOCALE_MUST_BE_OF_THE_FORM_LANGUAGE_OR_LANGUAGE_TERRITORY_FOR_EXAMPLE_OR
+        );
+        std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
+    }
+
     // Initialize locale for i18n message translation
     locale::init_locale(args.locale.as_deref());
 
@@ -125,6 +147,19 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
         std::process::exit(1);
     }
 
+    // `tsz <dir>` should behave like `tsz --project <dir>` when no
+    // `--project` was supplied and the only positional arg is a directory.
+    // tsc treats this as a project root and loads the directory's
+    // tsconfig.json. Without this promotion we emit TS5112 ("tsconfig.json
+    // is present but will not be loaded …") because `<dir>` is classified
+    // as an explicit file input (#6002).
+    if args.project.is_none() && args.files.len() == 1 {
+        let candidate = cwd.join(&args.files[0]);
+        if candidate.is_dir() {
+            args.project = Some(args.files.remove(0));
+        }
+    }
+
     // TS5042: Option 'project' cannot be mixed with source files on a command line.
     if args.project.is_some() && !args.files.is_empty() {
         println!(
@@ -171,13 +206,16 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
         Ok(r) => r,
         Err(e) => {
             let msg = e.to_string();
-            // Intercept TS6053 file-not-found errors from discover_ts_files and
-            // format them matching tsc v6 output.
             if let Some(rest) = msg.strip_prefix("TS6053: ") {
-                println!("error TS6053: {rest}");
-                println!("  The file is in the program because:");
-                println!("    Root file specified for compilation\n");
-                std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_GENERATED);
+                report_root_file_diagnostic(6053, rest);
+            }
+            if let Some(path_str) = msg.strip_prefix("TS6231: ") {
+                report_root_file_diagnostic(
+                    6231,
+                    &format!(
+                        "Could not resolve the path '{path_str}' with the extensions: {TS6231_EXTENSIONS}."
+                    ),
+                );
             }
             return Err(e);
         }
@@ -268,6 +306,31 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
         print_diagnostics(&result, elapsed, args.extended_diagnostics);
     }
 
+    // Perf-tools-only: write the machine-readable diagnostics JSON report.
+    // The flag and call site both compile out of default release builds.
+    #[cfg(feature = "perf-tools")]
+    if let Some(path) = args.diagnostics_json.as_deref() {
+        let raw_args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+        if let Err(err) = tsz_cli::perf_json::write_compilation_report(path, &result, &raw_args) {
+            tracing::warn!(
+                "failed to write diagnostics JSON to {}: {err}",
+                path.display()
+            );
+        }
+    }
+
+    // Perf-tools-only: write the perf-counter JSON snapshot. The flag and
+    // the call both compile out of default release builds.
+    #[cfg(feature = "perf-tools")]
+    if let Some(path) = args.perf_counters_json.as_deref()
+        && let Err(err) = tsz_common::perf_counters::PerfCounters::write_json_to(path)
+    {
+        tracing::warn!(
+            "failed to write perf-counter JSON to {}: {err}",
+            path.display()
+        );
+    }
+
     if !result.diagnostics.is_empty() {
         let pretty = args
             .pretty
@@ -283,6 +346,10 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
             // tsc writes all diagnostics to stdout
             print!("{output}");
         }
+    }
+
+    if args.sound_report_only {
+        std::process::exit(EXIT_SUCCESS);
     }
 
     let has_errors = result
@@ -359,8 +426,8 @@ fn run_batch_mode() -> Result<()> {
         // same TypeId values would get stale TypeData from the old interner.
         // The checker thread-locals hold NodeIndex-keyed caches that similarly get
         // stale when a new AST arena reuses the same indices.
-        tsz_solver::clear_thread_local_cache();
-        tsz_solver::reset_subtype_thread_local_state();
+        tsz_solver::construction::clear_thread_local_cache();
+        tsz_solver::relations::subtype::reset_subtype_thread_local_state();
         tsz::checker::clear_all_thread_local_state();
 
         let project_path = std::path::Path::new(project_dir);
@@ -425,8 +492,6 @@ fn run_batch_mode() -> Result<()> {
 /// - Optional boolean flags: `--strictNullChecks file.ts` → `--strictNullChecks=true file.ts`
 /// - Duplicate flags: `--strict --strict` → deduplicated (tsc v6 compat)
 fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
-    let flag_lookup = build_flag_lookup();
-
     // First pass: expand response files and collect normalized arg strings
     let mut expanded = Vec::with_capacity(args.len());
 
@@ -469,15 +534,13 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
             if let Some(eq_pos) = s.find('=') {
                 let flag_part = &s[2..eq_pos];
                 let value_part = &s[eq_pos..];
-                let lower = flag_part.to_lowercase();
-                if let Some(canonical) = flag_lookup.get(lower.as_str()) {
+                if let Some(canonical) = canonicalize_long_flag(flag_part) {
                     *arg = OsString::from(format!("{canonical}{value_part}"));
                 }
             } else {
                 let flag_part = &s[2..];
-                let lower = flag_part.to_lowercase();
-                if let Some(canonical) = flag_lookup.get(lower.as_str()) {
-                    *arg = OsString::from(canonical.to_string());
+                if let Some(canonical) = canonicalize_long_flag(flag_part) {
+                    *arg = OsString::from(canonical);
                 }
             }
         }
@@ -537,7 +600,6 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
     // These must be detected before clap sees them (clap treats `--` as
     // end-of-options and `-` as a positional arg).
     // Also check for --boolFlag=value which tsc treats as an unknown option.
-    let boolean_flags = build_boolean_flag_set();
     for arg in expanded.iter().skip(1) {
         let s = arg.to_string_lossy();
         if s == "--" || s == "-" {
@@ -547,7 +609,7 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
         // tsc treats --boolFlag=value as an unknown option (the whole --flag=value string)
         if let Some(eq_pos) = s.find('=') {
             let flag_part = &s[..eq_pos];
-            if boolean_flags.contains(flag_part) {
+            if is_boolean_flag(flag_part) {
                 println!("error TS5023: Unknown compiler option '{s}'.");
                 std::process::exit(1);
             }
@@ -599,9 +661,6 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
 
     // Fourth pass: handle boolean flag values ("true"/"false") and deduplicate flags.
     // tsc treats `--strict false` as setting strict=false, and accepts duplicate flags silently.
-    let boolean_flags = build_boolean_flag_set();
-    let valued_flags = build_valued_flag_set();
-    let option_bool_flags = build_option_bool_flag_set();
     let mut final_result = Vec::with_capacity(result.len());
     let mut flag_positions: FxHashMap<String, usize> = FxHashMap::default();
     let mut skip_positions: Vec<bool> = Vec::new();
@@ -623,8 +682,8 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
                 arg_str.clone()
             };
 
-            let is_boolean = boolean_flags.contains(flag_name.as_str());
-            let takes_value = valued_flags.contains(flag_name.as_str());
+            let is_boolean = is_boolean_flag(flag_name.as_str());
+            let takes_value = is_valued_flag(flag_name.as_str());
 
             // Check if next arg is "true" or "false" for boolean flags
             if is_boolean
@@ -634,7 +693,7 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
                 let next_str = next.to_string_lossy();
                 let next_lower = next_str.to_lowercase();
                 if next_lower == "false" {
-                    if option_bool_flags.contains(flag_name.as_str()) {
+                    if is_option_bool_flag(flag_name.as_str()) {
                         push_option_bool_arg(
                             &mut final_result,
                             &mut skip_positions,
@@ -662,7 +721,7 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
                     i += 2;
                     continue;
                 } else if next_lower == "true" {
-                    if option_bool_flags.contains(flag_name.as_str()) {
+                    if is_option_bool_flag(flag_name.as_str()) {
                         push_option_bool_arg(
                             &mut final_result,
                             &mut skip_positions,
@@ -678,10 +737,7 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
                 }
             }
 
-            if is_boolean
-                && !arg_str.contains('=')
-                && option_bool_flags.contains(flag_name.as_str())
-            {
+            if is_boolean && !arg_str.contains('=') && is_option_bool_flag(flag_name.as_str()) {
                 push_option_bool_arg(
                     &mut final_result,
                     &mut skip_positions,
@@ -748,211 +804,226 @@ fn push_option_bool_arg(
     skip_positions.push(false);
 }
 
-/// Build a lookup table from lowercase flag names (without `--`) to their canonical
-/// `--flagName` forms. Used for case-insensitive flag normalization (tsc v6 compat).
-fn build_flag_lookup() -> FxHashMap<String, String> {
-    let cmd = CliArgs::command();
-    let mut map = FxHashMap::default();
-    for a in cmd.get_arguments() {
-        if let Some(long) = a.get_long() {
-            let canonical = format!("--{long}");
-            map.insert(long.to_lowercase(), canonical.clone());
-            if let Some(aliases) = a.get_all_aliases() {
-                for alias in aliases {
-                    map.insert(alias.to_lowercase(), canonical.clone());
-                }
-            }
+/// Return the canonical long flag spelling for tsc-compatible case-insensitive
+/// input, accepting both camelCase and kebab-case spellings.
+fn canonicalize_long_flag(flag: &str) -> Option<&'static str> {
+    for &known in KNOWN_TSC_OPTIONS {
+        if flag_key_matches(&known[2..], flag) {
+            return Some(known);
         }
     }
-    for opt in KNOWN_TSC_OPTIONS {
-        let name = &opt[2..];
-        map.entry(name.to_lowercase())
-            .or_insert_with(|| opt.to_string());
+
+    match normalized_flag_key(flag).as_str() {
+        "buildverbose" | "verbose" => Some("--build-verbose"),
+        "batch" => Some("--batch"),
+        "diagnosticsjson" => Some("--diagnostics-json"),
+        "perfcountersjson" => Some("--perf-counters-json"),
+        "tracedependencies" => Some("--traceDependencies"),
+        "__explicitlydisabledboolflag" => Some("--__explicitly-disabled-bool-flag"),
+        _ => None,
     }
-    map
 }
 
-/// Set of known boolean flags (flags that accept no value or optional true/false).
-fn build_boolean_flag_set() -> rustc_hash::FxHashSet<&'static str> {
-    [
-        "--all",
-        "--build",
-        "--init",
-        "--listFilesOnly",
-        "--showConfig",
-        "--ignoreConfig",
-        "--libReplacement",
-        "--watch",
-        "--noLib",
-        "--useDefineForClassFields",
-        "--experimentalDecorators",
-        "--emitDecoratorMetadata",
-        "--resolveJsonModule",
-        "--resolvePackageJsonExports",
-        "--resolvePackageJsonImports",
-        "--allowArbitraryExtensions",
-        "--allowImportingTsExtensions",
-        "--rewriteRelativeImportExtensions",
-        "--noResolve",
-        "--allowUmdGlobalAccess",
-        "--noUncheckedSideEffectImports",
-        "--allowJs",
-        "--checkJs",
-        "--declaration",
-        "--declarationMap",
-        "--emitDeclarationOnly",
-        "--sourceMap",
-        "--inlineSourceMap",
-        "--inlineSources",
-        "--noEmit",
-        "--noEmitOnError",
-        "--noEmitHelpers",
-        "--importHelpers",
-        "--downlevelIteration",
-        "--removeComments",
-        "--preserveConstEnums",
-        "--stripInternal",
-        "--emitBOM",
-        "--esModuleInterop",
-        "--allowSyntheticDefaultImports",
-        "--isolatedModules",
-        "--isolatedDeclarations",
-        "--verbatimModuleSyntax",
-        "--forceConsistentCasingInFileNames",
-        "--preserveSymlinks",
-        "--erasableSyntaxOnly",
-        "--strict",
-        "--noImplicitAny",
-        "--strictNullChecks",
-        "--strictFunctionTypes",
-        "--strictBindCallApply",
-        "--strictPropertyInitialization",
-        "--strictBuiltinIteratorReturn",
-        "--noImplicitThis",
-        "--useUnknownInCatchVariables",
-        "--alwaysStrict",
-        "--noUnusedLocals",
-        "--noUnusedParameters",
-        "--exactOptionalPropertyTypes",
-        "--noImplicitReturns",
-        "--noFallthroughCasesInSwitch",
-        "--sound",
-        "--noUncheckedIndexedAccess",
-        "--noImplicitOverride",
-        "--noPropertyAccessFromIndexSignature",
-        "--allowUnreachableCode",
-        "--allowUnusedLabels",
-        "--skipDefaultLibCheck",
-        "--skipLibCheck",
-        "--composite",
-        "--incremental",
-        "--disableReferencedProjectLoad",
-        "--disableSolutionSearching",
-        "--disableSourceOfProjectReferenceRedirect",
-        "--diagnostics",
-        "--extendedDiagnostics",
-        "--explainFiles",
-        "--listFiles",
-        "--listEmittedFiles",
-        "--traceResolution",
-        "--traceDependencies",
-        "--noCheck",
-        "--pretty",
-        "--noErrorTruncation",
-        "--preserveWatchOutput",
-        "--synchronousWatchDirectory",
-        "--build-verbose",
-        "--dry",
-        "--force",
-        "--clean",
-        "--stopBuildOnErrors",
-        "--assumeChangesOnlyAffectDirectDependencies",
-        "--keyofStringsOnly",
-        "--noImplicitUseStrict",
-        "--noStrictGenericChecks",
-        "--preserveValueImports",
-        "--suppressExcessPropertyErrors",
-        "--suppressImplicitAnyIndexErrors",
-        "--disableSizeLimit",
-        "--batch",
-    ]
-    .into_iter()
-    .collect()
+fn flag_key_matches(canonical: &str, input: &str) -> bool {
+    canonical
+        .bytes()
+        .filter(|&b| b != b'-')
+        .map(|b| b.to_ascii_lowercase())
+        .eq(input
+            .bytes()
+            .filter(|&b| b != b'-')
+            .map(|b| b.to_ascii_lowercase()))
 }
 
-/// Set of flags that take a mandatory value argument (not boolean flags).
-fn build_valued_flag_set() -> rustc_hash::FxHashSet<&'static str> {
-    [
-        "--locale",
-        "--project",
-        "--target",
-        "--module",
-        "--lib",
-        "--jsx",
-        "--jsxFactory",
-        "--jsxFragmentFactory",
-        "--jsxImportSource",
-        "--moduleDetection",
-        "--moduleResolution",
-        "--baseUrl",
-        "--typeRoots",
-        "--types",
-        "--rootDirs",
-        "--paths",
-        "--plugins",
-        "--moduleSuffixes",
-        "--customConditions",
-        "--maxNodeModuleJsDepth",
-        "--declarationDir",
-        "--outDir",
-        "--rootDir",
-        "--outFile",
-        "--mapRoot",
-        "--sourceRoot",
-        "--newLine",
-        "--tsBuildInfoFile",
-        "--generateTrace",
-        "--generateCpuProfile",
-        "--ignoreDeprecations",
-        "--watchFile",
-        "--watchDirectory",
-        "--fallbackPolling",
-        "--excludeDirectories",
-        "--excludeFiles",
-        "--reactNamespace",
-        "--charset",
-        "--importsNotUsedAsValues",
-        "--out",
-        "--typesVersions",
-    ]
-    .into_iter()
-    .collect()
+fn normalized_flag_key(flag: &str) -> String {
+    flag.bytes()
+        .filter(|&b| b != b'-')
+        .map(|b| b.to_ascii_lowercase() as char)
+        .collect()
 }
 
-/// Set of flags that are Option<bool> (tri-state: None, Some(true), Some(false)).
+/// Known boolean flags (flags that accept no value or optional true/false).
+const BOOLEAN_FLAGS: &[&str] = &[
+    "--all",
+    "--build",
+    "--init",
+    "--listFilesOnly",
+    "--showConfig",
+    "--ignoreConfig",
+    "--libReplacement",
+    "--watch",
+    "--noLib",
+    "--useDefineForClassFields",
+    "--experimentalDecorators",
+    "--emitDecoratorMetadata",
+    "--resolveJsonModule",
+    "--resolvePackageJsonExports",
+    "--resolvePackageJsonImports",
+    "--allowArbitraryExtensions",
+    "--allowImportingTsExtensions",
+    "--rewriteRelativeImportExtensions",
+    "--noResolve",
+    "--allowUmdGlobalAccess",
+    "--noUncheckedSideEffectImports",
+    "--allowJs",
+    "--checkJs",
+    "--declaration",
+    "--declarationMap",
+    "--emitDeclarationOnly",
+    "--sourceMap",
+    "--inlineSourceMap",
+    "--inlineSources",
+    "--noEmit",
+    "--noEmitOnError",
+    "--noEmitHelpers",
+    "--importHelpers",
+    "--downlevelIteration",
+    "--removeComments",
+    "--preserveConstEnums",
+    "--stripInternal",
+    "--emitBOM",
+    "--esModuleInterop",
+    "--allowSyntheticDefaultImports",
+    "--isolatedModules",
+    "--isolatedDeclarations",
+    "--verbatimModuleSyntax",
+    "--forceConsistentCasingInFileNames",
+    "--preserveSymlinks",
+    "--erasableSyntaxOnly",
+    "--strict",
+    "--noImplicitAny",
+    "--strictNullChecks",
+    "--strictFunctionTypes",
+    "--strictBindCallApply",
+    "--strictPropertyInitialization",
+    "--strictBuiltinIteratorReturn",
+    "--noImplicitThis",
+    "--useUnknownInCatchVariables",
+    "--alwaysStrict",
+    "--noUnusedLocals",
+    "--noUnusedParameters",
+    "--exactOptionalPropertyTypes",
+    "--noImplicitReturns",
+    "--noFallthroughCasesInSwitch",
+    "--sound",
+    "--soundReportOnly",
+    "--noUncheckedIndexedAccess",
+    "--noImplicitOverride",
+    "--noPropertyAccessFromIndexSignature",
+    "--allowUnreachableCode",
+    "--allowUnusedLabels",
+    "--skipDefaultLibCheck",
+    "--skipLibCheck",
+    "--composite",
+    "--incremental",
+    "--disableReferencedProjectLoad",
+    "--disableSolutionSearching",
+    "--disableSourceOfProjectReferenceRedirect",
+    "--diagnostics",
+    "--extendedDiagnostics",
+    "--explainFiles",
+    "--listFiles",
+    "--listEmittedFiles",
+    "--traceResolution",
+    "--traceDependencies",
+    "--noCheck",
+    "--pretty",
+    "--noErrorTruncation",
+    "--preserveWatchOutput",
+    "--synchronousWatchDirectory",
+    "--build-verbose",
+    "--dry",
+    "--force",
+    "--clean",
+    "--stopBuildOnErrors",
+    "--assumeChangesOnlyAffectDirectDependencies",
+    "--keyofStringsOnly",
+    "--noImplicitUseStrict",
+    "--noStrictGenericChecks",
+    "--preserveValueImports",
+    "--suppressExcessPropertyErrors",
+    "--suppressImplicitAnyIndexErrors",
+    "--disableSizeLimit",
+    "--batch",
+];
+
+fn is_boolean_flag(flag: &str) -> bool {
+    BOOLEAN_FLAGS.contains(&flag)
+}
+
+/// Flags that take a mandatory value argument (not boolean flags).
+const VALUED_FLAGS: &[&str] = &[
+    "--locale",
+    "--project",
+    "--target",
+    "--module",
+    "--lib",
+    "--jsx",
+    "--jsxFactory",
+    "--jsxFragmentFactory",
+    "--jsxImportSource",
+    "--moduleDetection",
+    "--moduleResolution",
+    "--baseUrl",
+    "--typeRoots",
+    "--types",
+    "--rootDirs",
+    "--paths",
+    "--plugins",
+    "--moduleSuffixes",
+    "--customConditions",
+    "--maxNodeModuleJsDepth",
+    "--declarationDir",
+    "--outDir",
+    "--rootDir",
+    "--outFile",
+    "--mapRoot",
+    "--sourceRoot",
+    "--newLine",
+    "--tsBuildInfoFile",
+    "--generateTrace",
+    "--generateCpuProfile",
+    "--ignoreDeprecations",
+    "--watchFile",
+    "--watchDirectory",
+    "--fallbackPolling",
+    "--excludeDirectories",
+    "--excludeFiles",
+    "--reactNamespace",
+    "--charset",
+    "--importsNotUsedAsValues",
+    "--out",
+    "--typesVersions",
+];
+
+fn is_valued_flag(flag: &str) -> bool {
+    VALUED_FLAGS.contains(&flag)
+}
+
+/// Flags that are Option<bool> (tri-state: None, Some(true), Some(false)).
 /// These need --flag=true or --flag=false rather than flag removal.
-fn build_option_bool_flag_set() -> rustc_hash::FxHashSet<&'static str> {
-    [
-        "--useDefineForClassFields",
-        "--resolvePackageJsonExports",
-        "--resolvePackageJsonImports",
-        "--allowSyntheticDefaultImports",
-        "--forceConsistentCasingInFileNames",
-        "--noImplicitAny",
-        "--strictNullChecks",
-        "--strictFunctionTypes",
-        "--strictBindCallApply",
-        "--strictPropertyInitialization",
-        "--strictBuiltinIteratorReturn",
-        "--noImplicitThis",
-        "--useUnknownInCatchVariables",
-        "--alwaysStrict",
-        "--allowUnreachableCode",
-        "--allowUnusedLabels",
-        "--pretty",
-    ]
-    .into_iter()
-    .collect()
+const OPTION_BOOL_FLAGS: &[&str] = &[
+    "--useDefineForClassFields",
+    "--resolvePackageJsonExports",
+    "--resolvePackageJsonImports",
+    "--allowSyntheticDefaultImports",
+    "--forceConsistentCasingInFileNames",
+    "--noImplicitAny",
+    "--strictNullChecks",
+    "--strictFunctionTypes",
+    "--strictBindCallApply",
+    "--strictPropertyInitialization",
+    "--strictBuiltinIteratorReturn",
+    "--noImplicitThis",
+    "--useUnknownInCatchVariables",
+    "--alwaysStrict",
+    "--allowUnreachableCode",
+    "--allowUnusedLabels",
+    "--pretty",
+];
+
+fn is_option_bool_flag(flag: &str) -> bool {
+    OPTION_BOOL_FLAGS.contains(&flag)
 }
 
 /// Split a response file line into arguments, respecting quoted strings.
@@ -1339,6 +1410,8 @@ const KNOWN_TSC_OPTIONS: &[&str] = &[
     "--showConfig",
     "--skipDefaultLibCheck",
     "--skipLibCheck",
+    "--sound",
+    "--soundReportOnly",
     "--sourceMap",
     "--sourceRoot",
     "--stopBuildOnErrors",
@@ -1358,6 +1431,7 @@ const KNOWN_TSC_OPTIONS: &[&str] = &[
     "--tsBuildInfoFile",
     "--typeRoots",
     "--types",
+    "--typesVersions",
     "--useDefineForClassFields",
     "--useUnknownInCatchVariables",
     "--verbatimModuleSyntax",
@@ -1460,11 +1534,10 @@ fn merge_output_only_options_from_tsconfig(args: &mut CliArgs, cwd: &std::path::
     let Ok(text) = std::fs::read_to_string(&path) else {
         return;
     };
-    // Tolerate JSONC: strip line/block comments before parsing. tsconfig
-    // permits both. We don't need the full extends chain here — only the
+    // Tolerate JSONC. We don't need the full extends chain here — only the
     // top-level compilerOptions block.
-    let stripped = strip_jsonc_minimal(&text);
-    let Ok(json) = serde_json::from_str::<serde_json::Value>(&stripped) else {
+    let normalized = tsz_cli::config::normalize_jsonc(&text);
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&normalized) else {
         return;
     };
     let Some(opts) = json.get("compilerOptions").and_then(|v| v.as_object()) else {
@@ -1487,58 +1560,6 @@ fn merge_output_only_options_from_tsconfig(args: &mut CliArgs, cwd: &std::path::
     take_bool("diagnostics", &mut args.diagnostics);
     take_bool("extendedDiagnostics", &mut args.extended_diagnostics);
     take_bool("traceResolution", &mut args.trace_resolution);
-}
-
-/// Strip line and block comments from JSONC. Single-pass; respects string
-/// literals. Sufficient for top-level tsconfig parsing.
-fn strip_jsonc_minimal(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let bytes = text.as_bytes();
-    let mut i = 0;
-    let mut in_string = false;
-    let mut string_quote = b'"';
-    while i < bytes.len() {
-        let b = bytes[i];
-        if in_string {
-            out.push(b as char);
-            if b == b'\\' && i + 1 < bytes.len() {
-                out.push(bytes[i + 1] as char);
-                i += 2;
-                continue;
-            }
-            if b == string_quote {
-                in_string = false;
-            }
-            i += 1;
-            continue;
-        }
-        if b == b'"' || b == b'\'' {
-            in_string = true;
-            string_quote = b;
-            out.push(b as char);
-            i += 1;
-            continue;
-        }
-        if b == b'/' && i + 1 < bytes.len() {
-            if bytes[i + 1] == b'/' {
-                while i < bytes.len() && bytes[i] != b'\n' {
-                    i += 1;
-                }
-                continue;
-            }
-            if bytes[i + 1] == b'*' {
-                i += 2;
-                while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
-                    i += 1;
-                }
-                i += 2;
-                continue;
-            }
-        }
-        out.push(b as char);
-        i += 1;
-    }
-    out
 }
 
 fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, extended: bool) {
@@ -2497,9 +2518,7 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     // tsconfig + explicit files" check below knows to fire only on
     // walk-up discoveries (an explicit `--project` path is the user opting
     // into a specific config, and tsc keeps loading it in that case).
-    let (tsconfig_path, discovered_via_walkup) = if args.ignore_config {
-        (None, false)
-    } else if let Some(p) = args.project.as_ref() {
+    let (tsconfig_path, discovered_via_walkup) = if let Some(p) = args.project.as_ref() {
         // Canonicalize relative paths by joining with cwd first,
         // so that p.parent() later returns a valid directory.
         let resolved = if p.is_relative() {
@@ -2513,6 +2532,8 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
             resolved
         };
         (Some(resolved), false)
+    } else if args.ignore_config && !args.files.is_empty() {
+        (None, false)
     } else {
         (driver::find_tsconfig(cwd), true)
     };
@@ -3249,6 +3270,9 @@ fn show_config_apply_cli_overrides(
     }
     if let Some(ref v) = args.ignore_deprecations {
         map.insert("ignoreDeprecations".into(), Value::String(v.clone()));
+    }
+    if args.ignore_config {
+        map.insert("ignoreConfig".into(), Value::Bool(true));
     }
 
     // `--flag false` for plain `bool` flags is forwarded through this hidden

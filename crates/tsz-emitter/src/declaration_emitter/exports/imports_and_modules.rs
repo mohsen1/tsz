@@ -139,6 +139,10 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
 
+        if self.import_declaration_is_local_json_value_import(import) {
+            return;
+        }
+
         // Check if we should elide this import based on usage
         let (default_used, named_used) = self.count_used_imports(import);
         if default_used == 0 && named_used == 0 {
@@ -195,6 +199,54 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_declaration_import_attributes(import.attributes);
         self.write(";");
         self.write_line();
+    }
+
+    fn import_declaration_is_local_json_value_import(
+        &self,
+        import: &tsz_parser::parser::node::ImportDeclData,
+    ) -> bool {
+        let Some(module_node) = self.arena.get(import.module_specifier) else {
+            return false;
+        };
+        if !self
+            .arena
+            .get_literal(module_node)
+            .is_some_and(|literal| literal.text.ends_with(".json"))
+        {
+            return false;
+        }
+        let Some(clause_node) = self.arena.get(import.import_clause) else {
+            return false;
+        };
+        let Some(clause) = self.arena.get_import_clause(clause_node) else {
+            return false;
+        };
+        if clause.is_type_only {
+            return false;
+        }
+
+        let mut imported_names = Vec::new();
+        if let Some(name) = self.get_identifier_text(clause.name) {
+            imported_names.push(name);
+        }
+
+        if let Some(named_bindings_node) = self.arena.get(clause.named_bindings)
+            && let Some(named_bindings) = self.arena.get_named_imports(named_bindings_node)
+        {
+            if named_bindings.name.is_some() && named_bindings.elements.nodes.is_empty() {
+                if let Some(name) = self.get_identifier_text(named_bindings.name) {
+                    imported_names.push(name);
+                }
+            } else if !named_bindings.elements.nodes.is_empty() {
+                return false;
+            }
+        }
+
+        !imported_names.is_empty()
+            && imported_names.iter().all(|name| {
+                !self.public_api_type_surface_contains_typeof_name(name)
+                    && !self.public_api_export_specifier_exports_name(name)
+            })
     }
 
     /// Emit named imports, filtering out unused specifiers.
@@ -347,14 +399,10 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
 
-        // Elide empty, non-exported, non-declare inner namespaces nested
-        // inside another non-ambient namespace.
-        // tsc emits nothing for `namespace A { }` in that position: the body
-        // has no declarations to contribute to the type surface. Used by
-        // declFileWithInternalModuleNameConflicts*
-        // where an empty inner `namespace A { }` exists only for source-level
-        // name resolution, and may collide textually with an outer `A` used
-        // in exported heritage clauses.
+        // Elide non-exported, non-declare inner namespaces nested inside a
+        // non-ambient namespace unless they contribute to the exported type
+        // surface. tsc omits these hidden source-level namespaces from .d.ts
+        // output, even when they contain declarations.
         //
         // Keep the namespace when:
         //   - it's exported
@@ -366,10 +414,17 @@ impl<'a> DeclarationEmitter<'a> {
         if !is_exported
             && !self.arena.is_declare(&module.modifiers)
             && self.inside_non_ambient_namespace
-            && self.is_module_body_effectively_empty(module.body)
-            && !self.is_empty_namespace_referenced_by_export_import_alias(module_idx)
         {
-            return;
+            if self.is_module_body_effectively_empty(module.body)
+                && !self.is_empty_namespace_referenced_by_export_import_alias(module_idx)
+            {
+                return;
+            }
+            let referenced_by_export_surface = self.is_ns_member_used_by_exports(module_idx)
+                || self.is_empty_namespace_referenced_by_export_import_alias(module_idx);
+            if !referenced_by_export_surface {
+                return;
+            }
         }
 
         self.write_indent();
@@ -484,6 +539,7 @@ impl<'a> DeclarationEmitter<'a> {
                 || (prev_inside_declare_namespace && !prev_inside_non_ambient_namespace);
             if is_ambient_ns {
                 self.public_api_scope_depth += 1;
+                self.inside_non_ambient_namespace = false;
             } else {
                 self.inside_non_ambient_namespace = true;
             }
@@ -978,13 +1034,26 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(export) = self.arena.get_export_decl(stmt_node)
                 && let Some(clause_node) = self.arena.get(export.export_clause)
                 && clause_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
-                && self.import_equals_references_namespace(
+            {
+                if self.import_equals_references_namespace(
                     export.export_clause,
                     module_symbol,
                     module_name,
-                )
-            {
-                return true;
+                ) {
+                    return true;
+                }
+                if let Some(import) = self.arena.get_import_decl(clause_node)
+                    && let Some(alias_name) =
+                        self.get_identifier_text(self.get_rightmost_name(import.module_specifier))
+                    && self.statements_contain_import_alias_to_namespace(
+                        statements,
+                        &alias_name,
+                        module_symbol,
+                        module_name,
+                    )
+                {
+                    return true;
+                }
             }
 
             if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION
@@ -994,6 +1063,28 @@ impl<'a> DeclarationEmitter<'a> {
                     module_symbol,
                     module_name,
                 )
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn statements_contain_import_alias_to_namespace(
+        &self,
+        statements: &NodeList,
+        alias_name: &str,
+        module_symbol: Option<tsz_binder::SymbolId>,
+        module_name: Option<&str>,
+    ) -> bool {
+        for &stmt_idx in &statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                && let Some(import) = self.arena.get_import_decl(stmt_node)
+                && self.get_identifier_text(import.import_clause).as_deref() == Some(alias_name)
+                && self.import_equals_references_namespace(stmt_idx, module_symbol, module_name)
             {
                 return true;
             }
@@ -1483,6 +1574,10 @@ impl<'a> DeclarationEmitter<'a> {
                     let before_type = self.writer.len();
                     if let Some(rescued) = self.rescued_asserts_parameter_type_text(param_idx) {
                         self.write(&rescued);
+                    } else if let Some(type_text) =
+                        self.preferred_annotation_name_text(param.type_annotation)
+                    {
+                        self.write(&type_text);
                     } else if self.normalize_string_literal_type_quotes
                         && let Some(type_text) =
                             self.emit_type_node_text_normalized(param.type_annotation)
@@ -1494,7 +1589,12 @@ impl<'a> DeclarationEmitter<'a> {
                     // For non-private parameter properties with `?`, tsc appends
                     // `| undefined` to both the property declaration and the constructor
                     // parameter type. For private params, the type is hidden so skip.
-                    if is_parameter_property && !is_private_param_property && param.question_token {
+                    if is_parameter_property
+                        && !is_private_param_property
+                        && param.question_token
+                        && !self
+                            .type_annotation_semantically_includes_undefined(param.type_annotation)
+                    {
                         let output = self.writer.get_output();
                         let type_text = &output[before_type..];
                         if !output.ends_with("| undefined")
@@ -1503,11 +1603,21 @@ impl<'a> DeclarationEmitter<'a> {
                             self.write(" | undefined");
                         }
                     }
+                } else if let Some(type_text) =
+                    self.jsdoc_object_binding_param_type_literal(param_idx, i)
+                {
+                    self.write(": ");
+                    self.write(&type_text);
                 } else if let Some(jsdoc_param) = effective_jsdoc_param
                     && !Self::jsdoc_type_needs_checker_resolution(&jsdoc_param.type_text)
                 {
                     self.write(": ");
-                    self.write(&jsdoc_param.type_text);
+                    let type_text =
+                        self.jsdoc_type_text_for_declaration_emit(&jsdoc_param.type_text);
+                    self.write(&type_text);
+                    if jsdoc_param.optional && !Self::type_text_has_undefined_branch(&type_text) {
+                        self.write(" | undefined");
+                    }
                 } else if let Some(jsdoc_param) = effective_jsdoc_param
                     && Self::jsdoc_type_needs_checker_resolution(&jsdoc_param.type_text)
                     && let Some(converted) =
@@ -1586,7 +1696,10 @@ impl<'a> DeclarationEmitter<'a> {
                 // initializer before the last required parameter, tsc appends
                 // `| undefined` — but only when the type doesn't already
                 // include undefined (to avoid `T | undefined | undefined`).
-                if self.strict_null_checks && has_initializer_before_required {
+                if self.strict_null_checks
+                    && has_initializer_before_required
+                    && !self.type_annotation_semantically_includes_undefined(param.type_annotation)
+                {
                     let output = self.writer.get_output();
                     if !output.ends_with("| undefined") {
                         self.write(" | undefined");
@@ -1966,12 +2079,7 @@ impl<'a> DeclarationEmitter<'a> {
             } else {
                 elem.name
             };
-            let name_node = self.arena.get(prop_name_idx)?;
-            if name_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
-                return None;
-            }
-            let ident = self.arena.get_identifier(name_node)?;
-            let mut member_text = ident.escaped_text.to_string();
+            let mut member_text = self.binding_pattern_member_name_text(prop_name_idx)?;
             if elem.initializer.is_some() {
                 member_text.push_str("?: ");
             } else {
@@ -2008,6 +2116,26 @@ impl<'a> DeclarationEmitter<'a> {
             .map(|member| format!("{member_indent}{member}"))
             .collect();
         Some(format!("{{\n{}\n{closing_indent}}}", lines.join("\n")))
+    }
+
+    fn binding_pattern_member_name_text(&self, name_idx: NodeIndex) -> Option<String> {
+        let name_node = self.arena.get(name_idx)?;
+        if name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            return self
+                .arena
+                .get_identifier(name_node)
+                .map(|ident| ident.escaped_text.to_string());
+        }
+
+        let property_name = self.destructuring_property_lookup_text(name_idx)?;
+        if Self::is_simple_identifier_text(&property_name) || property_name.parse::<f64>().is_ok() {
+            Some(property_name)
+        } else {
+            Some(format!(
+                "\"{}\"",
+                property_name.replace('\\', "\\\\").replace('"', "\\\"")
+            ))
+        }
     }
 
     fn type_text_from_initializer(&self, initializer: NodeIndex) -> Option<String> {
@@ -2231,7 +2359,9 @@ impl<'a> DeclarationEmitter<'a> {
                 // Inline JSDoc comment before type parameter
                 self.emit_inline_parameter_comment(param_node.pos);
 
-                // Emit variance/const modifiers (in, out, const)
+                // Emit type-parameter modifiers as parsed. `public` is not a
+                // valid variance modifier, but tsc preserves it in declaration
+                // emit when recovering from invalid type-parameter syntax.
                 if let Some(ref mods) = param.modifiers {
                     for &mod_idx in &mods.nodes {
                         if let Some(mod_node) = self.arena.get(mod_idx) {
@@ -2239,6 +2369,9 @@ impl<'a> DeclarationEmitter<'a> {
                                 k if k == SyntaxKind::InKeyword as u16 => self.write("in "),
                                 k if k == SyntaxKind::OutKeyword as u16 => self.write("out "),
                                 k if k == SyntaxKind::ConstKeyword as u16 => self.write("const "),
+                                k if k == SyntaxKind::PublicKeyword as u16 => {
+                                    self.write("public ");
+                                }
                                 _ => {}
                             }
                         }
@@ -2363,9 +2496,63 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(", ");
                 }
                 first = false;
+                if heritage.token == SyntaxKind::ExtendsKeyword as u16
+                    && self.source_is_js_file
+                    && self.heritage_type_is_bare_array(type_idx)
+                {
+                    self.write("Array<any>");
+                    continue;
+                }
                 self.emit_type(type_idx);
             }
         }
+    }
+
+    pub(in crate::declaration_emitter) fn heritage_clauses_extend_bare_array(
+        &self,
+        clauses: Option<&NodeList>,
+    ) -> bool {
+        let Some(clauses) = clauses else {
+            return false;
+        };
+        clauses.nodes.iter().copied().any(|clause_idx| {
+            let Some(heritage) = self.arena.get_heritage_clause_at(clause_idx) else {
+                return false;
+            };
+            heritage.token == SyntaxKind::ExtendsKeyword as u16
+                && heritage
+                    .types
+                    .nodes
+                    .iter()
+                    .copied()
+                    .any(|type_idx| self.heritage_type_is_bare_array(type_idx))
+        })
+    }
+
+    fn heritage_type_is_bare_array(&self, type_idx: NodeIndex) -> bool {
+        let Some(type_node) = self.arena.get(type_idx) else {
+            return false;
+        };
+        if self.get_identifier_text(type_idx).as_deref() == Some("Array")
+            && let Some(identifier) = self.arena.get_identifier(type_node)
+        {
+            return identifier
+                .type_arguments
+                .as_ref()
+                .is_none_or(|args| args.nodes.is_empty());
+        }
+
+        let Some(expr) = self.arena.get_expr_type_args(type_node) else {
+            return false;
+        };
+        if expr
+            .type_arguments
+            .as_ref()
+            .is_some_and(|args| !args.nodes.is_empty())
+        {
+            return false;
+        }
+        self.get_identifier_text(expr.expression).as_deref() == Some("Array")
     }
 
     /// Check if a heritage type expression is an entity name (identifier or
@@ -2511,22 +2698,26 @@ impl<'a> DeclarationEmitter<'a> {
                         // In non-ambient namespaces, non-exported declarations
                         // are only emitted in .d.ts if they are referenced by
                         // exported members (via used_symbols). Namespace
-                        // declarations are normally visible, but an empty
-                        // non-exported inner namespace is elided by
-                        // `emit_module_declaration_with_export` (it has no
-                        // members to contribute and no reason to appear in
-                        // the type surface); matching that elision here
-                        // prevents the elided decl from triggering a false
+                        // declarations are only emitted when they are
+                        // referenced by the exported API surface or by an
+                        // exported import alias. Matching that elision here
+                        // prevents hidden namespaces from triggering a false
                         // mixed-export scope-marker.
                         if non_ambient {
-                            let counts_as_non_exported =
-                                if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
-                                    self.arena.get_module(stmt_node).is_none_or(|m| {
-                                        !self.is_module_body_effectively_empty(m.body)
-                                    })
-                                } else {
-                                    self.is_ns_member_used_by_exports(stmt_idx)
-                                };
+                            let counts_as_non_exported = if stmt_node.kind
+                                == syntax_kind_ext::MODULE_DECLARATION
+                            {
+                                self.arena.get_module(stmt_node).is_none_or(|m| {
+                                    !self.is_module_body_effectively_empty(m.body)
+                                        && (self.is_ns_member_used_by_exports(stmt_idx)
+                                            || self
+                                                .is_empty_namespace_referenced_by_export_import_alias(
+                                                    stmt_idx,
+                                                ))
+                                })
+                            } else {
+                                self.is_ns_member_used_by_exports(stmt_idx)
+                            };
                             if counts_as_non_exported {
                                 has_non_exported = true;
                             }
@@ -2582,6 +2773,8 @@ impl<'a> DeclarationEmitter<'a> {
                             // encodes Promise<T>, so the modifier is redundant.
                         }
                         k if k == SyntaxKind::AccessorKeyword as u16 => self.write("accessor "),
+                        k if k == SyntaxKind::InKeyword as u16 => self.write("in "),
+                        k if k == SyntaxKind::OutKeyword as u16 => self.write("out "),
                         k if k == SyntaxKind::DeclareKeyword as u16 => {
                             // tsc strips `declare` from class members in .d.ts — it is
                             // only meaningful at the top-level statement level

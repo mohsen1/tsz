@@ -351,6 +351,10 @@ fn test_capabilities_classify_global_names() {
         caps.classify_missing_global("window"),
         Some(MissingGlobalKind::DomGlobal)
     );
+    assert_eq!(
+        caps.classify_missing_global("crypto"),
+        Some(MissingGlobalKind::PlainGlobalValue)
+    );
 
     // ES2015+ types
     assert_eq!(
@@ -630,6 +634,13 @@ fn test_capability_diagnostic_code_mapping() {
         }
         .code(),
         2584
+    );
+    assert_eq!(
+        CapabilityDiagnostic::MissingPlainGlobalValue {
+            name: "crypto".to_string()
+        }
+        .code(),
+        2304
     );
     assert_eq!(
         CapabilityDiagnostic::MissingNodeGlobal {

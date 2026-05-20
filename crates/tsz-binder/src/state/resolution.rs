@@ -327,6 +327,49 @@ impl BinderState {
         None
     }
 
+    /// Probe lib `file_locals` for a name that the standard resolvers cannot
+    /// reach.
+    ///
+    /// `resolve_identifier_with_filter` and friends skip `lib_binders` once
+    /// `lib_symbols_merged` is set; Phase 3 of `merge_lib_contexts_into_binder`
+    /// excludes external-module lib `file_locals` (e.g. the module-scoped
+    /// `class Iterator` in `es2025.iterator.d.ts`) from the global hoist so
+    /// they cannot pollute the global scope. Callers that legitimately need
+    /// to reach those module-scoped lib symbols (type-position resolution,
+    /// lib augmentation handlers, last-resort fallbacks) go through this
+    /// method instead of iterating `LibContext` themselves.
+    ///
+    /// Takes `&[LibContext]` rather than a flattened `&[Arc<Self>]` because
+    /// several checker call sites mutate `ctx.lib_contexts` directly without
+    /// going through the `lib_binders_cached`-aware setter; consuming the
+    /// canonical `LibContext` slice avoids that staleness window.
+    ///
+    /// `accept` receives `(file_sym_id, lib_symbol_flags)`. Return
+    /// `Some(id)` to accept and stop; return `None` to skip and keep
+    /// iterating. The picked `SymbolId` MUST be a current-binder ID — lib
+    /// binders run in their own ID space.
+    pub fn resolve_name_in_lib_module_locals<F>(
+        &self,
+        name: &str,
+        lib_contexts: &[super::LibContext],
+        mut accept: F,
+    ) -> Option<SymbolId>
+    where
+        F: FnMut(SymbolId, u32) -> Option<SymbolId>,
+    {
+        let file_sym_id = self.file_locals.get(name)?;
+        for lib_ctx in lib_contexts {
+            let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name) else {
+                continue;
+            };
+            let flags = lib_ctx.binder.get_symbol(lib_sym_id).map_or(0, |s| s.flags);
+            if let Some(resolved) = accept(file_sym_id, flags) {
+                return Some(resolved);
+            }
+        }
+        None
+    }
+
     /// Collect visible symbol names for diagnostics and suggestions.
     /// If `meaning_flags` is non-zero, only include symbols whose flags overlap with `meaning_flags`.
     pub fn collect_visible_symbol_names(

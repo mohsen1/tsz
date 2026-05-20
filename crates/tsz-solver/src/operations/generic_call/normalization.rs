@@ -9,13 +9,13 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::{constraint_is_primitive_type_with_resolver, unique_placeholder_name};
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
-    /// Fast path for identity-style generic calls:
-    /// `<T extends C>(x: T) => T` with a single non-rest argument.
+    /// Fast path for direct single-parameter generic calls:
+    /// `<T extends C>(x: T | W<T>) => R<T>` with a single non-rest argument.
     ///
     /// This shape is common in constraint-heavy code and does not require full
     /// multi-pass inference machinery. We can infer `T` directly from the argument,
-    /// validate the constraint once, and return the argument type.
-    pub(super) fn resolve_trivial_single_type_param_call(
+    /// validate the constraint once, and instantiate the return type.
+    pub(crate) fn resolve_trivial_single_type_param_call(
         &mut self,
         func: &FunctionShape,
         arg_types: &[TypeId],
@@ -40,7 +40,34 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 Some(TypeData::TypeParameter(info)) if info.name == tp.name
             )
         };
-        if !is_tp(param_ty) || !is_tp(return_ty) {
+        let param_is_tp = is_tp(param_ty);
+        let param_is_direct_union =
+            !param_is_tp && self.union_contains_bare_type_parameter_member(param_ty, tp.name);
+        if !param_is_tp && !param_is_direct_union {
+            return None;
+        }
+        let return_is_tp = is_tp(return_ty);
+        if func.is_constructor && !return_is_tp {
+            return None;
+        }
+        let return_contains_tp = return_is_tp
+            || crate::visitor::contains_type_parameter_named(
+                self.interner.as_type_database(),
+                return_ty,
+                tp.name,
+            );
+        if !return_contains_tp {
+            return None;
+        }
+
+        // Contextual return types can seed inference for wrapped returns. Keep
+        // the older identity case on this path, but let compound return shapes
+        // use the full pipeline when a meaningful expected type is present.
+        if !return_is_tp
+            && self.contextual_type.is_some_and(|contextual_type| {
+                contextual_type != TypeId::ANY && contextual_type != TypeId::UNKNOWN
+            })
+        {
             return None;
         }
 
@@ -48,6 +75,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             self.is_contextually_sensitive(arg_types[0])
                 && Self::get_contextual_signature_cached(self.interner, contextual_type).is_some()
         }) {
+            return None;
+        }
+        if param_is_direct_union {
+            return None;
+        }
+        if !return_is_tp
+            && !matches!(
+                self.interner.lookup(arg_types[0]),
+                Some(TypeData::TypeParameter(_))
+            )
+        {
             return None;
         }
 
@@ -100,41 +138,54 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             });
             if constraint_is_primitive {
                 arg_ty
-            } else {
-                let widened = crate::operations::widening::widen_type(
+            } else if let Some(constraint) = constraint {
+                // Widen to check if widening would violate the constraint.
+                // Fresh objects use widen_type (not widen_type_for_inference) to preserve
+                // FRESH_LITERAL, which is required for excess-property checking against the constraint.
+                let widened_for_check = crate::operations::widening::widen_type(
                     self.interner.as_type_database(),
                     arg_ty,
                 );
-                // When a constraint exists and the widened type violates it, fall back
-                // to the unwidened (literal) type. This matches tsc's behavior: for
-                // `<T extends 'a' | 'b'>(x: T)` called with `'a'`, T infers as `"a"`
-                // (not `string`), because widening to `string` would violate the
-                // constraint. Similarly for tuple constraints like
-                // `<T extends [string, string, 'a' | 'b']>(x: T)`.
-                if let Some(constraint) = constraint {
-                    if !self.checker.is_assignable_to(widened, constraint)
-                        && self.checker.is_assignable_to(arg_ty, constraint)
-                    {
-                        arg_ty
-                    } else {
-                        widened
-                    }
-                } else if let Some(ctx_type) = self.contextual_type
-                    && ctx_type != TypeId::ANY
-                    && ctx_type != TypeId::UNKNOWN
-                    && widened != arg_ty
-                    && !self.checker.is_assignable_to(widened, ctx_type)
-                    && self.checker.is_assignable_to(arg_ty, ctx_type)
+                if !self.checker.is_assignable_to(widened_for_check, constraint)
+                    && self.checker.is_assignable_to(arg_ty, constraint)
                 {
-                    // When a contextual return type exists (e.g., from a variable
-                    // declaration like `let v: DooDad = identity('ELSE')`), and
-                    // widening the argument type breaks assignability to the
-                    // contextual type, preserve the literal. This matches tsc's
-                    // behavior where contextual return types inform inference and
-                    // prevent unnecessary widening of literals.
                     arg_ty
                 } else {
-                    widened
+                    widened_for_check
+                }
+            } else if self.is_first_arg_type_annotated() {
+                // Type assertions (e.g. `identity(1 as 1)`) produce non-fresh literals;
+                // preserve them, matching the normal inference path's
+                // `has_type_annotation_candidate` gate.
+                arg_ty
+            } else {
+                // Only compute widen_type when a contextual return type exists — widening may
+                // break assignability to it (e.g. `let v: DooDad = identity('ELSE')`).
+                let should_preserve_literal = self.contextual_type.is_some_and(|ctx_type| {
+                    if ctx_type == TypeId::ANY || ctx_type == TypeId::UNKNOWN {
+                        return false;
+                    }
+                    let widened_for_check = crate::operations::widening::widen_type(
+                        self.interner.as_type_database(),
+                        arg_ty,
+                    );
+                    widened_for_check != arg_ty
+                        && !self.checker.is_assignable_to(widened_for_check, ctx_type)
+                        && self.checker.is_assignable_to(arg_ty, ctx_type)
+                });
+                if should_preserve_literal
+                    || (return_is_tp
+                        && crate::visitor::is_literal_type(
+                            self.interner.as_type_database(),
+                            arg_ty,
+                        ))
+                {
+                    arg_ty
+                } else {
+                    crate::operations::widening::widen_type_for_inference(
+                        self.interner.as_type_database(),
+                        arg_ty,
+                    )
                 }
             }
         };
@@ -144,7 +195,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             inferred_ty
         };
         if let Some(constraint) = constraint
-            && !self.checker.is_assignable_to(effective_arg_ty, constraint)
+            && !self.arg_satisfies_type_parameter_constraint(effective_arg_ty, constraint)
             && !self.is_function_union_compat(effective_arg_ty, constraint)
             && !self.callable_satisfies_top_rest_any_constraint(effective_arg_ty, constraint)
         {
@@ -161,7 +212,43 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             });
         }
 
-        Some(CallResult::Success(effective_arg_ty))
+        if param_is_direct_union {
+            let subst = TypeSubstitution::single(tp.name, effective_arg_ty);
+            let expected_param_ty = instantiate_type(self.interner, param_ty, &subst);
+            if !self.checker.is_assignable_to(arg_ty, expected_param_ty) {
+                return Some(CallResult::ArgumentTypeMismatch {
+                    index: 0,
+                    expected: expected_param_ty,
+                    actual: arg_ty,
+                    fallback_return: TypeId::ERROR,
+                });
+            }
+        }
+
+        let return_type = if return_is_tp {
+            effective_arg_ty
+        } else {
+            let subst = TypeSubstitution::single(tp.name, effective_arg_ty);
+            instantiate_type(self.interner, return_ty, &subst)
+        };
+
+        Some(CallResult::Success(return_type))
+    }
+
+    fn union_contains_bare_type_parameter_member(
+        &self,
+        type_id: TypeId,
+        type_param_name: tsz_common::Atom,
+    ) -> bool {
+        let Some(TypeData::Union(members_id)) = self.interner.lookup(type_id) else {
+            return false;
+        };
+        self.interner.type_list(members_id).iter().any(|&member| {
+            matches!(
+                self.interner.lookup(member),
+                Some(TypeData::TypeParameter(info)) if info.name == type_param_name
+            )
+        })
     }
 
     /// Collapse transient inference placeholders (like `__infer_src_*`) to stable types.
@@ -193,6 +280,24 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             current = next;
         }
 
+        let preserved_source_placeholders: rustc_hash::FxHashSet<_> =
+            if let Some(TypeData::Function(shape_id)) = self.interner.lookup(current) {
+                self.interner
+                    .function_shape(shape_id)
+                    .type_params
+                    .iter()
+                    .filter_map(|tp| {
+                        self.interner
+                            .resolve_atom(tp.name)
+                            .as_str()
+                            .starts_with("__infer_src_")
+                            .then_some(tp.name)
+                    })
+                    .collect()
+            } else {
+                rustc_hash::FxHashSet::default()
+            };
+
         let mut source_placeholder_subst = TypeSubstitution::new();
         for ty in crate::visitor::collect_all_types(self.interner.as_type_database(), current) {
             if let Some(TypeData::TypeParameter(info)) = self.interner.lookup(ty)
@@ -201,6 +306,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     .resolve_atom(info.name)
                     .as_str()
                     .starts_with("__infer_src_")
+                && !preserved_source_placeholders.contains(&info.name)
             {
                 source_placeholder_subst.insert(info.name, TypeId::UNKNOWN);
             }
@@ -210,6 +316,49 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         self.prune_placeholder_union_members(current)
+    }
+
+    pub(super) fn normalize_inferred_placeholder_type_preserving_source_placeholders(
+        &self,
+        ty: TypeId,
+        infer_subst: &TypeSubstitution,
+    ) -> TypeId {
+        if infer_subst.is_empty() {
+            return ty;
+        }
+
+        let mut current = ty;
+        for _ in 0..8 {
+            let next = instantiate_type(self.interner, current, infer_subst);
+            if next == current {
+                break;
+            }
+            current = next;
+        }
+
+        self.prune_placeholder_union_members(current)
+    }
+
+    pub(super) fn remove_unresolved_source_placeholders_from_substitution(
+        &self,
+        subst: &mut TypeSubstitution,
+    ) {
+        let names = subst
+            .map()
+            .iter()
+            .filter_map(|(&name, &ty)| {
+                (ty == TypeId::UNKNOWN
+                    && self
+                        .interner
+                        .resolve_atom(name)
+                        .as_str()
+                        .starts_with("__infer_src_"))
+                .then_some(name)
+            })
+            .collect::<Vec<_>>();
+        for name in names {
+            subst.remove(name);
+        }
     }
 
     fn prune_placeholder_union_members(&self, ty: TypeId) -> TypeId {
@@ -574,6 +723,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         // Process rest tuple in Round 1
         if let Some((_start, target_type, tuple_type)) = rest_tuple_inference {
+            let direct_rest_tuple = self
+                .interner
+                .lookup(tuple_type)
+                .and_then(|data| match data {
+                    TypeData::Tuple(elements_id) => Some(self.interner.tuple_list(elements_id)),
+                    _ => None,
+                })
+                .is_some_and(|elements| elements.iter().all(|element| !element.rest));
+            let was_type_annotation = infer_ctx.source_is_type_annotation;
+            if direct_rest_tuple {
+                infer_ctx.source_is_type_annotation = true;
+            }
             self.constrain_types(
                 &mut infer_ctx,
                 &var_map,
@@ -581,6 +742,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 target_type,
                 InferencePriority::NakedTypeVariable,
             );
+            infer_ctx.source_is_type_annotation = was_type_annotation;
         }
 
         // 4. Fix variables with enough information from Round 1

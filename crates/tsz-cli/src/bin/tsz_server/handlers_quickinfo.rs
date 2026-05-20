@@ -9,7 +9,7 @@ use tsz::lsp::position::LineMap;
 use tsz::lsp::signature_help::SignatureHelpProvider;
 use tsz::parser::node::NodeAccess;
 use tsz::parser::syntax_kind_ext;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 impl Server {
     fn checker_options_for_source(source_text: &str) -> tsz::checker::context::CheckerOptions {
@@ -1515,6 +1515,6 @@ impl Server {
             }))
         })();
 
-        self.stub_response(seq, request, result)
+        self.success_response(seq, request, result)
     }
 }

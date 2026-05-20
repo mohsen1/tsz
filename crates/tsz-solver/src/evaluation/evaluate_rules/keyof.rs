@@ -2,16 +2,18 @@
 //!
 //! Handles TypeScript's keyof operator: `keyof T`
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::instantiation::instantiate::instantiate_generic;
+use crate::objects::apparent::literal_value_intrinsic_kind;
 use crate::objects::{PropertyCollectionResult, collect_properties};
 use crate::relations::subtype::TypeResolver;
 use crate::type_queries::narrow_keyof_intersection_member_by_literal_discriminants;
 use crate::types::{
-    IntrinsicKind, LiteralValue, MappedType, MappedTypeId, PropertyInfo, TupleElement, TypeData,
-    TypeId, TypeListId,
+    IntrinsicKind, LiteralValue, MappedType, MappedTypeId, ObjectFlags, PropertyInfo, SymbolRef,
+    TupleElement, TypeData, TypeId, TypeListId,
 };
 use rustc_hash::FxHashSet;
+use smallvec::SmallVec;
 use tsz_common::interner::Atom;
 
 use super::super::evaluate::{
@@ -25,6 +27,7 @@ pub(crate) struct KeyofKeySet {
     pub has_number: bool,
     pub has_symbol: bool,
     pub string_literals: FxHashSet<Atom>,
+    pub unique_symbols: FxHashSet<SymbolRef>,
 }
 
 impl KeyofKeySet {
@@ -34,6 +37,7 @@ impl KeyofKeySet {
             has_number: false,
             has_symbol: false,
             string_literals: FxHashSet::default(),
+            unique_symbols: FxHashSet::default(),
         }
     }
 
@@ -69,35 +73,65 @@ impl KeyofKeySet {
                 self.string_literals.insert(atom);
                 true
             }
+            TypeData::UniqueSymbol(symbol) => {
+                self.unique_symbols.insert(symbol);
+                true
+            }
             _ => false,
         }
     }
 }
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
+    fn unique_symbol_ref_from_synthetic_atom(&self, name: Atom) -> Option<SymbolRef> {
+        let name_text = self.interner().resolve_atom_ref(name);
+        let symbol_ref = name_text.strip_prefix("__unique_")?.parse::<u32>().ok()?;
+        Some(SymbolRef(symbol_ref))
+    }
+
+    pub(super) fn unique_symbol_ref_from_symbol_named_atom(&self, name: Atom) -> Option<SymbolRef> {
+        self.unique_symbol_ref_from_synthetic_atom(name)
+            .or_else(|| {
+                let name_text = self.interner().resolve_atom_ref(name);
+                self.resolver().resolve_well_known_symbol_name(&name_text)
+            })
+    }
+
     fn property_name_to_key_type(&self, prop: &PropertyInfo) -> TypeId {
-        let name = prop.name;
-        let name_text = self.interner().resolve_atom_ref(name);
-        if prop.is_symbol_named
-            && let Some(symbol_ref) = name_text.strip_prefix("__unique_")
-            && let Ok(id) = symbol_ref.parse::<u32>()
-        {
-            return self.interner().unique_symbol(crate::types::SymbolRef(id));
+        if prop.is_symbol_named {
+            if let Some(symbol_ref) = self.unique_symbol_ref_from_symbol_named_atom(prop.name) {
+                return self.interner().unique_symbol(symbol_ref);
+            }
+            return TypeId::SYMBOL;
         }
-        self.interner().literal_string_atom(name)
+        // `keyof { 1: ... }` yields the *numeric* literal `1`, not `"1"`.
+        // The bare-numeric-name vs string-quoted distinction is the same
+        // structural rule that drives mapped-type key substitution.
+        crate::utils::literal_key_for_property_name(
+            self.interner(),
+            prop.name,
+            prop.is_string_named,
+        )
     }
 
-    fn synthetic_property_name_atom_to_key_type(&self, name: Atom) -> TypeId {
-        let name_text = self.interner().resolve_atom_ref(name);
-        if let Some(symbol_ref) = name_text.strip_prefix("__unique_")
-            && let Ok(id) = symbol_ref.parse::<u32>()
-        {
-            return self.interner().unique_symbol(crate::types::SymbolRef(id));
+    fn synthetic_property_key_to_key_type(
+        &self,
+        key: crate::type_queries::ExactLiteralPropertyKey,
+    ) -> TypeId {
+        if key.is_symbol_named {
+            if let Some(symbol_ref) = self.unique_symbol_ref_from_symbol_named_atom(key.name) {
+                return self.interner().unique_symbol(symbol_ref);
+            }
+            return TypeId::SYMBOL;
         }
-        self.interner().literal_string_atom(name)
+        self.interner().literal_string_atom(key.name)
     }
 
-    fn push_remapped_key_type(&mut self, key_types: &mut Vec<TypeId>, remapped_key: TypeId) {
+    fn push_remapped_key_type(
+        &mut self,
+        key_types: &mut SmallVec<[TypeId; 8]>,
+        remapped_key: TypeId,
+    ) {
         if remapped_key == TypeId::STRING {
             key_types.push(TypeId::STRING);
             key_types.push(TypeId::NUMBER);
@@ -112,7 +146,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         mapped: &MappedType,
     ) -> Option<TypeId> {
         let name_type = mapped.name_type?;
-        let mut key_types = Vec::new();
+        let mut key_types: SmallVec<[TypeId; 8]> = SmallVec::new();
 
         let constraint_source = crate::keyof_inner_type(self.interner(), mapped.constraint)
             .or_else(|| {
@@ -177,13 +211,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 PropertyCollectionResult::NonObject => {}
             }
-        } else if let Some(names) =
-            crate::type_queries::collect_finite_mapped_property_names(self.interner(), mapped_id)
+        } else if let Some(keys) =
+            crate::type_queries::collect_finite_mapped_property_keys(self.interner(), mapped_id)
         {
-            let mut sorted_names: Vec<_> = names.into_iter().collect();
-            sorted_names.sort_by_key(|atom| atom.0);
-            for name in sorted_names {
-                key_types.push(self.synthetic_property_name_atom_to_key_type(name));
+            let mut sorted_keys: Vec<_> = keys.into_iter().collect();
+            sorted_keys.sort_by_key(|key| (key.name.0, key.is_symbol_named));
+            for key in sorted_keys {
+                key_types.push(self.synthetic_property_key_to_key_type(key));
             }
         }
 
@@ -196,7 +230,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         } else if key_types.len() == 1 {
             Some(key_types[0])
         } else {
-            Some(self.interner().union(key_types))
+            Some(self.interner().union(key_types.into_vec()))
         }
     }
 
@@ -236,7 +270,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let member_list = self.interner().type_list(members);
 
                 // Recursively compute keyof for each member (this resolves Lazy/Ref/etc.)
-                let mut key_types: Vec<TypeId> = Vec::with_capacity(member_list.len());
+                let mut key_types: SmallVec<[TypeId; 4]> =
+                    SmallVec::with_capacity(member_list.len());
                 for &member in member_list.iter() {
                     key_types.push(self.recurse_keyof(member));
                 }
@@ -247,7 +282,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     intersection
                 } else {
                     // Fallback: use general intersection
-                    self.interner().intersection(key_types)
+                    self.interner().intersection(key_types.into_vec())
                 };
             }
             _ => {}
@@ -278,14 +313,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         return self.recurse_keyof(narrowed_operand);
                     };
                     let member_list = self.interner().type_list(members);
-                    let mut key_types: Vec<TypeId> = Vec::with_capacity(member_list.len());
+                    let mut key_types: SmallVec<[TypeId; 4]> =
+                        SmallVec::with_capacity(member_list.len());
                     for &member in member_list.iter() {
                         key_types.push(self.recurse_keyof(member));
                     }
                     if let Some(intersection) = self.intersect_keyof_sets(&key_types) {
                         intersection
                     } else {
-                        self.interner().intersection(key_types)
+                        self.interner().intersection(key_types.into_vec())
                     }
                 }
                 TypeData::Mapped(mapped_id) => {
@@ -409,7 +445,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     if shape.string_index.is_some() {
                         key_types.push(TypeId::STRING);
                         key_types.push(TypeId::NUMBER);
-                    } else if shape.number_index.is_some() {
+                    } else if shape.number_index.is_some()
+                        // Enum namespace types carry `[index: number]: string` only for
+                        // reverse-lookup bracket access (E[0]). tsc excludes this from
+                        // `keyof typeof E` — the keyof is just the named member keys.
+                        && !shape.flags.contains(ObjectFlags::ENUM_NAMESPACE)
+                    {
                         key_types.push(TypeId::NUMBER);
                     }
 
@@ -484,11 +525,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     | IntrinsicKind::Symbol => self.apparent_primitive_keyof(kind),
                 },
                 TypeData::Literal(literal) => {
-                    if let Some(kind) = self.apparent_literal_kind(&literal) {
-                        self.apparent_primitive_keyof(kind)
-                    } else {
-                        self.interner().keyof(operand)
-                    }
+                    self.apparent_primitive_keyof(literal_value_intrinsic_kind(&literal))
                 }
                 TypeData::TemplateLiteral(_) => {
                     self.apparent_primitive_keyof(IntrinsicKind::String)
@@ -537,6 +574,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         self.interner().keyof(operand)
                     }
                 }
+                // Conditional types: if the check type is a type parameter and every
+                // branch shares its key space (identity, or a non-remapped mapped type
+                // whose constraint is `keyof <check_param>`), keyof of the conditional
+                // reduces to keyof of the check parameter.  This catches expanded
+                // utility-type aliases like `DeepRequired<T>` whose application has
+                // already been substituted to its body before reaching `evaluate_keyof`.
+                TypeData::Conditional(_) => self
+                    .try_keyof_from_conditional_branches(evaluated_operand)
+                    .unwrap_or_else(|| self.interner().keyof(operand)),
                 // For other types (type parameters, etc.), keep as KeyOf (deferred)
                 _ => self.interner().keyof(operand),
             }
@@ -558,11 +604,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             _ => None,
         }?;
         let resolved = self.resolver().resolve_lazy(def_id, self.interner())?;
-        let TypeData::Mapped(mapped_id) = self.interner().lookup(resolved)? else {
-            return None;
-        };
-        let mapped = self.interner().get_mapped(mapped_id);
-        if mapped.name_type.is_some() {
+
+        // Inspect the body kind first so non-Mapped, non-Conditional aliases
+        // (e.g. `Array<T>`, plain interface aliases) skip the cost of
+        // resolving/extracting type parameters.
+        let body = self.interner().lookup(resolved)?;
+        if !matches!(body, TypeData::Mapped(_) | TypeData::Conditional(_)) {
             return None;
         }
 
@@ -575,14 +622,140 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return None;
         }
 
-        let instantiated =
-            instantiate_generic(self.interner(), mapped.constraint, &type_params, &app.args);
-        let evaluated = self.evaluate(instantiated);
-        Some(if evaluated == TypeId::ERROR {
-            instantiated
+        match body {
+            TypeData::Mapped(mapped_id) => {
+                let mapped = self.interner().get_mapped(mapped_id);
+                if mapped.name_type.is_some() {
+                    return None;
+                }
+                let instantiated = instantiate_generic(
+                    self.interner(),
+                    mapped.constraint,
+                    &type_params,
+                    &app.args,
+                );
+                Some(self.evaluate_or_keep(instantiated))
+            }
+            TypeData::Conditional(_) => {
+                // Recursive utility types like `DeepRequired<T>` whose body is a
+                // conditional (`T extends C ? A : B`) need keyof reduction when
+                // every branch shares the source argument's key space; otherwise
+                // `DeepRequired<T>[K]` with `K in keyof T` would misfire TS2536.
+                self.try_keyof_from_conditional_application_body(resolved, &type_params, &app.args)
+            }
+            _ => None,
+        }
+    }
+
+    /// Evaluate `ty`; if evaluation returns `ERROR`, keep the original.  Used to
+    /// avoid surfacing solver errors when a usable deferred form already exists.
+    fn evaluate_or_keep(&mut self, ty: TypeId) -> TypeId {
+        let evaluated = self.evaluate(ty);
+        if evaluated == TypeId::ERROR {
+            ty
         } else {
             evaluated
-        })
+        }
+    }
+
+    /// Structural rule: every branch of the conditional must be either the
+    /// source type parameter itself (identity) or a non-remapped mapped type
+    /// whose constraint is `keyof <source param>`. When so, `keyof F<T>` =
+    /// `keyof T` (returned as the instantiated keyof of the source arg).
+    fn try_keyof_from_conditional_application_body(
+        &mut self,
+        conditional_type_id: TypeId,
+        type_params: &[crate::types::TypeParamInfo],
+        args: &[TypeId],
+    ) -> Option<TypeId> {
+        let cond_id =
+            crate::type_queries::get_conditional_type_id(self.interner(), conditional_type_id)?;
+        let cond = self.interner().conditional_type(cond_id);
+
+        let source_param_idx = type_params
+            .iter()
+            .position(|p| self.is_type_param_named(cond.check_type, p.name))?;
+        let source_arg = args[source_param_idx];
+        let source_name = type_params[source_param_idx].name;
+
+        // Pre-instantiation screen against the alias's own param name; bail
+        // before the (expensive) `instantiate_generic` when either branch
+        // clearly isn't in the source's key space.
+        let matches_by_name = |ty: TypeId| self.is_type_param_named(ty, source_name);
+        if !self.branch_matches_keyof_source(cond.true_type, &matches_by_name)
+            || !self.branch_matches_keyof_source(cond.false_type, &matches_by_name)
+        {
+            return None;
+        }
+
+        // Post-instantiation check uses the source ARG identity: same TypeId,
+        // or — defensively, in case substitution produced a distinct TypeParameter
+        // node with the same name — same param name as the arg.
+        let source_arg_name =
+            crate::type_param_info(self.interner(), source_arg).map(|info| info.name);
+        let matches_by_arg = |ty: TypeId| {
+            ty == source_arg || source_arg_name.is_some_and(|n| self.is_type_param_named(ty, n))
+        };
+        let inst_true = instantiate_generic(self.interner(), cond.true_type, type_params, args);
+        if !self.branch_matches_keyof_source(inst_true, &matches_by_arg) {
+            return None;
+        }
+        let inst_false = instantiate_generic(self.interner(), cond.false_type, type_params, args);
+        if !self.branch_matches_keyof_source(inst_false, &matches_by_arg) {
+            return None;
+        }
+
+        let keyof_source = self.interner().keyof(source_arg);
+        Some(self.evaluate_or_keep(keyof_source))
+    }
+
+    /// Direct-conditional form of the branch-keyof reduction, for cases where
+    /// `evaluate_keyof` reaches a Conditional that's already been substituted
+    /// (e.g. `T extends C ? { [P in keyof T]?: ... } : T` arrived here without
+    /// the surrounding Application).  Treats the conditional's check type as
+    /// the "source": every branch must either *be* the check type or be a
+    /// non-remapped mapped type whose constraint is `keyof <check>`.
+    fn try_keyof_from_conditional_branches(&mut self, conditional: TypeId) -> Option<TypeId> {
+        let cond_id = crate::type_queries::get_conditional_type_id(self.interner(), conditional)?;
+        let cond = self.interner().conditional_type(cond_id);
+        // Check type must already be a type parameter for the rule to apply.
+        let source_info = crate::type_param_info(self.interner(), cond.check_type)?;
+        let source = cond.check_type;
+        let source_name = source_info.name;
+        let is_source = |ty: TypeId| ty == source || self.is_type_param_named(ty, source_name);
+        if !self.branch_matches_keyof_source(cond.true_type, &is_source)
+            || !self.branch_matches_keyof_source(cond.false_type, &is_source)
+        {
+            return None;
+        }
+        let keyof_source = self.interner().keyof(source);
+        Some(self.evaluate_or_keep(keyof_source))
+    }
+
+    fn is_type_param_named(&self, ty: TypeId, name: tsz_common::interner::Atom) -> bool {
+        crate::type_param_info(self.interner(), ty).is_some_and(|info| info.name == name)
+    }
+
+    /// Does `branch_type` have the same key space as the source, where
+    /// "the source" is identified by `is_source`?  True when:
+    /// - `is_source(branch_type)` (identity / name match), or
+    /// - `branch_type` is a non-remapped mapped type whose constraint is
+    ///   `keyof X` and `is_source(X)`.
+    fn branch_matches_keyof_source<F>(&self, branch_type: TypeId, is_source: &F) -> bool
+    where
+        F: Fn(TypeId) -> bool,
+    {
+        if is_source(branch_type) {
+            return true;
+        }
+        let Some(TypeData::Mapped(mapped_id)) = self.interner().lookup(branch_type) else {
+            return false;
+        };
+        let mapped = self.interner().get_mapped(mapped_id);
+        if mapped.name_type.is_some() {
+            return false;
+        }
+        crate::keyof_inner_type(self.interner(), mapped.constraint).is_some_and(is_source)
     }
 
     /// Compute keyof for an intersection type: keyof (A & B) = keyof A | keyof B
@@ -590,7 +763,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let members = self.interner().type_list(members).to_vec();
         // Use recurse_keyof to respect depth limits
         // Use loop instead of closure to allow mutable self access
-        let mut key_sets: Vec<TypeId> = Vec::with_capacity(members.len());
+        let mut key_sets: SmallVec<[TypeId; 4]> = SmallVec::with_capacity(members.len());
         for (member_idx, &member) in members.iter().enumerate() {
             let narrowed_member = narrow_keyof_intersection_member_by_literal_discriminants(
                 self.interner(),
@@ -600,7 +773,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             );
             key_sets.push(self.recurse_keyof(narrowed_member));
         }
-        self.interner().union(key_sets)
+        self.interner().union(key_sets.into_vec())
     }
 
     /// Get the keyof keys for an array type (includes all array methods and number index).
@@ -696,6 +869,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let mut common_literals: Option<FxHashSet<Atom>> = None;
         let mut all_number = true;
         let mut all_symbol = true;
+        let mut common_unique_symbols: Option<FxHashSet<SymbolRef>> = None;
 
         for set in &parsed_sets {
             if set.has_string {
@@ -721,6 +895,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             if !set.has_symbol {
                 all_symbol = false;
             }
+            if set.has_symbol {
+                // A broad `symbol` key includes every unique symbol.
+            } else if set.unique_symbols.is_empty() {
+                common_unique_symbols = Some(FxHashSet::default());
+            } else {
+                common_unique_symbols = Some(match common_unique_symbols {
+                    Some(mut existing) => {
+                        existing.retain(|symbol| set.unique_symbols.contains(symbol));
+                        existing
+                    }
+                    None => set.unique_symbols.clone(),
+                });
+            }
         }
 
         let mut result_keys = Vec::new();
@@ -738,6 +925,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
         if all_symbol {
             result_keys.push(TypeId::SYMBOL);
+        } else if let Some(common) = common_unique_symbols {
+            for symbol in common {
+                result_keys.push(self.interner().unique_symbol(symbol));
+            }
         }
 
         if result_keys.is_empty() {

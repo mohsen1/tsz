@@ -1,6 +1,220 @@
 use super::*;
 
 #[test]
+fn test_cross_file_imported_interface_promise_return_keeps_lib_symbol() {
+    let diagnostics = compile_named_files_get_diagnostics_with_compiled_libs_and_options(
+        &[
+            (
+                "a.ts",
+                r#"
+export interface I {
+  getSchemas(): Promise<SchemaMetadata[]>;
+}
+export interface SchemaMetadata {
+  readonly name: string;
+}
+"#,
+            ),
+            (
+                "b.ts",
+                r#"
+import type { I, SchemaMetadata } from "./a.js";
+
+export class C implements I {
+  async getSchemas(): Promise<SchemaMetadata[]> {
+    return [];
+  }
+}
+"#,
+            ),
+        ],
+        "b.ts",
+        &[
+            "lib.es5.d.ts",
+            "lib.es2015.d.ts",
+            "lib.es2015.promise.d.ts",
+            "lib.es2015.iterable.d.ts",
+            "lib.es2022.d.ts",
+            "lib.dom.d.ts",
+        ],
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2017,
+            module: ModuleKind::ESNext,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2416),
+        "Imported interface return type `Promise<T>` must not resolve through a foreign arena \
+         collision such as `CSSLayerBlockRule<T>`. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_cross_file_class_method_promise_return_uses_lib_generic_base() {
+    let diagnostics = compile_named_files_get_diagnostics_with_compiled_libs_and_options(
+        &[
+            (
+                "base.ts",
+                r#"
+export class Base {
+  m(x: unknown): Promise<void> {
+    return null as any;
+  }
+}
+"#,
+            ),
+            (
+                "b.ts",
+                r#"
+import { Base } from "./base.js";
+
+declare const base: Base;
+const f: (x: unknown) => Promise<void> = base.m;
+"#,
+            ),
+        ],
+        "b.ts",
+        &[
+            "lib.es5.d.ts",
+            "lib.es2015.promise.d.ts",
+            "lib.es2015.iterable.d.ts",
+            "lib.es2022.d.ts",
+            "lib.dom.d.ts",
+        ],
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2017,
+            module: ModuleKind::ESNext,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2322)
+            && diagnostics
+                .iter()
+                .all(|(_, message)| !message.contains("object<void>")),
+        "Cross-file class method return `Promise<void>` must not become `object<void>`. \
+         Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_cross_file_imported_interface_methods_preserve_lib_generic_identity() {
+    let diagnostics = compile_named_files_get_diagnostics_with_compiled_libs_and_options(
+        &[
+            (
+                "result.ts",
+                r#"
+export interface Boxed<T> {
+  readonly value: T;
+}
+"#,
+            ),
+            (
+                "connection.ts",
+                r#"
+import type { Boxed } from "./result.js";
+
+export interface Connection {
+  run<T>(value: T): Promise<Boxed<T>>;
+  stream<T>(value: T): AsyncIterableIterator<Boxed<T>>;
+}
+"#,
+            ),
+            (
+                "driver.ts",
+                r#"
+import type { Connection } from "./connection.js";
+
+export interface Driver {
+  connect(): Promise<Connection>;
+  commit(): Promise<void>;
+}
+"#,
+            ),
+            (
+                "adapter-base.ts",
+                r#"
+export interface Adapter {
+  acquire(lock: string): Promise<void>;
+}
+
+export abstract class AdapterBase implements Adapter {
+  async acquire(_lock: string): Promise<void> {}
+}
+"#,
+            ),
+            (
+                "mssql.ts",
+                r#"
+import type { Boxed } from "./result.js";
+import type { Connection } from "./connection.js";
+import type { Driver } from "./driver.js";
+import { AdapterBase, type Adapter } from "./adapter-base.js";
+
+class MssqlConnection implements Connection {
+  async run<T>(value: T): Promise<Boxed<T>> {
+    return { value };
+  }
+  stream<T>(_value: T): AsyncIterableIterator<Boxed<T>> {
+    return null as any;
+  }
+}
+
+class MssqlDriver implements Driver {
+  async connect(): Promise<Connection> {
+    return new MssqlConnection();
+  }
+  async commit(): Promise<void> {}
+}
+
+class MssqlAdapter extends AdapterBase {}
+
+export class Dialect {
+  createDriver(): Driver {
+    return new MssqlDriver();
+  }
+  createAdapter(): Adapter {
+    return new MssqlAdapter();
+  }
+}
+"#,
+            ),
+        ],
+        "mssql.ts",
+        &[
+            "lib.es5.d.ts",
+            "lib.es2015.d.ts",
+            "lib.es2015.promise.d.ts",
+            "lib.es2015.iterable.d.ts",
+            "lib.es2018.asynciterable.d.ts",
+            "lib.es2022.d.ts",
+            "lib.dom.d.ts",
+        ],
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2018,
+            module: ModuleKind::ESNext,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().all(|(code, message)| {
+            *code != 2322
+                && !message.contains("CSSLayerBlockRule")
+                && !message.contains("captureEvents")
+        }),
+        "Cross-file imported interface method signatures must preserve canonical lib \
+         generic identities. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_const_alias_expando_element_reads_do_not_emit_ts7053_in_declaration_mode() {
     let source = r#"
 function foo() {}
@@ -180,20 +394,23 @@ c = d;
         .filter(|(code, _)| *code == 2322)
         .collect();
 
-    // tsc produces 0 errors here: Pick<A, 'x'> and Pick<B, 'x'> are both {x: string},
-    // so the assignments are structurally valid. The indexed access through the type
-    // parameter produces structurally equivalent results despite different type arguments.
-    // With NEEDS_STRUCTURAL_FALLBACK set for indexed access variance, the variance
-    // fast path correctly falls through to structural comparison which passes.
+    // tsc preserves the alias-application variance surface for `T<A>` and `T<B>`
+    // here, so the direct assignment fails even though the materialized `Pick`
+    // aliases are structurally compatible.
     assert_eq!(
         ts2322.len(),
-        0,
-        "Expected no TS2322 errors (matching tsc). Actual diagnostics: {diagnostics:#?}"
+        1,
+        "Expected one TS2322 error (matching tsc). Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322[0]
+            .1
+            .contains("Type 'T<A>' is not assignable to type 'T<B>'."),
+        "Expected alias-application TS2322. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
 #[test]
-#[ignore = "regression from remote: invariant recursive generic now emits 2 TS2322 instead of 0"]
 fn test_invariant_recursive_generic_error_elaboration_preserves_ts2322() {
     if !lib_files_available() {
         return;

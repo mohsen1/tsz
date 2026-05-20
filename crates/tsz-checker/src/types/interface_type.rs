@@ -11,11 +11,13 @@
 
 use crate::query_boundaries::common::is_template_literal_type;
 use crate::state::CheckerState;
-use rustc_hash::FxHashMap;
+use crate::types_domain::type_node_helpers::type_node_includes_explicit_undefined;
+use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+use tsz_solver::IndexSignature;
 use tsz_solver::TypeId;
 use tsz_solver::Visibility;
 
@@ -56,6 +58,23 @@ fn dedup_call_signatures_keep_last(sigs: &mut Vec<tsz_solver::CallSignature>) {
         i += 1;
         seen.get(&key_of(sig)).copied() == Some(idx)
     });
+}
+
+/// Merges an additional string-keyed index signature into an existing one by
+/// unioning their key patterns, enabling excess-property checking to accept any
+/// key that matches ANY of the declared template-literal patterns.
+pub(crate) fn merge_string_index_by_union(
+    existing: &mut IndexSignature,
+    extra: IndexSignature,
+    factory: tsz_solver::construction::TypeFactory<'_>,
+) {
+    if existing.key_type != extra.key_type {
+        existing.key_type = factory.union2(existing.key_type, extra.key_type);
+    }
+    if existing.value_type != extra.value_type {
+        existing.value_type = factory.union2(existing.value_type, extra.value_type);
+    }
+    existing.readonly &= extra.readonly;
 }
 
 impl<'a> CheckerState<'a> {
@@ -133,6 +152,41 @@ impl<'a> CheckerState<'a> {
         };
         let interface_symbol = self.ctx.binder.get_node_symbol(idx);
 
+        let own_type_param_names: FxHashSet<String> = interface
+            .type_parameters
+            .as_ref()
+            .map(|params| {
+                params
+                    .nodes
+                    .iter()
+                    .filter_map(|&param_idx| {
+                        self.ctx
+                            .arena
+                            .get(param_idx)
+                            .and_then(|param_node| self.ctx.arena.get_type_parameter(param_node))
+                            .and_then(|param| {
+                                self.ctx
+                                    .arena
+                                    .get(param.name)
+                                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                                    .map(|ident| ident.escaped_text.clone())
+                            })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut hidden_merged_type_params = Vec::new();
+        if let Some(sym_id) = interface_symbol {
+            for param in self.get_type_params_for_symbol(sym_id) {
+                let name = self.ctx.types.resolve_atom_ref(param.name).to_string();
+                if !own_type_param_names.contains(&name)
+                    && let Some(previous) = self.ctx.type_parameter_scope.remove(&name)
+                {
+                    hidden_merged_type_params.push((name, previous));
+                }
+            }
+        }
+
         let (_interface_type_params, interface_type_param_updates) =
             self.push_type_parameters(&interface.type_parameters);
 
@@ -140,6 +194,9 @@ impl<'a> CheckerState<'a> {
             getter: Option<TypeId>,
             setter: Option<TypeId>,
             declaration_order: u32,
+            is_symbol_named: bool,
+            is_string_named: bool,
+            single_quoted_name: bool,
         }
 
         let mut call_signatures: Vec<SolverCallSignature> = Vec::new();
@@ -159,6 +216,9 @@ impl<'a> CheckerState<'a> {
             optional: bool,
             readonly: bool,
             declaration_order: u32,
+            is_symbol_named: bool,
+            is_string_named: bool,
+            single_quoted_name: bool,
         }
         let mut method_overloads: Vec<(Atom, MethodOverloadEntry)> = Vec::new();
 
@@ -260,17 +320,34 @@ impl<'a> CheckerState<'a> {
                             .map(|name| self.ctx.types.intern_string(&name))
                     });
                     if let Some(name_atom) = name_atom {
+                        let is_symbol_named = self.is_symbol_property_name(sig.name);
+                        let (is_string_named, single_quoted_name) =
+                            self.ctx.arena.string_property_name_flags(sig.name);
                         let type_id = if sig.type_annotation.is_some() {
                             self.get_type_from_type_node_in_type_literal(sig.type_annotation)
                         } else {
                             TypeId::ANY
+                        };
+                        let write_type = if self.ctx.compiler_options.exact_optional_property_types
+                            && sig.question_token
+                            && sig.type_annotation.is_some()
+                            && !type_node_includes_explicit_undefined(
+                                self.ctx.arena,
+                                sig.type_annotation,
+                            ) {
+                            crate::query_boundaries::common::remove_undefined(
+                                self.ctx.types.as_type_database(),
+                                type_id,
+                            )
+                        } else {
+                            type_id
                         };
 
                         member_order += 1;
                         properties.push(PropertyInfo {
                             name: name_atom,
                             type_id,
-                            write_type: type_id,
+                            write_type,
                             optional: sig.question_token,
                             readonly: self.has_readonly_modifier(&sig.modifiers),
                             is_method: false,
@@ -278,9 +355,9 @@ impl<'a> CheckerState<'a> {
                             visibility: Visibility::Public,
                             parent_id: None,
                             declaration_order: member_order,
-                            is_string_named: false,
-                            is_symbol_named: false,
-                            single_quoted_name: false,
+                            is_string_named,
+                            is_symbol_named,
+                            single_quoted_name,
                         });
                     }
                 }
@@ -295,6 +372,9 @@ impl<'a> CheckerState<'a> {
                             .map(|name| self.ctx.types.intern_string(&name))
                     });
                     if let Some(name_atom) = name_atom {
+                        let is_symbol_named = self.is_symbol_property_name(sig.name);
+                        let (is_string_named, single_quoted_name) =
+                            self.ctx.arena.string_property_name_flags(sig.name);
                         let (type_params, type_param_updates) =
                             self.push_type_parameters(&sig.type_parameters);
                         let (params, this_type) =
@@ -351,6 +431,9 @@ impl<'a> CheckerState<'a> {
                                     optional,
                                     readonly,
                                     declaration_order: member_order,
+                                    is_symbol_named,
+                                    is_string_named,
+                                    single_quoted_name,
                                 },
                             ));
                         }
@@ -365,12 +448,18 @@ impl<'a> CheckerState<'a> {
                             .map(|name| self.ctx.types.intern_string(&name))
                     });
                     if let Some(name_atom) = name_atom {
+                        let is_symbol_named = self.is_symbol_property_name(accessor.name);
+                        let (is_string_named, single_quoted_name) =
+                            self.ctx.arena.string_property_name_flags(accessor.name);
                         member_order += 1;
                         let current_order = member_order;
                         let entry = accessors.entry(name_atom).or_insert(AccessorAggregate {
                             getter: None,
                             setter: None,
                             declaration_order: current_order,
+                            is_symbol_named,
+                            is_string_named,
+                            single_quoted_name,
                         });
 
                         if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
@@ -484,7 +573,12 @@ impl<'a> CheckerState<'a> {
                     if key_type == TypeId::NUMBER {
                         Self::merge_index_signature(&mut number_index, info);
                     } else {
-                        Self::merge_index_signature(&mut string_index, info);
+                        match string_index.as_mut() {
+                            None => string_index = Some(info),
+                            Some(existing) => {
+                                merge_string_index_by_union(existing, info, factory);
+                            }
+                        }
                     }
                 }
             }
@@ -536,9 +630,9 @@ impl<'a> CheckerState<'a> {
                 visibility: Visibility::Public,
                 parent_id: None,
                 declaration_order: entry.declaration_order,
-                is_string_named: false,
-                is_symbol_named: false,
-                single_quoted_name: false,
+                is_string_named: entry.is_string_named,
+                is_symbol_named: entry.is_symbol_named,
+                single_quoted_name: entry.single_quoted_name,
             });
         }
 
@@ -567,9 +661,9 @@ impl<'a> CheckerState<'a> {
                 visibility: Visibility::Public,
                 parent_id: None,
                 declaration_order: accessor.declaration_order,
-                is_string_named: false,
-                is_symbol_named: false,
-                single_quoted_name: false,
+                is_string_named: accessor.is_string_named,
+                is_symbol_named: accessor.is_symbol_named,
+                single_quoted_name: accessor.single_quoted_name,
             });
         }
 
@@ -599,6 +693,9 @@ impl<'a> CheckerState<'a> {
         };
 
         self.pop_type_parameters(interface_type_param_updates);
+        for (name, type_id) in hidden_merged_type_params {
+            self.ctx.type_parameter_scope.insert(name, type_id);
+        }
         self.merge_interface_heritage_types(std::slice::from_ref(&idx), result)
     }
 

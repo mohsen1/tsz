@@ -113,6 +113,20 @@ impl Project {
             .cloned()
             .collect();
 
+        // Pre-compute the set of files whose paths match the auto-import exclude
+        // patterns. Building the set once amortizes the glob-matching cost across
+        // all files in the loop, avoiding O(files × patterns) repeated work.
+        let excluded_file_set: FxHashSet<String> =
+            if self.auto_import_file_exclude_matchers.is_empty() {
+                FxHashSet::default()
+            } else {
+                all_files
+                    .iter()
+                    .filter(|f| self.auto_import_path_is_excluded(f))
+                    .cloned()
+                    .collect()
+            };
+
         let files_to_check = self.files_to_check_for_symbol(
             missing_name,
             from_file.file_name(),
@@ -164,6 +178,13 @@ impl Project {
                     )) {
                         output.push(candidate);
                     }
+                }
+
+                // Skip this file for regular import candidates if its path matches
+                // an auto-import exclude pattern. The exclusion set was precomputed
+                // once above to avoid re-running glob matching per file per symbol.
+                if excluded_file_set.contains(&file_name) {
+                    continue;
                 }
 
                 let module_specifiers = module_specifiers_cache
@@ -285,6 +306,21 @@ impl Project {
             .filter(|file_name| self.file_has_wildcard_reexport(file_name))
             .cloned()
             .collect();
+
+        // Pre-compute the set of files whose paths match the auto-import exclude
+        // patterns. This set is reused across all symbol iterations below, so
+        // glob-matching runs once per file rather than once per (symbol, file) pair.
+        let excluded_file_set: FxHashSet<String> =
+            if self.auto_import_file_exclude_matchers.is_empty() {
+                FxHashSet::default()
+            } else {
+                all_files
+                    .iter()
+                    .filter(|f| self.auto_import_path_is_excluded(f))
+                    .cloned()
+                    .collect()
+            };
+
         let mut supplemental_symbol_set = FxHashSet::default();
 
         // Get all symbols that match the prefix using the sorted symbol index
@@ -369,6 +405,13 @@ impl Project {
                     )) {
                         output.push(candidate);
                     }
+                }
+
+                // Skip this file for regular import candidates if its path matches
+                // an auto-import exclude pattern. The exclusion set is precomputed
+                // once per request to avoid re-running glob matching per (symbol, file).
+                if excluded_file_set.contains(&file_name) {
+                    continue;
                 }
 
                 let module_specifiers = module_specifiers_cache
@@ -466,73 +509,9 @@ impl Project {
     }
 
     fn file_has_wildcard_reexport(&self, file_name: &str) -> bool {
-        let Some(file) = self.files.get(file_name) else {
-            return false;
-        };
-        let arena = file.arena();
-        let Some(source_file) = arena.get_source_file_at(file.root()) else {
-            return false;
-        };
-
-        source_file.statements.nodes.iter().any(|&stmt_idx| {
-            let Some(stmt_node) = arena.get(stmt_idx) else {
-                return false;
-            };
-            if stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT {
-                return arena
-                    .get_export_assignment(stmt_node)
-                    .is_some_and(|assign| !assign.is_export_equals);
-            }
-            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
-                return false;
-            }
-            let Some(export) = arena.get_export_decl(stmt_node) else {
-                return false;
-            };
-            if export.is_default_export {
-                return true;
-            }
-            if export.module_specifier.is_none() {
-                return false;
-            }
-            if export.export_clause.is_none() {
-                return true;
-            }
-            if arena
-                .get_identifier_text(export.export_clause)
-                .is_some_and(|name| name == "default")
-            {
-                return true;
-            }
-
-            let Some(clause_node) = arena.get(export.export_clause) else {
-                return false;
-            };
-            if clause_node.kind == SyntaxKind::Identifier as u16
-                || clause_node.kind == SyntaxKind::StringLiteral as u16
-            {
-                return true;
-            }
-            if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
-                return false;
-            }
-            let Some(named) = arena.get_named_imports(clause_node) else {
-                return false;
-            };
-            named.elements.nodes.iter().any(|&spec_idx| {
-                let Some(spec) = arena.get_specifier_at(spec_idx) else {
-                    return false;
-                };
-                let export_ident = if spec.name.is_some() {
-                    spec.name
-                } else {
-                    spec.property_name
-                };
-                arena
-                    .get_identifier_text(export_ident)
-                    .is_some_and(|name| name == "default")
-            })
-        })
+        self.files
+            .get(file_name)
+            .is_some_and(|f| f.has_wildcard_reexport)
     }
 
     fn reexported_names_with_prefix(&self, file_name: &str, prefix: &str) -> Vec<String> {
@@ -708,6 +687,49 @@ impl Project {
         }
 
         module_specifier.split('/').next()
+    }
+
+    /// Returns `true` when `position` falls inside a `NamedImports` node —
+    /// i.e., the cursor is in the `{ … }` binding list of an `import` statement.
+    ///
+    /// TypeScript calls this the "import statement completion" context and uses
+    /// `SortText.LocationPriority` ("11") instead of `SortText.AutoImportSuggestions`
+    /// ("16") for candidates offered there.
+    pub(crate) fn is_in_named_import_bindings(file: &ProjectFile, position: Position) -> bool {
+        let arena = file.arena();
+        let source_text = file.source_text();
+        let Some(offset) = file.line_map().position_to_offset(position, source_text) else {
+            return false;
+        };
+
+        let mut node_idx = find_node_at_offset(arena, offset);
+        if node_idx.is_none() && offset > 0 {
+            node_idx = find_node_at_offset(arena, offset - 1);
+        }
+
+        // Walk up the parent chain until we hit a NAMED_IMPORTS node (found) or
+        // pass the statement boundary (IMPORT_DECLARATION / SOURCE_FILE).
+        // Bounded to avoid pathological cycles; import nesting is always shallow.
+        let mut current = node_idx;
+        for _ in 0..8 {
+            let Some(node) = arena.get(current) else {
+                break;
+            };
+            if node.kind == syntax_kind_ext::NAMED_IMPORTS {
+                return true;
+            }
+            if node.kind == syntax_kind_ext::IMPORT_DECLARATION
+                || node.kind == syntax_kind_ext::SOURCE_FILE
+            {
+                break;
+            }
+            let Some(parent) = arena.parent_of(current) else {
+                break;
+            };
+            current = parent;
+        }
+
+        false
     }
 
     fn imported_package_names(file: &ProjectFile) -> FxHashSet<String> {
@@ -961,6 +983,7 @@ impl Project {
         &self,
         candidate: &ImportCandidate,
         from_file: &str,
+        import_statement_completion: bool,
     ) -> CompletionItem {
         let detail = self.auto_import_detail(candidate);
         let documentation = self.auto_import_documentation(candidate);
@@ -968,7 +991,13 @@ impl Project {
 
         let mut item = CompletionItem::new(candidate.local_name.clone(), completion_kind)
             .with_detail(detail)
-            .with_sort_text(sort_priority::AUTO_IMPORT)
+            .with_sort_text(if import_statement_completion {
+                // Inside `import { | }`: TypeScript uses LocationPriority ("11") so
+                // these rank above regular-code auto-import suggestions ("16").
+                sort_priority::LOCATION_PRIORITY
+            } else {
+                sort_priority::AUTO_IMPORT
+            })
             .with_has_action()
             .with_source(candidate.module_specifier.clone())
             .with_source_display(candidate.module_specifier.clone())
@@ -2998,6 +3027,50 @@ export = ts;
     }
 
     #[test]
+    fn diagnostics_import_candidates_use_parent_package_subpath_for_nested_package_manifest() {
+        let mut project = Project::new();
+        project.set_file(
+            "/project/app.tsx".to_string(),
+            "const state = useMemo(() => 'Hello', []);".to_string(),
+        );
+        project.set_file(
+            "/project/node_modules/preact/package.json".to_string(),
+            r#"{ "name": "preact", "version": "10.3.4", "types": "src/index.d.ts" }"#.to_string(),
+        );
+        project.set_file(
+            "/project/node_modules/preact/hooks/package.json".to_string(),
+            r#"{ "name": "hooks", "version": "0.1.0", "types": "src/index.d.ts" }"#.to_string(),
+        );
+        project.set_file(
+            "/project/node_modules/preact/hooks/src/index.d.ts".to_string(),
+            "export declare function useMemo<T>(factory: () => T, inputs: ReadonlyArray<unknown> | undefined): T;\n".to_string(),
+        );
+
+        let diagnostics = vec![LspDiagnostic {
+            range: Range::new(Position::new(0, 14), Position::new(0, 21)),
+            message: "Cannot find name 'useMemo'.".to_string(),
+            code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+            severity: None,
+            source: None,
+            related_information: None,
+            reports_unnecessary: None,
+            reports_deprecated: None,
+        }];
+
+        let specs: Vec<String> = project
+            .get_import_candidates_for_diagnostics("/project/app.tsx", &diagnostics)
+            .into_iter()
+            .filter(|candidate| candidate.local_name == "useMemo")
+            .map(|candidate| candidate.module_specifier)
+            .collect();
+
+        assert!(
+            specs.iter().any(|specifier| specifier == "preact/hooks"),
+            "expected diagnostics auto-import candidate preact/hooks, got {specs:?}"
+        );
+    }
+
+    #[test]
     fn auto_import_candidates_include_direct_exported_class_declarations() {
         let mut project = Project::new();
         project.set_file(
@@ -3186,5 +3259,126 @@ export = ts;
             specs.iter().any(|specifier| specifier == "fs-extra"),
             "expected fs-extra re-export candidate, got {specs:?}"
         );
+    }
+
+    #[test]
+    fn has_wildcard_reexport_cached_on_project_file() {
+        use super::super::ProjectFile;
+        use super::super::core::compute_has_wildcard_reexport;
+
+        // Files without wildcard re-exports.
+        let plain = ProjectFile::new("/a.ts".to_string(), "export const x = 1;".to_string());
+        assert!(
+            !plain.has_wildcard_reexport,
+            "plain export should not be flagged as wildcard reexport"
+        );
+
+        let named_only =
+            ProjectFile::new("/b.ts".to_string(), "export { x } from './a';".to_string());
+        assert!(
+            !named_only.has_wildcard_reexport,
+            "named-only re-export should not be flagged"
+        );
+
+        // Files with wildcard re-exports.
+        let star = ProjectFile::new("/c.ts".to_string(), "export * from './a';".to_string());
+        assert!(star.has_wildcard_reexport, "export * should be flagged");
+
+        let default_reexport = ProjectFile::new(
+            "/d.ts".to_string(),
+            "export { default } from './a';".to_string(),
+        );
+        assert!(
+            default_reexport.has_wildcard_reexport,
+            "export {{ default }} re-export should be flagged"
+        );
+
+        // Compute_has_wildcard_reexport agrees with the cached field (both code paths exercise).
+        for (file, expected) in [
+            (&plain, false),
+            (&named_only, false),
+            (&star, true),
+            (&default_reexport, true),
+        ] {
+            let computed = compute_has_wildcard_reexport(file.arena(), file.root());
+            assert_eq!(
+                computed, expected,
+                "compute_has_wildcard_reexport disagrees with expected for {:?}",
+                file.file_name
+            );
+        }
+    }
+
+    #[test]
+    fn has_wildcard_reexport_cache_updates_with_project_file_source_changes() {
+        use super::super::ProjectFile;
+
+        let mut file = ProjectFile::new(
+            "/barrel.ts".to_string(),
+            "export { x } from './a';".to_string(),
+        );
+        assert!(
+            !file.has_wildcard_reexport,
+            "named-only re-export should start with cached flag off"
+        );
+
+        file.update_source("export * from './a';".to_string());
+        assert!(
+            file.has_wildcard_reexport,
+            "full source update adding export * should refresh cached flag"
+        );
+
+        file.update_source("export { default } from './a';".to_string());
+        assert!(
+            file.has_wildcard_reexport,
+            "full source update adding default re-export should keep cached flag on"
+        );
+
+        file.update_source("export { x } from './a';".to_string());
+        assert!(
+            !file.has_wildcard_reexport,
+            "full source update removing wildcard/default re-export should refresh cached flag off"
+        );
+    }
+
+    #[test]
+    fn file_exclude_patterns_applied_once_per_request_not_per_symbol() {
+        // This test verifies that when multiple symbols from the same excluded file
+        // are searched, none of them appear as candidates — proving the precomputed
+        // excluded_file_set gates correctly across symbol iterations.
+        let mut project = Project::new();
+        project.set_auto_import_file_exclude_patterns(vec!["**/excluded/**".to_string()]);
+        project.set_file(
+            "/tsconfig.json".to_string(),
+            r#"{"compilerOptions":{"module":"commonjs"}}"#.to_string(),
+        );
+        project.set_file(
+            "/node_modules/excluded/index.d.ts".to_string(),
+            "export declare function alpha(): void;\nexport declare function beta(): void;\nexport declare function gamma(): void;".to_string(),
+        );
+        project.set_file(
+            "/node_modules/included/index.d.ts".to_string(),
+            "export declare function alpha(): void;".to_string(),
+        );
+        project.set_file("/src/index.ts".to_string(), "alpha".to_string());
+
+        let candidates = project.get_import_candidates_for_prefix("/src/index.ts", "al");
+
+        // The `included` package's `alpha` is reachable.
+        assert!(
+            candidates
+                .iter()
+                .any(|c| c.local_name == "alpha" && c.module_specifier.contains("included")),
+            "expected alpha from included package, got {candidates:?}"
+        );
+
+        // None of the excluded package's symbols appear.
+        for excluded_fn in ["alpha", "beta", "gamma"] {
+            assert!(
+                !candidates.iter().any(|c| c.local_name == excluded_fn
+                    && c.module_specifier.contains("excluded")),
+                "expected {excluded_fn} from excluded package to be hidden, got {candidates:?}"
+            );
+        }
     }
 }

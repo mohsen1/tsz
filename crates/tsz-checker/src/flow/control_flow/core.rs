@@ -13,11 +13,86 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::node::{CallExprData, NodeArena};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{GuardSense, ParamInfo, TupleElement, TypeId, TypePredicate};
+use tsz_solver::computation::TypeEnvironment;
+use tsz_solver::narrowing::{GuardSense, NarrowingCache, NarrowingContext};
+use tsz_solver::{ParamInfo, TupleElement, TypeId, TypePredicate};
 
 type FlowCache = FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>;
 type ReferenceMatchCache = RefCell<FxHashMap<(u32, u32), bool>>;
 type ReferenceSymbolCache = RefCell<FxHashMap<u32, Option<SymbolId>>>;
+
+#[must_use]
+pub(crate) fn flow_cache_entries(cache: &FlowCache) -> usize {
+    cache.len()
+}
+
+#[must_use]
+pub(crate) fn flow_cache_estimated_size_bytes(cache: &FlowCache) -> usize {
+    cache.capacity()
+        * (std::mem::size_of::<(FlowNodeId, SymbolId, TypeId)>()
+            + std::mem::size_of::<TypeId>()
+            + 8)
+}
+
+#[must_use]
+pub(crate) fn reference_match_cache_entries(cache: &ReferenceMatchCache) -> usize {
+    cache.borrow().len()
+}
+
+#[must_use]
+pub(crate) fn reference_match_cache_estimated_size_bytes(cache: &ReferenceMatchCache) -> usize {
+    let cache = cache.borrow();
+    cache.capacity() * (std::mem::size_of::<(u32, u32)>() + std::mem::size_of::<bool>() + 8)
+}
+
+#[must_use]
+pub(crate) fn reference_symbol_cache_entries(cache: &ReferenceSymbolCache) -> usize {
+    cache.borrow().len()
+}
+
+#[must_use]
+pub(crate) fn reference_symbol_cache_estimated_size_bytes(cache: &ReferenceSymbolCache) -> usize {
+    let cache = cache.borrow();
+    cache.capacity() * (std::mem::size_of::<u32>() + std::mem::size_of::<Option<SymbolId>>() + 8)
+}
+
+#[must_use]
+pub(crate) fn switch_reference_cache_entries(cache: &ReferenceMatchCache) -> usize {
+    reference_match_cache_entries(cache)
+}
+
+#[must_use]
+pub(crate) fn switch_reference_cache_estimated_size_bytes(cache: &ReferenceMatchCache) -> usize {
+    reference_match_cache_estimated_size_bytes(cache)
+}
+
+#[must_use]
+pub(crate) fn numeric_atom_cache_entries(cache: &RefCell<FxHashMap<u64, Atom>>) -> usize {
+    cache.borrow().len()
+}
+
+#[must_use]
+pub(crate) fn numeric_atom_cache_estimated_size_bytes(
+    cache: &RefCell<FxHashMap<u64, Atom>>,
+) -> usize {
+    let cache = cache.borrow();
+    cache.capacity() * (std::mem::size_of::<u64>() + std::mem::size_of::<Atom>() + 8)
+}
+
+#[must_use]
+pub(crate) fn shared_numeric_atom_cache_entries(
+    cache: Option<&RefCell<FxHashMap<u64, Atom>>>,
+) -> usize {
+    cache.map(numeric_atom_cache_entries).unwrap_or(0)
+}
+
+#[must_use]
+pub(crate) const fn shared_numeric_atom_cache_estimated_size_bytes(
+    _cache: Option<&RefCell<FxHashMap<u64, Atom>>>,
+) -> usize {
+    0
+}
+
 /// Instantiated type predicates from generic call resolutions, keyed by call node index.
 #[derive(Debug, Default)]
 pub struct CallPredicateMap {
@@ -122,6 +197,20 @@ mod tests {
     use super::{
         FLOW_STEP_BUDGET_MAX, FLOW_STEP_BUDGET_MIN, FLOW_STEP_BUDGET_SCALE, flow_step_budget,
     };
+    use super::{
+        FlowCache, ReferenceMatchCache, ReferenceSymbolCache, flow_cache_entries,
+        flow_cache_estimated_size_bytes, numeric_atom_cache_entries,
+        numeric_atom_cache_estimated_size_bytes, reference_match_cache_entries,
+        reference_match_cache_estimated_size_bytes, reference_symbol_cache_entries,
+        reference_symbol_cache_estimated_size_bytes, shared_numeric_atom_cache_entries,
+        shared_numeric_atom_cache_estimated_size_bytes, switch_reference_cache_entries,
+        switch_reference_cache_estimated_size_bytes,
+    };
+    use rustc_hash::FxHashMap;
+    use std::cell::RefCell;
+    use tsz_binder::{FlowNodeId, SymbolId};
+    use tsz_common::interner::Atom;
+    use tsz_solver::TypeId;
 
     #[test]
     fn flow_step_budget_has_minimum_floor() {
@@ -150,6 +239,107 @@ mod tests {
     fn flow_step_budget_caps_large_contention_graphs_earlier() {
         // Keep pathological full-suite flow walks bounded under worker contention.
         assert_eq!(flow_step_budget(8_000), FLOW_STEP_BUDGET_MAX);
+    }
+
+    #[test]
+    fn flow_cache_statistics_report_entries_and_size() {
+        let mut cache = FlowCache::default();
+        assert_eq!(flow_cache_entries(&cache), 0);
+        assert_eq!(flow_cache_estimated_size_bytes(&cache), 0);
+
+        cache.insert((FlowNodeId(1), SymbolId(2), TypeId(3)), TypeId(4));
+        cache.insert((FlowNodeId(5), SymbolId(6), TypeId(7)), TypeId(8));
+
+        assert_eq!(flow_cache_entries(&cache), 2);
+        assert!(
+            flow_cache_estimated_size_bytes(&cache)
+                >= 2 * (std::mem::size_of::<(FlowNodeId, SymbolId, TypeId)>()
+                    + std::mem::size_of::<TypeId>())
+        );
+    }
+
+    #[test]
+    fn reference_match_cache_statistics_report_entries_and_size() {
+        let cache = ReferenceMatchCache::default();
+        assert_eq!(reference_match_cache_entries(&cache), 0);
+        assert_eq!(reference_match_cache_estimated_size_bytes(&cache), 0);
+
+        cache.borrow_mut().insert((1, 2), true);
+        cache.borrow_mut().insert((3, 4), false);
+
+        assert_eq!(reference_match_cache_entries(&cache), 2);
+        assert!(
+            reference_match_cache_estimated_size_bytes(&cache)
+                >= 2 * (std::mem::size_of::<(u32, u32)>() + std::mem::size_of::<bool>())
+        );
+    }
+
+    #[test]
+    fn reference_symbol_cache_statistics_report_entries_and_size() {
+        let cache = ReferenceSymbolCache::default();
+        assert_eq!(reference_symbol_cache_entries(&cache), 0);
+        assert_eq!(reference_symbol_cache_estimated_size_bytes(&cache), 0);
+
+        cache.borrow_mut().insert(1, Some(SymbolId(2)));
+        cache.borrow_mut().insert(3, None);
+
+        assert_eq!(reference_symbol_cache_entries(&cache), 2);
+        assert!(
+            reference_symbol_cache_estimated_size_bytes(&cache)
+                >= 2 * (std::mem::size_of::<u32>() + std::mem::size_of::<Option<SymbolId>>())
+        );
+    }
+
+    #[test]
+    fn switch_reference_cache_statistics_report_entries_and_size() {
+        let cache = ReferenceMatchCache::default();
+        assert_eq!(switch_reference_cache_entries(&cache), 0);
+        assert_eq!(switch_reference_cache_estimated_size_bytes(&cache), 0);
+
+        cache.borrow_mut().insert((1, 2), true);
+        cache.borrow_mut().insert((3, 4), false);
+
+        assert_eq!(switch_reference_cache_entries(&cache), 2);
+        assert!(
+            switch_reference_cache_estimated_size_bytes(&cache)
+                >= 2 * (std::mem::size_of::<(u32, u32)>() + std::mem::size_of::<bool>())
+        );
+    }
+
+    #[test]
+    fn numeric_atom_cache_statistics_report_entries_and_size() {
+        let cache = RefCell::new(FxHashMap::default());
+        assert_eq!(numeric_atom_cache_entries(&cache), 0);
+        assert_eq!(numeric_atom_cache_estimated_size_bytes(&cache), 0);
+
+        cache.borrow_mut().insert(1, Atom(2));
+        cache.borrow_mut().insert(3, Atom(4));
+
+        assert_eq!(numeric_atom_cache_entries(&cache), 2);
+        assert!(
+            numeric_atom_cache_estimated_size_bytes(&cache)
+                >= 2 * (std::mem::size_of::<u64>() + std::mem::size_of::<Atom>())
+        );
+    }
+
+    #[test]
+    fn shared_numeric_atom_cache_statistics_report_borrowed_entries_and_zero_owned_size() {
+        let cache = RefCell::new(FxHashMap::default());
+        assert_eq!(shared_numeric_atom_cache_entries(Some(&cache)), 0);
+        assert_eq!(
+            shared_numeric_atom_cache_estimated_size_bytes(Some(&cache)),
+            0
+        );
+        assert_eq!(shared_numeric_atom_cache_entries(None), 0);
+        assert_eq!(shared_numeric_atom_cache_estimated_size_bytes(None), 0);
+
+        cache.borrow_mut().insert(1, Atom(2));
+
+        assert_eq!(shared_numeric_atom_cache_entries(Some(&cache)), 1);
+        assert_eq!(
+            shared_numeric_atom_cache_estimated_size_bytes(Some(&cache)),
+            0
+        );
     }
 }
 
@@ -213,12 +403,15 @@ pub struct FlowAnalyzer<'a> {
     pub(crate) arena: &'a NodeArena,
     pub(crate) binder: &'a BinderState,
     pub(crate) interner: &'a dyn QueryDatabase,
+    /// Optional checker context for creating real `DefId`-backed lazy refs
+    /// when the flow snapshot has not seen a symbol yet.
+    pub(crate) checker_context: Option<&'a crate::context::CheckerContext<'a>>,
     pub(crate) node_types: Option<&'a crate::context::NodeTypeCache>,
     pub(crate) flow_graph: Option<FlowGraph<'a>>,
     /// Optional cache for flow analysis results to avoid redundant graph traversals
     pub(crate) flow_cache: Option<&'a RefCell<FlowCache>>,
     /// Optional `TypeEnvironment` for resolving Lazy types during narrowing
-    pub(crate) type_environment: Option<&'a RefCell<tsz_solver::TypeEnvironment>>,
+    pub(crate) type_environment: Option<&'a RefCell<TypeEnvironment>>,
     /// Cache for switch-reference relevance checks.
     /// Key: (`switch_expr_node`, `reference_node`) -> whether switch can narrow reference.
     switch_reference_cache: RefCell<FxHashMap<(u32, u32), bool>>,
@@ -241,7 +434,7 @@ pub struct FlowAnalyzer<'a> {
     /// Optional shared numeric atom cache.
     pub(crate) shared_numeric_atom_cache: Option<&'a RefCell<FxHashMap<u64, Atom>>>,
     /// Optional shared narrowing cache.
-    pub(crate) narrowing_cache: Option<&'a tsz_solver::NarrowingCache>,
+    pub(crate) narrowing_cache: Option<&'a NarrowingCache>,
     /// Instantiated type predicates from generic call resolutions.
     /// Keyed by call expression node index.
     pub(crate) call_type_predicates: Option<&'a CallPredicateMap>,
@@ -289,6 +482,9 @@ impl<'a> FlowAnalyzer<'a> {
             if seen.insert(ty) {
                 simplified.push(ty);
             }
+        }
+        if simplified.contains(&TypeId::UNKNOWN) {
+            return vec![TypeId::UNKNOWN];
         }
         simplified
     }
@@ -441,6 +637,7 @@ impl<'a> FlowAnalyzer<'a> {
             arena,
             binder,
             interner,
+            checker_context: None,
             node_types: None,
             flow_graph,
             flow_cache: None,
@@ -475,6 +672,7 @@ impl<'a> FlowAnalyzer<'a> {
             arena,
             binder,
             interner,
+            checker_context: None,
             node_types: Some(node_types),
             flow_graph,
             flow_cache: None,
@@ -520,7 +718,7 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     /// Set a shared narrowing cache.
-    pub const fn with_narrowing_cache(mut self, cache: &'a tsz_solver::NarrowingCache) -> Self {
+    pub const fn with_narrowing_cache(mut self, cache: &'a NarrowingCache) -> Self {
         self.narrowing_cache = Some(cache);
         self
     }
@@ -602,11 +800,11 @@ impl<'a> FlowAnalyzer<'a> {
 
     /// Create a `NarrowingContext`, sharing the pre-allocated cache when available.
     /// This avoids 7 `FxHashMap` allocations per narrowing operation on the hot path.
-    pub(super) fn make_narrowing_context(&self) -> tsz_solver::NarrowingContext<'_> {
+    pub(super) fn make_narrowing_context(&self) -> NarrowingContext<'_> {
         if let Some(cache) = self.narrowing_cache {
-            tsz_solver::NarrowingContext::with_cache(self.interner, cache)
+            NarrowingContext::with_cache(self.interner, cache)
         } else {
-            tsz_solver::NarrowingContext::new(self.interner)
+            NarrowingContext::new(self.interner)
         }
     }
 
@@ -650,11 +848,17 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     /// Set the `TypeEnvironment` for resolving Lazy types during narrowing.
-    pub const fn with_type_environment(
-        mut self,
-        type_env: &'a RefCell<tsz_solver::TypeEnvironment>,
-    ) -> Self {
+    pub const fn with_type_environment(mut self, type_env: &'a RefCell<TypeEnvironment>) -> Self {
         self.type_environment = Some(type_env);
+        self
+    }
+
+    /// Set the owning checker context for stable `DefId` fallback resolution.
+    pub const fn with_checker_context(
+        mut self,
+        ctx: &'a crate::context::CheckerContext<'a>,
+    ) -> Self {
+        self.checker_context = Some(ctx);
         self
     }
 
@@ -1221,6 +1425,8 @@ impl<'a> FlowAnalyzer<'a> {
                 };
             let skip_cache_for_explicit_unknown_switch = initial_type == TypeId::UNKNOWN
                 && self.flow_chain_contains_switch_clause(current_flow);
+            let skip_cache_for_exhaustive_unknown_typeof = initial_type == TypeId::UNKNOWN
+                && self.flow_has_exhaustive_typeof_exclusions(current_flow, reference);
 
             // Use cache if: 1) not a switch clause, AND
             // 2) either initial type is concrete OR this is a loop label.
@@ -1230,6 +1436,7 @@ impl<'a> FlowAnalyzer<'a> {
             if !is_switch_clause
                 && (!skip_cache_for_control_flow_typed_any || is_loop_label_node)
                 && !skip_cache_for_explicit_unknown_switch
+                && !skip_cache_for_exhaustive_unknown_typeof
                 && (!initial_has_type_params || is_loop_label_node)
                 && let Some(cache) = self.flow_cache
             {
@@ -1446,14 +1653,20 @@ impl<'a> FlowAnalyzer<'a> {
                     (current_type, FlowNodeId::NONE)
                 };
 
-                let is_true_branch = flow.has_any_flags(flow_flags::TRUE_CONDITION);
-                self.narrow_type_by_condition(
-                    pre_type,
-                    flow.node,
-                    reference,
-                    is_true_branch,
-                    antecedent_id,
-                )
+                if initial_type == TypeId::UNKNOWN
+                    && self.flow_has_exhaustive_typeof_exclusions(current_flow, reference)
+                {
+                    query::empty_object_type(self.interner)
+                } else {
+                    let is_true_branch = flow.has_any_flags(flow_flags::TRUE_CONDITION);
+                    self.narrow_type_by_condition(
+                        pre_type,
+                        flow.node,
+                        reference,
+                        is_true_branch,
+                        antecedent_id,
+                    )
+                }
             } else if flow.has_any_flags(flow_flags::SWITCH_CLAUSE) {
                 // Defer if the pre-switch antecedent hasn't been computed yet.
                 // Without this, switch clause narrowing uses the stale current_type
@@ -2053,16 +2266,22 @@ impl<'a> FlowAnalyzer<'a> {
                 };
                 let ant_types = self.simplify_flow_merge_types(ant_types);
 
-                match ant_types.len() {
-                    0 => result_type,
-                    1 => ant_types[0],
-                    _ if initial_type == TypeId::ANY
-                        && !control_flow_typed_any_symbol
-                        && ant_types.contains(&TypeId::ANY) =>
-                    {
-                        TypeId::ANY
+                if initial_type == TypeId::UNKNOWN
+                    && self.flow_has_exhaustive_typeof_exclusions(current_flow, reference)
+                {
+                    query::empty_object_type(self.interner)
+                } else {
+                    match ant_types.len() {
+                        0 => result_type,
+                        1 => ant_types[0],
+                        _ if initial_type == TypeId::ANY
+                            && !control_flow_typed_any_symbol
+                            && ant_types.contains(&TypeId::ANY) =>
+                        {
+                            TypeId::ANY
+                        }
+                        _ => self.interner.union_preserve_members(ant_types),
                     }
-                    _ => self.interner.union_preserve_members(ant_types),
                 }
             } else {
                 result_type
@@ -2081,6 +2300,8 @@ impl<'a> FlowAnalyzer<'a> {
                     || flow.has_any_flags(flow_flags::LOOP_LABEL))
                 && !(initial_type == TypeId::UNKNOWN
                     && self.flow_chain_contains_switch_clause(current_flow))
+                && !(initial_type == TypeId::UNKNOWN
+                    && self.flow_has_exhaustive_typeof_exclusions(current_flow, reference))
             {
                 let final_has_type_params = self.contains_type_parameters_cached(final_type);
 
@@ -2251,11 +2472,11 @@ impl<'a> FlowAnalyzer<'a> {
             self.narrow_by_switch_case_clause(
                 base_type,
                 switch_data.expression,
-                switch_data.case_block,
                 clause_idx,
                 clause.expression,
                 reference,
                 &narrowing,
+                flow.antecedent.len() > 1,
             )
         }
     }
@@ -2353,25 +2574,37 @@ impl<'a> FlowAnalyzer<'a> {
         let Some(&callee_type) = node_types.get(&call.expression.0) else {
             return pre_type;
         };
-        let Some(signature) = self.predicate_signature_for_type(callee_type) else {
-            return pre_type;
+
+        // Cache holds solver-instantiated predicates (generic T → concrete type arg).
+        // Raw callee type carries the uninstantiated signature; cache must win when present.
+        let (assertion_predicate, assertion_params) = if let Some(predicates) =
+            self.call_type_predicates
+            && let Some((pred, params)) = predicates.get(&flow.node.0)
+            && pred.asserts
+        {
+            (*pred, params.clone())
+        } else {
+            let Some(sig) = self.predicate_signature_for_type(callee_type) else {
+                return pre_type;
+            };
+            if !sig.predicate.asserts {
+                return pre_type;
+            }
+            (sig.predicate, sig.params)
         };
-        if !signature.predicate.asserts {
-            return pre_type;
-        }
 
         let Some(predicate_target) =
-            self.predicate_target_expression(call, &signature.predicate, &signature.params)
+            self.predicate_target_expression(call, &assertion_predicate, &assertion_params)
         else {
             return pre_type;
         };
 
         // For generic assertion functions like `assertEqual<T>(value: any, type: T): asserts value is T`,
-        // the predicate's type_id is the unresolved type parameter T. Resolve it by matching against
-        // the call's actual argument types.
+        // the predicate's type_id may still be an unresolved type parameter T. Resolve it by
+        // matching against the call's actual argument types.
         let resolved_predicate = self.resolve_generic_predicate(
-            &signature.predicate,
-            &signature.params,
+            &assertion_predicate,
+            &assertion_params,
             call,
             callee_type,
             node_types,

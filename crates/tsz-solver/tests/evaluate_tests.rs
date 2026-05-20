@@ -1,7 +1,31 @@
 use super::*;
-use crate::TypeInterner;
+use crate::construction::TypeInterner;
 use crate::def::DefId;
-use crate::{SubtypeChecker, TypeSubstitution, instantiate_type};
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::relations::subtype::SubtypeChecker;
+
+#[test]
+fn evaluator_cache_statistics_report_entries_and_size() {
+    let interner = TypeInterner::new();
+    let mut evaluator = TypeEvaluator::new(&interner);
+
+    let empty = evaluator.cache_statistics();
+    assert_eq!(empty.conditional_subtype_entries, 0);
+    assert_eq!(empty.contains_infer_entries, 0);
+    assert_eq!(empty.estimated_size_bytes(), 0);
+
+    evaluator.cache_conditional_subtype(TypeId::STRING, TypeId::UNKNOWN, true);
+    evaluator.cache_conditional_subtype(TypeId::NUMBER, TypeId::STRING, false);
+    evaluator.cache_contains_infer(TypeId::BOOLEAN, false);
+
+    let populated = evaluator.cache_statistics();
+    assert_eq!(populated.conditional_subtype_entries, 2);
+    assert_eq!(populated.contains_infer_entries, 1);
+    assert!(
+        populated.estimated_size_bytes() > empty.estimated_size_bytes(),
+        "populated evaluator caches should report nonzero estimated residency"
+    );
+}
 
 #[test]
 fn test_conditional_true_branch() {
@@ -780,6 +804,94 @@ fn test_conditional_infer_array_element_with_constraint() {
 }
 
 #[test]
+fn test_conditional_infer_array_element_with_object_constraint() {
+    let interner = TypeInterner::new();
+
+    let t_name = interner.intern_string("T");
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let infer_name = interner.intern_string("R");
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: infer_name,
+        constraint: Some(TypeId::OBJECT),
+        default: None,
+        is_const: false,
+    }));
+
+    // T extends (infer R extends object)[] ? R : never, with T = { name: string }[].
+    let extends_array = interner.array(infer_r);
+    let cond = ConditionalType {
+        check_type: t_param,
+        extends_type: extends_array,
+        true_type: infer_r,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    };
+
+    let cond_type = interner.conditional(cond);
+    let object_member = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("name"),
+        TypeId::STRING,
+    )]);
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, interner.array(object_member));
+
+    let instantiated = instantiate_type(&interner, cond_type, &subst);
+    let result = evaluate_type(&interner, instantiated);
+
+    assert_eq!(result, object_member);
+}
+
+#[test]
+fn test_conditional_infer_array_element_rejects_non_array_application() {
+    let interner = TypeInterner::new();
+
+    let t_name = interner.intern_string("T");
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let infer_name = interner.intern_string("R");
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: infer_name,
+        constraint: Some(TypeId::OBJECT),
+        default: None,
+        is_const: false,
+    }));
+
+    let extends_array = interner.array(infer_r);
+    let cond = ConditionalType {
+        check_type: t_param,
+        extends_type: extends_array,
+        true_type: infer_r,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    };
+
+    let cond_type = interner.conditional(cond);
+    let object_member = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("name"),
+        TypeId::STRING,
+    )]);
+    let non_array_application = interner.application(TypeId::OBJECT, vec![object_member]);
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, non_array_application);
+
+    let instantiated = instantiate_type(&interner, cond_type, &subst);
+    let result = evaluate_type(&interner, instantiated);
+
+    assert_eq!(result, TypeId::NEVER);
+}
+
+#[test]
 fn test_conditional_infer_array_element_non_distributive() {
     let interner = TypeInterner::new();
 
@@ -983,9 +1095,7 @@ fn test_conditional_infer_object_property_with_constraint() {
     let instantiated = instantiate_type(&interner, cond_type, &subst);
     let result = evaluate_type(&interner, instantiated);
 
-    let expected = interner.union(vec![TypeId::STRING, TypeId::UNDEFINED]);
-
-    assert_eq!(result, expected);
+    assert_eq!(result, TypeId::STRING);
 }
 
 #[test]
@@ -3359,6 +3469,7 @@ fn test_conditional_infer_template_literal_from_string_input() {
     }));
 
     // T extends `${infer R}` ? R : never, with T = string.
+    // tsc: primitive `string` does NOT extend a template literal pattern → never.
     let extends_template = interner.template_literal(vec![TemplateSpan::Type(infer_r)]);
     let cond = ConditionalType {
         check_type: t_param,
@@ -3375,7 +3486,7 @@ fn test_conditional_infer_template_literal_from_string_input() {
     let instantiated = instantiate_type(&interner, cond_type, &subst);
     let result = evaluate_type(&interner, instantiated);
 
-    assert_eq!(result, TypeId::STRING);
+    assert_eq!(result, TypeId::NEVER);
 }
 
 #[test]
@@ -3572,6 +3683,155 @@ fn test_conditional_infer_template_literal_with_constrained_infer_distributive()
         interner.literal_string("2"),
     ]);
     assert_eq!(result, expected);
+}
+
+/// Primitive string does NOT match a template literal infer pattern.
+///
+/// tsc rule: when `check_type` is the primitive string, the false branch is taken.
+/// Only concrete string literals and template literal source types can match.
+#[test]
+fn test_conditional_primitive_string_does_not_match_template_infer_pattern() {
+    let interner = TypeInterner::new();
+
+    // Infer variable name R (test: rule holds regardless of name choice)
+    let infer_name_r = interner.intern_string("R");
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: infer_name_r,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    // `string extends \`${infer R}\` ? true : false` — non-distributive direct check
+    let extends_template = interner.template_literal(vec![TemplateSpan::Type(infer_r)]);
+    let cond = ConditionalType {
+        check_type: TypeId::STRING,
+        extends_type: extends_template,
+        true_type: TypeId::BOOLEAN_TRUE,
+        false_type: TypeId::BOOLEAN_FALSE,
+        is_distributive: false,
+    };
+
+    let cond_type = interner.conditional(cond);
+    let result = evaluate_type(&interner, cond_type);
+
+    assert_eq!(
+        result,
+        TypeId::BOOLEAN_FALSE,
+        "primitive string should NOT match template literal pattern"
+    );
+}
+
+/// Same rule with infer var named X — proves the rule is structural, not name-dependent.
+#[test]
+fn test_conditional_primitive_string_does_not_match_template_infer_pattern_any_name() {
+    let interner = TypeInterner::new();
+
+    let infer_name_x = interner.intern_string("X");
+    let infer_x = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: infer_name_x,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let extends_template = interner.template_literal(vec![TemplateSpan::Type(infer_x)]);
+    let cond = ConditionalType {
+        check_type: TypeId::STRING,
+        extends_type: extends_template,
+        true_type: TypeId::BOOLEAN_TRUE,
+        false_type: TypeId::BOOLEAN_FALSE,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+    assert_eq!(result, TypeId::BOOLEAN_FALSE);
+}
+
+/// Primitive string against a template with a text prefix — regression guard.
+/// Verifies that primitive string stays false for prefixed templates (pre-existing behavior).
+#[test]
+fn test_conditional_primitive_string_prefixed_template_stays_false() {
+    let interner = TypeInterner::new();
+
+    let infer_name = interner.intern_string("R");
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: infer_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let prefix = interner.intern_string("prefix_");
+    let extends_template = interner.template_literal(vec![
+        TemplateSpan::Text(prefix),
+        TemplateSpan::Type(infer_r),
+    ]);
+    let cond = ConditionalType {
+        check_type: TypeId::STRING,
+        extends_type: extends_template,
+        true_type: TypeId::BOOLEAN_TRUE,
+        false_type: TypeId::BOOLEAN_FALSE,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+    assert_eq!(result, TypeId::BOOLEAN_FALSE);
+}
+
+/// String literal "hello" against a template infer pattern — should still yield "hello".
+/// String literals continue to match template patterns correctly.
+#[test]
+fn test_conditional_string_literal_still_matches_template_infer_pattern() {
+    let interner = TypeInterner::new();
+
+    let infer_name = interner.intern_string("R");
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: infer_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let extends_template = interner.template_literal(vec![TemplateSpan::Type(infer_r)]);
+    let cond = ConditionalType {
+        check_type: interner.literal_string("hello"),
+        extends_type: extends_template,
+        true_type: infer_r,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+    assert_eq!(result, interner.literal_string("hello"));
+}
+
+/// Template literal source (string-filled) against a template infer pattern — should yield string.
+/// Template literal source types continue to match template patterns correctly.
+#[test]
+fn test_conditional_template_literal_source_still_matches_template_infer_pattern() {
+    let interner = TypeInterner::new();
+
+    let infer_name = interner.intern_string("R");
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: infer_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let source_template = interner.template_literal(vec![TemplateSpan::Type(TypeId::STRING)]);
+    let extends_template = interner.template_literal(vec![TemplateSpan::Type(infer_r)]);
+    let cond = ConditionalType {
+        check_type: source_template,
+        extends_type: extends_template,
+        true_type: infer_r,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+    assert_eq!(result, TypeId::STRING);
 }
 
 #[test]
@@ -3817,9 +4077,7 @@ fn test_conditional_infer_nested_object_property_with_constraint() {
     let instantiated = instantiate_type(&interner, cond_type, &subst);
     let result = evaluate_type(&interner, instantiated);
 
-    let expected = interner.union(vec![TypeId::STRING, TypeId::UNDEFINED]);
-
-    assert_eq!(result, expected);
+    assert_eq!(result, TypeId::STRING);
 }
 
 #[test]
@@ -9660,8 +9918,8 @@ fn test_index_access_object_with_number_index_signature_no_unchecked() {
 
 #[test]
 fn test_index_access_resolves_ref() {
-    use crate::TypeEnvironment;
     use crate::def::DefId;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
     let mut env = TypeEnvironment::new();
@@ -10607,8 +10865,8 @@ fn test_keyof_type_param_with_type_param_constraint_not_collapsed() {
 
 #[test]
 fn test_keyof_resolves_ref() {
-    use crate::TypeEnvironment;
     use crate::def::DefId;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
     let mut env = TypeEnvironment::new();
@@ -11115,7 +11373,7 @@ fn test_keyof_object_keyword() {
 
 #[test]
 fn test_object_trifecta_keyof_object_interface() {
-    use crate::TypeEnvironment;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
     let mut env = TypeEnvironment::new();
@@ -11629,7 +11887,10 @@ fn test_keyof_both_index_signatures() {
 
 #[test]
 fn test_keyof_numeric_literal_keys() {
-    // keyof { 0: string, 1: number } = "0" | "1"
+    // keyof { 0: string, 1: number } = 0 | 1 (numeric literals, matching tsc).
+    // `PropertyInfo::new` defaults to `is_string_named: false`, which models
+    // properties declared with a bare numeric name (`{ 0: ... }` rather than
+    // `{ "0": ... }`).
     let interner = TypeInterner::new();
 
     let obj = interner.object(vec![
@@ -11638,8 +11899,8 @@ fn test_keyof_numeric_literal_keys() {
     ]);
 
     let result = evaluate_keyof(&interner, obj);
-    let key_0 = interner.literal_string("0");
-    let key_1 = interner.literal_string("1");
+    let key_0 = interner.literal_number(0.0);
+    let key_1 = interner.literal_number(1.0);
     let expected = interner.union(vec![key_0, key_1]);
     assert_eq!(result, expected);
 }
@@ -11950,6 +12211,47 @@ fn test_mapped_type_basic() {
         PropertyInfo::new(interner.intern_string("y"), TypeId::NUMBER),
     ]);
     assert_eq!(result, expected);
+}
+
+#[test]
+fn test_mapped_type_any_keys_with_never_template_produces_indexes() {
+    let interner = TypeInterner::new();
+
+    let mapped = MappedType {
+        type_param: TypeParamInfo {
+            name: interner.intern_string("K"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        },
+        constraint: TypeId::ANY,
+        name_type: None,
+        template: TypeId::NEVER,
+        readonly_modifier: None,
+        optional_modifier: None,
+    };
+
+    let result = evaluate_mapped(&interner, &mapped);
+    let Some(TypeData::ObjectWithIndex(shape_id)) = interner.lookup(result) else {
+        panic!("expected mapped any keys to evaluate to object indexes, got {result:?}");
+    };
+    let shape = interner.object_shape(shape_id);
+
+    assert_eq!(shape.properties.len(), 0);
+    assert_eq!(
+        shape
+            .string_index
+            .expect("expected string index")
+            .value_type,
+        TypeId::NEVER
+    );
+    assert_eq!(
+        shape
+            .number_index
+            .expect("expected number index")
+            .value_type,
+        TypeId::NEVER
+    );
 }
 
 #[test]
@@ -19277,9 +19579,11 @@ fn test_array_covariance_non_array() {
 // ReturnType, Parameters, and ConstructorParameters Utility Type Edge Cases
 // =============================================================================
 
-/// Test `ReturnType`<T> with a generic function: <T>(x: T) => T
-/// TypeScript's `ReturnType` extracts the return type, which for generic functions
-/// is the type parameter T itself (unsubstituted).
+/// Test `ReturnType<T>` with a generic function: `<U>(x: U) => U`
+/// When the return-only infer pattern matches a generic function, free type
+/// parameters must be instantiated to their upper bounds before binding the
+/// infer variable. An unconstrained `U` erases to `unknown`, so the result is
+/// `unknown` (not the raw `TypeParameter(U)`).
 #[test]
 fn test_return_type_generic_function() {
     let interner = TypeInterner::new();
@@ -19346,8 +19650,7 @@ fn test_return_type_generic_function() {
 
     let result = evaluate_conditional(&interner, &cond);
 
-    // Expected: U (the type parameter) for ReturnType of <U>(x: U) => U
-    assert_eq!(result, u_param);
+    assert_eq!(result, TypeId::UNKNOWN);
 }
 
 /// Test `ReturnType`<T> with an overloaded function (Callable type with multiple signatures).
@@ -28347,7 +28650,8 @@ fn test_multiple_infers_different_constraints() {
 
 #[test]
 fn test_typeof_variable_reference_basic() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // typeof x where x: number
     let interner = TypeInterner::new();
@@ -28365,7 +28669,8 @@ fn test_typeof_variable_reference_basic() {
 
 #[test]
 fn test_typeof_variable_reference_object_type() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // typeof x where x: { a: string, b: number }
     let interner = TypeInterner::new();
@@ -28388,7 +28693,8 @@ fn test_typeof_variable_reference_object_type() {
 
 #[test]
 fn test_typeof_variable_reference_array_type() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // typeof arr where arr: string[]
     let interner = TypeInterner::new();
@@ -28408,7 +28714,8 @@ fn test_typeof_variable_reference_array_type() {
 
 #[test]
 fn test_typeof_imported_value_basic() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // typeof importedValue where importedValue: boolean
     let interner = TypeInterner::new();
@@ -28427,7 +28734,8 @@ fn test_typeof_imported_value_basic() {
 
 #[test]
 fn test_typeof_imported_value_complex() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // typeof importedConfig where importedConfig: { port: number, host: string }
     let interner = TypeInterner::new();
@@ -28450,7 +28758,8 @@ fn test_typeof_imported_value_complex() {
 
 #[test]
 fn test_typeof_function_type() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // typeof fn where fn: (x: number) => string
     let interner = TypeInterner::new();
@@ -28483,7 +28792,8 @@ fn test_typeof_function_type() {
 
 #[test]
 fn test_typeof_function_multiple_params() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // typeof fn where fn: (a: string, b: number) => boolean
     let interner = TypeInterner::new();
@@ -28524,7 +28834,8 @@ fn test_typeof_function_multiple_params() {
 
 #[test]
 fn test_typeof_const_string_literal() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // typeof x where x: "hello" (const assertion)
     let interner = TypeInterner::new();
@@ -28544,7 +28855,8 @@ fn test_typeof_const_string_literal() {
 
 #[test]
 fn test_typeof_const_number_literal() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // typeof x where x: 42 (const assertion)
     let interner = TypeInterner::new();
@@ -28564,7 +28876,8 @@ fn test_typeof_const_number_literal() {
 
 #[test]
 fn test_typeof_const_tuple_readonly() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // typeof x where x = [1, 2, 3] as const -> readonly [1, 2, 3]
     let interner = TypeInterner::new();
@@ -28608,7 +28921,8 @@ fn test_typeof_const_tuple_readonly() {
 
 #[test]
 fn test_typeof_const_object_readonly() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // typeof x where x = { a: 1, b: "hello" } as const
     // -> { readonly a: 1, readonly b: "hello" }
@@ -28635,7 +28949,8 @@ fn test_typeof_const_object_readonly() {
 
 #[test]
 fn test_typeof_unresolved_passes_through() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // When resolver doesn't know the symbol, TypeQuery passes through unchanged
     let interner = TypeInterner::new();
@@ -28653,7 +28968,8 @@ fn test_typeof_unresolved_passes_through() {
 
 #[test]
 fn test_typeof_in_union() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // typeof x | typeof y
     let interner = TypeInterner::new();
@@ -28689,7 +29005,8 @@ fn test_typeof_in_union() {
 
 #[test]
 fn test_typeof_in_keyof() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // keyof typeof x where x: { a: string, b: number }
     let interner = TypeInterner::new();
@@ -28718,7 +29035,8 @@ fn test_typeof_in_keyof() {
 
 #[test]
 fn test_typeof_indexed_access() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // (typeof x)["a"] where x: { a: number, b: string }
     let interner = TypeInterner::new();
@@ -29669,7 +29987,7 @@ fn test_mapped_type_template_literal_keys() {
 
 #[test]
 fn test_satisfies_basic_literal_string() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = "hello" satisfies string
     // The literal type "hello" should satisfy the string constraint
@@ -29685,7 +30003,7 @@ fn test_satisfies_basic_literal_string() {
 
 #[test]
 fn test_satisfies_basic_literal_number() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = 42 satisfies number
     let interner = TypeInterner::new();
@@ -29700,7 +30018,7 @@ fn test_satisfies_basic_literal_number() {
 
 #[test]
 fn test_satisfies_basic_object_type() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = { a: 1, b: "hello" } satisfies { a: number, b: string }
     let interner = TypeInterner::new();
@@ -29729,7 +30047,7 @@ fn test_satisfies_basic_object_type() {
 
 #[test]
 fn test_satisfies_constraint_failure() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = "hello" satisfies number - should fail
     let interner = TypeInterner::new();
@@ -29742,7 +30060,8 @@ fn test_satisfies_constraint_failure() {
 
 #[test]
 fn test_satisfies_literal_widening_preserved_string() {
-    use crate::{LiteralValue, SubtypeChecker};
+    use crate::LiteralValue;
+    use crate::relations::subtype::SubtypeChecker;
 
     // With satisfies, literal types are preserved:
     // const x = "hello" satisfies string -> type is "hello"
@@ -29764,7 +30083,8 @@ fn test_satisfies_literal_widening_preserved_string() {
 
 #[test]
 fn test_satisfies_literal_widening_preserved_number() {
-    use crate::{LiteralValue, SubtypeChecker};
+    use crate::LiteralValue;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = 42 satisfies number -> type remains 42 (literal)
     let interner = TypeInterner::new();
@@ -29781,7 +30101,8 @@ fn test_satisfies_literal_widening_preserved_number() {
 
 #[test]
 fn test_satisfies_literal_widening_preserved_boolean() {
-    use crate::{LiteralValue, SubtypeChecker};
+    use crate::LiteralValue;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = true satisfies boolean -> type remains true (literal)
     let interner = TypeInterner::new();
@@ -29798,7 +30119,7 @@ fn test_satisfies_literal_widening_preserved_boolean() {
 
 #[test]
 fn test_satisfies_excess_property_check_fails() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // In TypeScript, satisfies performs excess property checking:
     // const x = { a: 1, b: 2, c: 3 } satisfies { a: number, b: number }
@@ -29827,7 +30148,7 @@ fn test_satisfies_excess_property_check_fails() {
 
 #[test]
 fn test_satisfies_missing_property_fails() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = { a: 1 } satisfies { a: number, b: number }
     // This fails because 'b' is required but missing
@@ -29850,7 +30171,7 @@ fn test_satisfies_missing_property_fails() {
 
 #[test]
 fn test_satisfies_optional_property_satisfied() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = { a: 1 } satisfies { a: number, b?: number }
     // This succeeds because 'b' is optional
@@ -29887,7 +30208,7 @@ fn test_satisfies_optional_property_satisfied() {
 
 #[test]
 fn test_satisfies_vs_annotation_literal_preservation() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // Demonstrating satisfies vs type annotation difference:
     //
@@ -29921,7 +30242,7 @@ fn test_satisfies_vs_annotation_literal_preservation() {
 
 #[test]
 fn test_satisfies_vs_annotation_object_properties() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // With satisfies, object property types are preserved:
     //   const x = { status: "success" } satisfies { status: string }
@@ -29956,7 +30277,7 @@ fn test_satisfies_vs_annotation_object_properties() {
 
 #[test]
 fn test_satisfies_union_constraint() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = "a" satisfies "a" | "b" | "c"
     let interner = TypeInterner::new();
@@ -29976,7 +30297,7 @@ fn test_satisfies_union_constraint() {
 
 #[test]
 fn test_satisfies_array_type() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = [1, 2, 3] satisfies number[]
     let interner = TypeInterner::new();
@@ -30016,7 +30337,7 @@ fn test_satisfies_array_type() {
 
 #[test]
 fn test_satisfies_record_type() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = { foo: 1, bar: 2 } satisfies Record<string, number>
     let interner = TypeInterner::new();
@@ -30047,7 +30368,7 @@ fn test_satisfies_record_type() {
 
 #[test]
 fn test_satisfies_with_generic_function() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const fn = <T>(x: T) => x satisfies <T>(x: T) => T
     let interner = TypeInterner::new();
@@ -30099,7 +30420,7 @@ fn test_satisfies_with_generic_function() {
 
 #[test]
 fn test_satisfies_preserves_narrower_type() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
     use crate::types::LiteralValue;
 
     // const x = "hello" satisfies string
@@ -30121,7 +30442,7 @@ fn test_satisfies_preserves_narrower_type() {
 
 #[test]
 fn test_satisfies_with_union_literals() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = "a" | "b" satisfies string
     let interner = TypeInterner::new();
@@ -30137,7 +30458,7 @@ fn test_satisfies_with_union_literals() {
 
 #[test]
 fn test_satisfies_with_intersection() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = { a: 1 } & { b: 2 } satisfies { a: number, b: number }
     let interner = TypeInterner::new();
@@ -31047,7 +31368,7 @@ fn test_const_object_literal_nested() {
 
 #[test]
 fn test_const_object_literal_vs_mutable() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = { a: 1 } as const  ->  { readonly a: 1 }
     // let y = { a: 1 }             ->  { a: number }
@@ -31257,7 +31578,7 @@ fn test_const_array_nested() {
 
 #[test]
 fn test_const_array_vs_mutable() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = [1, 2] as const  ->  readonly [1, 2]
     // A non-readonly tuple [1, 2] is subtype of number[]
@@ -31445,7 +31766,7 @@ fn test_template_literal_type_structure() {
 
 #[test]
 fn test_template_literal_union_expansion() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // `${"a" | "b"}` expands to "a" | "b"
     let interner = TypeInterner::new();
@@ -31464,7 +31785,7 @@ fn test_template_literal_union_expansion() {
 
 #[test]
 fn test_const_enum_like_object() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const Direction = { Up: 0, Down: 1, Left: 2, Right: 3 } as const
     // -> { readonly Up: 0, readonly Down: 1, readonly Left: 2, readonly Right: 3 }
@@ -41365,6 +41686,78 @@ fn test_nested_conditional_template_literal_infer() {
     assert_eq!(result, expected);
 }
 
+#[test]
+fn test_recursive_template_literal_application_with_string_intrinsics() {
+    use crate::StringIntrinsicKind;
+    use crate::def::DefKind;
+    use crate::relations::subtype::TypeEnvironment;
+
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+    let camel_def = DefId(6312);
+    let camel_base = interner.intern(TypeData::Lazy(camel_def));
+
+    let s_name = interner.intern_string("S");
+    let s_param_info = TypeParamInfo {
+        name: s_name,
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+    };
+    let s_param = interner.intern(TypeData::TypeParameter(s_param_info));
+
+    let l_name = interner.intern_string("L");
+    let infer_l = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: l_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let r_name = interner.intern_string("R");
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: r_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let pattern = interner.template_literal(vec![
+        TemplateSpan::Type(infer_l),
+        TemplateSpan::Text(interner.intern_string("_")),
+        TemplateSpan::Type(infer_r),
+    ]);
+    let lower_l = interner.string_intrinsic(StringIntrinsicKind::Lowercase, infer_l);
+    let cap_r = interner.string_intrinsic(StringIntrinsicKind::Capitalize, infer_r);
+    let recursive = interner.application(camel_base, vec![cap_r]);
+    let true_type = interner.template_literal(vec![
+        TemplateSpan::Type(lower_l),
+        TemplateSpan::Type(recursive),
+    ]);
+    let false_type = interner.string_intrinsic(StringIntrinsicKind::Lowercase, s_param);
+    let body = interner.conditional(ConditionalType {
+        check_type: s_param,
+        extends_type: pattern,
+        true_type,
+        false_type,
+        is_distributive: true,
+    });
+
+    env.insert_def_with_params(camel_def, body, vec![s_param_info]);
+    env.insert_def_kind(camel_def, DefKind::TypeAlias);
+
+    let input = interner.literal_string("hello_world");
+    let app = interner.application(camel_base, vec![input]);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let result = evaluator.evaluate(app);
+
+    assert_eq!(
+        result,
+        interner.literal_string("helloworld"),
+        "got {:?}",
+        interner.lookup(result)
+    );
+}
+
 /// Test template literal in conditional extends clause
 /// `prefix${string}` extends `prefix${infer R}` ? R : never
 #[test]
@@ -42775,5 +43168,183 @@ fn test_index_access_with_keyof_type_as_index() {
         expected,
         "T[keyof T] should evaluate to number | string, got {:?}",
         interner.lookup(result)
+    );
+}
+
+#[test]
+fn intermediate_application_alias_skips_preexisting_application_occurrence() {
+    let interner = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+    let type_param = |name: &str| TypeParamInfo {
+        name: interner.intern_string(name),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+
+    let inner_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        interner.intern_string("Inner"),
+        vec![type_param("T")],
+        TypeId::UNKNOWN,
+    ));
+    let outer_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        interner.intern_string("Outer"),
+        vec![type_param("T")],
+        TypeId::UNKNOWN,
+    ));
+    let one = interner.literal_number(1.0);
+
+    // Simulate a user-authored Inner<1> that predates evaluating Outer<1>.
+    let inner_app = interner.application(interner.lazy(inner_def), vec![one]);
+    let outer_app = interner.application(interner.lazy(outer_def), vec![one]);
+    let evaluated = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("p"),
+        TypeId::NUMBER,
+    )]);
+
+    let evaluator = TypeEvaluator::new(&interner);
+    evaluator.store_intermediate_application_display_alias(inner_app, outer_app, evaluated, &[one]);
+
+    assert_eq!(
+        interner.get_display_alias(inner_app),
+        None,
+        "Pre-existing instantiated applications should not be globally repainted"
+    );
+}
+
+#[test]
+fn intermediate_application_alias_preserves_newly_introduced_intermediate() {
+    let interner = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+    let type_param = |name: &str| TypeParamInfo {
+        name: interner.intern_string(name),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+
+    let inner_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        interner.intern_string("Inner"),
+        vec![type_param("T")],
+        TypeId::UNKNOWN,
+    ));
+    let outer_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        interner.intern_string("Outer"),
+        vec![type_param("T")],
+        TypeId::UNKNOWN,
+    ));
+    let one = interner.literal_number(1.0);
+
+    // Outer exists first; Inner<1> is introduced later as an intermediate.
+    let outer_app = interner.application(interner.lazy(outer_def), vec![one]);
+    let inner_app = interner.application(interner.lazy(inner_def), vec![one]);
+    let evaluated = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("p"),
+        TypeId::NUMBER,
+    )]);
+
+    let evaluator = TypeEvaluator::new(&interner);
+    evaluator.store_intermediate_application_display_alias(inner_app, outer_app, evaluated, &[one]);
+
+    assert_eq!(
+        interner.get_display_alias(inner_app),
+        Some(outer_app),
+        "Fresh intermediate applications should still carry the forward alias"
+    );
+}
+
+/// Tests for distributive conditional instantiation over union type parameters.
+///
+/// Structural rule: when a distributive conditional `K extends K ? K : never`
+/// is instantiated with K=1|2, the `TypeInstantiator` distributes K over the
+/// union members, producing a union of evaluated conditionals.
+#[test]
+fn test_distributive_conditional_over_union_evaluates_correctly() {
+    let interner = TypeInterner::new();
+
+    let k_name = interner.intern_string("K");
+
+    let k_param = interner.type_param(TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    let lit1 = interner.literal_number(1.0);
+    let lit2 = interner.literal_number(2.0);
+    let union_1_2 = interner.union(vec![lit1, lit2]);
+
+    // Conditional: K extends K ? K : never  (distributive, trivially true)
+    let k_extends_k = interner.conditional(ConditionalType {
+        check_type: k_param,
+        extends_type: k_param,
+        true_type: k_param,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    });
+
+    // Instantiate with {K → 1|2} — should distribute and produce 1|2
+    let k_type_params = vec![TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }];
+    let k_args = vec![union_1_2];
+
+    let result = instantiate_generic(&interner, k_extends_k, &k_type_params, &k_args);
+    let evaluated = evaluate_type(&interner, result);
+
+    // Each union member passes `K extends K`, so the evaluated result is the original union
+    assert!(
+        matches!(interner.lookup(evaluated), Some(TypeData::Union(_))),
+        "Expected union from distributive K extends K ? K : never with K=1|2, got: {:?}",
+        interner.lookup(evaluated)
+    );
+}
+
+/// Tests with renamed type parameter (X instead of K) to prove the fix
+/// is structural, not dependent on parameter name spelling.
+#[test]
+fn test_distributive_conditional_renamed_param_evaluates_correctly() {
+    let interner = TypeInterner::new();
+
+    let x_name = interner.intern_string("X");
+    let x_param = interner.type_param(TypeParamInfo {
+        name: x_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    let lit_a = interner.literal_string("a");
+    let lit_b = interner.literal_string("b");
+    let union_ab = interner.union(vec![lit_a, lit_b]);
+
+    // Conditional: X extends X ? X : never  (distributive)
+    let x_extends_x = interner.conditional(ConditionalType {
+        check_type: x_param,
+        extends_type: x_param,
+        true_type: x_param,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    });
+
+    let x_type_params = vec![TypeParamInfo {
+        name: x_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }];
+    let x_args = vec![union_ab];
+
+    let result = instantiate_generic(&interner, x_extends_x, &x_type_params, &x_args);
+    let evaluated = evaluate_type(&interner, result);
+
+    assert!(
+        matches!(interner.lookup(evaluated), Some(TypeData::Union(_))),
+        "Expected union from distributive X extends X ? X : never with X='a'|'b', got: {:?}",
+        interner.lookup(evaluated)
     );
 }

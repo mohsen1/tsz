@@ -4,7 +4,7 @@ use tsz_checker::diagnostics::Diagnostic;
 use tsz_checker::state::CheckerState;
 use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn check_without_lib(source: &str) -> Vec<Diagnostic> {
     check_without_lib_with_options(source, CheckerOptions::default())
@@ -97,6 +97,55 @@ fn document_type_reference_emits_ts2304_with_minimal_core_globals() {
             .iter()
             .any(|d| d.code == 2304 && d.message_text.contains("'Document'")),
         "Expected TS2304 for Document type reference without DOM libs, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn crypto_value_emits_ts2304_without_dom_lib() {
+    let diagnostics = check_without_lib_with_minimal_core_globals("crypto;");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == 2304 && d.message_text.contains("'crypto'")),
+        "Expected TS2304 for missing crypto global without DOM libs, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn crypto_property_access_base_emits_ts2304_without_dom_lib() {
+    let diagnostics = check_without_lib_with_minimal_core_globals("crypto.randomUUID();");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == 2304 && d.message_text.contains("'crypto'")),
+        "Expected TS2304 for crypto.randomUUID() without DOM libs, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn crypto_local_shadow_does_not_emit_ts2304_without_dom_lib() {
+    let diagnostics = check_without_lib_with_minimal_core_globals(
+        r#"
+const crypto = { randomUUID(): string { return ""; } };
+crypto.randomUUID();
+"#,
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|d| d.code == 2304 && d.message_text.contains("'crypto'")),
+        "Local crypto binding should shadow the missing global, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn crypto_no_ts2304_with_dom_lib() {
+    let diagnostics = check_with_named_libs("crypto.randomUUID();", &["es5.d.ts", "dom.d.ts"]);
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|d| d.code == 2304 && d.message_text.contains("'crypto'")),
+        "crypto should not emit TS2304 with DOM lib loaded, got: {diagnostics:?}"
     );
 }
 

@@ -6,10 +6,10 @@ use crate::symbol_resolver::TypeSymbolResolution;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{Symbol, SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::NodeArena;
+use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_scanner::SyntaxKind;
-use tsz_solver as solver_narrowing;
 use tsz_solver::TypeId;
+use tsz_solver::narrowing as solver_narrowing;
 
 #[derive(Default)]
 struct ThenableAwaitInfo {
@@ -18,43 +18,165 @@ struct ThenableAwaitInfo {
     has_callable_then: bool,
 }
 
+const MAX_THENABLE_THIS_VALIDATION_DEPTH: u8 = 10;
+
 // =============================================================================
 // Promise and Async Type Checking Methods
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
-    // =========================================================================
-    // Promise Type Detection
-    // =========================================================================
-
-    /// Check if a name refers to a Promise-like type.
-    ///
-    /// Returns true for "Promise", "`PromiseLike`", or any name containing "Promise".
-    /// This handles built-in Promise types as well as custom Promise implementations.
-    pub fn is_promise_like_name(&self, name: &str) -> bool {
-        matches!(name, "Promise" | "PromiseLike") || name.contains("Promise")
-    }
-
-    fn is_builtin_promise_like_name(name: &str) -> bool {
-        matches!(name, "Promise" | "PromiseLike")
-    }
-
-    /// True when `type_id` is an `Application` whose base resolves (through any
-    /// number of `Lazy` wrappers) to the lib `Awaited` type alias.
+    /// True when `type_id` is an `Application` whose base resolves to the
+    /// standard-library `Awaited` type alias. No-lib tests may provide a local
+    /// conditional alias named `Awaited`; we accept that shape too because it
+    /// has the same deferred conditional surface that Promise helpers expose.
     ///
     /// Used to gate alias-evaluation after Promise unwrap so we only fold
     /// Awaited applications (which tsc resolves eagerly via `getAwaitedType`)
     /// without disturbing the printer's preferred alias-form display for other
     /// generic applications like `Box<T>` or `Partial<T>`.
     fn is_awaited_application(&self, type_id: TypeId) -> bool {
-        let Some((base, _)) =
-            crate::query_boundaries::common::application_info(self.ctx.types, type_id)
+        self.awaited_application_arg(type_id).is_some()
+    }
+
+    pub(crate) fn awaited_application_arg(&self, type_id: TypeId) -> Option<TypeId> {
+        self.awaited_application_arg_from_type(type_id).or_else(|| {
+            let alias = self.ctx.types.get_display_alias(type_id)?;
+            (alias != type_id).then(|| self.awaited_application_arg_from_type(alias))?
+        })
+    }
+
+    pub(crate) fn awaited_application_args_in_type(&self, type_id: TypeId) -> Vec<TypeId> {
+        let mut args = Vec::new();
+        self.collect_awaited_application_args(type_id, &mut args, 0);
+        args
+    }
+
+    fn collect_awaited_application_args(&self, type_id: TypeId, args: &mut Vec<TypeId>, depth: u8) {
+        if depth > 8 {
+            return;
+        }
+        if let Some(arg) = self.awaited_application_arg(type_id) {
+            args.push(arg);
+            return;
+        }
+        if let Some(elem) =
+            crate::query_boundaries::common::array_element_type(self.ctx.types, type_id)
+        {
+            self.collect_awaited_application_args(elem, args, depth + 1);
+        }
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, type_id)
+        {
+            for member in members {
+                self.collect_awaited_application_args(member, args, depth + 1);
+            }
+        }
+        if let Some(elems) =
+            crate::query_boundaries::common::tuple_elements(self.ctx.types, type_id)
+        {
+            for elem in elems {
+                self.collect_awaited_application_args(elem.type_id, args, depth + 1);
+            }
+        }
+    }
+
+    pub(crate) fn awaited_application_arg_from_type(&self, type_id: TypeId) -> Option<TypeId> {
+        // Cheap pre-check: read the base without materializing the args Vec.
+        // `evaluate_application_type` now consults this helper for every
+        // generic application; allocating an args Vec for `Array<T>`,
+        // `Map<K,V>`, etc. just to reject them is wasted work.
+        let base = crate::query_boundaries::common::get_application_base(self.ctx.types, type_id)?;
+        if !self.is_awaited_application_base(base) {
+            return None;
+        }
+        let (_, args) = crate::query_boundaries::common::application_info(self.ctx.types, type_id)?;
+        args.first().copied()
+    }
+
+    pub(crate) fn builtin_promise_like_application_arg(&self, type_id: TypeId) -> Option<TypeId> {
+        let query::PromiseTypeKind::Application { base, args, .. } =
+            query::classify_promise_type(self.ctx.types, type_id)
         else {
-            return false;
+            return None;
         };
+        let sym_id = match query::classify_promise_type(self.ctx.types, base) {
+            query::PromiseTypeKind::Lazy(def_id) => self.ctx.def_to_symbol_id(def_id)?,
+            query::PromiseTypeKind::TypeQuery(sym_ref) => SymbolId(sym_ref.0),
+            _ => return None,
+        };
+        self.ctx
+            .sym_id_is_lib_promise_or_promise_like(sym_id)
+            .then(|| args.first().copied().unwrap_or(TypeId::UNKNOWN))
+    }
+
+    pub(crate) fn promise_branch_alias_body_from_application(
+        &self,
+        type_id: TypeId,
+    ) -> Option<TypeId> {
+        let query::PromiseTypeKind::Application { base, args, .. } =
+            query::classify_promise_type(self.ctx.types, type_id)
+        else {
+            return None;
+        };
+        let sym_id = match query::classify_promise_type(self.ctx.types, base) {
+            query::PromiseTypeKind::Lazy(def_id) => self.ctx.def_to_symbol_id(def_id)?,
+            query::PromiseTypeKind::TypeQuery(sym_ref) => SymbolId(sym_ref.0),
+            _ => return None,
+        };
+        let (symbol, decl_file_idx) = self.promise_symbol_and_decl_file(sym_id)?;
+        if !symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
+            return None;
+        }
+        let decl_idx = symbol.primary_declaration().unwrap_or(NodeIndex::NONE);
+        if decl_idx.is_none() {
+            return None;
+        }
+        let arena = self.ctx.get_arena_for_file(decl_file_idx);
+        let type_alias = arena.get_type_alias_at(decl_idx)?;
+        if !Self::type_node_contains_builtin_promise_like_name(arena, type_alias.type_node) {
+            return None;
+        }
+
+        let mut bindings = Vec::new();
+        if let Some(params) = &type_alias.type_parameters {
+            if params.nodes.len() != args.len() {
+                return None;
+            }
+            for (&param_idx, &arg) in params.nodes.iter().zip(args.iter()) {
+                let param = arena.get_type_parameter_at(param_idx)?;
+                let ident = arena.get_identifier_at(param.name)?;
+                bindings.push((self.ctx.types.intern_string(&ident.escaped_text), arg));
+            }
+        } else if !args.is_empty() {
+            return None;
+        }
+        Some(self.lower_type_with_bindings_from_arena(arena, type_alias.type_node, bindings))
+    }
+
+    fn type_node_contains_builtin_promise_like_name(arena: &NodeArena, root: NodeIndex) -> bool {
+        let mut stack = vec![root];
+        let mut remaining = 128usize;
+        while let Some(idx) = stack.pop() {
+            if remaining == 0 {
+                return false;
+            }
+            remaining -= 1;
+            if let Some(node) = arena.get(idx)
+                && let Some(ident) = arena.get_identifier(node)
+                && matches!(ident.escaped_text.as_str(), "Promise" | "PromiseLike")
+            {
+                return true;
+            }
+            stack.extend(arena.get_children(idx));
+        }
+        false
+    }
+
+    fn is_awaited_application_base(&self, base: TypeId) -> bool {
         if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
             && symbol.escaped_name.as_str() == "Awaited"
+            && self.is_standard_or_conditional_awaited_alias(sym_id, symbol)
         {
             return true;
         }
@@ -63,7 +185,8 @@ impl<'a> CheckerState<'a> {
                 if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
                     && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                 {
-                    return symbol.escaped_name.as_str() == "Awaited";
+                    return symbol.escaped_name.as_str() == "Awaited"
+                        && self.is_standard_or_conditional_awaited_alias(sym_id, symbol);
                 }
                 false
             }
@@ -71,18 +194,30 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check if a name refers to exactly the global Promise type (not subclasses).
-    ///
-    /// TSC's `checkAsyncFunctionReturnType` uses `isReferenceToType(returnType, globalPromiseType)`,
-    /// which only accepts the global `Promise` itself — not `PromiseLike`, not subclasses like
-    /// `MyPromise extends Promise<T>`, not types merely containing "Promise" in their name.
-    fn is_exactly_promise_name(name: &str) -> bool {
-        name == "Promise"
-    }
+    fn is_standard_or_conditional_awaited_alias(&self, sym_id: SymbolId, symbol: &Symbol) -> bool {
+        if self.symbol_has_standard_lib_origin(sym_id) {
+            return true;
+        }
 
-    fn is_global_promise_symbol(&self, sym_id: SymbolId, symbol: &Symbol) -> bool {
-        Self::is_exactly_promise_name(symbol.escaped_name.as_str())
-            && self.symbol_has_standard_lib_origin(sym_id)
+        let decl_arena = if symbol.decl_file_idx != u32::MAX {
+            self.ctx.get_arena_for_file(symbol.decl_file_idx)
+        } else {
+            self.ctx.arena
+        };
+
+        symbol.declarations.iter().any(|&decl_idx| {
+            let Some(type_alias) = decl_arena.get_type_alias_at(decl_idx) else {
+                return false;
+            };
+            let has_single_type_param = type_alias
+                .type_parameters
+                .as_ref()
+                .is_some_and(|params| params.nodes.len() == 1);
+            has_single_type_param
+                && decl_arena.get(type_alias.type_node).is_some_and(|node| {
+                    node.kind == tsz_parser::parser::syntax_kind_ext::CONDITIONAL_TYPE
+                })
+        })
     }
 
     pub(crate) fn symbol_has_standard_lib_origin(&self, sym_id: SymbolId) -> bool {
@@ -115,36 +250,30 @@ impl<'a> CheckerState<'a> {
 
     /// Strict check: is this type exactly the global `Promise<T>` type?
     ///
-    /// Unlike `is_promise_type` (which broadly matches Promise-like names), this only
-    /// returns true for the global `Promise` type itself. Used for TS1064 emission where
-    /// TSC requires exactly `Promise<T>`, not subclasses or similarly-named types.
+    /// Returns true only for the standard-library `Promise` itself (identity check),
+    /// not for `PromiseLike`, user subclasses, or type aliases unless the alias body
+    /// ultimately references the lib `Promise` symbol.
     pub fn is_global_promise_type(&self, type_id: TypeId) -> bool {
         match query::classify_promise_type(self.ctx.types, type_id) {
             query::PromiseTypeKind::Application { base, .. } => {
                 match query::classify_promise_type(self.ctx.types, base) {
                     query::PromiseTypeKind::Lazy(def_id) => {
-                        if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
-                            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                        {
-                            if self.is_global_promise_symbol(sym_id, symbol) {
+                        if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
+                            if self.ctx.sym_id_is_lib_promise(sym_id) {
                                 return true;
                             }
-                            // If the base is a type alias, resolve through it to check
-                            // if the alias body references Promise. This handles cases
-                            // like `type MyPromise<T> = Promise<T>` where the Application
-                            // base is the alias, not the underlying Promise interface.
-                            if symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
+                            // Type aliases like `type MyPromise<T> = Promise<T>` must be
+                            // chased through the alias body.
+                            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                                && symbol.has_any_flags(symbol_flags::TYPE_ALIAS)
+                            {
                                 return self.type_alias_resolves_to_promise(sym_id, symbol);
                             }
                         }
                         false
                     }
                     query::PromiseTypeKind::TypeQuery(sym_ref) => {
-                        let sym_id = SymbolId(sym_ref.0);
-                        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                            return self.is_global_promise_symbol(sym_id, symbol);
-                        }
-                        false
+                        self.ctx.sym_id_is_lib_promise(SymbolId(sym_ref.0))
                     }
                     query::PromiseTypeKind::Application {
                         base: inner_base, ..
@@ -153,19 +282,13 @@ impl<'a> CheckerState<'a> {
                 }
             }
             query::PromiseTypeKind::Lazy(def_id) => {
-                if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
-                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                {
-                    return self.is_global_promise_symbol(sym_id, symbol);
+                if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
+                    return self.ctx.sym_id_is_lib_promise(sym_id);
                 }
                 false
             }
             query::PromiseTypeKind::TypeQuery(sym_ref) => {
-                let sym_id = SymbolId(sym_ref.0);
-                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                    return self.is_global_promise_symbol(sym_id, symbol);
-                }
-                false
+                self.ctx.sym_id_is_lib_promise(SymbolId(sym_ref.0))
             }
             query::PromiseTypeKind::Object(_)
             | query::PromiseTypeKind::Union(_)
@@ -175,32 +298,21 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a type reference is a Promise or Promise-like type.
     ///
-    /// This handles:
-    /// - Direct Promise/PromiseLike references
-    /// - Promise<T> type applications
-    /// - Object types from lib files (conservatively assumed to be Promise-like)
+    /// Object types from lib files are treated as Promise-like without name resolution —
+    /// a conservative assumption to avoid false positives for `Promise<void>` return types.
     pub fn type_ref_is_promise_like(&self, type_id: TypeId) -> bool {
         match query::classify_promise_type(self.ctx.types, type_id) {
             query::PromiseTypeKind::Lazy(def_id) => {
-                // Use DefId -> SymbolId bridge
-                if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
-                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                {
-                    return self.is_promise_like_name(symbol.escaped_name.as_str());
+                if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
+                    return self.ctx.sym_id_is_lib_promise_or_promise_like(sym_id);
                 }
                 false
             }
             query::PromiseTypeKind::TypeQuery(sym_ref) => {
                 let sym_id = SymbolId(sym_ref.0);
-                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                    return self.is_promise_like_name(symbol.escaped_name.as_str());
-                }
-                false
+                self.ctx.sym_id_is_lib_promise_or_promise_like(sym_id)
             }
-            query::PromiseTypeKind::Application { base, .. } => {
-                // Check if the base type of the application is a Promise-like type
-                self.type_ref_is_promise_like(base)
-            }
+            query::PromiseTypeKind::Application { base, .. } => self.type_ref_is_promise_like(base),
             query::PromiseTypeKind::Object(_) => {
                 // For Object types (interfaces from lib files), we conservatively assume
                 // they might be Promise-like. This avoids false positives for Promise<void>
@@ -212,38 +324,24 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check if a type is a Promise or Promise-like type.
-    ///
-    /// This is used to validate async function return types.
-    /// Handles both Promise<T> applications and direct Promise references.
-    ///
-    /// IMPORTANT: This method is STRICT - it only returns true for actual Promise/PromiseLike types.
-    /// It does NOT use the conservative assumption that all Object types might be Promise-like.
-    /// This ensures TS2705 is correctly emitted for async functions with non-Promise return types.
+    /// Strict check — only returns true for the standard-library `Promise` or
+    /// `PromiseLike` types (identity comparison), not for user classes or aliases
+    /// whose name happens to contain "Promise". Object types and unions are not
+    /// considered Promise-like here.
     pub fn is_promise_type(&self, type_id: TypeId) -> bool {
         match query::classify_promise_type(self.ctx.types, type_id) {
             query::PromiseTypeKind::Application { base, .. } => {
-                // For Application types, STRICTLY check if the base symbol is Promise/PromiseLike
-                // We do NOT use type_ref_is_promise_like here because it conservatively assumes
-                // all Object types are Promise-like, which causes false negatives for TS2705
                 match query::classify_promise_type(self.ctx.types, base) {
                     query::PromiseTypeKind::Lazy(def_id) => {
-                        // Use DefId -> SymbolId bridge
-                        if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
-                            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                        {
-                            return self.is_promise_like_name(symbol.escaped_name.as_str());
+                        if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
+                            return self.ctx.sym_id_is_lib_promise_or_promise_like(sym_id);
                         }
                         false
                     }
                     query::PromiseTypeKind::TypeQuery(sym_ref) => {
                         let sym_id = SymbolId(sym_ref.0);
-                        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                            return self.is_promise_like_name(symbol.escaped_name.as_str());
-                        }
-                        false
+                        self.ctx.sym_id_is_lib_promise_or_promise_like(sym_id)
                     }
-                    // Handle nested applications (e.g., Promise<SomeType<T>>)
                     query::PromiseTypeKind::Application {
                         base: inner_base, ..
                     } => self.is_promise_type(inner_base),
@@ -251,21 +349,14 @@ impl<'a> CheckerState<'a> {
                 }
             }
             query::PromiseTypeKind::Lazy(def_id) => {
-                // Use DefId -> SymbolId bridge
-                // Check for direct Promise or PromiseLike reference (this also handles type aliases)
-                if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
-                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                {
-                    return self.is_promise_like_name(symbol.escaped_name.as_str());
+                if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
+                    return self.ctx.sym_id_is_lib_promise_or_promise_like(sym_id);
                 }
                 false
             }
             query::PromiseTypeKind::TypeQuery(sym_ref) => {
                 let sym_id = SymbolId(sym_ref.0);
-                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                    return self.is_promise_like_name(symbol.escaped_name.as_str());
-                }
-                false
+                self.ctx.sym_id_is_lib_promise_or_promise_like(sym_id)
             }
             query::PromiseTypeKind::Object(_)
             | query::PromiseTypeKind::Union(_)
@@ -285,8 +376,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        self.promise_symbol_and_decl_file(sym_id)
-            .is_some_and(|(symbol, _)| self.is_promise_like_name(symbol.escaped_name.as_str()))
+        self.ctx.sym_id_is_lib_promise_or_promise_like(sym_id)
     }
 
     /// Extract a Promise member from a contextual type that may be a union.
@@ -361,14 +451,11 @@ impl<'a> CheckerState<'a> {
                 return Some(first_arg);
             }
 
-            // Fast path: direct Promise/PromiseLike application from lib symbols.
-            // This is a hot path for `await Promise.resolve(...)` and avoids
-            // heavier alias/class resolution when the base already names Promise.
+            // Fast path: direct lib Promise/PromiseLike application — identity check.
             if let query::PromiseTypeKind::Lazy(def_id) =
                 query::classify_promise_type(self.ctx.types, base)
                 && let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
-                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                && Self::is_builtin_promise_like_name(symbol.escaped_name.as_str())
+                && self.ctx.sym_id_is_lib_promise_or_promise_like(sym_id)
             {
                 return Some(first_arg.unwrap_or(TypeId::UNKNOWN));
             }
@@ -380,9 +467,7 @@ impl<'a> CheckerState<'a> {
                 query::classify_promise_type(self.ctx.types, base)
             {
                 let sym_id = SymbolId(sym_ref.0);
-                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                    && Self::is_builtin_promise_like_name(symbol.escaped_name.as_str())
-                {
+                if self.ctx.sym_id_is_lib_promise_or_promise_like(sym_id) {
                     return Some(first_arg.unwrap_or(TypeId::UNKNOWN));
                 }
             }
@@ -396,20 +481,15 @@ impl<'a> CheckerState<'a> {
                 return Some(result);
             }
 
-            // Fallback: if the base is a Promise-like reference (e.g., Promise from lib files)
-            // and we have type arguments, return the first one
-            // This handles cases where Promise doesn't have expected flags or where
-            // promise_like_type_argument_from_base fails for other reasons
+            // Fallback: if the base Lazy DefId resolves to a lib Promise/PromiseLike
+            // and promise_like_type_argument_from_base failed for other reasons, return
+            // the first type argument.
             if let query::PromiseTypeKind::Lazy(def_id) =
                 query::classify_promise_type(self.ctx.types, base)
+                && let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
+                && self.ctx.sym_id_is_lib_promise_or_promise_like(sym_id)
             {
-                // Use DefId -> SymbolId bridge
-                if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
-                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                    && Self::is_builtin_promise_like_name(symbol.escaped_name.as_str())
-                {
-                    return Some(first_arg.unwrap_or(TypeId::UNKNOWN));
-                }
+                return Some(first_arg.unwrap_or(TypeId::UNKNOWN));
             }
 
             if let Some(awaited) = self.extract_awaited_type_from_thenable(return_type) {
@@ -429,8 +509,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // If we can't extract the type argument from a Promise-like type,
-        // return None instead of ANY/UNKNOWN (consistent with Task 4-6 changes)
-        // This allows the caller (await expressions) to use UNKNOWN as fallback.
+        // return None so the caller (await expressions) uses UNKNOWN as fallback.
         //
         // A previous "fallback for generic applications" path unconditionally
         // returned `args.first()` for *any* generic Application whose base
@@ -452,7 +531,7 @@ impl<'a> CheckerState<'a> {
     /// 1. Finding the `then` property on the object
     /// 2. Getting its call signature
     /// 3. Extracting the first param of the `onfulfilled` callback (which is T)
-    fn extract_awaited_type_from_thenable(&mut self, type_id: TypeId) -> Option<TypeId> {
+    pub(super) fn extract_awaited_type_from_thenable(&mut self, type_id: TypeId) -> Option<TypeId> {
         self.extract_awaited_type_from_valid_thenable(type_id, false)
             .awaited_type
     }
@@ -461,11 +540,28 @@ impl<'a> CheckerState<'a> {
         &mut self,
         type_id: TypeId,
     ) -> Option<TypeId> {
-        let info = self.extract_awaited_type_from_valid_thenable(type_id, true);
-        if info.has_callable_then && info.awaited_type.is_none() {
-            return info.rejected_this_type;
+        self.await_operand_invalid_thenable_this_type_with_depth(type_id, 0)
+    }
+
+    fn await_operand_invalid_thenable_this_type_with_depth(
+        &mut self,
+        type_id: TypeId,
+        depth: u8,
+    ) -> Option<TypeId> {
+        if depth > MAX_THENABLE_THIS_VALIDATION_DEPTH {
+            return None;
         }
-        None
+
+        if let Some(inner) = self.builtin_promise_like_application_arg(type_id) {
+            return (!self.is_awaited_application(inner))
+                .then(|| self.await_operand_invalid_thenable_this_type_with_depth(inner, depth + 1))
+                .flatten();
+        }
+
+        let info = self.extract_awaited_type_from_valid_thenable(type_id, true);
+        (info.has_callable_then && info.awaited_type.is_none())
+            .then_some(info.rejected_this_type)
+            .flatten()
     }
 
     fn extract_awaited_type_from_valid_thenable(
@@ -611,7 +707,8 @@ impl<'a> CheckerState<'a> {
             if let Some(&first_arg) = args.first() {
                 return Some(first_arg);
             }
-            // Return UNKNOWN instead of ANY when there are no type arguments (consistent with Task 4-6)
+            // No type arguments present: fall back to UNKNOWN so callers can distinguish
+            // "unresolved" from "any" — avoids falsely widening the awaited type.
             return Some(TypeId::UNKNOWN);
         }
 
@@ -622,10 +719,8 @@ impl<'a> CheckerState<'a> {
                 return Some(args.first().copied().unwrap_or(TypeId::UNKNOWN));
             }
         };
-        let name = symbol.escaped_name.as_str();
-
-        if Self::is_builtin_promise_like_name(name) {
-            // Return UNKNOWN instead of ANY when there are no type arguments (consistent with Task 4-6)
+        if self.ctx.sym_id_is_lib_promise_or_promise_like(sym_id) {
+            // Lib Promise/PromiseLike: first type arg is the resolved value, or UNKNOWN if absent.
             return Some(args.first().copied().unwrap_or(TypeId::UNKNOWN));
         }
 
@@ -700,11 +795,13 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        // Check if the alias RHS is directly a Promise/PromiseLike type reference
-        // before lowering (e.g., Promise<T> where Promise is from lib and might not fully resolve)
+        // Check if the alias RHS is directly a Promise/PromiseLike type reference before
+        // lowering. Resolve the identifier to its lib symbol and use identity comparison
+        // so user-defined types with Promise-like names are not mistakenly accepted.
         if let Some(type_ref) = self.ctx.arena.get_type_ref_at(type_alias.type_node)
-            && let Some(ident) = self.ctx.arena.get_identifier_at(type_ref.type_name)
-            && self.is_promise_like_name(ident.escaped_text.as_str())
+            && let TypeSymbolResolution::Type(ref_sym_id) =
+                self.resolve_identifier_symbol_in_type_position_without_tracking(type_ref.type_name)
+            && self.ctx.sym_id_is_lib_promise_or_promise_like(ref_sym_id)
         {
             // It's Promise<...> or PromiseLike<...>
             // Get the first type argument and substitute bindings
@@ -734,12 +831,12 @@ impl<'a> CheckerState<'a> {
         }
 
         // Fallback only for aliases that still resolve to a Promise-like type after
-        // lowering, or aliases whose own name is Promise-like. Do not use
+        // lowering, or aliases that ARE the lib Promise/PromiseLike symbol. Do not use
         // `type_ref_is_promise_like` by itself here: it treats arbitrary object
         // types as Promise-like, so `type Box<T> = { data: T }` would unwrap to
         // `T` after `await Promise<Box<T>>`.
         if self.is_promise_type(lowered)
-            || self.is_promise_like_name(symbol.escaped_name.as_str())
+            || self.ctx.sym_id_is_lib_promise_or_promise_like(sym_id)
             || self.object_type_symbol_is_promise_like(lowered)
         {
             // If we have args, try to return the first one (the T in Promise<T>)
@@ -845,8 +942,25 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // Check if it's Promise or PromiseLike
-            if !self.is_promise_like_name(&ident.escaped_text) {
+            // Pre-filter on canonical spelling, then identity-check the resolved symbol
+            // so user classes named "Promise" that shadow the lib are rejected.
+            let name = ident.escaped_text.as_str();
+            if !matches!(name, "Promise" | "PromiseLike") {
+                continue;
+            }
+            // Resolve via file_locals (captures any local shadow or import binding).
+            // If the name is absent from file_locals it resolves to the lib global.
+            // node_symbols only tracks declaration nodes, not use-site references,
+            // so we cannot use get_node_symbol for the heritage clause identifier.
+            let sym_from_file = self
+                .ctx
+                .get_binder_for_file(decl_file_idx as usize)
+                .and_then(|b| b.file_locals.get(name))
+                .or_else(|| self.ctx.binder.file_locals.get(name));
+            let extends_lib_promise = sym_from_file
+                .map(|sym_id| self.ctx.sym_id_is_lib_promise_or_promise_like(sym_id))
+                .unwrap_or_else(|| self.ctx.has_name_in_lib(name));
+            if !extends_lib_promise {
                 continue;
             }
 
@@ -974,13 +1088,15 @@ impl<'a> CheckerState<'a> {
     /// Check if TS7030 (noImplicitReturns) should be skipped for this return type.
     ///
     /// TSC skips TS7030 for functions whose return type is or contains `void` or `any`.
-    /// Top-level `undefined` also causes a skip, but `undefined` in a union does NOT.
+    /// Top-level `undefined` also causes a skip. A union containing `undefined` does not
+    /// suppress TS7030 unless it also contains `void` or `any`.
     /// For unannotated functions, we only check top-level types because our inferred
     /// return types use `void` for implicit fall-through (TSC uses `undefined`).
     pub fn should_skip_no_implicit_return_check(
         &self,
         return_type: TypeId,
         has_type_annotation: bool,
+        _is_generator: bool,
     ) -> bool {
         if return_type == TypeId::VOID
             || return_type == TypeId::ANY
@@ -1058,31 +1174,28 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check if a return type annotation syntactically looks like Promise<T>.
+    /// Check if a return type annotation syntactically looks like `Promise<T>` or `PromiseLike<T>`.
     ///
-    /// This is a fallback for when the type can't be resolved but the syntax is clearly Promise.
-    /// Used for better error messages when Promise types are not available.
+    /// Syntactic fallback used when the type can't yet be resolved (e.g. during implicit
+    /// return-type checks). Matches only the two canonical lib names; user-chosen names
+    /// containing "Promise" are intentionally excluded.
     pub fn return_type_annotation_looks_like_promise(&self, type_annotation: NodeIndex) -> bool {
-        // Get the type node from the annotation
         let Some(node) = self.ctx.arena.get(type_annotation) else {
             return false;
         };
 
-        // Check if it's a type reference with "Promise" name
-        if let Some(type_ref) = self.ctx.arena.get_type_ref(node) {
-            // Get the type name - it could be an identifier or qualified name
-            if let Some(name_node) = self.ctx.arena.get(type_ref.type_name) {
-                // Check for simple identifier like "Promise"
-                if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                    return self.is_promise_like_name(&ident.escaped_text);
-                }
-                // Also check for qualified names like SomeModule.Promise
-                if let Some(qualified) = self.ctx.arena.get_qualified_name(name_node)
-                    && let Some(right_node) = self.ctx.arena.get(qualified.right)
-                    && let Some(ident) = self.ctx.arena.get_identifier(right_node)
-                {
-                    return self.is_promise_like_name(&ident.escaped_text);
-                }
+        if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+            && let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
+        {
+            if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                return matches!(ident.escaped_text.as_str(), "Promise" | "PromiseLike");
+            }
+            // Qualified name like `SomeModule.Promise` — check the rightmost identifier.
+            if let Some(qualified) = self.ctx.arena.get_qualified_name(name_node)
+                && let Some(right_node) = self.ctx.arena.get(qualified.right)
+                && let Some(ident) = self.ctx.arena.get_identifier(right_node)
+            {
+                return matches!(ident.escaped_text.as_str(), "Promise" | "PromiseLike");
             }
         }
 
@@ -1162,38 +1275,32 @@ impl<'a> CheckerState<'a> {
             };
 
             // Check if the type reference name is "Promise"
-            let Some(name_node) = self.ctx.arena.get(type_ref.type_name) else {
+            if self.ctx.arena.get(type_ref.type_name).is_none() {
                 continue;
-            };
-            if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                let name = ident.escaped_text.as_str();
-                if Self::is_exactly_promise_name(name)
-                    && matches!(
-                        self.resolve_identifier_symbol_in_type_position_without_tracking(
-                            type_ref.type_name
-                        ),
-                        TypeSymbolResolution::Type(body_sym_id)
-                            if self.symbol_has_standard_lib_origin(body_sym_id)
-                    )
-                {
-                    return true;
-                }
-                // The alias body might reference another alias — resolve recursively
-                if let Some(body_sym_id) = self
-                    .ctx
-                    .binder
-                    .node_symbols
-                    .get(&type_ref.type_name.0)
-                    .copied()
-                    && body_sym_id != sym_id
-                {
-                    // Avoid infinite loops
-                    if let Some(body_symbol) = self.ctx.binder.get_symbol(body_sym_id)
-                        && body_symbol.has_any_flags(symbol_flags::TYPE_ALIAS)
-                    {
-                        return self.type_alias_resolves_to_promise(body_sym_id, body_symbol);
-                    }
-                }
+            }
+            // Resolve the body's type reference to its symbol and use lib identity.
+            // No name check needed: if the resolved symbol IS the lib Promise, it's Promise.
+            if matches!(
+                self.resolve_identifier_symbol_in_type_position_without_tracking(
+                    type_ref.type_name
+                ),
+                TypeSymbolResolution::Type(body_sym_id)
+                    if self.ctx.sym_id_is_lib_promise(body_sym_id)
+            ) {
+                return true;
+            }
+            // The alias body might reference another alias — resolve recursively.
+            if let Some(body_sym_id) = self
+                .ctx
+                .binder
+                .node_symbols
+                .get(&type_ref.type_name.0)
+                .copied()
+                && body_sym_id != sym_id
+                && let Some(body_symbol) = self.ctx.binder.get_symbol(body_sym_id)
+                && body_symbol.has_any_flags(symbol_flags::TYPE_ALIAS)
+            {
+                return self.type_alias_resolves_to_promise(body_sym_id, body_symbol);
             }
 
             // Only check the first matching declaration
@@ -1203,30 +1310,23 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Strict syntactic check: is the return type annotation exactly `Promise<...>`?
+    /// Strict check: does the return type annotation resolve to the lib `Promise`?
     ///
-    /// Unlike `return_type_annotation_looks_like_promise` (which matches any Promise-like name),
-    /// this only matches exactly `Promise` — not `MyPromise`, not `X.MyPromise`.
-    /// Used as a fallback for TS1064 emission when the resolved type loses its Application wrapper.
+    /// Only matches when the identifier at the type reference resolves to the
+    /// standard-library `Promise` symbol via lib identity. Qualified names like
+    /// `X.Promise` or user types named "Promise" that shadow the lib are rejected.
     pub fn return_type_annotation_is_exactly_promise(&self, type_annotation: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(type_annotation) else {
             return false;
         };
 
-        if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
-            && let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
-        {
-            // Only match simple identifier "Promise" — not qualified names
-            if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                return ident.escaped_text.as_str() == "Promise"
-                    && matches!(
-                        self.resolve_identifier_symbol_in_type_position_without_tracking(
-                            type_ref.type_name
-                        ),
-                        TypeSymbolResolution::Type(sym_id)
-                            if self.symbol_has_standard_lib_origin(sym_id)
-                    );
-            }
+        if let Some(type_ref) = self.ctx.arena.get_type_ref(node) {
+            // The resolver returns NotFound for qualified names and missing nodes,
+            // so no pre-filter on identifier shape is needed here.
+            return matches!(
+                self.resolve_identifier_symbol_in_type_position_without_tracking(type_ref.type_name),
+                TypeSymbolResolution::Type(sym_id) if self.ctx.sym_id_is_lib_promise(sym_id)
+            );
         }
 
         false
@@ -1631,22 +1731,9 @@ impl<'a> CheckerState<'a> {
         self.promise_like_return_type_argument(type_id)
     }
 
-    /// Unwrap Promise from an async function's return type for body checking.
-    ///
-    /// For contextually-typed async functions (no explicit annotation), the inferred
-    /// return type may be `Promise<T>` or a union like `Promise<T> | StateMachine<T>`.
-    /// This method unwraps each Promise member to produce the effective body return type:
-    /// - `Promise<T>` → `T`
-    /// - `Promise<T> | StateMachine<T>` → `T | StateMachine<T>`
-    /// - Non-Promise types pass through unchanged.
-    ///
-    /// The unwrapped inner type is then evaluated via `evaluate_application_type`
-    /// so that alias applications like `Awaited<X>` (which appears in the lib
-    /// signature `Promise.resolve<T>(value: T): Promise<Awaited<T>>`) fold to
-    /// their conditional-type result. This mirrors tsc's `getAwaitedType`,
-    /// which always resolves Awaited<X> for non-thenable X. Without this step
-    /// the assignability gateway sees a raw `Awaited<X>` Application and fails
-    /// to relate it against the structural form.
+    /// Unwrap Promise members from an async function's return type for body checking.
+    /// `Awaited<X>` payloads are evaluated so the body sees the same awaited
+    /// structural type tsc uses instead of the raw alias application.
     pub fn unwrap_async_return_type_for_body(&mut self, return_type: TypeId) -> TypeId {
         // Try simple unwrap first
         if let Some(unwrapped) = self.unwrap_promise_type(return_type) {
@@ -1675,41 +1762,6 @@ impl<'a> CheckerState<'a> {
     fn evaluate_awaited_application(&mut self, type_id: TypeId) -> TypeId {
         if self.is_awaited_application(type_id) {
             self.evaluate_application_type(type_id)
-        } else {
-            type_id
-        }
-    }
-
-    pub(crate) fn evaluate_awaited_application_for_assignability(
-        &mut self,
-        type_id: TypeId,
-    ) -> TypeId {
-        if !self.is_awaited_application(type_id) {
-            return type_id;
-        }
-
-        let evaluated = self.evaluate_application_type(type_id);
-        if evaluated != type_id {
-            return evaluated;
-        }
-
-        let Some((_base, args)) =
-            crate::query_boundaries::common::application_info(self.ctx.types, type_id)
-        else {
-            return type_id;
-        };
-        let Some(&arg) = args.first() else {
-            return type_id;
-        };
-
-        // Awaited<T> is transparent for non-thenables. If the conditional
-        // evaluator preserved the raw alias application, keep assignability in
-        // step with tsc's getAwaitedType without incorrectly treating
-        // Awaited<Promise<T>> as Promise<T>.
-        if self.unwrap_promise_type(arg).is_none()
-            && self.extract_awaited_type_from_thenable(arg).is_none()
-        {
-            arg
         } else {
             type_id
         }

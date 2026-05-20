@@ -1735,3 +1735,226 @@ fn test_union_with_null_and_undefined() {
         _ => unreachable!(),
     }
 }
+
+/// Register minimal Array + ReadonlyArray interfaces on `interner` for property-access tests.
+fn make_array_and_readonly_array_env(interner: &TypeInterner) {
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+
+    let push_fn = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("value")),
+            type_id: t_type,
+            optional: false,
+            rest: false,
+        }],
+        return_type: TypeId::NUMBER,
+        type_params: vec![],
+        this_type: None,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+    let slice_fn = interner.function(FunctionShape {
+        params: vec![],
+        return_type: interner.array(t_type),
+        type_params: vec![],
+        this_type: None,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+
+    // Array<T>: length, push, slice
+    let array_iface = interner.object(vec![
+        PropertyInfo::readonly(interner.intern_string("length"), TypeId::NUMBER),
+        PropertyInfo::method(interner.intern_string("push"), push_fn),
+        PropertyInfo::method(interner.intern_string("slice"), slice_fn),
+    ]);
+    interner.set_array_base_type(array_iface, vec![t_param]);
+
+    // ReadonlyArray<T>: length, slice (no push)
+    let readonly_array_iface = interner.object(vec![
+        PropertyInfo::readonly(interner.intern_string("length"), TypeId::NUMBER),
+        PropertyInfo::method(interner.intern_string("slice"), slice_fn),
+    ]);
+    interner.set_readonly_array_base_type(readonly_array_iface);
+}
+
+#[test]
+fn test_readonly_array_push_not_found() {
+    let interner = TypeInterner::new();
+    make_array_and_readonly_array_env(&interner);
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    // readonly number[] must NOT have push
+    let readonly_num = interner.readonly_array(TypeId::NUMBER);
+    assert_property_not_found(&evaluator.resolve_property_access(readonly_num, "push"));
+}
+
+#[test]
+fn test_readonly_array_push_not_found_different_element_type() {
+    // Verify the fix is structural (any element type), not specific to `number`.
+    let interner = TypeInterner::new();
+    make_array_and_readonly_array_env(&interner);
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    // readonly string[] — push absent
+    let readonly_str = interner.readonly_array(TypeId::STRING);
+    assert_property_not_found(&evaluator.resolve_property_access(readonly_str, "push"));
+
+    // readonly boolean[] — push absent
+    let readonly_bool = interner.readonly_array(TypeId::BOOLEAN);
+    assert_property_not_found(&evaluator.resolve_property_access(readonly_bool, "push"));
+}
+
+#[test]
+fn test_readonly_array_length_accessible() {
+    // Non-mutating properties must still resolve on readonly arrays.
+    let interner = TypeInterner::new();
+    make_array_and_readonly_array_env(&interner);
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let readonly_num = interner.readonly_array(TypeId::NUMBER);
+    assert_property_success(
+        &evaluator.resolve_property_access(readonly_num, "length"),
+        TypeId::NUMBER,
+    );
+}
+
+#[test]
+fn test_readonly_array_slice_accessible() {
+    // `slice` is in ReadonlyArray — must be found.
+    let interner = TypeInterner::new();
+    make_array_and_readonly_array_env(&interner);
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let readonly_str = interner.readonly_array(TypeId::STRING);
+    let result = evaluator.resolve_property_access(readonly_str, "slice");
+    assert!(
+        result.is_success(),
+        "slice should be accessible on readonly string[]. Got: {result:?}"
+    );
+}
+
+#[test]
+fn test_mutable_array_push_still_found() {
+    // Regression: mutable T[] must keep push after the fix.
+    let interner = TypeInterner::new();
+    make_array_and_readonly_array_env(&interner);
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let mutable_num = interner.array(TypeId::NUMBER);
+    let result = evaluator.resolve_property_access(mutable_num, "push");
+    assert!(
+        result.is_success(),
+        "push should still exist on mutable number[]. Got: {result:?}"
+    );
+}
+
+#[test]
+fn test_readonly_tuple_push_not_found() {
+    // readonly [T, U] tuples must also reject push via ReadonlyArray resolution.
+    let interner = TypeInterner::new();
+    make_array_and_readonly_array_env(&interner);
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+    let readonly_tuple = interner.readonly_type(tuple);
+    assert_property_not_found(&evaluator.resolve_property_access(readonly_tuple, "push"));
+}
+
+#[test]
+fn test_readonly_tuple_length_accessible() {
+    // Fixed-length tuples return a literal length even in readonly context.
+    let interner = TypeInterner::new();
+    make_array_and_readonly_array_env(&interner);
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+    let readonly_tuple = interner.readonly_type(tuple);
+    let expected_len = interner.literal_number(2.0);
+    assert_property_success(
+        &evaluator.resolve_property_access(readonly_tuple, "length"),
+        expected_len,
+    );
+}
+
+#[test]
+fn test_non_array_readonly_type_transparent() {
+    // ReadonlyType wrapping a non-array object must remain transparent —
+    // its properties are still accessible unchanged.
+    let interner = TypeInterner::new();
+    make_array_and_readonly_array_env(&interner);
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let x = interner.intern_string("x");
+    let obj = interner.object(vec![PropertyInfo::new(x, TypeId::NUMBER)]);
+    let readonly_obj = interner.readonly_type(obj);
+
+    assert_property_success(
+        &evaluator.resolve_property_access(readonly_obj, "x"),
+        TypeId::NUMBER,
+    );
+}
+
+#[test]
+fn test_readonly_array_no_lib_falls_back_gracefully() {
+    // When no ReadonlyArray lib type is registered, readonly array property
+    // access falls back to transparent behaviour (no crash, no false errors).
+    let interner = TypeInterner::new();
+    // Intentionally do NOT call make_array_and_readonly_array_env — no lib.
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let readonly_num = interner.readonly_array(TypeId::NUMBER);
+    // Without lib, the fallback path is used; result may succeed or not-found.
+    // The important invariant is that it does not panic.
+    let result = evaluator.resolve_property_access(readonly_num, "length");
+    // length is handled specially even without lib
+    assert!(
+        result.is_success(),
+        "length should succeed even without lib. Got: {result:?}"
+    );
+}
+
+#[test]
+fn test_readonly_array_no_lib_push_not_found() {
+    // Even when no ReadonlyArray lib type is registered, readonly arrays must
+    // not expose built-in Array mutators.
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let readonly_num = interner.readonly_array(TypeId::NUMBER);
+    assert_property_not_found(&evaluator.resolve_property_access(readonly_num, "push"));
+}

@@ -4,14 +4,18 @@
 
 use super::*;
 use tsz_binder::BinderState;
-use tsz_parser::ParserState;
+
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 #[test]
 fn test_lsp_workflow_simple() {
     // Simple test: const x = 1; x + x;
     let source = "const x = 1;\nx + x;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -37,8 +41,7 @@ fn test_lsp_workflow_simple() {
 fn test_lsp_with_function() {
     // Test with a function: function foo() {} foo();
     let source = "function foo() {}\nfoo();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -203,14 +206,13 @@ fn test_project_cross_file_definition_import_with_alias() {
 #[test]
 fn test_lsp_diagnostic_conversion() {
     let source = "const x: string = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let mut checker = tsz_checker::state::CheckerState::new(
         arena,
         &binder,
@@ -241,8 +243,7 @@ fn test_lsp_diagnostic_conversion() {
 fn test_definition_info_parameter_kind() {
     // Parameters should have kind "parameter", not "var"
     let source = "function foo(x: number) { return x; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -267,8 +268,7 @@ fn test_definition_info_parameter_kind() {
 fn test_definition_info_parameter_is_not_local() {
     // Parameters should have isLocal: false (matching TypeScript behavior)
     let source = "function foo(x: number) { return x; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -289,8 +289,7 @@ fn test_definition_info_parameter_is_not_local() {
 fn test_definition_info_class_member_container_name() {
     // Class members should have containerName set to the class name
     let source = "class MyClass {\n  myMethod() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -326,8 +325,7 @@ fn test_definition_info_class_member_container_name() {
 fn test_definition_info_enum_member_container_name() {
     // Enum members referenced via Color.Red should have containerName
     let source = "enum Color {\n  Red = 0,\n  Green = 1\n}\nconst c = Color.Red;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -349,8 +347,7 @@ fn test_definition_info_enum_member_container_name() {
 fn test_definition_info_top_level_not_local() {
     // Top-level declarations should have is_local = false
     let source = "const topLevel = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -377,8 +374,7 @@ fn test_definition_info_top_level_not_local() {
 fn test_definition_info_local_var_is_local() {
     // Variables inside function bodies should have is_local = true
     let source = "function foo() {\n  const local = 1;\n  return local;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -405,8 +401,7 @@ fn test_definition_info_local_var_is_local() {
 fn test_definition_info_enum_context_span_excludes_semicolon() {
     // Enum contextSpan should end at } not include trailing ;
     let source = "enum E { A, B };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
