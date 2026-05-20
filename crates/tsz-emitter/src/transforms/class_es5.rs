@@ -268,6 +268,92 @@ impl<'a> ClassES5Emitter<'a> {
         self.emit_class_internal(class_idx, Some(name))
     }
 
+    /// Emit a class expression as an IIFE expression and return structured parts
+    /// so callers can build the outer comma-expression pattern:
+    ///
+    /// ```js
+    /// (_classTemp = IIFE, _propTemp = propNameExpr, _classTemp)
+    /// ```
+    ///
+    /// Returns `(iife_expr, computed_prop_decls, computed_prop_init_exprs)` where:
+    /// - `iife_expr` is the raw `/** @class */ (function () { ... }())` text
+    /// - `computed_prop_decls` are temp names to hoist as `var _a, ...;`
+    /// - `computed_prop_init_exprs` are rendered assignment strings like `_a = x`
+    pub fn emit_class_as_iife_expr(
+        &mut self,
+        class_idx: NodeIndex,
+        name: &str,
+    ) -> (String, Vec<String>, Vec<String>) {
+        self.transformer.set_emit_computed_props_outside(true);
+        let ir_opt = self
+            .transformer
+            .transform_class_to_ir_with_name(class_idx, Some(name));
+        self.transformer.set_emit_computed_props_outside(false);
+
+        let Some(ir) = ir_opt else {
+            return (String::new(), Vec::new(), Vec::new());
+        };
+
+        let IRNode::ES5ClassIIFE {
+            name: ir_name,
+            binding_name,
+            base_class,
+            super_param,
+            body,
+            weakmap_decls,
+            computed_prop_temp_decls,
+            computed_prop_temp_inits,
+            weakmap_inits,
+            leading_comment,
+            deferred_static_blocks,
+            deferred_block_class_alias,
+        } = ir
+        else {
+            return (
+                self.emit_class_ir(class_idx, Some(name), ir),
+                Vec::new(),
+                Vec::new(),
+            );
+        };
+
+        let init_exprs: Vec<String> = computed_prop_temp_inits
+            .iter()
+            .map(|node| {
+                let expr = match node {
+                    IRNode::ExpressionStatement(inner) => inner.as_ref(),
+                    other => other,
+                };
+                self.make_ir_printer().emit(expr).to_string()
+            })
+            .collect();
+
+        let render_ir = IRNode::ES5ClassIIFE {
+            name: ir_name,
+            binding_name,
+            base_class,
+            super_param,
+            body,
+            weakmap_decls,
+            computed_prop_temp_decls: Vec::new(),
+            computed_prop_temp_inits: Vec::new(),
+            weakmap_inits,
+            leading_comment,
+            deferred_static_blocks,
+            deferred_block_class_alias,
+        };
+        let class_output = self.emit_class_ir(class_idx, Some(name), render_ir);
+
+        let prefix = format!("var {name} = ");
+        let trimmed = class_output.trim_end();
+        let trimmed = trimmed.strip_suffix(';').unwrap_or(trimmed);
+        let iife_expr = trimmed
+            .strip_prefix(&prefix)
+            .expect("class emit always produces `var <name> = <expr>;`")
+            .to_string();
+
+        (iife_expr, computed_prop_temp_decls, init_exprs)
+    }
+
     /// Emit a class declaration with a different outer binding name while
     /// preserving the class's own lexical name inside the generated IIFE.
     pub fn emit_class_with_binding_name(
