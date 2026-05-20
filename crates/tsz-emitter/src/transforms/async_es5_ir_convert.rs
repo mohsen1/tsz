@@ -1024,7 +1024,7 @@ impl<'a> AsyncES5Transformer<'a> {
     /// Whether the current module kind requires lowering dynamic `import()`.
     /// ESM and module:none pass through as native `import()`; everything else
     /// (CJS, AMD, UMD, System) needs a module-specific transformation.
-    fn module_needs_dynamic_import_lowering(&self) -> bool {
+    const fn module_needs_dynamic_import_lowering(&self) -> bool {
         !matches!(
             self.module_kind,
             ModuleKind::None

@@ -129,7 +129,7 @@ impl<'a> AsyncES5Emitter<'a> {
         self.system_import_meta = enabled;
     }
 
-    pub fn set_module_kind(&mut self, kind: ModuleKind) {
+    pub const fn set_module_kind(&mut self, kind: ModuleKind) {
         self.transformer.set_module_kind(kind);
     }
 

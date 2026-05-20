@@ -192,7 +192,7 @@ impl<'a> AsyncES5Transformer<'a> {
 
     /// Set the module kind so dynamic `import()` calls inside the generator
     /// body are lowered to the appropriate module-system form.
-    pub fn set_module_kind(&mut self, kind: ModuleKind) {
+    pub const fn set_module_kind(&mut self, kind: ModuleKind) {
         self.module_kind = kind;
     }
 

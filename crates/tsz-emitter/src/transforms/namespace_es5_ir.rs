@@ -181,7 +181,7 @@ impl<'a> NamespaceES5Transformer<'a> {
         self.is_commonjs = is_commonjs;
     }
 
-    pub fn set_module_kind(&mut self, kind: ModuleKind) {
+    pub const fn set_module_kind(&mut self, kind: ModuleKind) {
         self.module_kind = kind;
     }
 
