@@ -1549,14 +1549,14 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         false
     }
 
-    fn union_structurally_contains_source(&self, target: TypeId, source: TypeId) -> bool {
+    fn union_structurally_contains_source(&mut self, target: TypeId, source: TypeId) -> bool {
         let Some(target_members_id) = union_list_id(self.interner, target) else {
             return false;
         };
-        let target_members = self.interner.type_list(target_members_id);
+        let target_members: Vec<TypeId> = self.interner.type_list(target_members_id).to_vec();
 
         if let Some(source_members_id) = union_list_id(self.interner, source) {
-            let source_members = self.interner.type_list(source_members_id);
+            let source_members: Vec<TypeId> = self.interner.type_list(source_members_id).to_vec();
             if source_members.iter().all(|source_member| {
                 target_members.iter().any(|target_member| {
                     self.structurally_same_recursive_member(*source_member, *target_member, 8)
@@ -1573,7 +1573,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     }
 
     fn union_has_same_arm_kinds_plus_nullish(
-        &self,
+        &mut self,
         source_members: &[TypeId],
         target_members: &[TypeId],
     ) -> bool {
@@ -1591,6 +1591,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             target_members.iter().any(|target_member| {
                 !matches!(*target_member, TypeId::NULL | TypeId::UNDEFINED)
                     && self.same_top_level_relation_shape(*source_member, *target_member)
+                    && self.is_assignable(*source_member, *target_member)
             })
         })
     }
@@ -1947,7 +1948,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
     /// Check fast-path assignability conditions.
     /// Returns Some(result) if fast path applies, None if need to do full check.
-    fn check_assignable_fast_path(&self, source: TypeId, target: TypeId) -> Option<bool> {
+    fn check_assignable_fast_path(&mut self, source: TypeId, target: TypeId) -> Option<bool> {
         if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(target)
             && let Some(resolved_target) = self.subtype.resolver.resolve_lazy(def_id, self.interner)
             && resolved_target != target
