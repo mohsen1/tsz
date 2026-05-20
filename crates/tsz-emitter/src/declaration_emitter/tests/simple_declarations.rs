@@ -29,6 +29,50 @@ fn test_function_declaration() {
 }
 
 #[test]
+fn namespace_overload_names_do_not_hide_outer_function_implementation() {
+    let source = r#"
+declare namespace ns {
+    function f(): C;
+    class C {}
+}
+
+function f() {
+    return ns.f();
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("declare function f(): C;"),
+        "Expected outer function declaration despite namespace overload: {output}"
+    );
+}
+
+#[test]
+fn non_ambient_namespace_without_exported_surface_emits_empty_namespace() {
+    let source = r#"
+namespace hidden {
+    class C {
+        private value;
+    }
+    interface I {
+        [n: number]: C;
+    }
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("declare namespace hidden {\n}"),
+        "Expected hidden namespace to emit without private members: {output}"
+    );
+    assert!(
+        !output.contains("class C"),
+        "Expected hidden class to stay private: {output}"
+    );
+}
+
+#[test]
 fn test_invalid_ambient_style_getter_defaults_to_any() {
     let source = r#"
 export class C {
