@@ -969,7 +969,6 @@ impl<'a> DeclarationEmitter<'a> {
             self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos);
         let jsdoc_chain = self.current_statement_jsdoc_chain.clone();
 
-        // Emit leading typedef aliases first so they appear before the function in the output.
         let has_leading_jsdoc_typedef = self.source_is_js_file
             && self.js_export_equals_names.is_empty()
             && jsdoc_chain
@@ -977,7 +976,12 @@ impl<'a> DeclarationEmitter<'a> {
                 .any(|jsdoc| Self::jsdoc_contains_type_alias_tag(jsdoc));
         if has_leading_jsdoc_typedef {
             let is_exported = self.statement_has_effective_export(stmt_idx);
-            self.emit_leading_jsdoc_type_aliases_for_pos(stmt_node.pos, is_exported);
+            // Reuse the already-computed jsdoc_chain instead of re-walking comments.
+            for jsdoc in &jsdoc_chain {
+                if let Some(decl) = Self::parse_jsdoc_type_alias_decl(jsdoc) {
+                    self.emit_rendered_jsdoc_type_alias(decl, is_exported);
+                }
+            }
         }
 
         let has_jsdoc_type_function_signature = self
