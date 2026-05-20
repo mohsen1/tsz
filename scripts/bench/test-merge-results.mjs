@@ -292,6 +292,40 @@ withTempDir((dir) => {
 });
 
 withTempDir((dir) => {
+  const canaryRow = COMPILE_ONLY_CANARY_PROJECT_ROWS[0];
+  const compatibility = {
+    ...SAMPLE_COMPATIBILITY,
+    state: "red",
+    exit_class: "nonzero exit",
+    first_failure_class: null,
+    known_blockers: ["relations-assignability"],
+  };
+  const result = runMerge(dir, [projectRow(canaryRow, compatibility)]);
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    new RegExp(`${canaryRow}: red/yellow compatibility\\.first_failure_class must name the first blocker`),
+  );
+});
+
+withTempDir((dir) => {
+  const canaryRow = COMPILE_ONLY_CANARY_PROJECT_ROWS[0];
+  const compatibility = {
+    ...SAMPLE_COMPATIBILITY,
+    state: "yellow",
+    diagnostic_status: "diagnostic mismatch",
+    first_failure_class: "relations-assignability",
+    known_blockers: [],
+  };
+  const result = runMerge(dir, [projectRow(canaryRow, compatibility)]);
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    new RegExp(`${canaryRow}: red/yellow compatibility\\.known_blockers must name at least one blocker`),
+  );
+});
+
+withTempDir((dir) => {
   const runner_environment = {
     platform: "linux",
     arch: "x64",

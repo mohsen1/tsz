@@ -18,6 +18,14 @@ function hasProjectCompatibilityRows(rows) {
   return rows.some((row) => PROJECT_COMPATIBILITY_ROW_SET.has(row?.name));
 }
 
+function isNonEmptyString(value) {
+  return typeof value === "string" && value.trim() !== "";
+}
+
+function isNonEmptyStringArray(value) {
+  return Array.isArray(value) && value.some(isNonEmptyString);
+}
+
 function parseArgs(argv) {
   const [, , outFile, ...rest] = argv;
   const inputFiles = [];
@@ -329,6 +337,15 @@ function collectProjectCompatibilityFailures(rows) {
     for (const field of REQUIRED_COMPATIBILITY_FIELDS) {
       if (!Object.hasOwn(row.compatibility, field)) {
         failures.push(`${row.name}: missing compatibility.${field}`);
+      }
+    }
+    const state = String(row.compatibility.state || "").toLowerCase();
+    if (state === "red" || state === "yellow") {
+      if (!isNonEmptyString(row.compatibility.first_failure_class)) {
+        failures.push(`${row.name}: red/yellow compatibility.first_failure_class must name the first blocker`);
+      }
+      if (!isNonEmptyStringArray(row.compatibility.known_blockers)) {
+        failures.push(`${row.name}: red/yellow compatibility.known_blockers must name at least one blocker`);
       }
     }
   }
