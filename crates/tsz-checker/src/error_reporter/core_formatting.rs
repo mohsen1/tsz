@@ -1,6 +1,8 @@
 //! Type formatting and diagnostic anchor helpers for error reporter.
 use crate::state::{CheckerState, MemberAccessLevel};
+use tsz_common::interner::Atom;
 use tsz_parser::parser::node::NodeAccess;
+use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
@@ -142,6 +144,196 @@ impl<'a> CheckerState<'a> {
                     .any(|sig| !sig.type_params.is_empty())
             },
         )
+    }
+
+    fn symbol_declaration_arena<'b>(&'b self, symbol: &tsz_binder::Symbol) -> &'b NodeArena {
+        if symbol.decl_file_idx != u32::MAX {
+            self.ctx.get_arena_for_file(symbol.decl_file_idx)
+        } else {
+            self.ctx.arena
+        }
+    }
+
+    fn symbol_type_param_names_for_display(&self, symbol: &tsz_binder::Symbol) -> Vec<Atom> {
+        let arena = self.symbol_declaration_arena(symbol);
+        symbol
+            .declarations
+            .iter()
+            .find_map(|decl| {
+                let node = arena.get(*decl)?;
+                let params = arena
+                    .get_class(node)
+                    .and_then(|class| class.type_parameters.as_ref())
+                    .or_else(|| {
+                        arena
+                            .get_interface(node)
+                            .and_then(|interface| interface.type_parameters.as_ref())
+                    })?;
+                Some(
+                    params
+                        .nodes
+                        .iter()
+                        .filter_map(|param_idx| {
+                            let param = arena.get_type_parameter_at(*param_idx)?;
+                            let ident = arena.get_identifier_at(param.name)?;
+                            Some(self.ctx.types.intern_string(&ident.escaped_text))
+                        })
+                        .collect(),
+                )
+            })
+            .unwrap_or_default()
+    }
+
+    fn type_node_is_display_type_param(
+        &self,
+        arena: &NodeArena,
+        type_node: tsz_parser::parser::NodeIndex,
+        type_param_names: &[Atom],
+    ) -> bool {
+        arena
+            .get_type_ref_at(type_node)
+            .filter(|type_ref| type_ref.type_arguments.is_none())
+            .and_then(|type_ref| arena.get_identifier_at(type_ref.type_name))
+            .map(|ident| self.ctx.types.intern_string(&ident.escaped_text))
+            .is_some_and(|name| type_param_names.contains(&name))
+    }
+
+    fn declared_type_arg_candidate_for_display(
+        &self,
+        arena: &NodeArena,
+        declared_type: tsz_parser::parser::NodeIndex,
+        actual_type: TypeId,
+        type_param_names: &[Atom],
+    ) -> Option<TypeId> {
+        if declared_type.is_none() {
+            return None;
+        }
+        if self.type_node_is_display_type_param(arena, declared_type, type_param_names) {
+            return Some(actual_type);
+        }
+
+        let node = arena.get(declared_type)?;
+        if let Some(array) = arena.get_array_type(node) {
+            let element_type =
+                crate::query_boundaries::common::array_element_type(self.ctx.types, actual_type)?;
+            return self.declared_type_arg_candidate_for_display(
+                arena,
+                array.element_type,
+                element_type,
+                type_param_names,
+            );
+        }
+
+        if let Some(type_ref) = arena.get_type_ref(node)
+            && let Some(type_args) = &type_ref.type_arguments
+            && type_args.nodes.len() == 1
+            && let Some(ident) = arena.get_identifier_at(type_ref.type_name)
+            && matches!(ident.escaped_text.as_str(), "Array" | "ReadonlyArray")
+        {
+            let element_type =
+                crate::query_boundaries::common::array_element_type(self.ctx.types, actual_type)?;
+            return self.declared_type_arg_candidate_for_display(
+                arena,
+                type_args.nodes[0],
+                element_type,
+                type_param_names,
+            );
+        }
+
+        None
+    }
+
+    fn declared_property_type_arg_candidate_for_display(
+        &self,
+        symbol: &tsz_binder::Symbol,
+        property_name: Atom,
+        actual_type: TypeId,
+        type_param_names: &[Atom],
+    ) -> Option<TypeId> {
+        let arena = self.symbol_declaration_arena(symbol);
+        for decl in &symbol.declarations {
+            let Some(node) = arena.get(*decl) else {
+                continue;
+            };
+            let members = arena
+                .get_class(node)
+                .map(|class| &class.members)
+                .or_else(|| {
+                    arena
+                        .get_interface(node)
+                        .map(|interface| &interface.members)
+                });
+            let Some(members) = members else {
+                continue;
+            };
+
+            for member_idx in &members.nodes {
+                let Some(member_node) = arena.get(*member_idx) else {
+                    continue;
+                };
+                if let Some(prop) = arena.get_property_decl(member_node)
+                    && let Some(ident) = arena.get_identifier_at(prop.name)
+                    && self.ctx.types.intern_string(&ident.escaped_text) == property_name
+                    && let Some(candidate) = self.declared_type_arg_candidate_for_display(
+                        arena,
+                        prop.type_annotation,
+                        actual_type,
+                        type_param_names,
+                    )
+                {
+                    return Some(candidate);
+                }
+                if let Some(sig) = arena.get_signature(member_node)
+                    && let Some(ident) = arena.get_identifier_at(sig.name)
+                    && self.ctx.types.intern_string(&ident.escaped_text) == property_name
+                    && let Some(candidate) = self.declared_type_arg_candidate_for_display(
+                        arena,
+                        sig.type_annotation,
+                        actual_type,
+                        type_param_names,
+                    )
+                {
+                    return Some(candidate);
+                }
+            }
+        }
+
+        None
+    }
+
+    fn signature_type_arg_display_candidates(&self, ty: TypeId) -> Vec<TypeId> {
+        let is_substantive = |type_id: TypeId| {
+            !matches!(
+                type_id,
+                TypeId::VOID
+                    | TypeId::NEVER
+                    | TypeId::ANY
+                    | TypeId::UNKNOWN
+                    | TypeId::UNDEFINED
+                    | TypeId::NULL
+            )
+        };
+        let mut candidates = Vec::new();
+        if let Some(callable) =
+            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, ty)
+        {
+            for sig in callable
+                .call_signatures
+                .iter()
+                .chain(callable.construct_signatures.iter())
+            {
+                candidates.extend(
+                    sig.params
+                        .iter()
+                        .map(|param| param.type_id)
+                        .filter(|type_id| is_substantive(*type_id)),
+                );
+                if is_substantive(sig.return_type) {
+                    candidates.push(sig.return_type);
+                }
+            }
+        }
+        candidates
     }
 
     pub(crate) fn normalize_template_placeholder_spacing_for_display(&self, text: &str) -> String {
@@ -501,9 +693,10 @@ impl<'a> CheckerState<'a> {
                 // If display_alias didn't provide type args, try heuristic recovery.
                 if !formatted.contains('<') {
                     let def_id = self.ctx.get_or_create_def_id(sym_id);
-                    let type_param_count = if let Some(type_params) =
-                        self.ctx.get_def_type_params(def_id)
-                    {
+                    let type_param_names = self.symbol_type_param_names_for_display(symbol);
+                    let type_param_count = if !type_param_names.is_empty() {
+                        type_param_names.len()
+                    } else if let Some(type_params) = self.ctx.get_def_type_params(def_id) {
                         type_params.len()
                     } else {
                         symbol
@@ -516,7 +709,7 @@ impl<'a> CheckerState<'a> {
                             })
                             .unwrap_or(0)
                     };
-                    if type_param_count > 0 && shape.properties.len() >= type_param_count {
+                    if type_param_count > 0 {
                         // Recover instantiation args from actual value-carrying members.
                         // For methods, use return type (not the full function signature)
                         // since method return types often directly reflect type params.
@@ -606,25 +799,50 @@ impl<'a> CheckerState<'a> {
                                 candidates.sort_by(|a, b| a.0.cmp(&b.0));
                                 candidates
                             };
-                        let mut candidates = build_candidates(
-                            |prop| !prop.is_method && !prop.is_class_prototype,
-                            self.ctx.types.as_type_database(),
-                        );
-                        if candidates.len() < type_param_count {
+                        let mut candidates: Vec<(String, TypeId)> = if type_param_names.is_empty() {
+                            Vec::new()
+                        } else {
+                            shape
+                                .properties
+                                .iter()
+                                .filter_map(|prop| {
+                                    let candidate = self
+                                        .declared_property_type_arg_candidate_for_display(
+                                            symbol,
+                                            prop.name,
+                                            resolve_candidate_type(prop),
+                                            &type_param_names,
+                                        )?;
+                                    let name =
+                                        self.ctx.types.resolve_atom_ref(prop.name).to_string();
+                                    Some((name, candidate))
+                                })
+                                .collect()
+                        };
+                        candidates.sort_by(|a, b| a.0.cmp(&b.0));
+                        if candidates.len() < type_param_count
+                            && shape.properties.len() >= type_param_count
+                        {
                             candidates = build_candidates(
-                                |prop| !prop.is_method,
+                                |prop| !prop.is_method && !prop.is_class_prototype,
                                 self.ctx.types.as_type_database(),
                             );
-                        }
-                        if candidates.len() < type_param_count {
-                            candidates = build_candidates(
-                                |prop| !prop.is_class_prototype,
-                                self.ctx.types.as_type_database(),
-                            );
-                        }
-                        if candidates.len() < type_param_count {
-                            candidates =
-                                build_candidates(|_| true, self.ctx.types.as_type_database());
+                            if candidates.len() < type_param_count {
+                                candidates = build_candidates(
+                                    |prop| !prop.is_method,
+                                    self.ctx.types.as_type_database(),
+                                );
+                            }
+                            if candidates.len() < type_param_count {
+                                candidates = build_candidates(
+                                    |prop| !prop.is_class_prototype,
+                                    self.ctx.types.as_type_database(),
+                                );
+                            }
+                            if candidates.len() < type_param_count {
+                                candidates =
+                                    build_candidates(|_| true, self.ctx.types.as_type_database());
+                            }
                         }
                         let args: Vec<String> = candidates
                             .iter()
@@ -637,6 +855,29 @@ impl<'a> CheckerState<'a> {
                             formatted = format!("{}<{}>", symbol_name, args.join(", "));
                         }
                     }
+                }
+            }
+        }
+
+        if !formatted.contains('<')
+            && let Some(sym_id) =
+                crate::query_boundaries::common::type_shape_symbol(self.ctx.types, display_ty)
+            && let Some(symbol) = self.get_cross_file_symbol(sym_id)
+        {
+            let symbol_name = symbol.escaped_name.clone();
+            let type_param_names = self.symbol_type_param_names_for_display(symbol);
+            let type_param_count = type_param_names.len();
+            if type_param_count > 0 {
+                let candidates = self.signature_type_arg_display_candidates(display_ty);
+                if candidates.len() >= type_param_count {
+                    let args: Vec<String> = candidates
+                        .iter()
+                        .take(type_param_count)
+                        .map(|type_id| {
+                            self.format_type_diagnostic_for_assignability_display(*type_id)
+                        })
+                        .collect();
+                    formatted = format!("{}<{}>", symbol_name, args.join(", "));
                 }
             }
         }
