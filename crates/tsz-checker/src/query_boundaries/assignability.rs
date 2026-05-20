@@ -1,9 +1,9 @@
 use tsz_common::Atom;
 use tsz_solver::classes::inheritance::InheritanceGraph;
 use tsz_solver::computation::{TypeSubstitution, evaluate_type};
+use tsz_solver::relations::subtype::TypeResolver;
 use tsz_solver::{
     ObjectShape, PropertyInfo, QueryDatabase, SubtypeFailureReason, TypeDatabase, TypeId,
-    TypeResolver,
 };
 
 pub(crate) use super::common::{contains_type_parameters, object_shape_for_type};
@@ -14,7 +14,7 @@ pub(crate) fn are_types_structurally_identical<R: TypeResolver>(
     left: TypeId,
     right: TypeId,
 ) -> bool {
-    tsz_solver::are_types_structurally_identical(db, resolver, left, right)
+    tsz_solver::relations::subtype::are_types_structurally_identical(db, resolver, left, right)
 }
 
 /// Return the element type when `type_id` is a mutable `Array<T>` form used for
@@ -520,7 +520,7 @@ pub(crate) fn classify_for_excess_properties(
 /// This is needed after generic inference when the cache may contain stale
 /// entries from intermediate inference steps.
 pub(crate) fn is_fresh_subtype_of(db: &dyn TypeDatabase, source: TypeId, target: TypeId) -> bool {
-    tsz_solver::is_subtype_of(db, source, target)
+    tsz_solver::relations::subtype::is_subtype_of(db, source, target)
 }
 
 pub(crate) fn get_function_return_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
@@ -552,7 +552,7 @@ pub(crate) fn erase_function_type_params_to_any(db: &dyn TypeDatabase, type_id: 
 
 pub(crate) fn are_types_overlapping_with_env(
     db: &dyn TypeDatabase,
-    env: &tsz_solver::TypeEnvironment,
+    env: &tsz_solver::relations::subtype::TypeEnvironment,
     left: TypeId,
     right: TypeId,
     strict_null_checks: bool,
@@ -575,7 +575,7 @@ pub(crate) fn are_types_overlapping_with_env(
     .is_related()
 }
 
-pub(crate) fn is_assignable_with_overrides<R: tsz_solver::TypeResolver>(
+pub(crate) fn is_assignable_with_overrides<R: tsz_solver::relations::subtype::TypeResolver>(
     inputs: &AssignabilityQueryInputs<'_, R>,
     overrides: &dyn tsz_solver::relations::compat::AssignabilityOverrideProvider,
 ) -> tsz_solver::relations::relation_queries::RelationResult {
@@ -621,7 +621,7 @@ pub(crate) fn is_assignable_with_overrides<R: tsz_solver::TypeResolver>(
 ///
 /// This matches tsc's `isTypeAssignableTo` behavior, which does NOT
 /// include the weak type check. Used by the flow narrowing guard.
-pub(crate) fn is_assignable_no_weak_checks<R: tsz_solver::TypeResolver>(
+pub(crate) fn is_assignable_no_weak_checks<R: tsz_solver::relations::subtype::TypeResolver>(
     inputs: &AssignabilityQueryInputs<'_, R>,
     overrides: &dyn tsz_solver::relations::compat::AssignabilityOverrideProvider,
 ) -> bool {
@@ -659,7 +659,7 @@ pub(crate) fn is_assignable_no_weak_checks<R: tsz_solver::TypeResolver>(
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct AssignabilityQueryInputs<'a, R: tsz_solver::TypeResolver> {
+pub(crate) struct AssignabilityQueryInputs<'a, R: tsz_solver::relations::subtype::TypeResolver> {
     pub db: &'a dyn QueryDatabase,
     pub resolver: &'a R,
     pub source: TypeId,
@@ -669,7 +669,9 @@ pub(crate) struct AssignabilityQueryInputs<'a, R: tsz_solver::TypeResolver> {
     pub sound_mode: bool,
 }
 
-pub(crate) fn is_assignable_bivariant_with_resolver<R: tsz_solver::TypeResolver>(
+pub(crate) fn is_assignable_bivariant_with_resolver<
+    R: tsz_solver::relations::subtype::TypeResolver,
+>(
     db: &dyn QueryDatabase,
     resolver: &R,
     source: TypeId,
@@ -697,7 +699,7 @@ pub(crate) fn is_assignable_bivariant_with_resolver<R: tsz_solver::TypeResolver>
     )
 }
 
-pub(crate) fn is_subtype_with_resolver<R: tsz_solver::TypeResolver>(
+pub(crate) fn is_subtype_with_resolver<R: tsz_solver::relations::subtype::TypeResolver>(
     db: &dyn QueryDatabase,
     resolver: &R,
     source: TypeId,
@@ -723,7 +725,9 @@ pub(crate) fn is_subtype_with_resolver<R: tsz_solver::TypeResolver>(
     )
 }
 
-pub(crate) fn is_redeclaration_identical_with_resolver<R: tsz_solver::TypeResolver>(
+pub(crate) fn is_redeclaration_identical_with_resolver<
+    R: tsz_solver::relations::subtype::TypeResolver,
+>(
     db: &dyn QueryDatabase,
     resolver: &R,
     source: TypeId,
@@ -762,7 +766,9 @@ pub(crate) struct AssignabilityGateResult {
     pub analysis: Option<AssignabilityFailureAnalysis>,
 }
 
-pub(crate) fn check_assignable_gate_with_overrides<R: tsz_solver::TypeResolver>(
+pub(crate) fn check_assignable_gate_with_overrides<
+    R: tsz_solver::relations::subtype::TypeResolver,
+>(
     inputs: &AssignabilityQueryInputs<'_, R>,
     overrides: &dyn tsz_solver::relations::compat::AssignabilityOverrideProvider,
     ctx: Option<&crate::context::CheckerContext<'_>>,
@@ -837,7 +843,7 @@ pub(crate) struct RelationOutcome {
 /// are carried on `RelationRequest` as explicit policy descriptors for follow-up
 /// centralization, but existing caller-side EPC/missing-property diagnostics still
 /// own those decisions.
-pub(crate) fn execute_relation<R: tsz_solver::TypeResolver>(
+pub(crate) fn execute_relation<R: tsz_solver::relations::subtype::TypeResolver>(
     request: &RelationRequest,
     db: &dyn QueryDatabase,
     resolver: &R,
@@ -1146,7 +1152,11 @@ pub(crate) fn classify_object_properties(
             // Property exists in target — check type compatibility.
             // Account for optional properties: target `prop?: T` accepts `T | undefined`.
             let effective_target_type = target_prop_type;
-            if !tsz_solver::is_subtype_of(db, source_prop.type_id, effective_target_type) {
+            if !tsz_solver::relations::subtype::is_subtype_of(
+                db,
+                source_prop.type_id,
+                effective_target_type,
+            ) {
                 all_matching_compatible = false;
                 classification.incompatible_properties.push((
                     source_prop.name,
@@ -1174,7 +1184,7 @@ pub(crate) fn classify_object_properties(
     if !classification.excess_properties.is_empty() && all_matching_compatible {
         let trimmed_source = db.object(matching_props);
         classification.trimmed_source_assignable =
-            tsz_solver::is_subtype_of(db, trimmed_source, target);
+            tsz_solver::relations::subtype::is_subtype_of(db, trimmed_source, target);
     }
 
     Some(classification)
@@ -1254,7 +1264,8 @@ pub(crate) fn index_signature_key_type_accepts_symbol(
     db: &dyn TypeDatabase,
     key_type: TypeId,
 ) -> bool {
-    key_type == TypeId::SYMBOL || tsz_solver::is_subtype_of(db, TypeId::SYMBOL, key_type)
+    key_type == TypeId::SYMBOL
+        || tsz_solver::relations::subtype::is_subtype_of(db, TypeId::SYMBOL, key_type)
 }
 
 /// Property-name index for assignability failure classification.
@@ -1406,7 +1417,9 @@ fn is_global_object_or_function_shape(
     })
 }
 
-pub(crate) fn analyze_assignability_failure_with_context<R: tsz_solver::TypeResolver>(
+pub(crate) fn analyze_assignability_failure_with_context<
+    R: tsz_solver::relations::subtype::TypeResolver,
+>(
     db: &dyn TypeDatabase,
     ctx: &crate::context::CheckerContext<'_>,
     resolver: &R,
@@ -1434,7 +1447,9 @@ pub(crate) fn analyze_assignability_failure_with_context<R: tsz_solver::TypeReso
 /// Must be called BEFORE types are evaluated/expanded.
 ///
 /// Returns `Some(true/false)` if conclusive, `None` to fall through.
-pub(crate) fn check_application_variance_assignability<R: tsz_solver::TypeResolver>(
+pub(crate) fn check_application_variance_assignability<
+    R: tsz_solver::relations::subtype::TypeResolver,
+>(
     inputs: &AssignabilityQueryInputs<'_, R>,
 ) -> Option<bool> {
     let AssignabilityQueryInputs {

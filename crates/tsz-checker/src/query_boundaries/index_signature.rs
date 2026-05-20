@@ -16,7 +16,7 @@ pub(crate) fn index_key_type_satisfies_index_signature(
     signature_key_type: TypeId,
 ) -> bool {
     matches!(signature_key_type, TypeId::STRING | TypeId::SYMBOL)
-        || tsz_solver::is_subtype_of(db, index_type, signature_key_type)
+        || tsz_solver::relations::subtype::is_subtype_of(db, index_type, signature_key_type)
 }
 
 /// Structural AST check for index-signature parameter type validity.

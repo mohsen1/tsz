@@ -823,8 +823,8 @@ fn repair_array_callback_value_param(
     };
 
     if ty != array_elem
-        && crate::is_subtype_of(db, ty, array_elem)
-        && !crate::is_subtype_of(db, array_elem, ty)
+        && crate::relations::subtype::is_subtype_of(db, ty, array_elem)
+        && !crate::relations::subtype::is_subtype_of(db, array_elem, ty)
     {
         array_elem
     } else {

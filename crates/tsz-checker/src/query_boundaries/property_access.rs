@@ -76,7 +76,7 @@ pub(crate) fn resolve_property_access_raw_this_with_options(
 
 pub(crate) fn resolve_property_access_with_resolver(
     db: &dyn QueryDatabase,
-    resolver: &dyn tsz_solver::TypeResolver,
+    resolver: &dyn tsz_solver::relations::subtype::TypeResolver,
     obj_type: TypeId,
     prop_name: &str,
     no_unchecked_indexed_access: bool,
@@ -89,7 +89,7 @@ pub(crate) fn resolve_property_access_with_resolver(
 
 pub(crate) fn resolve_property_access_raw_this_with_resolver(
     db: &dyn QueryDatabase,
-    resolver: &dyn tsz_solver::TypeResolver,
+    resolver: &dyn tsz_solver::relations::subtype::TypeResolver,
     obj_type: TypeId,
     prop_name: &str,
     no_unchecked_indexed_access: bool,
