@@ -629,11 +629,15 @@ impl<'a> CheckerState<'a> {
                 index_type,
             )
         {
+            let display_receiver = self.display_receiver_for_generic_indexed_write(
+                pre_resolution_object_type,
+                raw_object_type,
+            );
             return self
                 .ctx
                 .types
                 .factory()
-                .index_access(pre_resolution_object_type, index_type);
+                .index_access(display_receiver, index_type);
         }
 
         // Concrete receiver indexed by a generic key (`K extends keyof Receiver`):
