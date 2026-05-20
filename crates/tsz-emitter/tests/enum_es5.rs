@@ -478,6 +478,34 @@ fn test_no_folding_for_non_constant_expressions() {
 }
 
 #[test]
+fn enum_initializer_recovers_arrow_line_terminator() {
+    let output = emit_enum_legacy_with_source("enum Enum { claw = (()\n    => 10)() }");
+
+    assert!(
+        output.contains("Enum[Enum[\"claw\"] = (() => 10)()] = \"claw\""),
+        "recovered arrow enum initializer should be normalized, got: {output}"
+    );
+    assert!(
+        !output.contains("()\n    =>"),
+        "illegal arrow line break should not leak into enum output, got: {output}"
+    );
+}
+
+#[test]
+fn renamed_enum_initializer_recovers_arrow_line_terminator() {
+    let output = emit_enum_legacy_with_source("enum Other { value = ((x)\n    => x)(10) }");
+
+    assert!(
+        output.contains("Other[Other[\"value\"] = ((x) => x)(10)] = \"value\""),
+        "recovered arrow normalization should not depend on enum or member names, got: {output}"
+    );
+    assert!(
+        !output.contains("(x)\n    =>"),
+        "illegal arrow line break should not leak into renamed enum output, got: {output}"
+    );
+}
+
+#[test]
 fn test_constant_folding_negative_values() {
     let output = transform_enum("enum E { A = -1, B = -2, C }");
     assert!(

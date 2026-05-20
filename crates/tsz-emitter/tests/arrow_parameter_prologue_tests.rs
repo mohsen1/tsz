@@ -17,6 +17,20 @@ fn emit_with_target(source: &str, target: ScriptTarget) -> String {
 }
 
 #[test]
+fn es2015_recovered_arrow_line_terminator_stays_canonical_outside_enum() {
+    let output = emit_with_target("var fn = ()\n    => 10;", ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("var fn = () => 10;"),
+        "Recovered native arrow should be canonically printed outside enum lowering.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("()\n    =>"),
+        "Illegal arrow line break should not leak into ordinary expression output.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn es2015_arrow_binding_param_class_static_uses_native_prologue() {
     let output = emit_with_target(
         "(({ [class { static x = 1 }.x]: b = \"\" }) => {})();",
