@@ -317,7 +317,7 @@ impl<'a> ContextualTypeContext<'a> {
         {
             if let TypeData::Conditional(cond_id) = expected_key {
                 let cond = self.interner.get_conditional(cond_id);
-                let mut branch_param_types = Vec::new();
+                let mut branch_param_types = Vec::with_capacity(2);
                 for branch in [cond.true_type, cond.false_type] {
                     // Guard against self-recursive aliases.
                     if branch == expected {
@@ -577,7 +577,7 @@ impl<'a> ContextualTypeContext<'a> {
         {
             if let TypeData::Conditional(cond_id) = expected_key {
                 let cond = self.interner.get_conditional(cond_id);
-                let mut branch_param_types = Vec::new();
+                let mut branch_param_types = Vec::with_capacity(2);
                 for (is_true_branch, branch) in [(true, cond.true_type), (false, cond.false_type)] {
                     // Guard against self-recursive aliases.
                     if branch == expected {
@@ -1149,7 +1149,7 @@ impl<'a> ContextualTypeContext<'a> {
 
             if let TypeData::Conditional(cond_id) = expected_key {
                 let cond = self.interner.get_conditional(cond_id);
-                let mut branch_elem_types = Vec::new();
+                let mut branch_elem_types = Vec::with_capacity(2);
                 for branch in [cond.true_type, cond.false_type] {
                     // Guard against self-recursive aliases.
                     if branch == expected {

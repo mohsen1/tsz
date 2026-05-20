@@ -785,7 +785,7 @@ impl<'a> IRPrinter<'a> {
                     if i > 0 {
                         if self.last_emit_ended_with_line_comment {
                             self.write_line();
-                            self.write_indent();
+                            self.write_indent_level(self.indent_level.saturating_sub(1));
                         }
                         self.last_emit_ended_with_line_comment = false;
                         self.write(",");
@@ -1826,6 +1826,20 @@ impl<'a> IRPrinter<'a> {
                 self.write(", , ");
                 self.write(&finally_label.to_string());
                 self.write(", ");
+                self.write(&end_label.to_string());
+                self.write("]);");
+            }
+            IRNode::GeneratorTryPushCatch {
+                start_label,
+                catch_label,
+                end_label,
+            } => {
+                self.write(self.generator_state_name);
+                self.write(".trys.push([");
+                self.write(&start_label.to_string());
+                self.write(", ");
+                self.write(&catch_label.to_string());
+                self.write(", , ");
                 self.write(&end_label.to_string());
                 self.write("]);");
             }
