@@ -1089,8 +1089,9 @@ run_conformance() {
   echo "Conformance skipped: ${skipped_tests}"
 
   local failures_file="$METRICS_DIR/conformance-failures-${shard_index}.txt"
-  grep -a '^\(FAIL\|XFAIL\|CRASH\|TIMEOUT\) ' "$log_file" \
-    | sed 's/^\(FAIL\|XFAIL\|CRASH\|TIMEOUT\) \([^ |]*\).*/\2/' \
+  # XFAIL is known failing debt in conformance math, so keep it in the shard
+  # failure list used by aggregate accepted-regression checks.
+  awk '/^(FAIL|XFAIL|CRASH|TIMEOUT) / { print $2 }' "$log_file" \
     | sort -u > "$failures_file" 2>/dev/null || true
 
   if [[ "$rc" -ne 0 ]]; then
