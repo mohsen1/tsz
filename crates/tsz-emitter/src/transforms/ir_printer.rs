@@ -63,6 +63,9 @@ pub struct IRPrinter<'a> {
     suppress_function_trailing_extraction: bool,
     /// Tracks when the last emitted IR node wrote a trailing line comment.
     last_emit_ended_with_line_comment: bool,
+    /// Source range end for nested AST arrow comments that should be left for
+    /// an IR-owned semicolon/trailing-comment site.
+    ast_arrow_comment_defer_end: Option<u32>,
     /// Name of the current ES5 class IIFE constructor, used to force constructor
     /// empty-body formatting without affecting nested function declarations.
     current_class_iife_name: Option<String>,
@@ -171,7 +174,7 @@ impl<'a> IRPrinter<'a> {
         self.write(" = {}));");
     }
 
-    fn emit_es5_class_expression(
+    pub(crate) fn emit_es5_class_expression(
         &mut self,
         name: &str,
         base_class: Option<&IRNode>,
@@ -327,6 +330,7 @@ impl<'a> IRPrinter<'a> {
             transforms: None,
             suppress_function_trailing_extraction: false,
             last_emit_ended_with_line_comment: false,
+            ast_arrow_comment_defer_end: None,
             current_class_iife_name: None,
             force_iife_multiline_empty: false,
             in_namespace_iife_body: false,
@@ -354,6 +358,7 @@ impl<'a> IRPrinter<'a> {
             transforms: None,
             suppress_function_trailing_extraction: false,
             last_emit_ended_with_line_comment: false,
+            ast_arrow_comment_defer_end: None,
             current_class_iife_name: None,
             force_iife_multiline_empty: false,
             in_namespace_iife_body: false,
@@ -381,6 +386,7 @@ impl<'a> IRPrinter<'a> {
             transforms: None,
             suppress_function_trailing_extraction: false,
             last_emit_ended_with_line_comment: false,
+            ast_arrow_comment_defer_end: None,
             current_class_iife_name: None,
             force_iife_multiline_empty: false,
             in_namespace_iife_body: false,
@@ -437,6 +443,25 @@ impl<'a> IRPrinter<'a> {
             printer.current_namespace_name = Some(namespace);
             printer.namespace_exported_names = self.namespace_ast_exported_names.clone();
         }
+    }
+
+    /// Build a nested `AstPrinter` that inherits this IR printer's transforms,
+    /// printer options, and source text. Callers that need namespace
+    /// qualification on the embedded output must invoke
+    /// `configure_ast_printer_namespace` themselves; keeping it opt-in avoids
+    /// silently changing emission for arms (e.g. `ASTRefWithGeneratorThis`)
+    /// that historically ran without namespace context.
+    fn build_nested_ast_printer(&self, arena: &'a NodeArena) -> AstPrinter<'a> {
+        let transforms = self.transforms.clone().unwrap_or_default();
+        let mut printer = AstPrinter::with_transforms_and_options(
+            arena,
+            transforms,
+            self.make_ast_printer_options(),
+        );
+        if let Some(source_text) = self.source_text {
+            printer.set_source_text(source_text);
+        }
+        printer
     }
 
     /// Write a runtime helper name, prefixing with `tslib_1.` when `tslib_prefix` is active.
@@ -766,7 +791,7 @@ impl<'a> IRPrinter<'a> {
                     if i > 0 {
                         if self.last_emit_ended_with_line_comment {
                             self.write_line();
-                            self.write_indent();
+                            self.write_indent_level(self.indent_level.saturating_sub(1));
                         }
                         self.last_emit_ended_with_line_comment = false;
                         self.write(",");
@@ -858,8 +883,12 @@ impl<'a> IRPrinter<'a> {
                 let should_emit_single_line = *is_expression_body || is_source_single_line;
 
                 let has_rest_to_lower = self.target_es5 && parameters.iter().any(|p| p.rest);
+                let has_new_target_capture = body
+                    .first()
+                    .is_some_and(|node| matches!(node, IRNode::NewTargetCapture { .. }));
                 if !has_defaults
                     && !has_rest_to_lower
+                    && !has_new_target_capture
                     && should_emit_single_line
                     && body.len() == 1
                     && match &body[0] {
@@ -888,6 +917,7 @@ impl<'a> IRPrinter<'a> {
                 }
                 if !has_defaults
                     && !has_rest_to_lower
+                    && !has_new_target_capture
                     && should_emit_single_line
                     && body.len() == 2
                     && matches!(body[0], IRNode::VarDeclList(_))
@@ -970,6 +1000,11 @@ impl<'a> IRPrinter<'a> {
                 }
                 self.write(";");
             }
+            IRNode::NewTargetCapture { initializer } => {
+                self.write("var _newTarget = ");
+                self.emit_node(initializer);
+                self.write(";");
+            }
             IRNode::ExpressionStatement(expr) => {
                 // Wrap function/object expressions in parens when in statement
                 // position to prevent declaration/block ambiguity.
@@ -980,7 +1015,11 @@ impl<'a> IRPrinter<'a> {
                 if needs_paren {
                     self.write("(");
                 }
+                let prev_ast_arrow_comment_defer_end = self.ast_arrow_comment_defer_end;
+                self.ast_arrow_comment_defer_end =
+                    self.source_text.map(|source| source.len() as u32);
                 self.emit_node(expr);
+                self.ast_arrow_comment_defer_end = prev_ast_arrow_comment_defer_end;
                 if needs_paren {
                     self.write(")");
                 }
@@ -1800,6 +1839,20 @@ impl<'a> IRPrinter<'a> {
                 self.write(&end_label.to_string());
                 self.write("]);");
             }
+            IRNode::GeneratorTryPushCatch {
+                start_label,
+                catch_label,
+                end_label,
+            } => {
+                self.write(self.generator_state_name);
+                self.write(".trys.push([");
+                self.write(&start_label.to_string());
+                self.write(", ");
+                self.write(&catch_label.to_string());
+                self.write(", , ");
+                self.write(&end_label.to_string());
+                self.write("]);");
+            }
 
             IRNode::IfBreak {
                 condition,
@@ -2159,34 +2212,43 @@ impl<'a> IRPrinter<'a> {
                     }
                 }
 
-                // Delegate to AstPrinter when transforms exist or when base
-                // printer options require JSX transformation.
-                if let Some(arena) = self.arena
-                    && (self.transforms.as_ref().is_some_and(|t| !t.is_empty())
-                        || self.base_printer_options.is_some())
-                {
-                    let transforms = self.transforms.clone().unwrap_or_default();
-                    let mut printer = AstPrinter::with_transforms_and_options(
-                        arena,
-                        transforms,
-                        self.make_ast_printer_options(),
-                    );
+                // Delegate to AstPrinter whenever an arena is available so
+                // output is canonically formatted; `write_embedded_output`
+                // re-applies the IR printer's current indent to every interior
+                // newline. The raw source-text fallback below is only reached
+                // for arena-less callers (mostly tests) and is otherwise unsafe
+                // because a statement's `node.end` may extend past its
+                // terminating `;` when that `;` was consumed via
+                // `parse_optional`/`parse_semicolon`.
+                if let Some(arena) = self.arena {
+                    let mut printer = self.build_nested_ast_printer(arena);
                     self.configure_ast_printer_namespace(&mut printer);
-                    if let Some(source_text) = self.source_text {
-                        printer.set_source_text(source_text);
+                    if let Some(defer_end) = self.ast_arrow_comment_defer_end {
+                        if let Some((comment_start, comment_end)) =
+                            printer.rightmost_concise_arrow_deferred_comment_range(*idx, defer_end)
+                        {
+                            printer.with_arrow_concise_body_trailing_comments_deferred(
+                                comment_start,
+                                comment_end,
+                                |printer| {
+                                    printer.emit(*idx);
+                                },
+                            );
+                        } else {
+                            printer.emit(*idx);
+                        }
+                    } else {
+                        printer.emit(*idx);
                     }
-                    printer.emit(*idx);
-                    let output = printer.get_output().to_string();
-                    let trimmed = output.trim();
+                    let trimmed = printer.get_output().trim();
                     if !trimmed.is_empty() {
-                        self.write(trimmed);
+                        self.write_embedded_output(trimmed);
                         return;
                     }
                 }
 
-                // Emit AST node by using its source text.
-                // For expressions, just emit the trimmed text directly.
-                // For statements, we need to find the statement end.
+                // Last-resort source-text fallback when no arena is attached
+                // or AstPrinter produced empty output for the node.
                 if let Some(arena) = self.arena
                     && let Some(text) = self.source_text
                     && let Some(node) = arena.get(*idx)
@@ -2195,7 +2257,6 @@ impl<'a> IRPrinter<'a> {
                     let end = std::cmp::min(node.end as usize, text.len());
                     if start < end {
                         let raw = &text[start..end];
-                        // Trim both leading and trailing whitespace for expressions
                         let trimmed = raw.trim();
                         if !trimmed.is_empty() {
                             self.write(trimmed);
@@ -2212,15 +2273,7 @@ impl<'a> IRPrinter<'a> {
                 generator_this,
             } => {
                 if let Some(arena) = self.arena {
-                    let transforms = self.transforms.clone().unwrap_or_default();
-                    let mut printer = AstPrinter::with_transforms_and_options(
-                        arena,
-                        transforms,
-                        self.make_ast_printer_options(),
-                    );
-                    if let Some(source_text) = self.source_text {
-                        printer.set_source_text(source_text);
-                    }
+                    let mut printer = self.build_nested_ast_printer(arena);
                     printer.emit_expression(*node);
                     let output = printer.get_output();
                     let rewritten = output.replacen(

@@ -5,11 +5,13 @@ use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_parser::ParserState;
 use tsz_parser::parser::node::NodeArena;
+use tsz_solver::computation::CompatChecker;
+use tsz_solver::construction::TypeInterner;
 use tsz_solver::def::resolver::TypeResolver;
 use tsz_solver::def::{DefId, DefinitionStore};
 use tsz_solver::{
-    CompatChecker, FunctionShape, ParamInfo, PropertyInfo, RelationCacheKey, SymbolRef, TypeId,
-    TypeInterner, TypeParamInfo, Visibility,
+    FunctionShape, ParamInfo, PropertyInfo, RelationCacheKey, SymbolRef, TypeId, TypeParamInfo,
+    Visibility,
 };
 
 /// Read a checker source path. If the path is a directory, concatenate all .rs files.
@@ -975,7 +977,7 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "control-flow assignment should not use interner relation flags directly"
     );
     assert!(
-        !control_flow_assignment_src.contains("tsz_solver::is_subtype_of("),
+        !control_flow_assignment_src.contains("tsz_solver::relations::subtype::is_subtype_of("),
         "control-flow assignment subtype checks should route through query boundaries, not direct solver helpers"
     );
     assert!(
@@ -1309,7 +1311,7 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
     );
     assert!(
         !call_boundary_src
-            .contains("CallEvaluator::<tsz_solver::CompatChecker>::get_contextual_signature("),
+            .contains("CallEvaluator::<tsz_solver::relations::compat::CompatChecker>::get_contextual_signature("),
         "query_boundaries/call_checker should not depend on concrete solver checker internals for contextual signature lookup"
     );
     assert!(
@@ -3887,6 +3889,40 @@ fn test_execute_relation_success_path_returns_clean_outcome() {
     );
 }
 
+/// Bivariant callback relation checks must preserve solver overflow flags.
+///
+/// Structural rule: when the bivariant-callback relation hits the same
+/// relation recursion guard as ordinary assignability, the checker boundary
+/// must carry `depth_exceeded` / `iteration_exceeded` into `RelationOutcome`
+/// so diagnostic selection can emit TS2321/TS2859 instead of a generic mismatch.
+#[test]
+fn test_bivariant_relation_boundary_preserves_overflow_flags() {
+    let boundary_source = fs::read_to_string("src/query_boundaries/assignability.rs")
+        .expect("failed to read assignability.rs");
+    let checker_source = fs::read_to_string("src/assignability/assignability_checker.rs")
+        .expect("failed to read assignability_checker.rs");
+
+    assert!(
+        boundary_source.contains(") -> tsz_solver::RelationResult")
+            && boundary_source.contains("tsz_solver::RelationKind::AssignableBivariantCallbacks"),
+        "bivariant relation helper must return the full solver RelationResult"
+    );
+    assert!(
+        boundary_source.contains("(r.is_related(), r.depth_exceeded, r.iteration_exceeded)"),
+        "execute_relation must forward bivariant callback depth/iteration overflow flags"
+    );
+    assert!(
+        !boundary_source.contains("(r, false, false)"),
+        "execute_relation must not erase bivariant callback overflow flags"
+    );
+    assert!(
+        checker_source.contains(
+            "self.propagate_overflow_flags(\n            relation_result.depth_exceeded,\n            relation_result.iteration_exceeded,\n        );"
+        ) && checker_source.contains("let result = relation_result.is_related();"),
+        "legacy bivariant boolean wrapper must merge overflow flags before returning/caching the bool"
+    );
+}
+
 /// Failed relation results should return a structured `RelationOutcome`
 /// that keeps the normalized failure facts attached.
 #[test]
@@ -4055,7 +4091,7 @@ fn test_shared_def_store_propagated_through_cache_constructor() {
     let def_id = shared_store.register(info);
 
     let interner = TypeInterner::new();
-    let query_cache = tsz_solver::QueryCache::new(&interner);
+    let query_cache = tsz_solver::construction::QueryCache::new(&interner);
     let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), "let x = 1;".to_string());
     let root = parser.parse_source_file();
     let arena = parser.get_arena();

@@ -102,12 +102,9 @@ impl<'a> CheckerState<'a> {
         result_type: TypeId,
         contextual_type: TypeId,
     ) -> bool {
-        let result_app = query::get_application_info(self.ctx.types, result_type).or_else(|| {
-            self.ctx
-                .types
-                .get_display_alias(result_type)
-                .and_then(|alias| query::get_application_info(self.ctx.types, alias))
-        });
+        let result_app = query::application_infos_for_type(self.ctx.types, result_type)
+            .into_iter()
+            .next();
         let contextual_app = query::get_application_info(self.ctx.types, contextual_type);
 
         let (Some((result_base, result_args)), Some((ctx_base, ctx_args))) =
@@ -152,8 +149,7 @@ impl<'a> CheckerState<'a> {
                 .any(|&arg| arg != TypeId::ANY && arg != TypeId::UNKNOWN && arg != TypeId::ERROR)
         };
 
-        let result_matches_context = self
-            .application_infos_for_type(result_type)
+        let result_matches_context = query::application_infos_for_type(self.ctx.types, result_type)
             .into_iter()
             .any(|(result_base, result_args)| {
                 !result_args.is_empty()
@@ -162,8 +158,7 @@ impl<'a> CheckerState<'a> {
                             || query::type_parameter_info(self.ctx.types, arg)
                                 .is_some_and(|info| constructor_param_names.contains(&info.name))
                     })
-                    && self
-                        .application_infos_for_type(contextual_type)
+                    && query::application_infos_for_type(self.ctx.types, contextual_type)
                         .into_iter()
                         .any(|(ctx_base, ctx_args)| {
                             self.application_bases_are_same_nominal_type(result_base, ctx_base)
@@ -185,7 +180,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        self.application_infos_for_type(contextual_type)
+        query::application_infos_for_type(self.ctx.types, contextual_type)
             .into_iter()
             .any(|(ctx_base, ctx_args)| {
                 self.contextual_application_base_matches_target(
@@ -212,7 +207,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        self.application_infos_for_type(contextual_type)
+        query::application_infos_for_type(self.ctx.types, contextual_type)
             .into_iter()
             .any(|(ctx_base, ctx_args)| {
                 self.contextual_application_base_matches_target(
@@ -273,13 +268,12 @@ impl<'a> CheckerState<'a> {
         contextual_type: TypeId,
         unresolved: impl Fn(TypeId) -> bool,
     ) -> bool {
-        self.application_infos_for_type(result_type)
+        query::application_infos_for_type(self.ctx.types, result_type)
             .into_iter()
             .any(|(result_base, result_args)| {
                 !result_args.is_empty()
                     && result_args.iter().all(|&arg| unresolved(arg))
-                    && self
-                        .application_infos_for_type(contextual_type)
+                    && query::application_infos_for_type(self.ctx.types, contextual_type)
                         .into_iter()
                         .any(|(ctx_base, ctx_args)| {
                             self.application_bases_are_same_nominal_type(result_base, ctx_base)
@@ -291,23 +285,6 @@ impl<'a> CheckerState<'a> {
                                 })
                         })
             })
-    }
-
-    fn application_infos_for_type(&self, type_id: TypeId) -> Vec<(TypeId, Vec<TypeId>)> {
-        let mut applications = Vec::with_capacity(2);
-        if let Some(app) = query::get_application_info(self.ctx.types, type_id) {
-            applications.push(app);
-        }
-        if let Some(alias_app) = self
-            .ctx
-            .types
-            .get_display_alias(type_id)
-            .and_then(|alias| query::get_application_info(self.ctx.types, alias))
-            && !applications.contains(&alias_app)
-        {
-            applications.push(alias_app);
-        }
-        applications
     }
 
     fn is_in_static_class_method_context(&self, idx: NodeIndex) -> bool {

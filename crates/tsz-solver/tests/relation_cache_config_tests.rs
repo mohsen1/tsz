@@ -10,6 +10,20 @@
 //! 3. `skip_weak_type_checks` and `erase_generics` must partition cache
 //!    entries (they actually change the relation outcome).
 //! 4. Different `any_propagation_mode` values must produce distinct keys.
+//! 5. Every `RelationFlag` bit produces a distinct key, including
+//!    `ALLOW_ERASED_GENERIC_SIGNATURE_RETRY`, `IN_CALLBACK_PARAM_CHECK`,
+//!    and `STRICT_READONLY_IDENTITY`.
+//! 6. Every sound-mode policy knob (`STRICT_ANY_PROPAGATION`,
+//!    `STRICT_SUBTYPE_CHECKING`, `DISABLE_METHOD_BIVARIANCE`) must
+//!    produce a distinct cache slot that does not collide with the
+//!    corresponding non-sound slot.
+//! 7. The `QueryCache` must not serve a non-sound cached result to a
+//!    sound-mode lookup for the same type pair.
+//! 8. Typed `RelationPolicy` query-cache entrypoints insert under
+//!    policy-derived cache keys.
+//! 9. The typed no-flags compatibility constructor remains equivalent to the
+//!    legacy `RelationPolicy::from_flags(0)` constructor, without collapsing
+//!    into `RelationPolicy::default()`.
 
 use super::*;
 use crate::caches::db::QueryDatabase;
@@ -40,6 +54,37 @@ fn assert_subtype_partitions(name: &str, on: RelationPolicy, off: RelationPolicy
     assert_ne!(key_on, key_off, "{name} must partition the cache");
 }
 
+/// Asserts that a flag reachable only via the packed `u16` path partitions the
+/// subtype cache: enabling the flag must produce a different key than disabling it.
+fn assert_packed_flag_partitions(name: &str, flag_bits: u16) {
+    assert_subtype_partitions(
+        name,
+        RelationPolicy::from_flags(flag_bits),
+        RelationPolicy::from_flags(0),
+    );
+}
+
+#[test]
+fn unflagged_compatibility_policy_matches_empty_legacy_flags() {
+    let typed = RelationPolicy::unflagged_compatibility();
+    let legacy = RelationPolicy::from_flags(0);
+
+    assert_eq!(
+        typed, legacy,
+        "typed no-flags compatibility policy must preserve the legacy packed no-flags behavior",
+    );
+    assert_eq!(
+        typed.cache_config(),
+        legacy.cache_config(),
+        "typed no-flags compatibility policy must use the legacy no-flags cache slot",
+    );
+    assert_ne!(
+        typed.cache_config(),
+        RelationPolicy::default().cache_config(),
+        "historical no-flags compatibility remains distinct from the strict-null default policy",
+    );
+}
+
 // =============================================================================
 // 1. Every behavior-affecting setting must change the key
 // =============================================================================
@@ -64,6 +109,13 @@ fn each_relation_flag_bit_produces_a_distinct_key() {
         RelationFlags::STRICT_ANY_PROPAGATION,
         RelationFlags::SKIP_WEAK_TYPE_CHECKS,
         RelationFlags::ASSUME_RELATED_ON_CYCLE,
+        // Transient flags set during checker execution — they reach the cache
+        // via packed `u16` flags rather than a typed builder field, but they
+        // must still partition the cache to keep distinct relation passes in
+        // separate slots.
+        RelationFlags::ALLOW_ERASED_GENERIC_SIGNATURE_RETRY,
+        RelationFlags::IN_CALLBACK_PARAM_CHECK,
+        RelationFlags::STRICT_READONLY_IDENTITY,
     ];
 
     for bit in single_bits {
@@ -176,6 +228,196 @@ fn any_propagation_mode_partitions_cache_entries_via_policy() {
     );
 }
 
+// Flags that reach the cache key through the packed `u16` path rather than a
+// typed `RelationPolicy` builder field. Verify they partition entries just like
+// the typed-builder flags above.
+
+#[test]
+fn allow_erased_generic_signature_retry_partitions_cache_entries() {
+    // Set transiently inside `SubtypeChecker` to permit a second pass with
+    // erased generic signatures; retry-mode results must live in a separate slot.
+    assert_packed_flag_partitions(
+        "allow_erased_generic_signature_retry",
+        RelationCacheKey::FLAG_ALLOW_ERASED_GENERIC_SIGNATURE_RETRY,
+    );
+}
+
+#[test]
+fn in_callback_param_check_partitions_cache_entries() {
+    // Set transiently during function-signature comparison; callback-mode
+    // results must live in a separate slot from ordinary comparisons.
+    assert_packed_flag_partitions(
+        "in_callback_param_check",
+        RelationFlags::IN_CALLBACK_PARAM_CHECK.bits() as u16,
+    );
+}
+
+#[test]
+fn strict_readonly_identity_partitions_cache_entries() {
+    // Toggled during conditional-type distribution; results computed under
+    // this mode must not share a slot with ordinary relation results.
+    assert_packed_flag_partitions(
+        "strict_readonly_identity",
+        RelationFlags::STRICT_READONLY_IDENTITY.bits() as u16,
+    );
+}
+
+// =============================================================================
+// Sound-mode cache slot isolation
+//
+// These tests verify the end-to-end property described in SOUND_MODE.md §
+// "The Caching Correctness Tax": a result cached under a non-sound policy
+// must never be served to a sound-mode lookup for the same type pair.
+//
+// Rule for adding a new sound policy knob:
+//   1. Add a field to `RelationPolicy` (or use the packed `flags` field if the
+//      knob is set transiently inside the checker).
+//   2. Map it to a `RelationFlags` bit and reflect it in `cache_config()`.
+//   3. Add a `*_partitions_cache_entries` test (see the section above).
+//   4. Add a `*_slot_does_not_collide_with_non_sound_slot` isolation test
+//      (mirror the pattern below) to prove non-sound results cannot
+//      contaminate sound-mode lookups.
+// =============================================================================
+
+#[test]
+fn strict_any_propagation_slot_does_not_collide_with_non_sound_slot() {
+    // Prove that a result cached in the non-sound slot (no STRICT_ANY_PROPAGATION)
+    // cannot be retrieved via a sound-mode lookup key (with STRICT_ANY_PROPAGATION).
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let lit = interner.literal_string("hello");
+
+    let non_sound_config =
+        RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_NULL_CHECKS).cache_config();
+    let sound_config = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_NULL_CHECKS)
+        .with_strict_any_propagation(true)
+        .cache_config();
+
+    let non_sound_key = RelationCacheKey::for_subtype(lit, TypeId::STRING, non_sound_config);
+    let sound_key = RelationCacheKey::for_subtype(lit, TypeId::STRING, sound_config);
+
+    assert_ne!(
+        non_sound_key, sound_key,
+        "non-sound and sound keys must differ for STRICT_ANY_PROPAGATION"
+    );
+
+    db.insert_subtype_cache(non_sound_key, true);
+
+    assert_eq!(
+        db.lookup_subtype_cache(sound_key),
+        None,
+        "sound-mode lookup must not hit the non-sound cache slot"
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(non_sound_key),
+        Some(true),
+        "non-sound slot must remain intact after a sound-mode miss"
+    );
+}
+
+#[test]
+fn strict_subtype_checking_slot_does_not_collide_with_non_sound_slot() {
+    // `STRICT_SUBTYPE_CHECKING` is the sound-mode flag that implies method
+    // bivariance disablement inside `CompatChecker`. Results cached under
+    // this policy must not be served to non-sound lookups.
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let lit = interner.literal_string("sound-checker-isolation");
+
+    let non_sound_config = RelationPolicy::from_flags(0).cache_config();
+    let sound_config = RelationPolicy::from_flags(0)
+        .with_strict_subtype_checking(true)
+        .cache_config();
+
+    let non_sound_key = RelationCacheKey::for_assignability(lit, TypeId::STRING, non_sound_config);
+    let sound_key = RelationCacheKey::for_assignability(lit, TypeId::STRING, sound_config);
+
+    assert_ne!(
+        non_sound_key, sound_key,
+        "non-sound and sound assignability keys must differ for STRICT_SUBTYPE_CHECKING"
+    );
+
+    db.insert_assignability_cache(non_sound_key, true);
+
+    assert_eq!(
+        db.lookup_assignability_cache(sound_key),
+        None,
+        "sound-mode assignability lookup must not hit the non-sound slot"
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(non_sound_key),
+        Some(true),
+        "non-sound assignability slot must remain intact"
+    );
+}
+
+#[test]
+fn disable_method_bivariance_slot_does_not_collide_with_bivariant_slot() {
+    // `DISABLE_METHOD_BIVARIANCE` is packed into the relation flags and is
+    // directly set on `SubtypeChecker` via `apply_flags`. Results computed
+    // with bivariance enabled must not be served to checks with it disabled.
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let lit = interner.literal_string("bivariance-isolation");
+
+    let bivariant_config = RelationPolicy::from_flags(0).cache_config();
+    let strict_config =
+        RelationPolicy::from_flags(RelationCacheKey::FLAG_DISABLE_METHOD_BIVARIANCE).cache_config();
+
+    let bivariant_key = RelationCacheKey::for_subtype(lit, TypeId::STRING, bivariant_config);
+    let strict_key = RelationCacheKey::for_subtype(lit, TypeId::STRING, strict_config);
+
+    assert_ne!(
+        bivariant_key, strict_key,
+        "bivariant and strict-bivariance keys must differ"
+    );
+
+    db.insert_subtype_cache(bivariant_key, true);
+
+    assert_eq!(
+        db.lookup_subtype_cache(strict_key),
+        None,
+        "strict-bivariance lookup must not hit the bivariant cache slot"
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(bivariant_key),
+        Some(true),
+        "bivariant slot must remain intact"
+    );
+}
+
+#[test]
+fn canonical_sound_mode_policy_cache_key_contains_expected_flags() {
+    // Prove that the canonical sound-mode `RelationPolicy` (as built by the
+    // checker query boundary for every assignability check in sound mode)
+    // encodes `STRICT_SUBTYPE_CHECKING` and `STRICT_ANY_PROPAGATION` in its
+    // cache key. Any future sound-mode policy knob must appear here too.
+    let sound_policy = RelationPolicy::default()
+        .with_strict_subtype_checking(true)
+        .with_strict_any_propagation(true);
+
+    let config = sound_policy.cache_config();
+
+    assert!(
+        config
+            .flags
+            .contains(RelationFlags::STRICT_SUBTYPE_CHECKING),
+        "sound mode policy cache key must include STRICT_SUBTYPE_CHECKING"
+    );
+    assert!(
+        config.flags.contains(RelationFlags::STRICT_ANY_PROPAGATION),
+        "sound mode policy cache key must include STRICT_ANY_PROPAGATION"
+    );
+
+    let default_config = RelationPolicy::default().cache_config();
+    assert_ne!(
+        config, default_config,
+        "sound mode cache config must differ from the default non-sound config"
+    );
+}
+
 // =============================================================================
 // 2. Regression: strict_function_types does NOT imply strict_any_propagation
 // =============================================================================
@@ -281,6 +523,17 @@ fn policy_cache_config_preserves_packed_extended_bits() {
 }
 
 #[test]
+fn policy_cache_config_preserves_all_assigned_packed_bits() {
+    let all_flags = RelationFlags::all();
+    let config = RelationPolicy::from_flags(all_flags.bits() as u16).cache_config();
+
+    assert_eq!(
+        config.flags, all_flags,
+        "explicit packed-bit projection must preserve every assigned relation flag",
+    );
+}
+
+#[test]
 fn subtype_flags_entrypoint_uses_relation_policy_cache_config() {
     let flags =
         RelationCacheKey::FLAG_STRICT_NULL_CHECKS | RelationCacheKey::FLAG_NO_ERASE_GENERICS;
@@ -337,7 +590,11 @@ fn query_cache_relation_misses_insert_policy_shaped_keys() {
         RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES | RelationCacheKey::FLAG_NO_ERASE_GENERICS;
     let config = RelationPolicy::from_flags(flags).cache_config();
 
-    assert!(db.is_subtype_of_with_flags(source, TypeId::STRING, flags));
+    assert!(db.is_subtype_of_with_policy(
+        source,
+        TypeId::STRING,
+        RelationPolicy::from_flags(flags),
+    ));
     assert_eq!(
         db.lookup_subtype_cache(RelationCacheKey::for_subtype(
             source,
@@ -348,7 +605,11 @@ fn query_cache_relation_misses_insert_policy_shaped_keys() {
         "subtype miss path must insert under the policy-derived cache key",
     );
 
-    assert!(db.is_assignable_to_with_flags(source, TypeId::STRING, flags));
+    assert!(db.is_assignable_to_with_policy(
+        source,
+        TypeId::STRING,
+        RelationPolicy::from_flags(flags),
+    ));
     assert_eq!(
         db.lookup_assignability_cache(RelationCacheKey::for_assignability(
             source,
@@ -357,5 +618,39 @@ fn query_cache_relation_misses_insert_policy_shaped_keys() {
         )),
         Some(true),
         "assignability miss path must insert under the policy-derived cache key",
+    );
+}
+
+#[test]
+fn query_cache_typed_policy_entrypoints_insert_policy_shaped_keys() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let source = interner.literal_string("typed-policy-key-source");
+    let policy = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES)
+        .with_strict_any_propagation(true)
+        .with_skip_weak_type_checks(true)
+        .with_erase_generics(false);
+    let config = policy.cache_config();
+
+    assert!(db.is_subtype_of_with_policy(source, TypeId::STRING, policy));
+    assert_eq!(
+        db.lookup_subtype_cache(RelationCacheKey::for_subtype(
+            source,
+            TypeId::STRING,
+            config,
+        )),
+        Some(true),
+        "typed subtype policy path must insert under the policy-derived cache key",
+    );
+
+    assert!(db.is_assignable_to_with_policy(source, TypeId::STRING, policy));
+    assert_eq!(
+        db.lookup_assignability_cache(RelationCacheKey::for_assignability(
+            source,
+            TypeId::STRING,
+            config,
+        )),
+        Some(true),
+        "typed assignability policy path must insert under the policy-derived cache key",
     );
 }

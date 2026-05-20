@@ -97,7 +97,7 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         idx: NodeIndex,
     ) {
-        if self.is_assignable_to(source, target)
+        if self.diagnostic_relation_boolean_guard(source, target)
             || self.is_nested_same_wrapper_application_assignment(source, target)
             || self.type_contains_invalid_mapped_key_type(target)
             || Self::looks_like_invalid_optional_mapped_display(
@@ -117,7 +117,7 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         anchor_idx: NodeIndex,
     ) {
-        if self.is_assignable_to(source, target)
+        if self.diagnostic_relation_boolean_guard(source, target)
             || self.is_nested_same_wrapper_application_assignment(source, target)
             || self.type_contains_invalid_mapped_key_type(target)
             || Self::looks_like_invalid_optional_mapped_display(
@@ -1001,7 +1001,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         let evaluated = self.evaluate_concrete_remapped_mapped_type_with_resolution(resolved);
-        if evaluated == resolved || self.is_assignable_to(evaluated, target) {
+        if evaluated == resolved || self.diagnostic_relation_boolean_guard(evaluated, target) {
             return false;
         }
         let analysis = self.analyze_assignability_failure(evaluated, target);

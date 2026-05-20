@@ -217,13 +217,36 @@ impl<'a> CodeActionProvider<'a> {
         range: Range,
         context: CodeActionContext,
     ) -> Vec<CodeAction> {
-        let mut actions = Vec::new();
-
         // Quick Fixes (diagnostic-based)
         let request_quickfix = context
             .only
             .as_ref()
             .is_none_or(|kinds| kinds.contains(&CodeActionKind::QuickFix));
+        let request_source = context.only.as_ref().is_none_or(|kinds| {
+            kinds.contains(&CodeActionKind::Source)
+                || kinds.contains(&CodeActionKind::SourceOrganizeImports)
+                || kinds.contains(&CodeActionKind::SourceAddMissingImports)
+                || kinds.contains(&CodeActionKind::SourceRemoveUnusedImports)
+                || kinds.contains(&CodeActionKind::SourceSortImports)
+        });
+        let request_refactor = context.only.as_ref().is_none_or(|kinds| {
+            kinds.contains(&CodeActionKind::Refactor)
+                || kinds.contains(&CodeActionKind::RefactorExtract)
+                || kinds.contains(&CodeActionKind::RefactorInline)
+                || kinds.contains(&CodeActionKind::RefactorRewrite)
+        });
+
+        let mut actions = Vec::new();
+        if request_quickfix {
+            actions.reserve(context.diagnostics.len().saturating_mul(9));
+        }
+        if request_source {
+            actions.reserve(2);
+        }
+        if request_refactor {
+            actions.reserve(24);
+        }
+
         if request_quickfix {
             for diag in &context.diagnostics {
                 if let Some(action) = self.unused_import_quickfix(diag) {
@@ -264,13 +287,6 @@ impl<'a> CodeActionProvider<'a> {
         }
 
         // Source Actions (file-level)
-        let request_source = context.only.as_ref().is_none_or(|kinds| {
-            kinds.contains(&CodeActionKind::Source)
-                || kinds.contains(&CodeActionKind::SourceOrganizeImports)
-                || kinds.contains(&CodeActionKind::SourceAddMissingImports)
-                || kinds.contains(&CodeActionKind::SourceRemoveUnusedImports)
-                || kinds.contains(&CodeActionKind::SourceSortImports)
-        });
         if request_source {
             if let Some(action) = self.organize_imports(root) {
                 actions.push(action);
@@ -280,13 +296,6 @@ impl<'a> CodeActionProvider<'a> {
         }
 
         // Refactorings
-        let request_refactor = context.only.as_ref().is_none_or(|kinds| {
-            kinds.contains(&CodeActionKind::Refactor)
-                || kinds.contains(&CodeActionKind::RefactorExtract)
-                || kinds.contains(&CodeActionKind::RefactorInline)
-                || kinds.contains(&CodeActionKind::RefactorRewrite)
-        });
-
         if request_refactor {
             // Extract refactorings require a non-empty selection
             if range.start != range.end {

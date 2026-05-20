@@ -1,7 +1,7 @@
 use super::*;
-use crate::CompatChecker;
-use crate::TypeInterner;
+use crate::construction::TypeInterner;
 use crate::def::{DefId, DefKind};
+use crate::relations::compat::CompatChecker;
 use crate::visitor::application_id;
 use std::sync::Arc;
 
@@ -1634,7 +1634,9 @@ fn test_evaluated_callable_assignable_to_all_any_application_via_display_alias()
     // Without the display_alias fallback in cache.rs, application_id() returns None for the
     // evaluated form and the variance fast path is skipped, causing structural expansion of
     // self-referential types that incorrectly fails. (circularlySimplifyingConditionalTypesNoCrash.ts)
-    use crate::{CallSignature, CallableShape, TypeInterner, relations::subtype::SubtypeChecker};
+    use crate::construction::TypeInterner;
+    use crate::relations::subtype::SubtypeChecker;
+    use crate::{CallSignature, CallableShape};
 
     let interner = TypeInterner::new();
     let base_lazy = interner.lazy(DefId(99));

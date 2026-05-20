@@ -33,7 +33,7 @@ impl<'a> CodeActionProvider<'a> {
         let interface_name = format!("I{class_name}");
 
         // Collect public members for the interface
-        let mut interface_members = Vec::new();
+        let mut interface_members = Vec::with_capacity(class_data.members.nodes.len());
         let class_indent = self.indent_at_offset(class_node.pos);
         let member_indent = {
             let unit = self.indent_unit_from(&class_indent);
@@ -120,7 +120,8 @@ impl<'a> CodeActionProvider<'a> {
         };
 
         // Add `implements InterfaceName` to the class
-        let mut edits = vec![insert_edit];
+        let mut edits = Vec::with_capacity(2);
+        edits.push(insert_edit);
 
         // Find position to insert `implements` clause
         if let Some(implements_edit) =

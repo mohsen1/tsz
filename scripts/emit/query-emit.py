@@ -63,29 +63,57 @@ JS_FAMILY_RULES = [
     ),
     ("destructuring/spread/rest emit", ("destruct", "spread", "rest", "bindingpattern")),
     ("enum/namespace emit", ("enum", "namespace", "internalmodule", "declarationmerging")),
-    ("jsx/react emit", ("jsx", "react")),
+    ("jsx/react emit", ("jsx", "react", "tsx")),
     (
         "loop/control-flow emit",
         ("forof", "forin", "switch", "try", "catch", "break", "continue", "label"),
     ),
     ("literal/template emit", ("template", "literal", "regexp", "numericseparator")),
     ("comments/source-map emit", ("comment", "sourcemap", "source map", "source-map")),
+    # The rules below match by substring against test name + path + error text and are
+    # triage aids over test metadata only, not compiler-behavior decisions.
+    (
+        "parser/recovery emit",
+        ("parser", "parsebigint", "parseinvalid", "parseassert", "parseerror", "skippedtoken"),
+    ),
+    ("type-guard emit", ("typeguard", "typeguards", "typepredicate")),
+    (
+        "optional-chain/nullish emit",
+        ("optionalchain", "optionalchaining", "chain", "nullishcoalesc"),
+    ),
+    ("unicode/identifier-encoding emit", ("unicode", "unicodeescape")),
+    ("reserved-word emit", ("reservedword", "reservedname")),
+    ("js-file/plain-js emit", ("jsfile", "jsdeclaration", "plainjsgrammar")),
+    ("new-target emit", ("newtarget",)),
+    ("tslib/helper emit", ("tslib",)),
+    ("jsdoc-type emit", ("jsdoc",)),
 ]
 
 
 DTS_FAMILY_RULES = [
     (
         "module/declaration merging",
-        ("moduleaugmentation", "augmentation", "declarationmerging", "ambientmodule"),
+        (
+            "moduleaugmentation",
+            "augmentation",
+            "declarationmerging",
+            "ambientmodule",
+            "symlink",
+            "moduledecl",
+            "nodemodule",
+        ),
     ),
     (
         "import/export/nameability",
         ("import", "export", "alias", "qualified", "externalmodules", "specifier"),
     ),
-    ("jsdoc/javascript declarations", ("jsdoc", "javascript", "salsa", "typedef", "checkjs")),
+    (
+        "jsdoc/javascript declarations",
+        ("jsdoc", "javascript", "salsa", "typedef", "checkjs", "jsfile"),
+    ),
     (
         "class/private/accessor declarations",
-        ("class", "private", "accessor", "constructor", "extends", "implements"),
+        ("class", "private", "accessor", "constructor", "extends", "implements", "privacy"),
     ),
     (
         "generic/type-display declarations",
@@ -101,6 +129,13 @@ DTS_FAMILY_RULES = [
             "indexed",
             "indexsignature",
             "signature",
+            "template",
+            "variadic",
+            "tuple",
+            "stringliteral",
+            "spread",
+            "never",
+            "noimplicit",
         ),
     ),
     (
@@ -110,6 +145,8 @@ DTS_FAMILY_RULES = [
     ("enum/namespace declarations", ("enum", "namespace", "internalmodule", "declarationmerging")),
     ("jsx/react declarations", ("jsx", "react")),
     ("ambient/lib declarations", ("ambient", "global", "lib", "defaultlib")),
+    ("type-guard declarations", ("typeguard", "typeguards")),
+    ("unique-symbol declarations", ("uniquesymbol",)),
 ]
 
 

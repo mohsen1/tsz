@@ -4,7 +4,8 @@
 //! `tsz_solver::*` directly (architecture rule: no inline solver function
 //! calls in checker modules).
 
-use tsz_solver::{TypeDatabase, TypeId};
+use tsz_solver::TypeId;
+use tsz_solver::construction::TypeDatabase;
 
 /// Widen a type for inference resolution: deep-widens fresh literals while
 /// preserving function/callable parameter and return types unchanged.
@@ -14,7 +15,13 @@ use tsz_solver::{TypeDatabase, TypeId};
 /// types would produce types incompatible with the original argument under
 /// strict-function-types.
 pub(crate) fn widen_type_for_inference(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    tsz_solver::widen_type_for_inference(db, type_id)
+    tsz_solver::operations::widening::widen_type_for_inference(db, type_id)
+}
+
+/// Apply a `const` assertion to a type, recursively converting mutable literals
+/// to their `readonly` / literal-preserving forms.
+pub(crate) fn apply_const_assertion(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::operations::widening::apply_const_assertion(db, type_id)
 }
 
 /// Whether `type_id` is a *plain* object/array shape: `Object`,

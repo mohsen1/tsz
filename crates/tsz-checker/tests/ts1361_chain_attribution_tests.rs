@@ -118,3 +118,42 @@ new B();
          Got TS1362={ts1362:?}, all={diagnostics:?}",
     );
 }
+
+#[test]
+fn import_type_equals_require_value_use_reports_ts1361() {
+    let foo = r#"
+class Foo {
+  value = "";
+}
+export = Foo;
+"#;
+    let bar = r#"
+import type Foo = require("./foo");
+
+new Foo();
+let value: Foo | undefined;
+"#;
+
+    let diagnostics = compile_module_files(&[("./foo.ts", foo), ("./bar.ts", bar)], 1);
+
+    let ts1361 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 1361)
+        .collect::<Vec<_>>();
+    let ts2693 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2693)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        ts1361.len(),
+        1,
+        "Expected one TS1361 for value use of `import type Foo = require(...)`. \
+         Got TS1361={ts1361:?}, all={diagnostics:?}",
+    );
+    assert!(
+        ts2693.is_empty(),
+        "A resolved type-only import-equals alias should not fall back to TS2693. \
+         Got TS2693={ts2693:?}, all={diagnostics:?}",
+    );
+}

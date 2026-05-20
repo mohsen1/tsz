@@ -62,8 +62,10 @@ impl<'a> FlowAnalyzer<'a> {
 
         let mut saw_antecedent = false;
         // Snapshot so we can release the borrow on `flow_nodes` before
-        // recursing into siblings.
-        let antecedents: Vec<FlowNodeId> = flow.antecedent.to_vec();
+        // recursing into siblings. Most flow nodes have one or two antecedents,
+        // so keep that snapshot stack-backed in the common case.
+        let antecedents: smallvec::SmallVec<[FlowNodeId; 2]> =
+            flow.antecedent.iter().copied().collect();
         for antecedent in antecedents {
             if antecedent.is_none() {
                 continue;

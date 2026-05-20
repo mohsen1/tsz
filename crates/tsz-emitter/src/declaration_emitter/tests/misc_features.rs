@@ -594,6 +594,54 @@ fn test_exported_namespace_import_equals_uses_target_for_outer_inferred_type() {
 }
 
 #[test]
+fn test_exported_namespace_import_equals_annotation_preserves_alias() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+    export namespace m1 {
+        export namespace inner {
+            export class c1 {}
+        }
+        import alias = inner;
+        export declare const value: alias.c1;
+    }
+    "#,
+    );
+
+    assert!(
+        output.contains("import alias = inner;"),
+        "Expected import-equals alias to be emitted: {output}"
+    );
+    assert!(
+        output.contains("const value: alias.c1;"),
+        "Expected exported annotation to preserve the local alias: {output}"
+    );
+}
+
+#[test]
+fn test_duplicate_namespace_import_equals_annotations_preserve_distinct_aliases() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+    namespace N {
+        export class C {}
+    }
+    import A = N;
+    import B = N;
+    export declare const x: A.C;
+    export declare const y: B.C;
+    "#,
+    );
+
+    assert!(
+        output.contains("export declare const x: A.C;"),
+        "Expected x annotation to preserve alias A: {output}"
+    );
+    assert!(
+        output.contains("export declare const y: B.C;"),
+        "Expected y annotation to preserve alias B: {output}"
+    );
+}
+
+#[test]
 fn test_import_type_with_resolution_mode_attributes_is_preserved() {
     let output = emit_dts_with_usage_analysis(
         r#"
@@ -969,6 +1017,49 @@ fn test_source_call_uses_cached_generic_return_alias_arguments() {
         .expect("expected source call return type");
 
     assert_eq!(type_text, "Boxified<A | B | undefined>");
+}
+
+#[test]
+fn test_function_returning_generic_mapped_alias_call_preserves_alias_surface() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Box<T> = {};
+type Boxified<T> = {
+    [P in keyof T]: Box<T[P]>;
+};
+type A = { a: string };
+type B = { b: string };
+type C = { c: string };
+declare function boxify<T>(obj: T): Boxified<T>;
+function f1(x: A | B | C | undefined) {
+    return boxify(x);
+}
+
+type Wrapped<Value> = {
+    [Key in keyof Value]: { current: Value[Key] };
+};
+declare function wrap<Value>(value: Value): Wrapped<Value>;
+function f2(item: A | B | undefined) {
+    return wrap(item);
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "declare function f1(x: A | B | C | undefined): Boxified<A | B | C | undefined>;"
+        ),
+        "Expected inferred return to keep the generic mapped alias instantiation: {output}"
+    );
+    assert!(
+        output
+            .contains("declare function f2(item: A | B | undefined): Wrapped<A | B | undefined>;"),
+        "Expected renamed helper type parameters and mapped keys to preserve the alias too: {output}"
+    );
+    assert!(
+        !output.contains("declare function f1(x: A | B | C | undefined): {\n    a: Box<string>;"),
+        "Did not expect the mapped alias return to expand into object-union members: {output}"
+    );
 }
 
 #[test]

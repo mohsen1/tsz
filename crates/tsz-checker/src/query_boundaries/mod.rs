@@ -58,13 +58,6 @@ pub(crate) mod class_type;
 )]
 pub(crate) mod common;
 pub(crate) mod construct_signatures;
-#[allow(
-    dead_code,
-    clippy::missing_const_for_fn,
-    clippy::match_same_arms,
-    clippy::doc_markdown,
-    clippy::manual_map
-)]
 pub(crate) mod definite_assignment;
 pub(crate) mod definition_identity;
 #[allow(
@@ -75,13 +68,6 @@ pub(crate) mod definition_identity;
     clippy::manual_map
 )]
 pub(crate) mod diagnostics;
-#[allow(
-    dead_code,
-    clippy::missing_const_for_fn,
-    clippy::match_same_arms,
-    clippy::doc_markdown,
-    clippy::manual_map
-)]
 pub(crate) mod dispatch;
 #[allow(
     dead_code,
@@ -124,7 +110,7 @@ pub(crate) mod js_exports;
 pub(crate) mod key_constraints;
 #[allow(dead_code)]
 pub(crate) mod name_resolution;
-mod operator_wrappers;
+pub(crate) mod operator_wrappers;
 #[allow(
     dead_code,
     clippy::missing_const_for_fn,

@@ -3,7 +3,7 @@
 //! This crate provides:
 //! - JavaScript code emission from AST
 //! - AST transforms (TypeScript to JavaScript downleveling)
-//! - Declaration file (.d.ts) emission
+//! - Declaration file (`.d.ts`) emission behind the `dts` feature
 //! - Source map generation
 
 #![allow(clippy::collapsible_if)]
@@ -11,6 +11,7 @@
 #![allow(clippy::needless_borrow)]
 
 pub mod context;
+#[cfg(feature = "dts")]
 pub mod declaration_emitter;
 pub mod emitter;
 pub mod enums;

@@ -21,8 +21,8 @@ use tsz_cli::config::{
     checker_target_from_emitter, default_lib_name_for_target, resolve_default_lib_files_from_dir,
     resolve_lib_files_from_dir,
 };
-use tsz_solver::QueryCache;
-use tsz_solver::RelationCacheStats;
+use tsz_solver::construction::QueryCache;
+use tsz_solver::construction::RelationCacheStats;
 
 pub(crate) struct RunCheckResult {
     pub(crate) codes: Vec<i32>,
@@ -350,7 +350,7 @@ impl Server {
             Some(payload)
         })();
 
-        self.stub_response(seq, request, body)
+        self.success_response(seq, request, body)
     }
 
     pub(crate) fn run_check(
@@ -872,6 +872,9 @@ impl Server {
             no_property_access_from_index_signature: options
                 .no_property_access_from_index_signature,
             sound_mode: false, // Sound mode not yet exposed in server protocol
+            sound_check_declarations: false,
+            sound_report_only: false,
+            sound_pedantic: false,
             experimental_decorators: options.experimental_decorators,
             no_unused_locals: options.no_unused_locals,
             no_unused_parameters: options.no_unused_parameters,

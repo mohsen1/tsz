@@ -20,7 +20,7 @@ pub(crate) use tsz_checker::state::CheckerState;
 pub(crate) use tsz_common::ModuleKind;
 pub(crate) use tsz_common::checker_options::JsxMode;
 pub(crate) use tsz_parser::parser::ParserState;
-pub(crate) use tsz_solver::TypeInterner;
+pub(crate) use tsz_solver::construction::TypeInterner;
 
 /// Helper to compile TypeScript and get diagnostics
 pub(crate) fn compile_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {

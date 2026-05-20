@@ -1,8 +1,9 @@
+use crate::construction::TypeInterner;
 use crate::type_queries::{
     get_function_shape, replace_function_return_type, rewrite_function_error_slots_to_any,
     unpack_tuple_rest_parameter,
 };
-use crate::{FunctionShape, ParamInfo, PropertyInfo, TupleElement, TypeId, TypeInterner};
+use crate::{FunctionShape, ParamInfo, PropertyInfo, TupleElement, TypeId};
 
 #[test]
 fn rewrite_function_error_slots_to_any_rewrites_error_param_and_return() {

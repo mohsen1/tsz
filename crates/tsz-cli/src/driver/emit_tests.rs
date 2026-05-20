@@ -201,6 +201,31 @@ fn test_join_declaration_bundle_chunks_orders_reference_paths_first() {
 }
 
 #[test]
+fn test_js_bundle_chunk_order_orders_reference_paths_first() {
+    let chunks = vec![
+        JsBundleChunk {
+            path_key: "/project/a.ts".to_string(),
+            referenced_path_keys: Vec::new(),
+            contents: "class c {\n}".to_string(),
+        },
+        JsBundleChunk {
+            path_key: "/project/b.js".to_string(),
+            referenced_path_keys: vec!["/project/c.js".to_string()],
+            contents: "/// <reference path=\"c.js\"/>\nfunction foo() {\n}".to_string(),
+        },
+        JsBundleChunk {
+            path_key: "/project/c.js".to_string(),
+            referenced_path_keys: Vec::new(),
+            contents: "function bar() {\n}".to_string(),
+        },
+    ];
+
+    let order = js_bundle_chunk_order(&chunks);
+
+    assert_eq!(order, vec![0, 2, 1]);
+}
+
+#[test]
 fn test_resolve_declaration_reference_path_treats_bare_paths_as_relative() {
     let mut file_lookup = rustc_hash::FxHashMap::default();
     file_lookup.insert("/project/c.js".to_string(), "/project/c.js".to_string());

@@ -1,5 +1,5 @@
 use serde_json::Value;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 use crate::wasm_api::diagnostics::{
     diagnostic_category_name, flatten_diagnostic_message_text, format_ts_diagnostic,
@@ -421,6 +421,35 @@ fn test_transpile_module_omits_source_map_when_not_requested() {
         !output.contains("//# sourceMappingURL"),
         "no sourceMappingURL should be emitted without sourceMap option: {output:?}"
     );
+}
+
+#[test]
+fn test_transpile_module_declaration_respects_dts_feature_gate() {
+    let json = transpile_module(
+        "export const value: number = 1;\n",
+        r#"{"declaration":true,"fileName":"input.ts"}"#,
+    );
+    let parsed: Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed["diagnostics"].as_array().unwrap().len(), 0);
+
+    #[cfg(feature = "dts")]
+    {
+        let declaration_text = parsed["declarationText"]
+            .as_str()
+            .expect("declarationText should be emitted when the dts feature is enabled");
+        assert!(
+            declaration_text.contains("value"),
+            "declaration output should mention the exported binding: {declaration_text:?}"
+        );
+    }
+
+    #[cfg(not(feature = "dts"))]
+    {
+        assert!(
+            parsed["declarationText"].is_null(),
+            "lean WASM build should not emit declarations without the dts feature"
+        );
+    }
 }
 
 #[test]

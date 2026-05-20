@@ -478,6 +478,34 @@ fn test_no_folding_for_non_constant_expressions() {
 }
 
 #[test]
+fn enum_initializer_recovers_arrow_line_terminator() {
+    let output = emit_enum_legacy_with_source("enum Enum { claw = (()\n    => 10)() }");
+
+    assert!(
+        output.contains("Enum[Enum[\"claw\"] = (() => 10)()] = \"claw\""),
+        "recovered arrow enum initializer should be normalized, got: {output}"
+    );
+    assert!(
+        !output.contains("()\n    =>"),
+        "illegal arrow line break should not leak into enum output, got: {output}"
+    );
+}
+
+#[test]
+fn renamed_enum_initializer_recovers_arrow_line_terminator() {
+    let output = emit_enum_legacy_with_source("enum Other { value = ((x)\n    => x)(10) }");
+
+    assert!(
+        output.contains("Other[Other[\"value\"] = ((x) => x)(10)] = \"value\""),
+        "recovered arrow normalization should not depend on enum or member names, got: {output}"
+    );
+    assert!(
+        !output.contains("(x)\n    =>"),
+        "illegal arrow line break should not leak into renamed enum output, got: {output}"
+    );
+}
+
+#[test]
 fn test_constant_folding_negative_values() {
     let output = transform_enum("enum E { A = -1, B = -2, C }");
     assert!(
@@ -525,5 +553,206 @@ fn emit_enum_preserves_single_quoted_string_member_initializer() {
     assert!(
         !output.contains("undefined.length"),
         "ASTRef must not collapse to `undefined`, got: {output}"
+    );
+}
+
+// =============================================================================
+// Leading comment preservation on enum members
+// =============================================================================
+//
+// Structural rule under test:
+//
+//   When lowering `enum E { X, /* trailing */ Y }` to its IIFE form, comments
+//   attach to the next member only after a line break from the previous boundary
+//   (the enum body's `{` or the preceding member's `,`). Same-line block
+//   comments after a boundary are trailing trivia in tsc and must not be emitted
+//   before the next synthesized `E[E["X"] = N] = "X";` member assignment.
+//
+// The rule is structural over comment placement, not over identifier spelling,
+// so each scenario below repeats with a different enum/member identifier set
+// to guard against name-keyed special cases (see CLAUDE.md §25).
+
+#[test]
+fn leading_line_comment_before_first_enum_member_is_preserved() {
+    let output = emit_enum_legacy_with_source("enum E {\n    // illegal case\n    X = 0\n}");
+    assert!(
+        output.contains("// illegal case"),
+        "line comment before first member must be emitted, got:\n{output}"
+    );
+    let idx_comment = output.find("// illegal case").unwrap();
+    let idx_x = output.find("E[\"X\"] = 0").unwrap();
+    assert!(
+        idx_comment < idx_x,
+        "leading line comment must precede the member assignment, got:\n{output}"
+    );
+}
+
+#[test]
+fn leading_line_comment_renamed_enum_keeps_attachment() {
+    // Same rule, different identifier name. If this test breaks but the
+    // previous one passes, the fix is name-keyed and must be re-stated.
+    let output = emit_enum_legacy_with_source("enum MyEnum {\n    // header\n    First = 0\n}");
+    assert!(
+        output.contains("// header"),
+        "line comment must be preserved regardless of enum identifier, got:\n{output}"
+    );
+    let idx_comment = output.find("// header").unwrap();
+    let idx_member = output.find("MyEnum[\"First\"] = 0").unwrap();
+    assert!(idx_comment < idx_member, "got:\n{output}");
+}
+
+#[test]
+fn multiple_consecutive_line_comments_attach_to_next_member() {
+    // The bug reproduced from `forwardRefInEnum.ts`: two `//` comments stacked
+    // above the same member. Both must be preserved, in source order.
+    let output = emit_enum_legacy_with_source(
+        "enum E1 {\n    // illegal case\n    // forward reference to the element of the same enum\n    X = 0, X1 = 0,\n    // forward reference to the element of the same enum\n    Y = 0, Y1 = 0\n}",
+    );
+    let idx_illegal = output
+        .find("// illegal case")
+        .expect("first comment present");
+    let idx_first_fwd = output
+        .find("// forward reference to the element of the same enum")
+        .expect("forward-ref comment present");
+    let idx_x = output.find("E1[\"X\"] = 0").expect("X member emitted");
+    let idx_x1 = output.find("E1[\"X1\"] = 0").expect("X1 member emitted");
+    let idx_y = output.find("E1[\"Y\"] = 0").expect("Y member emitted");
+    let idx_y1 = output.find("E1[\"Y1\"] = 0").expect("Y1 member emitted");
+
+    assert!(
+        idx_illegal < idx_first_fwd && idx_first_fwd < idx_x,
+        "comments stacked above X must precede X in source order, got:\n{output}"
+    );
+    assert!(idx_x < idx_x1, "got:\n{output}");
+    // The Y member has its own forward-ref comment between X1 and Y.
+    let idx_second_fwd = output
+        .rfind("// forward reference to the element of the same enum")
+        .expect("second forward-ref comment present");
+    assert_ne!(
+        idx_first_fwd, idx_second_fwd,
+        "both forward-ref comments must be preserved"
+    );
+    assert!(
+        idx_x1 < idx_second_fwd && idx_second_fwd < idx_y,
+        "got:\n{output}"
+    );
+    assert!(idx_y < idx_y1, "got:\n{output}");
+}
+
+#[test]
+fn block_comment_before_enum_member_preserved() {
+    // The existing block-comment path: must still work after the fix.
+    let output = emit_enum_legacy_with_source("enum E {\n    /* leading block */ A = 0\n}");
+    assert!(
+        output.contains("/* leading block */"),
+        "block comment before member must be preserved, got:\n{output}"
+    );
+}
+
+#[test]
+fn same_line_block_comments_after_boundaries_are_not_leading() {
+    let output = emit_enum_legacy_with_source("enum E { /* c1 */ A = 0, /* c2 */ B = 1 }");
+
+    assert!(
+        !output.contains("/* c1 */"),
+        "same-line block comment after enum body open is trailing trivia, got:\n{output}"
+    );
+    assert!(
+        !output.contains("/* c2 */"),
+        "same-line block comment after member comma is trailing trivia, got:\n{output}"
+    );
+}
+
+#[test]
+fn newline_block_comments_after_boundaries_are_leading() {
+    let output = emit_enum_legacy_with_source("enum F {\n  /* c3 */ C = 0,\n  /* c4 */ D = 1\n}");
+
+    let idx_c3 = output.find("/* c3 */").expect("c3 should be preserved");
+    let idx_c = output.find("F[\"C\"] = 0").expect("C member emitted");
+    let idx_c4 = output.find("/* c4 */").expect("c4 should be preserved");
+    let idx_d = output.find("F[\"D\"] = 1").expect("D member emitted");
+    assert!(
+        idx_c3 < idx_c,
+        "newline-separated block comment before C must be leading, got:\n{output}"
+    );
+    assert!(
+        idx_c4 < idx_d,
+        "newline-separated block comment before D must be leading, got:\n{output}"
+    );
+}
+
+#[test]
+fn jsdoc_comment_before_enum_member_preserved() {
+    let output = emit_enum_legacy_with_source("enum Color {\n    /** Red rose */\n    Red = 1\n}");
+    assert!(
+        output.contains("/** Red rose */"),
+        "JSDoc comment before member must be preserved, got:\n{output}"
+    );
+}
+
+#[test]
+fn line_and_block_comments_mixed_above_member_both_preserved() {
+    let output = emit_enum_legacy_with_source(
+        "enum E {\n    // line first\n    /* block second */\n    A = 0\n}",
+    );
+    let idx_line = output.find("// line first").expect("line comment present");
+    let idx_block = output
+        .find("/* block second */")
+        .expect("block comment present");
+    let idx_a = output.find("E[\"A\"] = 0").expect("member emitted");
+    assert!(
+        idx_line < idx_block && idx_block < idx_a,
+        "mixed comments must appear in source order ahead of member, got:\n{output}"
+    );
+}
+
+#[test]
+fn leading_comments_do_not_bleed_across_members() {
+    // Comments above X must not be re-emitted before Y, and vice-versa.
+    let output = emit_enum_legacy_with_source(
+        "enum E {\n    // for X\n    X = 0,\n    // for Y\n    Y = 1\n}",
+    );
+    // Exactly one occurrence of each comment.
+    let count = |needle: &str| output.matches(needle).count();
+    assert_eq!(count("// for X"), 1, "got:\n{output}");
+    assert_eq!(count("// for Y"), 1, "got:\n{output}");
+    let idx_x_comment = output.find("// for X").unwrap();
+    let idx_x = output.find("E[\"X\"] = 0").unwrap();
+    let idx_y_comment = output.find("// for Y").unwrap();
+    let idx_y = output.find("E[\"Y\"] = 1").unwrap();
+    assert!(idx_x_comment < idx_x, "got:\n{output}");
+    assert!(idx_x < idx_y_comment, "got:\n{output}");
+    assert!(idx_y_comment < idx_y, "got:\n{output}");
+}
+
+#[test]
+fn enum_without_comments_still_emits_correctly() {
+    // Negative case: when there are no leading comments, the IIFE body
+    // contains no Comment IR nodes and the legacy shape is preserved.
+    let output = emit_enum_legacy_with_source("enum E { A, B, C }");
+    assert!(
+        !output.contains("//"),
+        "no spurious line comments, got:\n{output}"
+    );
+    // No `/*` other than the IIFE arg form (which doesn't appear here) and
+    // no `/**` in body.
+    assert!(!output.contains("/**"), "no spurious JSDoc, got:\n{output}");
+    assert!(output.contains("E[E[\"A\"] = 0] = \"A\""), "got:\n{output}");
+    assert!(output.contains("E[E[\"B\"] = 1] = \"B\""), "got:\n{output}");
+    assert!(output.contains("E[E[\"C\"] = 2] = \"C\""), "got:\n{output}");
+}
+
+#[test]
+fn line_comments_without_source_text_fall_back_safely() {
+    // When source text is unavailable, comment extraction is a no-op and
+    // the IIFE still emits valid members. The legacy path uses transform_enum
+    // / emit_enum_legacy (no source text) — same fallback applies.
+    let output = transform_enum("enum E {\n    // top\n    A = 0\n}");
+    // Without source text we cannot extract comments; the member must
+    // still be emitted intact.
+    assert!(output.contains("E[E[\"A\"] = 0] = \"A\""), "got:\n{output}");
+    assert!(
+        !output.contains("// top"),
+        "no comments without source text, got:\n{output}"
     );
 }

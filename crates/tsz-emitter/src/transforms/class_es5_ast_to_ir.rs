@@ -6,7 +6,10 @@
 use super::*;
 use crate::transforms::async_es5_ir::AsyncES5Transformer;
 use tsz_common::common::ModuleKind;
-use tsz_parser::syntax::transform_utils::contains_super_reference;
+use tsz_parser::parser::node::{FunctionData, Node};
+use tsz_parser::syntax::transform_utils::{
+    contains_new_target_reference, contains_super_reference,
+};
 
 #[derive(Clone)]
 enum ThisSubstitution {
@@ -162,6 +165,21 @@ impl<'a> AstToIr<'a> {
         has_substitution
     }
 
+    fn current_this_ir(&self) -> IRNode {
+        if let Some(substitution) = self.current_this_substitution.take() {
+            self.current_this_substitution
+                .set(Some(substitution.clone()));
+            match substitution {
+                ThisSubstitution::Identifier(alias) => IRNode::Identifier(alias.into()),
+                ThisSubstitution::Raw(expr) => IRNode::Raw(expr.into()),
+            }
+        } else {
+            IRNode::This {
+                captured: self.this_captured.get(),
+            }
+        }
+    }
+
     fn can_delegate_es5_for_of_to_ast_printer(&self, idx: NodeIndex) -> bool {
         let has_es5_for_of_directive = self.transforms.as_ref().is_some_and(|transforms| {
             matches!(
@@ -175,6 +193,50 @@ impl<'a> AstToIr<'a> {
             && !self.this_captured.get()
             && !self.has_current_this_substitution()
             && self.identifier_substitution.is_none()
+    }
+
+    fn function_body_contains_new_target(&self, func: &FunctionData) -> bool {
+        (func.body.is_some() && contains_new_target_reference(self.arena, func.body))
+            || self.parameters_contain_new_target(&func.parameters)
+    }
+
+    fn method_body_contains_new_target(&self, body: NodeIndex, params: &NodeList) -> bool {
+        (body.is_some() && contains_new_target_reference(self.arena, body))
+            || self.parameters_contain_new_target(params)
+    }
+
+    fn parameters_contain_new_target(&self, params: &NodeList) -> bool {
+        params.nodes.iter().any(|&param_idx| {
+            self.arena
+                .get(param_idx)
+                .and_then(|param_node| self.arena.get_parameter(param_node))
+                .is_some_and(|param| {
+                    param.initializer.is_some()
+                        && contains_new_target_reference(self.arena, param.initializer)
+                })
+        })
+    }
+
+    fn ordinary_function_new_target_initializer(function_name: Option<&str>) -> IRNode {
+        if let Some(function_name) = function_name
+            && !function_name.is_empty()
+        {
+            IRNode::Raw(
+                format!("this && this instanceof {function_name} ? this.constructor : void 0")
+                    .into(),
+            )
+        } else {
+            IRNode::Raw("this && this instanceof _a ? this.constructor : void 0".into())
+        }
+    }
+
+    fn prepend_new_target_capture(body: &mut Vec<IRNode>, initializer: IRNode) {
+        body.insert(
+            0,
+            IRNode::NewTargetCapture {
+                initializer: Box::new(initializer),
+            },
+        );
     }
 
     /// Take the list of hoisted temp variable names that need `var` declarations
@@ -257,11 +319,13 @@ impl<'a> AstToIr<'a> {
                 IRNode::TrailingComment(comment_text.into()),
             ]);
         }
-        for comment in crate::emitter::get_trailing_comment_ranges(source_text, node.end as usize) {
+        let scan_start =
+            Self::find_actual_statement_end(source_text, node.pos as usize, node.end as usize);
+        for comment in crate::emitter::get_trailing_comment_ranges(source_text, scan_start) {
             if !self.comment_starts_before_limit(comment.pos) {
                 continue;
             }
-            let gap_start = (node.end as usize).min(source_text.len());
+            let gap_start = scan_start.min(source_text.len());
             let gap_end = (comment.pos as usize).min(source_text.len());
             if gap_start > gap_end
                 || !Self::can_attach_trailing_comment_gap(&source_text[gap_start..gap_end])
@@ -280,7 +344,7 @@ impl<'a> AstToIr<'a> {
         if node.kind == syntax_kind_ext::RETURN_STATEMENT {
             return statement;
         }
-        let line_start = (node.end as usize).min(source_text.len());
+        let line_start = scan_start.min(source_text.len());
         let line_end = source_text[line_start..]
             .find(['\n', '\r'])
             .map_or(source_text.len(), |offset| line_start + offset);
@@ -297,6 +361,77 @@ impl<'a> AstToIr<'a> {
             ]);
         }
         statement
+    }
+
+    /// Scan `[node_start, node_end)` and return the position after the last depth-0
+    /// statement terminator (`;` or closing bracket). The parser sets `node.end` to
+    /// the NEXT token's end, so we need to scan back to the actual statement boundary
+    /// before searching for trailing comments.
+    fn find_actual_statement_end(source_text: &str, node_start: usize, node_end: usize) -> usize {
+        let bytes = source_text.as_bytes();
+        let end = node_end.min(bytes.len());
+        let start = node_start.min(end);
+
+        let mut depth: i32 = 0;
+        let mut last_stmt_end = end;
+        let mut i = start;
+        let mut in_string: Option<u8> = None;
+
+        while i < end {
+            let ch = bytes[i];
+            if let Some(quote) = in_string {
+                if ch == b'\\' {
+                    i = (i + 2).min(end);
+                    continue;
+                }
+                if ch == quote {
+                    in_string = None;
+                }
+                i += 1;
+                continue;
+            }
+            match ch {
+                b'\'' | b'"' | b'`' => {
+                    in_string = Some(ch);
+                    i += 1;
+                }
+                b'/' if i + 1 < end && bytes[i + 1] == b'/' => {
+                    i += 2;
+                    while i < end && bytes[i] != b'\n' && bytes[i] != b'\r' {
+                        i += 1;
+                    }
+                }
+                b'/' if i + 1 < end && bytes[i + 1] == b'*' => {
+                    i += 2;
+                    while i + 1 < end && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                        i += 1;
+                    }
+                    if i + 1 < end {
+                        i += 2;
+                    }
+                }
+                b'{' | b'(' | b'[' => {
+                    depth += 1;
+                    i += 1;
+                }
+                b'}' | b')' | b']' => {
+                    depth = (depth - 1).max(0);
+                    if depth == 0 {
+                        last_stmt_end = i + 1;
+                    }
+                    i += 1;
+                }
+                b';' if depth == 0 => {
+                    last_stmt_end = i + 1;
+                    i += 1;
+                }
+                _ => {
+                    i += 1;
+                }
+            }
+        }
+
+        last_stmt_end
     }
 
     fn included_trailing_line_comment(
@@ -412,20 +547,7 @@ impl<'a> AstToIr<'a> {
             k if k == SyntaxKind::FalseKeyword as u16 => IRNode::BooleanLiteral(false),
             k if k == SyntaxKind::NullKeyword as u16 => IRNode::NullLiteral,
             k if k == SyntaxKind::UndefinedKeyword as u16 => IRNode::Undefined,
-            k if k == SyntaxKind::ThisKeyword as u16 => {
-                if let Some(substitution) = self.current_this_substitution.take() {
-                    self.current_this_substitution
-                        .set(Some(substitution.clone()));
-                    match substitution {
-                        ThisSubstitution::Identifier(alias) => IRNode::Identifier(alias.into()),
-                        ThisSubstitution::Raw(expr) => IRNode::Raw(expr.into()),
-                    }
-                } else {
-                    IRNode::This {
-                        captured: self.this_captured.get(),
-                    }
-                }
-            }
+            k if k == SyntaxKind::ThisKeyword as u16 => self.current_this_ir(),
             k if k == SyntaxKind::SuperKeyword as u16 => IRNode::Super,
             k if k == syntax_kind_ext::CALL_EXPRESSION => self.convert_call_expression(idx),
             k if k == syntax_kind_ext::NEW_EXPRESSION => self.convert_new_expression(idx),
@@ -436,7 +558,8 @@ impl<'a> AstToIr<'a> {
                 self.convert_element_access(idx)
             }
             k if k == syntax_kind_ext::META_PROPERTY => {
-                // new.target, import.meta — emit as raw text
+                // `new.target` is captured by the owning ES5 function prologue.
+                // `import.meta` is still printed as a raw meta-property.
                 if let Some(access) = self.arena.get_access_expr(node) {
                     let keyword = if let Some(kw_node) = self.arena.get(access.expression) {
                         if kw_node.kind == SyntaxKind::NewKeyword as u16 {
@@ -451,6 +574,9 @@ impl<'a> AstToIr<'a> {
                     };
                     let name = get_identifier_text(self.arena, access.name_or_argument)
                         .unwrap_or_default();
+                    if keyword == "new" && name == "target" {
+                        return IRNode::id("_newTarget");
+                    }
                     IRNode::Raw(format!("{keyword}.{name}").into())
                 } else {
                     IRNode::ASTRef(idx)
@@ -726,6 +852,12 @@ impl<'a> AstToIr<'a> {
 
         let mut body = body;
         self.prepend_function_hoisted_temps(&mut body, hoisted_before);
+        if self.function_body_contains_new_target(func) {
+            Self::prepend_new_target_capture(
+                &mut body,
+                Self::ordinary_function_new_target_initializer(Some(&name)),
+            );
+        }
 
         IRNode::FunctionDecl {
             name: name.into(),
@@ -1285,9 +1417,7 @@ impl<'a> AstToIr<'a> {
                     object: Box::new(super_proto_method),
                     property: "call".to_string().into(),
                 };
-                let mut call_args = vec![IRNode::This {
-                    captured: self.this_captured.get(),
-                }];
+                let mut call_args = vec![self.current_this_ir()];
                 call_args.extend(args);
                 return Some(IRNode::CallExpr {
                     callee: Box::new(call_method),
@@ -1322,9 +1452,7 @@ impl<'a> AstToIr<'a> {
                     object: Box::new(super_proto_elem),
                     property: "call".to_string().into(),
                 };
-                let mut call_args = vec![IRNode::This {
-                    captured: self.this_captured.get(),
-                }];
+                let mut call_args = vec![self.current_this_ir()];
                 call_args.extend(args);
                 return Some(IRNode::CallExpr {
                     callee: Box::new(call_method),
@@ -1340,9 +1468,7 @@ impl<'a> AstToIr<'a> {
         let temp = self.generate_hoisted_temp();
         let temp_ref = || IRNode::id(temp.clone());
 
-        let mut call_args = vec![IRNode::This {
-            captured: self.this_captured.get(),
-        }];
+        let mut call_args = vec![self.current_this_ir()];
         call_args.extend(args);
 
         IRNode::ConditionalExpr {
@@ -1837,26 +1963,15 @@ impl<'a> AstToIr<'a> {
     /// Convert a method declaration to a function expression IR node
     fn convert_method_to_function_expr(&self, node: &Node) -> Option<IRNode> {
         let method = self.arena.get_method_decl(node)?;
-        let params: Vec<IRParam> = method
-            .parameters
-            .nodes
-            .iter()
-            .filter_map(|&p_idx| {
-                let p_node = self.arena.get(p_idx)?;
-                let name = get_identifier_text(self.arena, self.arena.get_parameter(p_node)?.name)?;
-                Some(IRParam {
-                    name: name.into(),
-                    default_value: None,
-                    rest: false,
-                    leading_comment: None,
-                })
-            })
-            .collect();
-        let body = if method.body.is_some() {
+        let params = self.convert_parameters(&method.parameters);
+        let mut body = if method.body.is_some() {
             self.convert_block_to_stmts(method.body)
         } else {
             Vec::new()
         };
+        if self.method_body_contains_new_target(method.body, &method.parameters) {
+            Self::prepend_new_target_capture(&mut body, IRNode::void_0());
+        }
         let body_source_range = self.arena.pos_end_at(method.body);
         Some(IRNode::FunctionExpr {
             name: None,
@@ -1870,26 +1985,15 @@ impl<'a> AstToIr<'a> {
     /// Convert a getter/setter to a function expression IR node
     fn convert_accessor_to_function_expr(&self, node: &Node) -> Option<IRNode> {
         let accessor = self.arena.get_accessor(node)?;
-        let params: Vec<IRParam> = accessor
-            .parameters
-            .nodes
-            .iter()
-            .filter_map(|&p_idx| {
-                let p_node = self.arena.get(p_idx)?;
-                let name = get_identifier_text(self.arena, self.arena.get_parameter(p_node)?.name)?;
-                Some(IRParam {
-                    name: name.into(),
-                    default_value: None,
-                    rest: false,
-                    leading_comment: None,
-                })
-            })
-            .collect();
-        let body = if accessor.body.is_some() {
+        let params = self.convert_parameters(&accessor.parameters);
+        let mut body = if accessor.body.is_some() {
             self.convert_block_to_stmts(accessor.body)
         } else {
             Vec::new()
         };
+        if self.method_body_contains_new_target(accessor.body, &accessor.parameters) {
+            Self::prepend_new_target_capture(&mut body, IRNode::void_0());
+        }
         let body_source_range = self.arena.pos_end_at(accessor.body);
         Some(IRNode::FunctionExpr {
             name: None,
@@ -1948,8 +2052,9 @@ impl<'a> AstToIr<'a> {
             let saved_temp_counter = self.temp_var_counter.get();
             self.temp_var_counter.set(0);
 
+            let needs_new_target_capture = self.function_body_contains_new_target(func);
             let name = if func.name.is_none() {
-                None
+                needs_new_target_capture.then_some("_a".to_string())
             } else {
                 get_identifier_text(self.arena, func.name)
             };
@@ -1989,6 +2094,12 @@ impl<'a> AstToIr<'a> {
             self.temp_var_counter.set(saved_temp_counter);
             let mut body = body;
             self.prepend_function_hoisted_temps(&mut body, hoisted_before);
+            if needs_new_target_capture {
+                Self::prepend_new_target_capture(
+                    &mut body,
+                    Self::ordinary_function_new_target_initializer(name.as_deref()),
+                );
+            }
 
             IRNode::FunctionExpr {
                 name: name.map(Into::into),

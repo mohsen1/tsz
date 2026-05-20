@@ -1033,8 +1033,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let t_members = self.interner.type_list(t_members);
                 let mut non_nullable = None;
                 let mut count = 0;
+                let mut has_null = false;
+                let mut has_undefined = false;
+                let mut has_void = false;
                 for &member in t_members.iter() {
-                    if !is_nullish(member) {
+                    if member == TypeId::NULL {
+                        has_null = true;
+                    } else if member == TypeId::UNDEFINED {
+                        has_undefined = true;
+                    } else if member == TypeId::VOID {
+                        has_void = true;
+                    } else {
                         count += 1;
                         if count == 1 {
                             non_nullable = Some(member);
@@ -1046,6 +1055,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 if count == 1
                     && let Some(member) = non_nullable
                 {
+                    // `null <: T | null` gives no information about T; skip only
+                    // when the target union has the same fixed nullish arm.
+                    if (source == TypeId::NULL && has_null)
+                        || (source == TypeId::UNDEFINED && (has_undefined || has_void))
+                        || (source == TypeId::VOID && has_void)
+                    {
+                        return;
+                    }
                     self.constrain_types(ctx, var_map, source, member, priority);
                     return;
                 }

@@ -1,5 +1,6 @@
 use super::*;
-use tsz_solver::{DefId, FunctionShape, ParamInfo, TupleElement, TypeInterner};
+use tsz_solver::construction::TypeInterner;
+use tsz_solver::{DefId, FunctionShape, ParamInfo, TupleElement};
 
 #[test]
 fn exposes_property_access_boundary_queries() {

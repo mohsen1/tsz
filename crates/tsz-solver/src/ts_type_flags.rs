@@ -7,8 +7,9 @@
 //! match against `TypeData` next to the `TypeFlags` bit constants so
 //! callers only need to depend on the public surface.
 
+use crate::query::TypeStore;
 use crate::types::{IntrinsicKind, LiteralValue};
-use crate::{TypeData, TypeDatabase, TypeId};
+use crate::{TypeData, TypeId};
 
 /// Bit values mirroring TypeScript's public `TypeFlags` enum from
 /// `compiler/types.ts`. Exposed here so wasm/server bindings can return
@@ -48,7 +49,7 @@ pub mod flags {
 /// classification. Use from non-solver crates that need to expose
 /// type-shape categories (wasm bindings, server) without inspecting
 /// `TypeData` directly.
-pub fn type_id_ts_flags(types: &dyn TypeDatabase, type_id: TypeId) -> u32 {
+pub fn type_id_ts_flags(types: &dyn TypeStore, type_id: TypeId) -> u32 {
     if type_id == TypeId::BOOLEAN_TRUE || type_id == TypeId::BOOLEAN_FALSE {
         return flags::BOOLEAN_LITERAL | flags::BOOLEAN;
     }
@@ -109,7 +110,7 @@ pub fn type_id_ts_flags(types: &dyn TypeDatabase, type_id: TypeId) -> u32 {
 }
 
 /// Check whether a type is `null` / `undefined` or a union containing them.
-pub fn is_nullable_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+pub fn is_nullable_type(types: &dyn TypeStore, type_id: TypeId) -> bool {
     if type_id == TypeId::NULL || type_id == TypeId::UNDEFINED {
         return true;
     }

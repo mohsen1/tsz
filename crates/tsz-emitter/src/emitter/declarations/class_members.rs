@@ -656,9 +656,10 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        // For JavaScript: skip property declarations without initializers unless they
-        // still have a runtime class-field form. A typed declaration like `x: T;`
-        // is type-only even when native class fields are available.
+        // For JavaScript: skip recovered TypeScript-only property declarations
+        // without initializers unless they still have a runtime class-field form.
+        // In TypeScript files, native class-field targets preserve typed fields
+        // such as `x: T;` as runtime `x;` declarations.
         let target_supports_native_fields =
             (self.ctx.options.target as u32) >= (ScriptTarget::ES2022 as u32);
         let preserves_uninitialized_fields =
@@ -672,8 +673,9 @@ impl<'a> Printer<'a> {
                 .arena
                 .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword);
             let has_decorator = !self.collect_class_decorators(&prop.modifiers).is_empty();
-            let type_only_native_field =
-                preserves_uninitialized_fields && prop.type_annotation.is_some();
+            let type_only_native_field = self.source_is_js_file
+                && preserves_uninitialized_fields
+                && prop.type_annotation.is_some();
             if (!preserves_uninitialized_fields || type_only_native_field)
                 && !is_private
                 && !has_accessor
@@ -1446,8 +1448,24 @@ impl<'a> Printer<'a> {
                             self.comment_emit_idx += 1;
                         }
                     }
+                    let arrow_comment_scan_end =
+                        self.source_text.map_or(*init_end, |text| text.len() as u32);
+                    let arrow_comment_range = self.rightmost_concise_arrow_deferred_comment_range(
+                        *init_idx,
+                        arrow_comment_scan_end,
+                    );
                     self.with_scoped_static_initializer_context_cleared(|this| {
-                        this.emit_expression(*init_idx);
+                        if let Some((comment_start, comment_end)) = arrow_comment_range {
+                            this.with_arrow_concise_body_trailing_comments_deferred(
+                                comment_start,
+                                comment_end,
+                                |this| {
+                                    this.emit_expression(*init_idx);
+                                },
+                            );
+                        } else {
+                            this.emit_expression(*init_idx);
+                        }
                     });
                 }
                 self.write(";");
@@ -1692,7 +1710,9 @@ impl<'a> Printer<'a> {
 
 #[cfg(test)]
 mod tests {
+    use crate::emitter::{Printer as EmitPrinter, PrinterOptions};
     use crate::output::printer::{PrintOptions, Printer};
+    use tsz_common::ScriptTarget;
     use tsz_parser::ParserState;
 
     fn emit_ts(source: &str) -> String {
@@ -1702,6 +1722,15 @@ mod tests {
         printer.set_source_text(source);
         printer.print(root);
         printer.finish().code
+    }
+
+    fn emit_ts_with_options(source: &str, options: PrinterOptions) -> String {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = EmitPrinter::with_options(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        printer.get_output().to_string()
     }
 
     #[test]
@@ -1743,6 +1772,27 @@ mod tests {
         assert!(
             !output.contains("static A.Origin()"),
             "Namespace export qualification must not apply to class method names.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn esnext_define_class_fields_preserve_type_only_ts_fields() {
+        let output = emit_ts_with_options(
+            "class A {\n    foo?: string;\n    bar: number;\n    declare baz: boolean;\n}\n",
+            PrinterOptions {
+                target: ScriptTarget::ESNext,
+                use_define_for_class_fields: true,
+                ..Default::default()
+            },
+        );
+
+        assert!(
+            output.contains("class A {\n    foo;\n    bar;\n}"),
+            "ESNext define-field emit should preserve TS typed fields without initializers.\nOutput: {output}"
+        );
+        assert!(
+            !output.contains("baz"),
+            "`declare` fields should remain erased even when native fields are preserved.\nOutput: {output}"
         );
     }
 

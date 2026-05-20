@@ -255,6 +255,18 @@ jobs:
           fi
         continue-on-error: true
 
+      - name: Write benchmark artifact readiness status
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          readiness_out="artifacts/bench-readiness-status.json"
+          artifact="artifacts/bench-vs-tsgo-github-latest.json"
+
+          node scripts/bench/check-artifact-readiness.mjs "${artifact}" --json \
+            > "${readiness_out}" || true
+          echo "Wrote $(wc -c < "${readiness_out}") bytes to ${readiness_out}."
+        continue-on-error: true
+
       - name: Download latest suite metrics from GCS
         run: |
           BUCKET="thirdface-ai-oauth_cloudbuild"

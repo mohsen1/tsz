@@ -574,14 +574,10 @@ impl<'a> Printer<'a> {
                     let is_hoisted_func =
                         node.kind == syntax_kind_ext::FUNCTION_DECLARATION && !is_default;
                     if is_hoisted_func {
-                        let prev_module = self.ctx.options.module;
-                        let prev_original = self.ctx.original_module_kind;
-                        self.ctx.options.module = ModuleKind::None;
-                        self.ctx.original_module_kind = Some(prev_module);
                         let export_name = names.first().copied();
-                        self.emit_commonjs_inner(node, idx, inner.as_ref(), export_name);
-                        self.ctx.options.module = prev_module;
-                        self.ctx.original_module_kind = prev_original;
+                        self.with_cjs_export_body_mask(|this| {
+                            this.emit_commonjs_inner(node, idx, inner.as_ref(), export_name);
+                        });
                     } else if !is_default
                         && node.kind == syntax_kind_ext::VARIABLE_STATEMENT
                         && let Some(schedule) = self.collect_cjs_export_variable_schedule(idx, node)
@@ -607,14 +603,10 @@ impl<'a> Printer<'a> {
                             self.pending_commonjs_class_export_name =
                                 Some((idx, ident.escaped_text.clone()));
                         }
-                        let prev_module = self.ctx.options.module;
-                        let prev_original = self.ctx.original_module_kind;
-                        self.ctx.options.module = ModuleKind::None;
-                        self.ctx.original_module_kind = Some(prev_module);
                         let export_name = names.first().copied();
-                        self.emit_commonjs_inner(node, idx, inner.as_ref(), export_name);
-                        self.ctx.options.module = prev_module;
-                        self.ctx.original_module_kind = prev_original;
+                        self.with_cjs_export_body_mask(|this| {
+                            this.emit_commonjs_inner(node, idx, inner.as_ref(), export_name);
+                        });
                         // If the deferred export was NOT consumed (e.g. the class had no
                         // static blocks/fields, so emit_class_es6_with_options was not
                         // reached, or the class was ambient), emit it now as a fallback.
@@ -784,7 +776,7 @@ impl<'a> Printer<'a> {
                             return;
                         }
                         k if k == syntax_kind_ext::FUNCTION_EXPRESSION => {
-                            self.emit_function_expression_es5_params(func_node);
+                            self.emit_function_expression_es5_params(func_node, function_node);
                             return;
                         }
                         k if k == syntax_kind_ext::ARROW_FUNCTION && !self.ctx.target_es5 => {
@@ -945,11 +937,7 @@ impl<'a> Printer<'a> {
             es5_emitter.set_tslib_import_binding(self.commonjs_tslib_import_binding.clone());
         }
         es5_emitter.set_printer_options(self.ctx.options.clone());
-        es5_emitter.set_module_kind(
-            self.ctx
-                .original_module_kind
-                .unwrap_or(self.ctx.options.module),
-        );
+        es5_emitter.set_module_kind(self.ctx.outer_module_kind());
         if let Some(text) = self.source_text_for_map() {
             if self.writer.has_source_map() {
                 es5_emitter.set_source_map_context(text, self.writer.current_source_index());
@@ -1450,7 +1438,7 @@ impl<'a> Printer<'a> {
                             self.emit_function_declaration_es5_params(func_node);
                         }
                         k if k == syntax_kind_ext::FUNCTION_EXPRESSION => {
-                            self.emit_function_expression_es5_params(func_node);
+                            self.emit_function_expression_es5_params(func_node, *function_node);
                         }
                         k if k == syntax_kind_ext::ARROW_FUNCTION && !self.ctx.target_es5 => {
                             if let Some(func) = self.arena.get_function(func_node) {
@@ -1692,18 +1680,14 @@ impl<'a> Printer<'a> {
                         self.pending_commonjs_class_export_name =
                             Some((idx, ident.escaped_text.clone()));
                     }
-                    let prev_module = self.ctx.options.module;
-                    let prev_original = self.ctx.original_module_kind;
-                    self.ctx.options.module = ModuleKind::None;
-                    self.ctx.original_module_kind = Some(prev_module);
                     let export_name = names.first().copied();
-                    if index == 0 {
-                        self.emit_commonjs_inner(node, idx, inner.as_ref(), export_name);
-                    } else {
-                        self.emit_chained_directive(node, idx, directives, index - 1);
-                    }
-                    self.ctx.options.module = prev_module;
-                    self.ctx.original_module_kind = prev_original;
+                    self.with_cjs_export_body_mask(|this| {
+                        if index == 0 {
+                            this.emit_commonjs_inner(node, idx, inner.as_ref(), export_name);
+                        } else {
+                            this.emit_chained_directive(node, idx, directives, index - 1);
+                        }
+                    });
                     if let Some((_, class_name)) = self.pending_commonjs_class_export_name.take() {
                         if !self.writer.is_at_line_start() {
                             self.write_line();
@@ -1881,7 +1865,7 @@ impl<'a> Printer<'a> {
                             return;
                         }
                         k if k == syntax_kind_ext::FUNCTION_EXPRESSION => {
-                            self.emit_function_expression_es5_params(func_node);
+                            self.emit_function_expression_es5_params(func_node, *function_node);
                             return;
                         }
                         k if k == syntax_kind_ext::ARROW_FUNCTION && !self.ctx.target_es5 => {

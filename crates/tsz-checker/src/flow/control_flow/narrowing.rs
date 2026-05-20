@@ -5,7 +5,8 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::node::CallExprData;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{GuardSense, ParamInfo, TypeGuard, TypeId, TypePredicate, TypePredicateTarget};
+use tsz_solver::narrowing::{GuardSense, TypeGuard};
+use tsz_solver::{ParamInfo, TypeId, TypePredicate, TypePredicateTarget};
 
 use super::{FlowAnalyzer, PredicateSignature};
 use crate::query_boundaries::flow as flow_boundary;
@@ -803,7 +804,7 @@ impl<'a> FlowAnalyzer<'a> {
                 return Some(if unwrapped.len() == 1 {
                     unwrapped[0]
                 } else {
-                    crate::query_boundaries::flow_analysis::union_types(self.interner, unwrapped)
+                    flow_query::union_types(self.interner, unwrapped)
                 });
             }
         }
@@ -812,7 +813,7 @@ impl<'a> FlowAnalyzer<'a> {
         let inferred = if remaining.len() == 1 {
             remaining[0]
         } else {
-            crate::query_boundaries::flow_analysis::union_types(self.interner, remaining)
+            flow_query::union_types(self.interner, remaining)
         };
         Some(inferred)
     }
@@ -925,35 +926,40 @@ impl<'a> FlowAnalyzer<'a> {
             return type_id;
         }
 
-        // Extract instance type from constructor expression (AST -> TypeId).
-        // If we can't determine the instance type:
-        // - True branch: narrow to object-like types (instanceof always returns
-        //   false for null/undefined/primitives)
-        // - False branch: keep source type unchanged (we can't exclude anything
-        //   without knowing the constructor)
-        // We must NOT fall back to TypeId::OBJECT because the solver would treat
-        // it as `instanceof Object` and incorrectly exclude all non-primitives
-        // from the false branch.
-        let instance_type = match self.instance_type_from_constructor(bin.right) {
-            Some(t) => t,
-            None => {
-                if is_true_branch {
-                    // Even without knowing the constructor, instanceof true
-                    // means the value is definitely an object (not null/undefined).
-                    let env_borrow;
-                    let narrowing = if let Some(env) = &self.type_environment {
-                        env_borrow = env.borrow();
-                        self.make_narrowing_context().with_resolver(&*env_borrow)
-                    } else {
-                        self.make_narrowing_context()
-                    };
-                    return narrowing.narrow_to_objectish(type_id);
+        // When the constructor carries `[Symbol.hasInstance](v: ...): v is T`, use it
+        // as the instance type and route through type-predicate narrowing (not instanceof
+        // narrowing) so primitive union members are not incorrectly excluded or kept.
+        // Checking it first avoids a redundant solver call inside instance_type_from_constructor.
+        let (instance_type, use_predicate_guard) = if let Some(ctor_type) = constructor_expr_type
+            && let Some(pred_type) =
+                flow_query::instance_type_from_symbol_has_instance(self.interner, ctor_type)
+            && pred_type != TypeId::ANY
+        {
+            (pred_type, true)
+        } else {
+            // No non-any hasInstance predicate: resolve via construct signatures,
+            // prototype, the any-predicate fallback, or symbol resolution.
+            // We must NOT fall back to TypeId::OBJECT — the solver would treat it
+            // as `instanceof Object` and exclude all non-primitives in the false branch.
+            let instance_type = match self.instance_type_from_constructor(bin.right) {
+                Some(t) => t,
+                None => {
+                    if is_true_branch {
+                        let env_borrow;
+                        let narrowing = if let Some(env) = &self.type_environment {
+                            env_borrow = env.borrow();
+                            self.make_narrowing_context().with_resolver(&*env_borrow)
+                        } else {
+                            self.make_narrowing_context()
+                        };
+                        return narrowing.narrow_to_objectish(type_id);
+                    }
+                    return type_id;
                 }
-                return type_id;
-            }
+            };
+            (instance_type, false)
         };
 
-        // Delegate to solver via unified narrow_type API
         let env_borrow;
         let narrowing = if let Some(env) = &self.type_environment {
             env_borrow = env.borrow();
@@ -962,21 +968,23 @@ impl<'a> FlowAnalyzer<'a> {
             self.make_narrowing_context()
         };
 
-        narrowing.narrow_type(
-            type_id,
-            &TypeGuard::Instanceof(instance_type, false),
-            GuardSense::from(is_true_branch),
-        )
+        let guard = if use_predicate_guard {
+            TypeGuard::Predicate {
+                type_id: Some(instance_type),
+                asserts: false,
+            }
+        } else {
+            TypeGuard::Instanceof(instance_type, false)
+        };
+
+        narrowing.narrow_type(type_id, &guard, GuardSense::from(is_true_branch))
     }
 
     pub(crate) fn instance_type_from_constructor(&self, expr: NodeIndex) -> Option<TypeId> {
         if let Some(node_types) = self.node_types
             && let Some(&type_id) = node_types.get(&expr.0)
             && let Some(instance_type) =
-                crate::query_boundaries::flow_analysis::instance_type_from_constructor(
-                    self.interner,
-                    type_id,
-                )
+                flow_query::instance_type_from_constructor(self.interner, type_id)
         {
             return Some(instance_type);
         }
@@ -1012,10 +1020,7 @@ impl<'a> FlowAnalyzer<'a> {
             let env_borrow = env.borrow();
             if let Some(func_type) = env_borrow.get(symbol_ref)
                 && let Some(instance_type) =
-                    crate::query_boundaries::flow_analysis::instance_type_from_constructor(
-                        self.interner,
-                        func_type,
-                    )
+                    flow_query::instance_type_from_constructor(self.interner, func_type)
             {
                 return Some(instance_type);
             }
@@ -1030,10 +1035,7 @@ impl<'a> FlowAnalyzer<'a> {
                 let env_borrow = env.borrow();
                 if let Some(constructor_type) = env_borrow.get(symbol_ref)
                     && let Some(instance_type) =
-                        crate::query_boundaries::flow_analysis::instance_type_from_constructor(
-                            self.interner,
-                            constructor_type,
-                        )
+                        flow_query::instance_type_from_constructor(self.interner, constructor_type)
                 {
                     return Some(instance_type);
                 }
@@ -1085,10 +1087,7 @@ impl<'a> FlowAnalyzer<'a> {
             let env_borrow = env.borrow();
             if let Some(constructor_type) = env_borrow.get(type_symbol_ref)
                 && let Some(instance_type) =
-                    crate::query_boundaries::flow_analysis::instance_type_from_constructor(
-                        self.interner,
-                        constructor_type,
-                    )
+                    flow_query::instance_type_from_constructor(self.interner, constructor_type)
             {
                 return Some(instance_type);
             }
@@ -1098,10 +1097,7 @@ impl<'a> FlowAnalyzer<'a> {
         // and try to extract the instance type from it
         if let Some(lazy_type) = self.resolve_symbol_to_lazy(type_symbol_ref)
             && let Some(instance_type) =
-                crate::query_boundaries::flow_analysis::instance_type_from_constructor(
-                    self.interner,
-                    lazy_type,
-                )
+                flow_query::instance_type_from_constructor(self.interner, lazy_type)
         {
             return Some(instance_type);
         }

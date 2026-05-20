@@ -93,16 +93,28 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         expr_idx: NodeIndex,
     ) -> Option<String> {
+        let sym_id = self.reference_declared_type_symbol(expr_idx)?;
+        self.declared_source_type_annotation_text_for_symbol(sym_id)
+    }
+
+    pub(in crate::declaration_emitter) fn reference_declared_non_nullish_type_annotation_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let sym_id = self.reference_declared_type_symbol(expr_idx)?;
+        self.declared_non_nullish_type_annotation_text_for_symbol(sym_id)
+    }
+
+    fn reference_declared_type_symbol(&self, expr_idx: NodeIndex) -> Option<SymbolId> {
         let binder = self.binder?;
         let raw_sym_id = self
             .get_identifier_text(expr_idx)
             .and_then(|ident| self.resolve_lexical_identifier_symbol(expr_idx, &ident))
             .or_else(|| self.value_reference_symbol(expr_idx))?;
-        let sym_id = self
-            .resolve_portability_import_alias(raw_sym_id, binder)
-            .unwrap_or_else(|| self.resolve_portability_declaration_symbol(raw_sym_id, binder));
-
-        self.declared_source_type_annotation_text_for_symbol(sym_id)
+        Some(
+            self.resolve_portability_import_alias(raw_sym_id, binder)
+                .unwrap_or_else(|| self.resolve_portability_declaration_symbol(raw_sym_id, binder)),
+        )
     }
 
     fn declared_source_type_annotation_text_for_symbol(&self, sym_id: SymbolId) -> Option<String> {
@@ -120,6 +132,69 @@ impl<'a> DeclarationEmitter<'a> {
             let trimmed = trimmed.strip_suffix('=').unwrap_or(trimmed).trim_end();
             Some(trimmed.to_string())
         })
+    }
+
+    fn declared_non_nullish_type_annotation_text_for_symbol(
+        &self,
+        sym_id: SymbolId,
+    ) -> Option<String> {
+        self.with_declared_type_annotation_for_symbol(sym_id, |source_arena, type_annotation| {
+            self.non_nullish_type_annotation_text_from_arena_node(source_arena, type_annotation)
+        })
+    }
+
+    fn non_nullish_type_annotation_text_from_arena_node(
+        &self,
+        source_arena: &NodeArena,
+        type_annotation: NodeIndex,
+    ) -> Option<String> {
+        let type_node = source_arena.get(type_annotation)?;
+        if type_node.kind != syntax_kind_ext::UNION_TYPE {
+            return self.type_annotation_text_from_arena_node(source_arena, type_annotation);
+        }
+
+        let union = source_arena.get_composite_type(type_node)?;
+        let mut retained_parts = Vec::new();
+        let mut removed_nullish = false;
+        for &part_idx in &union.types.nodes {
+            if self.is_nullish_type_annotation_node(source_arena, part_idx) {
+                removed_nullish = true;
+                continue;
+            }
+            let part_text = self.type_annotation_text_from_arena_node(source_arena, part_idx)?;
+            retained_parts.push(part_text.trim().to_string());
+        }
+
+        if !removed_nullish {
+            return self.type_annotation_text_from_arena_node(source_arena, type_annotation);
+        }
+        if retained_parts.is_empty() {
+            return Some("never".to_string());
+        }
+        Some(retained_parts.join(" | "))
+    }
+
+    fn is_nullish_type_annotation_node(
+        &self,
+        source_arena: &NodeArena,
+        type_idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = source_arena.get(type_idx) else {
+            return false;
+        };
+        if node.kind == SyntaxKind::NullKeyword as u16
+            || node.kind == SyntaxKind::UndefinedKeyword as u16
+        {
+            return true;
+        }
+        if source_arena
+            .identifier_text_owned(type_idx)
+            .is_some_and(|text| matches!(text.trim(), "null" | "undefined"))
+        {
+            return true;
+        }
+        self.source_slice_from_arena(source_arena, type_idx)
+            .is_some_and(|text| matches!(text.trim(), "null" | "undefined"))
     }
 
     fn with_declared_type_annotation_for_symbol<T>(

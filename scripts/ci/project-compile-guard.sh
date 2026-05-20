@@ -87,7 +87,9 @@ run_with_timeout() {
   local timeout_secs="$1"
   shift
 
-  LAST_PEAK_RSS_BYTES=0
+  # Empty (not "0") is the "no positive sample yet" sentinel so the
+  # record-time reason logic can distinguish it from a deliberate zero.
+  LAST_PEAK_RSS_BYTES=""
   "$@" &
   local pid=$!
   local timeout_file
@@ -103,7 +105,7 @@ run_with_timeout() {
   local watchdog_pid=$!
   if measure_peak_rss_enabled; then
     rss_file=$(mktemp)
-    printf '0\n' > "$rss_file"
+    : > "$rss_file"
     (
       local peak_kb=0
       local rss_kb
@@ -135,7 +137,7 @@ run_with_timeout() {
     wait "$rss_monitor_pid" 2>/dev/null || true
   fi
   if [ -n "$rss_file" ]; then
-    LAST_PEAK_RSS_BYTES="$(cat "$rss_file" 2>/dev/null || echo 0)"
+    LAST_PEAK_RSS_BYTES="$(cat "$rss_file" 2>/dev/null || true)"
     rm -f "$rss_file"
   fi
 
@@ -152,6 +154,26 @@ measure_peak_rss_enabled() {
   esac
 
   [ "${CI:-}" = "true" ] && [ "$(uname -s 2>/dev/null || echo unknown)" = "Linux" ]
+}
+
+# Echoes the structured reason peak-RSS sampling did not produce a value, or
+# empty when sampling is active (in which case a missing value means the
+# process exited before the first sample). Reasons must be in the closed
+# vocabulary documented in scripts/ci/project-compatibility.mjs.
+peak_rss_unavailable_reason() {
+  case "${TSZ_PROJECT_COMPILE_PEAK_RSS:-}" in
+    0|false|FALSE|no|NO)
+      printf 'measurement disabled\n'
+      return
+      ;;
+    1|true|TRUE|yes|YES)
+      return
+      ;;
+  esac
+
+  if [ "${CI:-}" != "true" ] || [ "$(uname -s 2>/dev/null || echo unknown)" != "Linux" ]; then
+    printf 'not measured on platform\n'
+  fi
 }
 
 process_tree_rss_kb() {
@@ -264,6 +286,14 @@ record_project_compatibility() {
   local fixture_sources
   fixture_sources="$(tsz_project_fixture_sources "$name")"
 
+  local peak_memory_bytes_reason=""
+  if [ -z "$peak_memory_bytes" ]; then
+    peak_memory_bytes_reason="$(peak_rss_unavailable_reason)"
+    if [ -z "$peak_memory_bytes_reason" ]; then
+      peak_memory_bytes_reason="process exited before sampling"
+    fi
+  fi
+
   COMPAT_JSONL_FILE="$PROJECT_COMPATIBILITY_JSONL" \
   COMPAT_OUTPUT_ROOT="$FIXTURE_ROOT" \
   COMPAT_NAME="$name" \
@@ -273,6 +303,7 @@ record_project_compatibility() {
   COMPAT_DIAGNOSTIC_DELTA="$diagnostic_delta" \
   COMPAT_FILES_REACHED="$files_reached" \
   COMPAT_PEAK_MEMORY_BYTES="$peak_memory_bytes" \
+  COMPAT_PEAK_MEMORY_BYTES_REASON="$peak_memory_bytes_reason" \
   COMPAT_TSZ_EXIT_CODES="$tsz_exit_codes" \
   COMPAT_TSC_EXIT_CODES="$tsc_exit_codes" \
   COMPAT_TSCONFIG_PATH="$tsconfig_path" \
@@ -297,6 +328,13 @@ trap write_project_compatibility_summary EXIT
 
 ensure_git_fixture() {
   tsz_ensure_git_fixture "$@" 0
+}
+
+ensure_generated_app_tools() {
+  if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+    echo "error: node and npm are required for generated app project compile guards" >&2
+    exit 1
+  fi
 }
 
 write_utility_types_config() {
@@ -543,6 +581,22 @@ run_project_row() {
         echo "::warning::type-challenges-solutions-project tsc oracle failed; continuing because TSZ_PROJECT_COMPILE_ALLOW_FAILURES=1"
       fi
       ;;
+    vite-vanilla-ts-app)
+      if [[ "$INCLUDE_GENERATED_APPS" != "1" ]]; then
+        return 0
+      fi
+      ensure_generated_app_tools
+      node scripts/bench/generate-vite-app-fixture.mjs "$FIXTURE_ROOT/vite-vanilla-ts-live"
+      check_project "$name" "$FIXTURE_ROOT/vite-vanilla-ts-live/tsconfig.json" "$FIXTURE_ROOT/vite-vanilla-ts-live/src"
+      ;;
+    nextjs-fresh-app)
+      if [[ "$INCLUDE_GENERATED_APPS" != "1" ]]; then
+        return 0
+      fi
+      ensure_generated_app_tools
+      node scripts/bench/generate-next-app-fixture.mjs "$FIXTURE_ROOT/next-app-live"
+      check_project "$name" "$FIXTURE_ROOT/next-app-live/tsconfig.json" "$FIXTURE_ROOT/next-app-live"
+      ;;
     *)
       echo "error: unknown project row in compile-guard map: $name" >&2
       return 1
@@ -559,24 +613,6 @@ run_required_projects() {
       fi
     fi
   done
-
-if [[ "$INCLUDE_GENERATED_APPS" == "1" ]] \
-  && { should_check_project "vite-vanilla-ts-app" || should_check_project "nextjs-fresh-app"; }; then
-  if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
-    echo "error: node and npm are required for generated app project compile guards" >&2
-    exit 1
-  fi
-
-  if should_check_project "vite-vanilla-ts-app"; then
-    node scripts/bench/generate-vite-app-fixture.mjs "$FIXTURE_ROOT/vite-vanilla-ts-live"
-    check_project "vite-vanilla-ts-app" "$FIXTURE_ROOT/vite-vanilla-ts-live/tsconfig.json" "$FIXTURE_ROOT/vite-vanilla-ts-live/src"
-  fi
-
-  if should_check_project "nextjs-fresh-app"; then
-    node scripts/bench/generate-next-app-fixture.mjs "$FIXTURE_ROOT/next-app-live"
-    check_project "nextjs-fresh-app" "$FIXTURE_ROOT/next-app-live/tsconfig.json" "$FIXTURE_ROOT/next-app-live"
-  fi
-fi
 }
 
 run_canary_projects() {

@@ -79,20 +79,26 @@ impl<'a> DeclarationEmitter<'a> {
             .map(|(_, member_text, _)| member_text.clone())
             .collect::<FxHashSet<_>>();
         let mut emitted_keyword_export_alias = false;
-        let mut planned_members = Vec::with_capacity(members.len());
-        for (_member_name, member_text, initializer) in members {
-            let (local_name, export_alias) = self.js_static_namespace_member_local_name(
-                &member_text,
-                &mut reserved_member_names,
-                emitted_keyword_export_alias,
-            );
-            emitted_keyword_export_alias |= export_alias
-                .as_ref()
-                .is_some_and(|_| Self::is_js_static_reserved_binding_name(&member_text));
-            planned_members.push((initializer, local_name, export_alias));
-        }
-
-        for (initializer, local_name, export_alias) in planned_members {
+        let planned_members = members
+            .into_iter()
+            .map(|(_member_name, member_text, initializer)| {
+                let (local_name, export_alias) = self.js_static_namespace_member_local_name(
+                    &member_text,
+                    &mut reserved_member_names,
+                    emitted_keyword_export_alias,
+                );
+                if export_alias.is_some() {
+                    emitted_keyword_export_alias |=
+                        Self::is_js_static_reserved_binding_name(&member_text);
+                }
+                (member_text, initializer, local_name, export_alias)
+            })
+            .collect::<Vec<_>>();
+        let has_export_aliases = planned_members
+            .iter()
+            .any(|(_, _, _, export_alias)| export_alias.is_some());
+        for (_member_text, initializer, local_name, export_alias) in planned_members {
+            let emit_export = export_alias.is_none() && has_export_aliases;
             if let Some(init_node) = self.arena.get(initializer) {
                 if init_node.kind == syntax_kind_ext::ARROW_FUNCTION
                     || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
@@ -105,13 +111,13 @@ impl<'a> DeclarationEmitter<'a> {
                             &local_name,
                             func,
                             initializer,
-                            false,
+                            emit_export,
                         );
                     }
                 } else if let Some(type_text) =
                     self.js_namespace_value_member_type_text(initializer)
                 {
-                    self.emit_js_namespace_value_member_text(&local_name, &type_text, false);
+                    self.emit_js_namespace_value_member_text(&local_name, &type_text, emit_export);
                 }
             }
             if let Some((local_name, exported_name)) = export_alias {

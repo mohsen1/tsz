@@ -411,9 +411,11 @@ impl<'a> EnumES5Transformer<'a> {
     /// Collect every leading comment (line or block) that appears between
     /// `scan_start` and `member_pos`.
     ///
-    /// Mirrors tsc's `getLeadingCommentRanges`: any `// line` or `/* block */`
-    /// comment that begins after `scan_start` and ends at or before
-    /// `member_pos` is preserved before the member's emitted assignment.
+    /// Mirrors tsc's `getLeadingCommentRanges`: comments are attached to the
+    /// next member only once scanning has crossed a line break from the enum
+    /// body's `{` or the previous member's `,`. Same-line block comments
+    /// immediately after those boundaries are trailing trivia and are not
+    /// emitted before the next synthesized assignment.
     fn extract_leading_comments_between(&self, scan_start: u32, member_pos: u32) -> Vec<String> {
         let Some(source_text) = self.source_text else {
             return Vec::new();
@@ -425,6 +427,9 @@ impl<'a> EnumES5Transformer<'a> {
         for range in crate::emitter::get_leading_comment_ranges(source_text, scan_start as usize) {
             if range.end > member_pos {
                 break;
+            }
+            if !source_text[scan_start as usize..range.pos as usize].contains('\n') {
+                continue;
             }
             let text = &source_text[range.pos as usize..range.end as usize];
             comments.push(text.to_string());
@@ -713,12 +718,9 @@ impl<'a> EnumES5Transformer<'a> {
                 Some(start) => self.extract_leading_comments_between(start, member_node.pos),
                 None => Vec::new(),
             };
-            // Extract trailing inline comment after the enum member (e.g., `/* blue */`)
-            // Search from the name end or initializer end, then also from the comma position.
-            // We check multiple positions because the comment can appear at different spots:
-            // `Cornflower, /* blue */` — comment is after the comma
-            // `Cornflower = 0, /* comment */` — comment is after the comma
-            // `Cornflower /* comment */,` — comment is after the name
+            // Extract trailing inline comment after the enum member before its comma
+            // (e.g. `Cornflower /* blue */,`). Block comments after the comma are
+            // boundary-adjacent trailing trivia in tsc and are not preserved.
             let name_or_init_end = if let Some(init_node) = self.arena.get(member_data.initializer)
             {
                 init_node.end
@@ -727,26 +729,7 @@ impl<'a> EnumES5Transformer<'a> {
                     .get(member_data.name)
                     .map_or(member_node.end, |n| n.end)
             };
-            // Try from name/init end first, then from after the comma (scan for comma in source)
-            let trailing_comment =
-                self.extract_trailing_comment_at(name_or_init_end)
-                    .or_else(|| {
-                        // Scan forward from name_or_init_end to find the comma, then check after it
-                        if let Some(source_text) = self.source_text {
-                            let bytes = source_text.as_bytes();
-                            let mut pos = name_or_init_end as usize;
-                            while pos < bytes.len() && bytes[pos] != b',' && bytes[pos] != b'}' {
-                                if bytes[pos] == b'\n' {
-                                    return None; // Stop at newline
-                                }
-                                pos += 1;
-                            }
-                            if pos < bytes.len() && bytes[pos] == b',' {
-                                return self.extract_trailing_comment_at((pos + 1) as u32);
-                            }
-                        }
-                        None
-                    });
+            let trailing_comment = self.extract_trailing_comment_at(name_or_init_end);
 
             for text in &leading_comments {
                 let is_block = text.starts_with("/*");
@@ -941,10 +924,13 @@ impl<'a> EnumES5Transformer<'a> {
                 }
             }
 
-            // Arrow function / function expression: use raw source text
-            k if k == syntax_kind_ext::ARROW_FUNCTION
-                || k == syntax_kind_ext::FUNCTION_EXPRESSION =>
-            {
+            // Arrow functions need normal AST printing so parser-recovered
+            // arrows are emitted in canonical form instead of preserving an
+            // illegal source line break before `=>`.
+            k if k == syntax_kind_ext::ARROW_FUNCTION => IRNode::ASTRef(idx),
+
+            // Function expression: use raw source text
+            k if k == syntax_kind_ext::FUNCTION_EXPRESSION => {
                 if let Some(text) = self.source_text {
                     let start = node.pos as usize;
                     // Use body end as a tighter bound - node.end may extend

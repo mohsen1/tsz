@@ -254,6 +254,13 @@ impl<'a> DeclarationEmitter<'a> {
                     }
                     ReturnPart::Verbatim(member_idx) => {
                         let member_node = self.arena.get(*member_idx)?;
+                        if member_node.kind == syntax_kind_ext::TYPE_LITERAL
+                            && let Some(type_text) =
+                                self.emit_type_node_text_from_arena(self.arena, *member_idx)
+                        {
+                            parts.push(type_text.trim().to_string());
+                            continue;
+                        }
                         let raw = self.get_source_slice(member_node.pos, member_node.end)?;
                         // The parser's `end` can extend past the closing
                         // delimiter into the next significant token (e.g.
@@ -664,6 +671,22 @@ impl<'a> DeclarationEmitter<'a> {
         scratch
     }
 
+    /// Scratch emitter pre-configured for emitting class members into the body
+    /// of an anonymous constructor object type (`{ new(...): { ...members... } }`).
+    /// Sets `indent_level` and `in_object_type_class_body = true` so that
+    /// property declarations use `: T` annotation form rather than `= value`
+    /// initializer form (initializer syntax is not allowed in object type
+    /// literals).
+    pub(in crate::declaration_emitter) fn scratch_object_type_body_emitter(
+        &self,
+        indent_level: u32,
+    ) -> DeclarationEmitter<'a> {
+        let mut scratch = self.scratch_declaration_emitter();
+        scratch.indent_level = indent_level;
+        scratch.in_object_type_class_body = true;
+        scratch
+    }
+
     pub(in crate::declaration_emitter) fn declaration_emittable_type_text(
         &self,
         initializer: NodeIndex,
@@ -674,6 +697,12 @@ impl<'a> DeclarationEmitter<'a> {
 
         if type_id == tsz_solver::types::TypeId::ANY
             && let Some(type_text) = self.data_view_new_expression_type_text(initializer)
+        {
+            return type_text;
+        }
+
+        if self.initializer_is_new_expression(initializer)
+            && let Some(type_text) = self.construct_return_new_expression_type_text(initializer)
         {
             return type_text;
         }

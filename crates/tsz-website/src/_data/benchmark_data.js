@@ -5,8 +5,10 @@ import { marked } from "marked";
 import {
   COMPILE_CANARY_PROJECT_ROWS,
   COMPATIBILITY_CORPUS_ROWS,
+  PROJECT_ROWS_BY_NAME,
   REQUIRED_PROJECT_ROWS,
 } from "../../../../scripts/bench/project-rows.mjs";
+import { subsystemForCode } from "../../../../scripts/ci/diagnostic-subsystems.mjs";
 import { fmt } from "./loc.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..", "..", "..");
@@ -23,14 +25,48 @@ function formatMemory(bytes) {
   return `${(value / (1024 ** 3)).toFixed(1)} GiB RAM`;
 }
 
+function measurementProfileSummary(data) {
+  const profile = data?.measurement_profile;
+  if (!profile || typeof profile !== "object") return null;
+
+  const mode = String(profile.mode || "").trim();
+  if (!mode) return null;
+
+  const pgo = profile.profile_guided_optimization || {};
+  if (mode === "release-pgo" && pgo.optimized) {
+    const parts = ["tsz release-pgo"];
+    if (Number.isFinite(Number(pgo.training_input_count))) {
+      parts.push(`${Number(pgo.training_input_count)} PGO training inputs`);
+    }
+    if (pgo.profile_fingerprint) {
+      parts.push(`profile ${String(pgo.profile_fingerprint).slice(0, 12)}`);
+    }
+    if (pgo.profile_data_source === "cache") {
+      parts.push("cached profile data");
+    }
+    if (pgo.training_metadata_available === false) {
+      parts.push("training metadata unavailable");
+    }
+    return parts.join(", ");
+  }
+
+  if (mode === "release-untrained") return "tsz release build without PGO";
+  if (mode === "quick-untrained") return "quick-mode tsz build without PGO";
+  if (mode === "tsz-override") return "caller-provided tsz binary";
+  return `tsz ${mode}`;
+}
+
 function runnerEnvironmentSummary(data) {
   const parts = [];
   const generatedAt = formatUtcTimestamp(data?.generated_at);
   if (generatedAt) parts.push(`Generated ${generatedAt}`);
+  const sourceCommit = normalizedCommit(data?.source_commit);
+  if (sourceCommit) parts.push(`sha ${sourceCommit.slice(0, 12)}`);
+  const measurement = measurementProfileSummary(data);
+  if (measurement) parts.push(measurement);
 
   const env = data?.runner_environment;
   if (!env || typeof env !== "object") {
-    parts.push("runner hardware metadata unavailable for this artifact");
     return parts.join(" · ");
   }
 
@@ -65,6 +101,23 @@ function formatDurationMs(value, fractionDigits = 0) {
     return `${(ms / 1000).toLocaleString("en-US", { maximumFractionDigits: 1 })}s`;
   }
   return `${ms.toFixed(fractionDigits)}ms`;
+}
+
+function finiteNumber(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function formatFilesReached(value) {
+  const count = finiteNumber(value);
+  return count === null ? null : `${fmt(count)} files`;
+}
+
+function formatPeakMemoryMiB(value) {
+  const bytes = finiteNumber(value);
+  if (bytes === null || bytes <= 0) return null;
+  return `${(bytes / (1024 * 1024)).toLocaleString("en-US", { maximumFractionDigits: 0 })} MiB peak`;
 }
 
 function durationLabelFitsBar(label, widthPx) {
@@ -104,6 +157,25 @@ function hasTiming(value) {
   return Number.isFinite(time) && time > 0;
 }
 
+function isProjectBenchmark(row) {
+  return Boolean(row?.name && PROJECT_ROWS_BY_NAME[row.name]);
+}
+
+function hasGreenProjectCompatibility(row) {
+  if (!isProjectBenchmark(row)) return true;
+
+  const compatibility = row?.compatibility;
+  if (!compatibility || typeof compatibility !== "object") return false;
+
+  const state = String(compatibility.state || "").toLowerCase();
+  const exitClass = String(compatibility.exit_class || "").toLowerCase();
+  const diagnosticStatus = String(compatibility.diagnostic_status || "").toLowerCase();
+  return state === "green"
+    && exitClass === "exit success"
+    && (!diagnosticStatus || diagnosticStatus === "none")
+    && hasCompleteCompatibilityMetadata(compatibility);
+}
+
 function fastestTiming(row) {
   const timings = [row?.tsz_ms, row?.tsgo_ms].map(Number).filter((time) => Number.isFinite(time) && time > 0);
   return timings.length ? Math.min(...timings) : Infinity;
@@ -130,12 +202,19 @@ function compareByTszSpeedup(a, b) {
   return String(a?.name || "").localeCompare(String(b?.name || ""));
 }
 
+function hasSuccessfulTimingPair(row) {
+  return !row?.status
+    && row?.winner !== "error"
+    && hasTiming(row?.tsz_ms)
+    && hasTiming(row?.tsgo_ms);
+}
+
 function hasSuccessfulTiming(row) {
-  return !row?.status && row?.winner !== "error" && hasTiming(row?.tsz_ms) && hasTiming(row?.tsgo_ms);
+  return hasSuccessfulTimingPair(row);
 }
 
 function isFailedBenchmark(row) {
-  if (!row || hasSuccessfulTiming(row)) return false;
+  if (!row || hasSuccessfulTimingPair(row)) return false;
   return Boolean(row.status) || row.winner === "error" || hasTiming(row.tsz_ms) || hasTiming(row.tsgo_ms);
 }
 
@@ -150,24 +229,6 @@ function firstPresent(...values) {
   return null;
 }
 
-const DIAGNOSTIC_SUBSYSTEM_RULES = [
-  ["project-config", new Set(["TS18003", "TS5052", "TS5069", "TS5070", "TS5083", "TS5110", "TS6053", "TS2688"])],
-  ["syntax-parser-jsdoc", new Set(["TS1005", "TS1109", "TS1128", "TS17004", "TS8010", "TS8023", "TS8032"])],
-  ["module-symbol-resolution", new Set(["TS2304", "TS2305", "TS2306", "TS2307", "TS2451", "TS2503", "TS2580", "TS2583", "TS2664", "TS2665", "TS2666", "TS2694"])],
-  ["relations-assignability", new Set(["TS2322", "TS2345", "TS2352", "TS2394", "TS2416", "TS2420", "TS2430", "TS2559", "TS2740", "TS2741", "TS2769"])],
-  ["evaluation-inference-instantiation", new Set(["TS2313", "TS2314", "TS2315", "TS2344", "TS2558", "TS2589", "TS2590", "TS2615", "TS7022"])],
-  ["keyspace-property-indexed", new Set(["TS2339", "TS2353", "TS2536", "TS2537", "TS2538", "TS2540", "TS4111", "TS7053"])],
-  ["flow-narrowing", new Set(["TS2367", "TS2677", "TS2774", "TS18047", "TS18048"])],
-  ["class-this-accessor", new Set(["TS2415", "TS2511", "TS2515", "TS2526", "TS2683", "TS4113", "TS4114"])],
-  ["emit-dts-nameability", new Set(["TS4023", "TS4058", "TS4082", "TS4094", "TS9005", "TS9039"])],
-];
-
-function subsystemForDiagnosticCode(code) {
-  for (const [subsystem, codes] of DIAGNOSTIC_SUBSYSTEM_RULES) {
-    if (codes.has(code)) return subsystem;
-  }
-  return "unclassified diagnostic";
-}
 
 function diagnosticSubsystemsFromDeltas(deltas) {
   const groups = new Map();
@@ -175,7 +236,7 @@ function diagnosticSubsystemsFromDeltas(deltas) {
     const codes = [...String(line || "").matchAll(/\bTS\d{4,5}\b/g)].map((match) => match[0]);
     const lineCodes = codes.length ? codes : ["uncoded"];
     for (const code of lineCodes) {
-      const subsystem = code === "uncoded" ? "uncoded diagnostic" : subsystemForDiagnosticCode(code);
+      const subsystem = code === "uncoded" ? "uncoded diagnostic" : subsystemForCode(code);
       if (!groups.has(subsystem)) {
         groups.set(subsystem, { subsystem, codes: [], count: 0, examples: [] });
       }
@@ -249,6 +310,7 @@ function normalizedKnownBlockers(compatibility, diagnosticSubsystems, fallbackBl
   if (exitClass === "fixture invalid") add("reference fixture invalid");
   if (exitClass === "runner error") add("benchmark runner error");
   if (exitClass === "tsz unavailable") add("tsz unavailable in benchmark runner");
+  if (exitClass === "oracle unavailable") add("tsc oracle unavailable");
   if (phase && phase !== "check") add(`${phase} phase blocker`);
 
   for (const group of diagnosticSubsystems) {
@@ -300,7 +362,9 @@ const COMPATIBILITY_METADATA_FIELDS = [
   ["repro", "repro metadata"],
   ["exit_codes", "exit codes"],
   ["files_reached", "files reached"],
+  ["files_reached_reason", "files reached reason"],
   ["peak_memory_bytes", "peak memory"],
+  ["peak_memory_bytes_reason", "peak memory reason"],
   ["fixture_sources", "fixture sources"],
   ["emit_status", "emit status"],
   ["dts_status", "dts status"],
@@ -336,6 +400,16 @@ function missingCompatibilityMetadata(row, artifact) {
     missing.push("fixture sources missing/malformed/unpinned");
   }
   return missing;
+}
+
+function hasCompleteCompatibilityMetadata(compatibility) {
+  if (!compatibility || typeof compatibility !== "object") return false;
+  return COMPATIBILITY_METADATA_FIELDS.every(([field]) => (
+    Object.prototype.hasOwnProperty.call(compatibility, field)
+  )) && (
+    !Object.prototype.hasOwnProperty.call(compatibility, "fixture_sources") ||
+    hasCompleteFixtureSources(compatibility)
+  );
 }
 
 function hasCompleteFixtureSources(compatibility) {
@@ -502,7 +576,40 @@ function withExpectedProjectRows(results) {
 function compatibilityState(row) {
   const compatibility = row?.compatibility || {};
   const diagnosticStatus = String(compatibility.diagnostic_status || "").toLowerCase();
-  if (hasSuccessfulTiming(row)) {
+  const recordedState = String(compatibility.state || "").toLowerCase();
+  if (!Object.keys(compatibility).length) {
+    return {
+      className: "gray",
+      stateLabel: "Gray",
+      exitClass: "missing or incomplete artifact",
+      phase: "artifact",
+      diagnosticDeltas: "not available",
+    };
+  }
+  if (recordedState === "gray") {
+    return {
+      className: "gray",
+      stateLabel: "Gray",
+      exitClass: firstPresent(compatibility.exit_class, "missing or incomplete artifact"),
+      phase: firstPresent(compatibility.phase, "artifact"),
+      diagnosticDeltas: firstPresent(compatibility.diagnostic_deltas, "not available"),
+    };
+  }
+  const compatibilityGreen = (
+    recordedState === "green" ||
+    String(compatibility.exit_class || "").toLowerCase() === "exit success"
+  ) && diagnosticStatus === "none";
+  if (compatibilityGreen && hasCompleteCompatibilityMetadata(compatibility)) {
+    return {
+      className: "green",
+      stateLabel: "Green",
+      exitClass: firstPresent(compatibility.exit_class, "exit success"),
+      phase: firstPresent(compatibility.phase, "check"),
+      diagnosticDeltas: firstPresent(compatibility.diagnostic_deltas, "none recorded"),
+    };
+  }
+
+  if (hasSuccessfulTimingPair(row) && hasGreenProjectCompatibility(row)) {
     if (diagnosticStatus && diagnosticStatus !== "none") {
       return {
         className: "yellow",
@@ -576,11 +683,13 @@ function compatibilityRowFor(definition, allResults, artifact) {
     row,
     lines: row?.lines || 0,
     filesReached: compatibility.files_reached ?? null,
+    filesReachedReason: compatibility.files_reached_reason ?? null,
     firstFailureClass: compatibility.first_failure_class || null,
     ownerTrack: firstPresent(compatibility.owner_track, definition.owner),
     reducedReproPath: compatibility.reduced_repro_path || null,
     lastSuccessfulPhase: normalizedLastSuccessfulPhase(compatibility),
     peakMemoryBytes: compatibility.peak_memory_bytes ?? null,
+    peakMemoryBytesReason: compatibility.peak_memory_bytes_reason ?? null,
     emitStatus: compatibility.emit_status || "not in scope (noEmit project check)",
     dtsStatus: compatibility.dts_status || "not in scope (noEmit project check)",
     knownBlockers: normalizedKnownBlockers(compatibility, diagnosticSubsystems, fallbackBlockers),
@@ -695,6 +804,14 @@ function readJsonIfExists(p) {
   } catch {
     return null;
   }
+}
+
+let _benchReadinessStatus;
+function loadBenchReadinessStatus() {
+  if (_benchReadinessStatus === undefined) {
+    _benchReadinessStatus = readJsonIfExists(path.join(ROOT, "artifacts", "bench-readiness-status.json")) ?? null;
+  }
+  return _benchReadinessStatus;
 }
 
 function sanitizeLegacyBenchmarkData(data) {
@@ -816,7 +933,7 @@ function categoryMeta(category) {
     },
     "Projects: generated apps": {
       title: "Generated apps",
-      description: "Generated application fixtures with modern framework dependencies and generated configs.",
+      description: "Programmatically created app projects with framework defaults and common TypeScript dependencies.",
     },
     "Projects: external libraries": {
       title: "External libraries",
@@ -1939,7 +2056,9 @@ function generateCharts(data, mode = "projects") {
       }
       return (String(a.name || "") > String(b.name || "") ? 1 : -1);
     });
-    const desc = isProject ? "" : categoryDescription(category);
+    const desc = category === "Projects: generated apps" || !isProject
+      ? categoryDescription(category)
+      : "";
     const repoLink = meta.repo
       ? ` <a class="bench-category-repo" href="${meta.repo}" target="_blank" rel="noopener noreferrer">${escapeHtml(meta.repoLabel || meta.repo)}</a>`
       : "";
@@ -2056,11 +2175,17 @@ export function getProjectCompatibilityDashboard() {
 
   const measurementParts = (row) => {
     const parts = [];
-    if (row.filesReached !== null && row.filesReached !== undefined && Number.isFinite(Number(row.filesReached))) {
-      parts.push(`${fmt(row.filesReached)} files`);
+    const filesReached = formatFilesReached(row.filesReached);
+    const peakMemory = formatPeakMemoryMiB(row.peakMemoryBytes);
+    if (filesReached) {
+      parts.push(filesReached);
+    } else if (row.filesReachedReason) {
+      parts.push(`files reached: n/a (${row.filesReachedReason})`);
     }
-    if (Number.isFinite(Number(row.peakMemoryBytes)) && Number(row.peakMemoryBytes) > 0) {
-      parts.push(`${(Number(row.peakMemoryBytes) / (1024 * 1024)).toLocaleString("en-US", { maximumFractionDigits: 0 })} MiB peak`);
+    if (peakMemory) {
+      parts.push(peakMemory);
+    } else if (row.peakMemoryBytesReason) {
+      parts.push(`peak RSS: n/a (${row.peakMemoryBytesReason})`);
     }
     return parts;
   };
@@ -2081,6 +2206,63 @@ export function getProjectCompatibilityDashboard() {
       return `source: ${source.name} @ ${source.ref}`;
     });
   };
+
+  const numericSortValue = (value) => {
+    const number = finiteNumber(value);
+    return number === null ? "" : String(number);
+  };
+
+  const sortableHeader = (key, label, type = "text") =>
+    `<button type="button" class="compat-sort-button" data-compat-sort="${key}" data-sort-type="${type}" aria-label="Sort project compatibility by ${escapeHtml(label)}">${escapeHtml(label)}</button>`;
+
+  const sortScript = `<script>
+(() => {
+  for (const table of document.querySelectorAll("[data-compat-sortable]")) {
+    const tbody = table.tBodies[0];
+    if (!tbody) continue;
+    const buttons = Array.from(table.querySelectorAll("[data-compat-sort]"));
+    for (const button of buttons) {
+      button.addEventListener("click", () => {
+        const key = button.dataset.compatSort;
+        const type = button.dataset.sortType || "text";
+        const direction = button.dataset.direction === "asc" ? "desc" : "asc";
+        for (const candidate of buttons) {
+          candidate.dataset.direction = "";
+          candidate.removeAttribute("aria-sort");
+        }
+        button.dataset.direction = direction;
+        button.setAttribute("aria-sort", direction === "asc" ? "ascending" : "descending");
+        const rows = Array.from(tbody.rows);
+        rows.sort((left, right) => {
+          const leftCell = left.querySelector(\`[data-sort-key="\${key}"]\`);
+          const rightCell = right.querySelector(\`[data-sort-key="\${key}"]\`);
+          const leftRaw = leftCell?.dataset.sortValue ?? "";
+          const rightRaw = rightCell?.dataset.sortValue ?? "";
+          let comparison = 0;
+          if (type === "number") {
+            const leftNumber = Number(leftRaw);
+            const rightNumber = Number(rightRaw);
+            const leftMissing = leftRaw === "" || !Number.isFinite(leftNumber);
+            const rightMissing = rightRaw === "" || !Number.isFinite(rightNumber);
+            if (leftMissing || rightMissing) {
+              comparison = leftMissing === rightMissing ? 0 : leftMissing ? 1 : -1;
+            } else {
+              comparison = leftNumber - rightNumber;
+            }
+          } else {
+            comparison = leftRaw.localeCompare(rightRaw, undefined, { sensitivity: "base", numeric: true });
+          }
+          if (comparison === 0) {
+            comparison = (left.dataset.project || "").localeCompare(right.dataset.project || "", undefined, { sensitivity: "base" });
+          }
+          return direction === "asc" ? comparison : -comparison;
+        });
+        for (const row of rows) tbody.append(row);
+      });
+    }
+  }
+})();
+</script>`;
 
   const artifactFreshnessParts = (row) => {
     const metadata = row.artifactMetadata || {};
@@ -2163,18 +2345,49 @@ export function getProjectCompatibilityDashboard() {
     return `<div class="compat-meta">${parts.map((part) => `<span>${escapeHtml(part)}</span>`).join("")}</div>${blockerHtml}${subsystemHtml}${queueHtml}${deltaHtml}`;
   };
 
+  const readiness = loadBenchReadinessStatus();
+  let artifactBanner = "";
+  if (readiness?.artifact_absent) {
+    artifactBanner = `<p class="bench-readiness-warning">⚠️ No recent benchmark artifact — compatibility data shown from repository snapshot and may be stale.</p>`;
+  } else if (readiness?.missing > 0) {
+    artifactBanner = `<p class="bench-readiness-warning">⚠️ Benchmark artifact is missing ${readiness.missing} required row(s); shown data may be incomplete.</p>`;
+  }
+
   return `<section class="compat-dashboard">
   <h2>Compatibility</h2>
+  ${artifactBanner}
   <div class="compat-summary">${escapeHtml(summary)}</div>
-  <ul class="compat-list">
-    ${rows.map((row) => `<li class="compat-item">
-      <div class="compat-row-main">
-        <a href="${row.url}">${escapeHtml(row.label)}</a>
-        <span class="compat-state ${row.className}">${escapeHtml(row.className)}</span>
-        <span class="compat-detail">${escapeHtml(detailLabel(row))}</span>
-      </div>
-      ${renderRowDetails(row)}
-    </li>`).join("\n")}
-  </ul>
+  <div class="compat-table-wrap">
+    <table class="compat-table" data-compat-sortable>
+      <thead>
+        <tr>
+          <th scope="col">${sortableHeader("project", "Project")}</th>
+          <th scope="col">${sortableHeader("state", "State")}</th>
+          <th scope="col">${sortableHeader("exit", "Exit class")}</th>
+          <th scope="col">${sortableHeader("phase", "Phase")}</th>
+          <th scope="col">${sortableHeader("files", "Files", "number")}</th>
+          <th scope="col">${sortableHeader("peak", "Peak RSS", "number")}</th>
+          <th scope="col">Details</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map((row) => `<tr class="compat-item" data-project="${escapeHtml(row.label)}">
+          <td class="compat-project" data-sort-key="project" data-sort-value="${escapeHtml(row.label)}"><a href="${row.url}">${escapeHtml(row.label)}</a></td>
+          <td data-sort-key="state" data-sort-value="${escapeHtml(row.className)}"><span class="compat-state ${row.className}">${escapeHtml(row.className)}</span></td>
+          <td data-sort-key="exit" data-sort-value="${escapeHtml(row.exitClass || "")}"><span class="compat-detail">${escapeHtml(row.exitClass || "unknown")}</span></td>
+          <td data-sort-key="phase" data-sort-value="${escapeHtml(row.phase || "")}"><span class="compat-detail">${escapeHtml(row.phase || "unknown")}</span></td>
+          <td data-sort-key="files" data-sort-value="${numericSortValue(row.filesReached)}">${escapeHtml(formatFilesReached(row.filesReached) || "—")}</td>
+          <td data-sort-key="peak" data-sort-value="${numericSortValue(row.peakMemoryBytes)}">${escapeHtml(formatPeakMemoryMiB(row.peakMemoryBytes) || "—")}</td>
+          <td>
+            <div class="compat-row-main">
+              <span class="compat-detail">${escapeHtml(detailLabel(row))}</span>
+            </div>
+            ${renderRowDetails(row)}
+          </td>
+        </tr>`).join("\n")}
+      </tbody>
+    </table>
+  </div>
+  ${sortScript}
 </section>`;
 }

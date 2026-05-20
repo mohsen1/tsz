@@ -479,37 +479,7 @@ impl<'a> Printer<'a> {
     /// Without this, `0.toString()` would be parsed as the float `0.` followed
     /// by `toString()`, which is a syntax error.  tsc emits `0..toString()`.
     pub(in crate::emitter) fn write_dot_token(&mut self, expr_idx: NodeIndex) {
-        // Unwrap parentheses, type assertions, and `as` expressions to find the
-        // innermost expression. After type erasure, `(<any>1)` becomes just `1`.
-        let mut idx = expr_idx;
-        let mut is_parenthesized = false;
-        while let Some(node) = self.arena.get(idx) {
-            match node.kind {
-                k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
-                    is_parenthesized = true;
-                    if let Some(paren) = self.arena.get_parenthesized(node) {
-                        idx = paren.expression;
-                        continue;
-                    }
-                }
-                k if k == syntax_kind_ext::TYPE_ASSERTION
-                    || k == syntax_kind_ext::AS_EXPRESSION
-                    || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
-                {
-                    // Type assertions are fully erased during emit — they and
-                    // any surrounding parens do NOT survive in the output.
-                    // `(<any>1).foo` becomes `1.foo` which needs `1..foo`.
-                    // Reset is_parenthesized since the parens are erased too.
-                    is_parenthesized = false;
-                    if let Some(assert) = self.arena.get_type_assertion(node) {
-                        idx = assert.expression;
-                        continue;
-                    }
-                }
-                _ => {}
-            }
-            break;
-        }
+        let (idx, is_parenthesized) = self.property_access_dot_base_after_erasure(expr_idx);
         if let Some(inner_node) = self.arena.get(idx) {
             if inner_node.kind == SyntaxKind::NumericLiteral as u16 {
                 let needs_extra_dot = self
@@ -539,6 +509,42 @@ impl<'a> Printer<'a> {
         self.write(".");
     }
 
+    fn property_access_dot_base_after_erasure(&self, expr_idx: NodeIndex) -> (NodeIndex, bool) {
+        // Unwrap parentheses, type assertions, and `as`/`satisfies`
+        // expressions to find the expression that will still be immediately
+        // before the property dot. After type erasure, `(<any>1)` becomes
+        // just `1`.
+        let mut idx = expr_idx;
+        let mut is_parenthesized = false;
+        while let Some(node) = self.arena.get(idx) {
+            match node.kind {
+                k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                    is_parenthesized = true;
+                    if let Some(paren) = self.arena.get_parenthesized(node) {
+                        idx = paren.expression;
+                        continue;
+                    }
+                }
+                k if k == syntax_kind_ext::TYPE_ASSERTION
+                    || k == syntax_kind_ext::AS_EXPRESSION
+                    || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+                {
+                    // Type assertions are fully erased during emit; they and
+                    // any surrounding parens do not survive in the output.
+                    // `(<any>1).foo` becomes `1.foo`, which needs `1..foo`.
+                    is_parenthesized = false;
+                    if let Some(assert) = self.arena.get_type_assertion(node) {
+                        idx = assert.expression;
+                        continue;
+                    }
+                }
+                _ => {}
+            }
+            break;
+        }
+        (idx, is_parenthesized)
+    }
+
     pub(in crate::emitter) fn write_property_access_dot_token(
         &mut self,
         expr_idx: NodeIndex,
@@ -559,7 +565,8 @@ impl<'a> Printer<'a> {
         let Some(dot_pos) = dot_pos else {
             return false;
         };
-        let Some(expr_node) = self.arena.get(expr_idx) else {
+        let (runtime_expr_idx, _) = self.property_access_dot_base_after_erasure(expr_idx);
+        let Some(expr_node) = self.arena.get(runtime_expr_idx) else {
             return false;
         };
         if expr_node.kind != SyntaxKind::NumericLiteral as u16 {
@@ -1739,6 +1746,133 @@ mod tests {
         );
     }
 
+    /// A normal call whose callee is a parenthesized optional member access
+    /// still needs tsc's method-call binding preservation:
+    /// `(o?.b)(x)` -> `(o === null || o === void 0 ? void 0 : o.b).call(o, x)`.
+    #[test]
+    fn parenthesized_optional_member_call_preserves_simple_receiver() {
+        let source = "const o = { b(n: number) { return n; } };\n(o?.b)(1);\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("(o === null || o === void 0 ? void 0 : o.b).call(o, 1)"),
+            "Parenthesized optional member callee must preserve `this` with .call(o).\nOutput:\n{output}"
+        );
+    }
+
+    /// When the final member receiver is produced inside the optional branch,
+    /// capture that receiver once and use it as the `.call(...)` receiver.
+    #[test]
+    fn parenthesized_optional_member_call_preserves_nested_receiver() {
+        let source = "\
+const o = { nested() { return { b(n: number) { return n; } }; } };
+(o?.nested().b)(2);
+";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains(
+                "(o === null || o === void 0 ? void 0 : (_a = o.nested()).b).call(_a, 2)"
+            ),
+            "Parenthesized optional member callee must capture the nested receiver for .call(_a).\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn parenthesized_optional_element_call_preserves_nested_receiver() {
+        let source = "\
+const o = { nested() { return { b(n: number) { return n; } }; } };
+(o?.nested()[\"b\"])(2);
+";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains(
+                "(o === null || o === void 0 ? void 0 : (_a = o.nested())[\"b\"]).call(_a, 2)"
+            ),
+            "Parenthesized optional element callee must capture the nested receiver for .call(_a).\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn parenthesized_optional_tail_property_call_preserves_tail_receiver() {
+        let source = "\
+const o = { a: { b(n: number) { return n; } } };
+(o?.a.b)(1);
+";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("(o === null || o === void 0 ? void 0 : (_a = o.a).b).call(_a, 1)"),
+            "Parenthesized optional tail property callee must capture `o.a` for .call(_a).\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn parenthesized_optional_tail_element_call_preserves_tail_receiver() {
+        let source = "\
+const o = { a: { b(n: number) { return n; } } };
+(o?.a[\"b\"])(1);
+";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output
+                .contains("(o === null || o === void 0 ? void 0 : (_a = o.a)[\"b\"]).call(_a, 1)"),
+            "Parenthesized optional tail element callee must capture `o.a` for .call(_a).\nOutput:\n{output}"
+        );
+    }
+
     /// Complex (non-identifier) expression in optional method call MUST use a temp.
     /// `f()?.b()` needs a temp to avoid calling `f()` twice.
     #[test]
@@ -2070,6 +2204,79 @@ mod tests {
         assert!(
             !output.contains("3..foo"),
             "Removed comment after newline must not collapse numeric access to `..`.\nOutput:\n{output}"
+        );
+    }
+
+    /// Erased type wrappers should use the inner numeric literal when deciding
+    /// whether source trivia still separates the number from the property dot.
+    #[test]
+    fn numeric_literal_property_access_erased_wrapper_preserved_comment_uses_single_dot() {
+        let source = "(<any>3) /* comment */.foo;\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("3 /* comment */.foo"),
+            "Preserved comment after erased type assertion should separate integer literal from property dot.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("/* comment */..foo"),
+            "Comment-separated erased wrapper access must not use `..` while comments are preserved.\nOutput:\n{output}"
+        );
+    }
+
+    /// If comments are removed and no source newline survives, an erased
+    /// wrapper around an integer literal still needs the double-dot form.
+    #[test]
+    fn numeric_literal_property_access_erased_wrapper_removed_comment_uses_double_dot() {
+        let source = "(3 as any) /* comment */.foo;\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            remove_comments: true,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("3..foo"),
+            "Removed comment after erased `as` expression should require `..` for integer property access.\nOutput:\n{output}"
+        );
+    }
+
+    /// A source newline survives comment removal even when it crosses an erased
+    /// `satisfies` wrapper.
+    #[test]
+    fn numeric_literal_property_access_erased_wrapper_removed_comment_keeps_newline_separator() {
+        let source = "(3 satisfies number)\n    /* comment */.foo;\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            remove_comments: true,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("3\n    .foo"),
+            "Source newline after erased `satisfies` expression should keep a single property dot.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("3..foo"),
+            "Surviving newline after erased wrapper must not collapse numeric access to `..`.\nOutput:\n{output}"
         );
     }
 

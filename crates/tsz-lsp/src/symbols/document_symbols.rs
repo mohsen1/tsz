@@ -20,11 +20,133 @@
 //! - `children` corresponds to tsserver's `childItems`
 //! - `container_name` provides the parent container for flat symbol lists
 
+use std::cell::Cell;
+
 use crate::utils::node_range;
 use tsz_common::position::{Position, Range};
 use tsz_parser::parser::node::Node;
 use tsz_parser::{NodeIndex, node_flags, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
+
+const MAX_DOCUMENT_SYMBOL_ENTRIES: usize = 3000;
+const MAX_DOCUMENT_SYMBOL_DEPTH: usize = 64;
+const MORE_DOCUMENT_SYMBOL_NAME: &str = "more...";
+
+thread_local! {
+    static DOCUMENT_SYMBOL_REMAINING: Cell<usize> = const { Cell::new(usize::MAX) };
+    static DOCUMENT_SYMBOL_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
+
+fn with_document_symbol_collection_limit<F>(f: F) -> Vec<DocumentSymbol>
+where
+    F: FnOnce() -> Vec<DocumentSymbol>,
+{
+    DOCUMENT_SYMBOL_REMAINING.with(|remaining| {
+        DOCUMENT_SYMBOL_DEPTH.with(|depth| {
+            let previous_remaining = remaining.replace(MAX_DOCUMENT_SYMBOL_ENTRIES);
+            let previous_depth = depth.replace(0);
+            let symbols = f();
+            remaining.set(previous_remaining);
+            depth.set(previous_depth);
+            symbols
+        })
+    })
+}
+
+struct DocumentSymbolDepthGuard {
+    active: bool,
+}
+
+impl Drop for DocumentSymbolDepthGuard {
+    fn drop(&mut self) {
+        if self.active {
+            DOCUMENT_SYMBOL_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
+        }
+    }
+}
+
+fn document_symbol_depth_guard(kind: u16) -> DocumentSymbolDepthGuard {
+    let active = document_symbol_node_may_emit_direct(kind);
+    if active {
+        DOCUMENT_SYMBOL_DEPTH.with(|depth| depth.set(depth.get() + 1));
+    }
+    DocumentSymbolDepthGuard { active }
+}
+
+fn document_symbol_budget_precheck(kind: u16, range: Range) -> Option<Vec<DocumentSymbol>> {
+    let may_emit = document_symbol_node_may_emit_direct(kind);
+    let exhausted = DOCUMENT_SYMBOL_REMAINING.with(|remaining| remaining.get() == 0);
+    if exhausted {
+        return Some(Vec::new());
+    }
+
+    if !may_emit {
+        return None;
+    }
+
+    let at_depth_limit =
+        DOCUMENT_SYMBOL_DEPTH.with(|depth| depth.get() >= MAX_DOCUMENT_SYMBOL_DEPTH);
+    let must_emit_more = DOCUMENT_SYMBOL_REMAINING.with(|remaining| remaining.get() == 1);
+    if at_depth_limit || must_emit_more {
+        DOCUMENT_SYMBOL_REMAINING
+            .with(|remaining| remaining.set(remaining.get().saturating_sub(1)));
+        return Some(vec![more_document_symbol(range)]);
+    }
+
+    DOCUMENT_SYMBOL_REMAINING.with(|remaining| remaining.set(remaining.get().saturating_sub(1)));
+    None
+}
+
+fn document_symbol_budget_account(symbols: &mut Vec<DocumentSymbol>) {
+    if symbols.is_empty() {
+        DOCUMENT_SYMBOL_REMAINING.with(|remaining| remaining.set(remaining.get() + 1));
+        return;
+    }
+
+    DOCUMENT_SYMBOL_REMAINING.with(|remaining| {
+        let available = remaining.get();
+        let extra_symbols = symbols.len().saturating_sub(1);
+        if extra_symbols > available {
+            let keep = available + 1;
+            let sentinel_range = symbols[keep - 1].range;
+            symbols.truncate(keep);
+            symbols[keep - 1] = more_document_symbol(sentinel_range);
+            remaining.set(0);
+        } else {
+            remaining.set(available - extra_symbols);
+        }
+    });
+}
+
+fn document_symbol_node_may_emit_direct(kind: u16) -> bool {
+    matches!(
+        kind,
+        k if k == syntax_kind_ext::FUNCTION_DECLARATION
+            || k == syntax_kind_ext::FUNCTION_EXPRESSION
+            || k == syntax_kind_ext::CLASS_DECLARATION
+            || k == syntax_kind_ext::CLASS_EXPRESSION
+            || k == syntax_kind_ext::INTERFACE_DECLARATION
+            || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+            || k == syntax_kind_ext::VARIABLE_STATEMENT
+            || k == syntax_kind_ext::ENUM_DECLARATION
+            || k == syntax_kind_ext::ENUM_MEMBER
+            || k == syntax_kind_ext::METHOD_DECLARATION
+            || k == syntax_kind_ext::PROPERTY_DECLARATION
+            || k == syntax_kind_ext::PROPERTY_SIGNATURE
+            || k == syntax_kind_ext::CALL_SIGNATURE
+            || k == syntax_kind_ext::CONSTRUCT_SIGNATURE
+            || k == syntax_kind_ext::INDEX_SIGNATURE
+            || k == syntax_kind_ext::METHOD_SIGNATURE
+            || k == syntax_kind_ext::CONSTRUCTOR
+            || k == syntax_kind_ext::GET_ACCESSOR
+            || k == syntax_kind_ext::SET_ACCESSOR
+            || k == syntax_kind_ext::MODULE_DECLARATION
+            || k == syntax_kind_ext::IMPORT_DECLARATION
+            || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+            || k == syntax_kind_ext::EXPORT_ASSIGNMENT
+            || k == syntax_kind_ext::EXPORT_DECLARATION
+    )
+}
 
 /// A symbol kind (matches LSP `SymbolKind` values).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -180,7 +302,10 @@ define_lsp_provider!(minimal DocumentSymbolProvider, "Document symbol provider."
 impl<'a> DocumentSymbolProvider<'a> {
     /// Get all symbols in the document.
     pub fn get_document_symbols(&self, root: NodeIndex) -> Vec<DocumentSymbol> {
-        self.collect_symbols(root, None)
+        let mut symbols =
+            with_document_symbol_collection_limit(|| self.collect_symbols(root, None));
+        cap_document_symbols(&mut symbols);
+        symbols
     }
 
     /// Extract kind modifiers from a modifier node list.
@@ -230,11 +355,18 @@ impl<'a> DocumentSymbolProvider<'a> {
             return Vec::new();
         };
 
-        match node.kind {
+        let range = node_range(self.arena, self.line_map, self.source_text, node_idx);
+        if let Some(symbols) = document_symbol_budget_precheck(node.kind, range) {
+            return symbols;
+        }
+
+        let _depth_guard = document_symbol_depth_guard(node.kind);
+        let mut symbols = match node.kind {
             // Source File: Recurse into statements
             k if k == syntax_kind_ext::SOURCE_FILE => {
                 let mut symbols = Vec::new();
                 if let Some(sf) = self.arena.get_source_file(node) {
+                    symbols.reserve(sf.statements.nodes.len());
                     for &stmt in &sf.statements.nodes {
                         symbols.extend(self.collect_symbols(stmt, container_name));
                     }
@@ -347,7 +479,7 @@ impl<'a> DocumentSymbolProvider<'a> {
 
                     let modifiers = self.get_kind_modifiers_from_list(&class.modifiers);
 
-                    let mut children = Vec::new();
+                    let mut children = Vec::with_capacity(class.members.nodes.len());
                     for &member in &class.members.nodes {
                         children.extend(self.collect_symbols(member, Some(&name)));
                     }
@@ -384,7 +516,7 @@ impl<'a> DocumentSymbolProvider<'a> {
 
                     let modifiers = self.get_kind_modifiers_from_list(&iface.modifiers);
 
-                    let mut children = Vec::new();
+                    let mut children = Vec::with_capacity(iface.members.nodes.len());
                     for &member in &iface.members.nodes {
                         children.extend(self.collect_symbols(member, Some(&name)));
                     }
@@ -541,7 +673,7 @@ impl<'a> DocumentSymbolProvider<'a> {
 
                     let modifiers = self.get_kind_modifiers_from_list(&enum_decl.modifiers);
 
-                    let mut children = Vec::new();
+                    let mut children = Vec::with_capacity(enum_decl.members.nodes.len());
                     for &member in &enum_decl.members.nodes {
                         children.extend(self.collect_symbols(member, Some(&name)));
                     }
@@ -774,6 +906,7 @@ impl<'a> DocumentSymbolProvider<'a> {
             k if k == syntax_kind_ext::CONSTRUCTOR => {
                 let mut out = Vec::new();
                 if let Some(ctor) = self.arena.get_constructor(node) {
+                    out.reserve(1 + ctor.parameters.nodes.len());
                     let children = self.collect_children_from_block(ctor.body, container_name);
                     let modifiers = self.get_kind_modifiers_from_list(&ctor.modifiers);
                     out.push(DocumentSymbol {
@@ -844,6 +977,7 @@ impl<'a> DocumentSymbolProvider<'a> {
             k if k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION => {
                 let mut symbols = Vec::new();
                 if let Some(block) = self.arena.get_block(node) {
+                    symbols.reserve(block.statements.nodes.len());
                     for &stmt in &block.statements.nodes {
                         symbols.extend(self.collect_symbols(stmt, container_name));
                     }
@@ -1012,6 +1146,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                 if let Some(block) = self.arena.get_module_block(node) {
                     let mut symbols = Vec::new();
                     if let Some(stmts) = &block.statements {
+                        symbols.reserve(stmts.nodes.len());
                         for &stmt in &stmts.nodes {
                             symbols.extend(self.collect_symbols(stmt, container_name));
                         }
@@ -1125,6 +1260,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                                 if let Some(call) = self.arena.get_call_expr(expr_node)
                                     && let Some(args) = call.arguments.as_ref()
                                 {
+                                    children.reserve(args.nodes.len());
                                     for &arg_idx in &args.nodes {
                                         let Some(arg_node) = self.arena.get(arg_idx) else {
                                             continue;
@@ -1216,7 +1352,12 @@ impl<'a> DocumentSymbolProvider<'a> {
 
             // Default fallback
             _ => vec![],
+        };
+
+        if document_symbol_node_may_emit_direct(node.kind) {
+            document_symbol_budget_account(&mut symbols);
         }
+        symbols
     }
 
     /// Walk a variable / property initializer and produce nav-item
@@ -2845,6 +2986,61 @@ fn merge_same_name_modules(symbols: &mut Vec<DocumentSymbol>) {
         // → merged A has two `I` children). Recurse once more to resolve.
         merge_same_name_modules(&mut symbols[i].children);
         i += 1;
+    }
+}
+
+fn cap_document_symbols(symbols: &mut Vec<DocumentSymbol>) {
+    let mut remaining = MAX_DOCUMENT_SYMBOL_ENTRIES;
+    cap_document_symbols_at_depth(symbols, 0, &mut remaining);
+}
+
+fn cap_document_symbols_at_depth(
+    symbols: &mut Vec<DocumentSymbol>,
+    depth: usize,
+    remaining: &mut usize,
+) {
+    let original = std::mem::take(symbols);
+    let mut capped = Vec::with_capacity(original.len().min(*remaining));
+    let mut iter = original.into_iter().peekable();
+
+    while let Some(mut symbol) = iter.next() {
+        if *remaining == 0 {
+            break;
+        }
+        if *remaining == 1 && iter.peek().is_some() {
+            capped.push(more_document_symbol(symbol.range));
+            *remaining = 0;
+            break;
+        }
+
+        *remaining -= 1;
+        if depth + 1 >= MAX_DOCUMENT_SYMBOL_DEPTH {
+            if !symbol.children.is_empty() {
+                symbol.children.clear();
+                if *remaining > 0 {
+                    *remaining -= 1;
+                    symbol.children.push(more_document_symbol(symbol.range));
+                }
+            }
+        } else {
+            cap_document_symbols_at_depth(&mut symbol.children, depth + 1, remaining);
+        }
+        capped.push(symbol);
+    }
+
+    *symbols = capped;
+}
+
+fn more_document_symbol(range: Range) -> DocumentSymbol {
+    DocumentSymbol {
+        name: MORE_DOCUMENT_SYMBOL_NAME.to_string(),
+        detail: None,
+        kind: SymbolKind::Module,
+        kind_modifiers: String::new(),
+        range,
+        selection_range: range,
+        container_name: None,
+        children: Vec::new(),
     }
 }
 

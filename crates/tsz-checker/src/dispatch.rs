@@ -898,7 +898,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             &request.read().normal_origin().contextual_opt(None),
                         );
                         self.checker.ctx.in_const_assertion = prev_in_const_assertion;
-                        crate::query_boundaries::common::apply_const_assertion(
+                        crate::query_boundaries::widening::apply_const_assertion(
                             self.checker.ctx.types,
                             expr_type,
                         )
@@ -1046,7 +1046,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             // For unconstrained type parameters (no `extends`), skip —
                             // T could be anything.
                             let (should_check, effective_asserted) = if should_check {
-                                if crate::query_boundaries::common::is_this_type(
+                                if crate::query_boundaries::type_predicates::is_this_type(
                                     self.checker.ctx.types,
                                     asserted_type,
                                 ) {

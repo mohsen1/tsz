@@ -12,8 +12,12 @@ publish = false
 [lib]
 crate-type = ["cdylib"]
 
+[features]
+default = []
+dts = ["tsz/dts"]
+
 [dependencies]
-tsz = { path = "../tsz-core", package = "tsz-core" }
+tsz = { path = "../tsz-core", package = "tsz-core", default-features = false }
 tsz-common = { workspace = true }
 tsz-scanner = { workspace = true }
 tsz-solver = { workspace = true }

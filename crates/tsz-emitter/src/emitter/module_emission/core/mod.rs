@@ -227,17 +227,11 @@ impl<'a> Printer<'a> {
             self.write_line();
         }
 
-        let prev_module = self.ctx.options.module;
-        let prev_original = self.ctx.original_module_kind;
-        self.ctx.options.module = ModuleKind::None;
-        self.ctx.original_module_kind = Some(prev_module);
-
-        let before_len = self.writer.len();
-        emit_inner(self);
-        let inner_emitted = self.writer.len() > before_len;
-
-        self.ctx.options.module = prev_module;
-        self.ctx.original_module_kind = prev_original;
+        let inner_emitted = self.with_cjs_export_body_mask(|this| {
+            let before_len = this.writer.len();
+            emit_inner(this);
+            this.writer.len() > before_len
+        });
 
         // If the inner emit produced nothing (e.g., variable declaration with
         // no initializer where only the type annotation was stripped), skip
@@ -430,11 +424,7 @@ impl<'a> Printer<'a> {
         es5_emitter.set_transforms(self.transforms.clone());
         es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
         es5_emitter.set_printer_options(self.ctx.options.clone());
-        es5_emitter.set_module_kind(
-            self.ctx
-                .original_module_kind
-                .unwrap_or(self.ctx.options.module),
-        );
+        es5_emitter.set_module_kind(self.ctx.outer_module_kind());
         if let Some(text) = self.source_text_for_map() {
             if self.writer.has_source_map() {
                 es5_emitter.set_source_map_context(text, self.writer.current_source_index());
@@ -626,11 +616,7 @@ impl<'a> Printer<'a> {
                         es5_emitter.set_transforms(self.transforms.clone());
                         es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
                         es5_emitter.set_printer_options(self.ctx.options.clone());
-                        es5_emitter.set_module_kind(
-                            self.ctx
-                                .original_module_kind
-                                .unwrap_or(self.ctx.options.module),
-                        );
+                        es5_emitter.set_module_kind(self.ctx.outer_module_kind());
                         if let Some(text) = self.source_text_for_map() {
                             if self.writer.has_source_map() {
                                 es5_emitter.set_source_map_context(

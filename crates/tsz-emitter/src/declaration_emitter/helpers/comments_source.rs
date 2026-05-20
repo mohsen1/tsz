@@ -135,6 +135,23 @@ impl<'a> DeclarationEmitter<'a> {
         pos: u32,
         chain: &[String],
     ) -> bool {
+        self.emit_jsdoc_comment_chain_preserving_source_for_pos_with_indent_mode(pos, chain, true)
+    }
+
+    pub(crate) fn emit_jsdoc_comment_chain_preserving_source_for_pos_verbatim(
+        &mut self,
+        pos: u32,
+        chain: &[String],
+    ) -> bool {
+        self.emit_jsdoc_comment_chain_preserving_source_for_pos_with_indent_mode(pos, chain, false)
+    }
+
+    fn emit_jsdoc_comment_chain_preserving_source_for_pos_with_indent_mode(
+        &mut self,
+        pos: u32,
+        chain: &[String],
+        normalize_inner_indent: bool,
+    ) -> bool {
         if self.remove_comments {
             return true;
         }
@@ -188,11 +205,47 @@ impl<'a> DeclarationEmitter<'a> {
                 comment.pos,
                 comment.end,
                 next_on_same_line,
-                true,
+                normalize_inner_indent,
             );
         }
 
         true
+    }
+
+    pub(crate) fn emitted_leading_single_line_jsdoc_type_comment_for_pos(&self, pos: u32) -> bool {
+        let Some(text) = self.source_file_text.as_deref() else {
+            return false;
+        };
+        let bytes = text.as_bytes();
+        let mut actual_start = pos as usize;
+        while actual_start < bytes.len()
+            && matches!(bytes[actual_start], b' ' | b'\t' | b'\r' | b'\n')
+        {
+            actual_start += 1;
+        }
+
+        let Some(comment) = self
+            .all_comments
+            .iter()
+            .filter(|comment| comment.end as usize <= actual_start)
+            .filter(|comment| is_jsdoc_comment(comment, text))
+            .filter(|comment| {
+                Self::jsdoc_attaches_through_var_prefix(&text[comment.end as usize..actual_start])
+            })
+            .max_by_key(|comment| comment.end)
+        else {
+            return false;
+        };
+
+        let raw = &text[comment.pos as usize..comment.end as usize];
+        !raw.contains(['\n', '\r'])
+            && Self::extract_jsdoc_type_expression(&get_jsdoc_content(comment, text)).is_some()
+    }
+
+    pub(crate) fn join_last_emitted_jsdoc_comment_to_next_declaration(&mut self) {
+        if self.writer.undo_last_write_line() {
+            self.write(" ");
+        }
     }
 
     pub(crate) fn emit_jsdoc_comment_verbatim_for_pos(&mut self, pos: u32, jsdoc: &str) -> bool {

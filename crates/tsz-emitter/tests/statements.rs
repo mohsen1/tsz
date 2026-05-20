@@ -35,6 +35,36 @@ fn parse_and_emit_strict_es2015(source: &str, file_name: &str) -> String {
 }
 
 #[test]
+fn expression_statement_arrow_initializer_keeps_trailing_comment_after_semicolon() {
+    let output =
+        parse_and_emit_strict_es2015("declare let a: () => number;\na = () => 1 // ok\n", "a.ts");
+
+    assert!(
+        output.contains("a = () => 1; // ok"),
+        "Arrow assignment trailing comment should follow the statement semicolon.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("a = () => 1 // ok\n;"),
+        "Arrow body should not steal the statement trailing comment before the semicolon.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn variable_arrow_initializer_places_semicolon_before_following_comment() {
+    let output =
+        parse_and_emit_strict_es2015("var f = (a: any)\n=> a\n\n// Should be valid.\n;\n", "a.ts");
+
+    assert!(
+        output.contains("var f = (a) => a;\n// Should be valid."),
+        "Variable arrow initializer should own the semicolon before the following comment.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("=> a\n\n// Should be valid.\n;"),
+        "Following comment should not remain between the arrow body and semicolon.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn recovered_jsx_unary_type_assertion_preserves_trailing_less_than() {
     let output = parse_and_emit_strict_es2015("~< <\n", "a.js");
     assert_eq!(output.trim_end(), "\"use strict\";\n~< /> <\n;");
@@ -259,6 +289,45 @@ fn for_of_capture_hoists_var_declarations_before_loop() {
     assert!(
         output.contains("x = item;"),
         "body var initializer should remain as an assignment inside the capture function: {output}"
+    );
+}
+
+#[test]
+fn for_of_capture_detects_conditional_expression_inside_callback() {
+    let output = parse_and_lower_print(
+        "const list: any[] = [];\n\
+for (const comp of list) {\n\
+    comp.sp.y = comp.sp.r.find((k: any) => k.c == (comp.xp ? '1' : '0'));\n\
+    for (const item of comp.c) {\n\
+        item.v = !!item.t?.length;\n\
+    }\n\
+}\n",
+        PrintOptions::es5(),
+    );
+
+    let helper = output
+        .find("var _loop_1 = function (comp) {")
+        .expect("outer for-of should synthesize a loop-capture helper");
+    let loop_header = output
+        .find("for (var _i = 0, list_1 = list;")
+        .expect("expected lowered outer for-of loop header");
+
+    assert!(
+        helper < loop_header,
+        "Loop helper should be emitted before the lowered outer for-of.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_loop_1(comp);"),
+        "Lowered outer loop should call the helper with the captured iteration variable.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("k.c == (comp.xp ? '1' : '0')"),
+        "Callback conditional expression should close over the helper parameter.\nOutput:\n{output}"
+    );
+    assert!(
+        output
+            .contains("item.v = !!((_a = item.t) === null || _a === void 0 ? void 0 : _a.length);"),
+        "Nested optional chain should still downlevel inside the captured loop body.\nOutput:\n{output}"
     );
 }
 

@@ -954,7 +954,11 @@ impl<'a> CheckerState<'a> {
         }
 
         let ctor_type = self.base_constructor_type_from_expression(expr_idx, type_arguments)?;
+        let adds_implicit_any_index = self.constructor_type_explicitly_returns_any(ctor_type);
         let mut resolved = self.instance_type_from_constructor_type(ctor_type);
+        if adds_implicit_any_index && resolved.is_some_and(TypeId::is_any) {
+            resolved = Some(self.implicit_any_index_base_instance_type());
+        }
         if self.ctx.is_js_file()
             && let Some(synthesized) =
                 self.synthesize_js_constructor_instance_type(expr_idx, ctor_type, &[])
@@ -971,6 +975,28 @@ impl<'a> CheckerState<'a> {
             };
         }
         self.cache_base_instance_result(expr_idx, should_cache, resolved)
+    }
+
+    fn constructor_type_explicitly_returns_any(&mut self, ctor_type: TypeId) -> bool {
+        ctor_type != TypeId::ANY
+            && self
+                .instance_type_from_constructor_type(ctor_type)
+                .is_some_and(TypeId::is_any)
+    }
+
+    fn implicit_any_index_base_instance_type(&self) -> TypeId {
+        self.ctx
+            .types
+            .factory()
+            .object_with_index(tsz_solver::ObjectShape {
+                string_index: Some(tsz_solver::IndexSignature {
+                    key_type: TypeId::STRING,
+                    value_type: TypeId::ANY,
+                    readonly: false,
+                    param_name: None,
+                }),
+                ..tsz_solver::ObjectShape::default()
+            })
     }
 
     /// Sanitize and cache a base-instance result. Drops `Some(ERROR)` to

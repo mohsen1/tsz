@@ -1,5 +1,6 @@
 use super::*;
-use tsz_solver::{TupleElement, TypeId, TypeInterner};
+use tsz_solver::construction::TypeInterner;
+use tsz_solver::{TupleElement, TypeId};
 
 #[test]
 fn exposes_type_computation_access_boundary_queries() {

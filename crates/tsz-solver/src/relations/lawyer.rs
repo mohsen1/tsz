@@ -138,7 +138,7 @@
 //! While `any` is TypeScript's escape hatch, we still want to catch real errors
 //! even when `any` is involved.
 
-use crate::AnyPropagationMode;
+use crate::relations::subtype::AnyPropagationMode;
 
 /// Rules for `any` propagation in type checking.
 ///

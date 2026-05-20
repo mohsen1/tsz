@@ -1412,6 +1412,53 @@ fn test_document_symbols_deeply_nested_namespaces() {
 }
 
 #[test]
+fn test_document_symbols_caps_total_entries_with_more_sentinel() {
+    let mut source = String::new();
+    for i in 0..3005 {
+        source.push_str(&format!("const v{i} = {i};\n"));
+    }
+    let (parser, root) = parse_test_source(&source);
+    let line_map = LineMap::build(&source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, &source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 3000);
+    assert_eq!(symbols[2998].name, "v2998");
+    assert_eq!(symbols[2999].name, "more...");
+}
+
+#[test]
+fn test_document_symbols_caps_namespace_depth_with_more_sentinel() {
+    let mut source = String::new();
+    for i in 0..128 {
+        source.push_str(&format!("namespace N{i} {{\n"));
+    }
+    source.push_str("function leaf() {}\n");
+    for _ in 0..128 {
+        source.push_str("}\n");
+    }
+    let (parser, root) = parse_test_source(&source);
+    let line_map = LineMap::build(&source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, &source);
+    let symbols = provider.get_document_symbols(root);
+
+    let mut current = &symbols[0];
+    let mut depth = 1;
+    while current.name != "more..." && !current.children.is_empty() {
+        current = &current.children[0];
+        depth += 1;
+    }
+
+    assert_eq!(current.name, "more...");
+    assert!(
+        depth <= 65,
+        "depth cap should avoid walking all 128 namespaces"
+    );
+}
+
+#[test]
 fn test_document_symbols_class_with_static_and_instance() {
     let source = "class Counter {\n  static count: number = 0;\n  value: number;\n  static reset() {}\n  increment() {}\n}";
     let (parser, root) = parse_test_source(source);

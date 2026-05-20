@@ -10,11 +10,12 @@ use tsz_checker::context::CheckerOptions;
 use tsz_checker::diagnostics::{Diagnostic, diagnostic_codes};
 use tsz_checker::state::CheckerState;
 use tsz_checker::test_utils::{
-    HasDiagnosticCode, diagnostic_codes as project_diagnostic_codes, load_lib_files,
+    HasDiagnosticCode, check_source_with_libs, diagnostic_codes as project_diagnostic_codes,
+    load_lib_files,
 };
 use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
     load_lib_files(&[
@@ -144,6 +145,13 @@ fn ts2322_messages(source: &str) -> Vec<String> {
     get_all_diagnostics(source)
         .into_iter()
         .filter_map(|(code, message)| (code == 2322).then_some(message))
+        .collect()
+}
+
+fn ts2820_messages(source: &str) -> Vec<String> {
+    get_all_diagnostics(source)
+        .into_iter()
+        .filter_map(|(code, message)| (code == 2820).then_some(message))
         .collect()
 }
 
@@ -4898,6 +4906,46 @@ class Comp<T extends Foo, S> extends Component<S & State<T>>
     );
 }
 
+#[test]
+fn indexed_access_on_intersection_real_pick_preserves_deferred_constraints() {
+    // Same conformance case as above, but using the real library `Pick`.
+    // The no-lib reduced test can pass while the lib mapped type loses the
+    // deferred `(S & State<T>)["a"]` constraint and incorrectly accepts `T`.
+    let source = r#"
+class Component<S> {
+    setState<K extends keyof S>(state: Pick<S, K>) {}
+}
+
+export interface State<T> {
+    a?: T;
+}
+
+class Foo {}
+
+class Comp<T extends Foo, S> extends Component<S & State<T>>
+{
+    foo(a: T) {
+        this.setState({ a: a });
+    }
+}
+"#;
+    let libs = load_lib_files_for_test();
+    let diagnostics = check_source_with_libs(
+        source,
+        "indexedAccessRelation.ts",
+        CheckerOptions::default(),
+        &libs,
+    );
+    let ts2322 = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect::<Vec<_>>();
+    assert!(
+        !ts2322.is_empty(),
+        "Expected TS2322 for real Pick indexed access on intersection with unconstrained type parameter. Actual diagnostics: {diagnostics:?}"
+    );
+}
+
 /// Regression test: arrays should NOT be assignable to interfaces that extend
 /// ReadonlyArray/Array but have additional required properties.
 ///
@@ -4972,6 +5020,71 @@ fn flat_weak_type_in_intersection_target_emits_ts2559() {
     assert!(
         has_ts2559,
         "Expected TS2559 for flat weak type mismatch in intersection target. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn direct_object_literal_excess_prop_against_weak_intersection_emits_ts2353() {
+    // tsc emits TS2353 (excess property check) — NOT TS2559 — when a fresh object
+    // literal with an unrecognized property is assigned to a weak intersection target.
+    // EPC runs first for fresh literals; TS2559 applies to non-fresh sources only.
+    let source = r#"
+        interface A { x?: number }
+        interface B { y?: string }
+        const v: A & B = { z: 1 };
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2353 = has_diagnostic_code(&diagnostics, 2353);
+    let has_ts2559 = has_diagnostic_code(&diagnostics, 2559);
+    assert!(
+        has_ts2353,
+        "Expected TS2353 (excess property) for fresh literal with unrecognized property against weak intersection. Got: {diagnostics:?}"
+    );
+    assert!(
+        !has_ts2559,
+        "Expected no TS2559 for a fresh object literal (EPC fires first). Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn direct_object_literal_prop_matching_second_weak_intersection_member_no_ts2559() {
+    // `y` is a property of `Second` and therefore of the intersection `First & Second`.
+    // Having any property in common with ANY member is sufficient — no TS2559.
+    // This verifies that `violates_weak_type` collects ALL members' properties.
+    let source = r#"
+        interface First { x?: number }
+        interface Second { y?: string }
+        const v: First & Second = { y: "hello" };
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2559 = has_diagnostic_code(&diagnostics, 2559);
+    assert!(
+        !has_ts2559,
+        "Source with property matching second intersection member should NOT emit TS2559. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn direct_object_literal_excess_prop_against_single_weak_type_emits_ts2353() {
+    // tsc emits TS2353 (excess property check) when a fresh object literal with an
+    // unrecognized property is assigned to a single weak type. EPC fires first for
+    // fresh literals; TS2559 applies only to non-fresh sources.
+    let source = r#"
+        interface Opts { timeout?: number; retries?: number }
+        const v: Opts = { url: "x" };
+    "#;
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2353 = has_diagnostic_code(&diagnostics, 2353);
+    let has_ts2559 = has_diagnostic_code(&diagnostics, 2559);
+    assert!(
+        has_ts2353,
+        "Expected TS2353 (excess property) for fresh literal with unrecognized property against single weak type. Got: {diagnostics:?}"
+    );
+    assert!(
+        !has_ts2559,
+        "Expected no TS2559 for a fresh object literal (EPC fires first). Got: {diagnostics:?}"
     );
 }
 
@@ -8029,6 +8142,87 @@ fn test_ts2322_type_param_extends_never_transitive_constraint() {
 }
 
 #[test]
+fn test_ts2322_type_param_assigns_to_recursive_interface_constraint() {
+    let source = r#"
+        interface MyNode<T> {
+            value: T;
+            child?: MyNode<T>;
+        }
+        function f<T extends MyNode<number>>(t: T): MyNode<number> {
+            return t;
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert_eq!(
+        ts2322, 0,
+        "Expected no TS2322 when returning a type parameter through its recursive interface constraint: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_type_param_assigns_to_aliased_recursive_interface_constraint() {
+    let source = r#"
+        interface TreeBox<U> {
+            item: U;
+            next?: TreeBox<U>;
+        }
+        type NumberTree = TreeBox<number>;
+        function f<X extends NumberTree>(x: X): NumberTree {
+            return x;
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert_eq!(
+        ts2322, 0,
+        "Expected no TS2322 when returning a type parameter through an aliased recursive interface constraint: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_type_param_assigns_through_transitive_recursive_constraint() {
+    let source = r#"
+        interface Link<V> {
+            value: V;
+            child?: Link<V>;
+        }
+        function f<Base extends Link<number>, Item extends Base>(item: Item): Link<number> {
+            return item;
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert_eq!(
+        ts2322, 0,
+        "Expected no TS2322 when returning through a transitive recursive interface constraint: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_incompatible_recursive_interface_constraint_still_errors() {
+    let source = r#"
+        interface NumberNode {
+            value: number;
+            child?: NumberNode;
+        }
+        interface TextNode {
+            value: string;
+            child?: TextNode;
+        }
+        function f<T extends TextNode>(t: T): NumberNode {
+            return t;
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        ts2322 >= 1,
+        "Expected TS2322 when a recursive constraint is structurally incompatible with the target: {diags:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_fbounded_object_literal_empty_array_no_error() {
     let source = r#"
         interface TreeNodeBase<T extends TreeNodeBase<T>> {
@@ -8558,5 +8752,110 @@ const check: number[] = mapped;
     assert!(
         diagnostics.is_empty(),
         "Identity-return callback should pick either overload and yield `number[]`. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn ts2820_preserves_generic_alias_application_inside_union_target() {
+    let source = r#"
+type Values<T> = T[keyof T];
+type ExtractFields<Options> = Values<{
+  [K in keyof Options]: Options[K] extends object ? keyof Options[K] : never;
+}>;
+type SetType<Options> = {
+  [key: string]: any;
+  target?: ExtractFields<Options>;
+};
+declare function test<OptionsData extends SetType<OptionsData>>(options: OptionsData): void;
+
+test({
+  target: "$test6",
+  data1: { $test1: 111, $test2: null },
+  data2: { $test3: {}, $test4: () => {}, $test5() {} },
+});
+"#;
+    let msgs = ts2820_messages(source);
+    assert_eq!(
+        msgs.len(),
+        1,
+        "expected exactly one TS2820 diagnostic, got: {msgs:#?}"
+    );
+    let msg = &msgs[0];
+    assert!(
+        msg.contains("ExtractFields<"),
+        "ts2820 target should preserve the ExtractFields<...> alias form, got: {msg}"
+    );
+    assert!(
+        msg.contains("Did you mean"),
+        "ts2820 should include a spelling suggestion, got: {msg}"
+    );
+}
+
+#[test]
+fn ts2820_preserves_generic_alias_application_inside_union_target_renamed_param() {
+    // "alphx" is one character off from "alpha" to trigger the spelling suggestion.
+    let source = r#"
+type AllValues<U> = U[keyof U];
+type PickFields<Config> = AllValues<{
+  [K in keyof Config]: Config[K] extends object ? keyof Config[K] : never;
+}>;
+type Schema<Config> = {
+  [key: string]: any;
+  target?: PickFields<Config>;
+};
+declare function run<C extends Schema<C>>(opts: C): void;
+
+run({
+  target: "alphx",
+  group1: { alpha: 1, beta: null },
+  group2: { gamma: {}, delta: () => {} },
+});
+"#;
+    let msgs = ts2820_messages(source);
+    assert_eq!(
+        msgs.len(),
+        1,
+        "expected exactly one TS2820 diagnostic with renamed params, got: {msgs:#?}"
+    );
+    let msg = &msgs[0];
+    assert!(
+        msg.contains("PickFields<"),
+        "ts2820 target should preserve PickFields<...> alias form regardless of type param name, got: {msg}"
+    );
+}
+
+#[test]
+fn ts2820_preserves_application_union_with_null_instead_of_undefined() {
+    let source = r#"
+interface Container<T> { value: T; tag: 1 }
+declare let src: Container<"frist">;
+declare let dst: Container<"first" | "second"> | null;
+dst = src;
+"#;
+    let all = get_all_diagnostics(source);
+    let msg = all
+        .iter()
+        .find_map(|(code, msg)| (*code == 2322 || *code == 2820).then_some(msg))
+        .unwrap_or_else(|| panic!("expected a 2322/2820 diagnostic, got: {all:#?}"));
+    assert!(
+        msg.contains("Container<"),
+        "ts2820/ts2322 should preserve Container<...> alias when target is application | null, got: {msg}"
+    );
+}
+
+#[test]
+fn ts2820_union_of_plain_string_literals_uses_literal_union_form() {
+    let source = r#"
+declare let c: "bleu";
+let x: "red" | "green" | "blue" = c;
+"#;
+    let all = get_all_diagnostics(source);
+    let msg = all
+        .iter()
+        .find_map(|(code, msg)| (*code == 2322 || *code == 2820).then_some(msg))
+        .unwrap_or_else(|| panic!("expected a type mismatch diagnostic, got none"));
+    assert!(
+        msg.contains("\"red\" | \"green\" | \"blue\""),
+        "plain string literal union target should use full literal union form, got: {msg}"
     );
 }

@@ -1474,7 +1474,14 @@ impl<'a> TC39DecoratorEmitter<'a> {
             }
             output.push_str(&format!("{indent}}}\n"));
         } else {
-            output.push_str(") {\n");
+            // Synthetic constructor: derived classes need a pass-through to super.
+            // tsc always uses `...args` / `super(...args)` for the forwarding form.
+            if has_extends {
+                output.push_str("...args) {\n");
+                output.push_str(&format!("{inner_indent}super(...args);\n"));
+            } else {
+                output.push_str(") {\n");
+            }
             for call in &ctor_init_calls {
                 output.push_str(call);
             }

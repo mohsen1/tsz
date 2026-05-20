@@ -191,8 +191,12 @@ fn test_mapped_keyof_intersection_prunes_impossible_enum_discriminant_branch() {
     let discriminated_union = interner.union(vec![branch_a, branch_b]);
     let intersection = interner.intersection(vec![fixed_v_a, discriminated_union]);
 
-    assert!(crate::is_subtype_of(&interner, enum_a, enum_a));
-    assert!(!crate::is_subtype_of(&interner, enum_a, enum_b));
+    assert!(crate::relations::subtype::is_subtype_of(
+        &interner, enum_a, enum_a
+    ));
+    assert!(!crate::relations::subtype::is_subtype_of(
+        &interner, enum_a, enum_b
+    ));
 
     let keyof_intersection = evaluate_type(&interner, interner.keyof(intersection));
     let keyof_members = crate::type_queries::get_union_members(&interner, keyof_intersection)
@@ -295,12 +299,12 @@ fn test_mapped_keyof_intersection_prunes_impossible_distinct_enum_member_branch(
         interner.lookup(intersection)
     );
 
-    assert!(crate::is_subtype_of(
+    assert!(crate::relations::subtype::is_subtype_of(
         &interner,
         enum_member_a,
         enum_member_a
     ));
-    assert!(!crate::is_subtype_of(
+    assert!(!crate::relations::subtype::is_subtype_of(
         &interner,
         enum_member_a,
         enum_member_b

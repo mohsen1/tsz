@@ -179,7 +179,7 @@ impl TypeInterner {
         match self.lookup(type_id) {
             Some(TypeData::Union(list_id)) => {
                 let members = self.type_list(list_id);
-                let mut values = Vec::new();
+                let mut values = Vec::with_capacity(members.len());
                 for member in members.iter() {
                     // RECURSIVE CALL: Handle boolean-in-union and nested unions correctly
                     let member_values = self.get_string_literal_values(*member)?;
@@ -213,7 +213,7 @@ impl TypeInterner {
     /// For example: `prefix-${"a" | "b"}-suffix` -> "prefix-a-suffix" | "prefix-b-suffix"
     fn expand_template_literal_to_union(&self, spans: &[TemplateSpan]) -> TypeId {
         // Collect text parts and interpolation alternatives
-        let mut parts: Vec<Vec<String>> = Vec::new();
+        let mut parts: Vec<Vec<String>> = Vec::with_capacity(spans.len());
 
         for span in spans {
             match span {

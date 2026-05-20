@@ -11,7 +11,7 @@ use tsz_checker::CheckerState;
 use tsz_common::checker_options::{CheckerOptions, JsxMode};
 use tsz_common::diagnostics::Diagnostic;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn check_with_jsx_mode(source: &str, file_name: &str, jsx_mode: JsxMode) -> Vec<Diagnostic> {
     let mut parser = ParserState::new(file_name.to_string(), source.to_string());

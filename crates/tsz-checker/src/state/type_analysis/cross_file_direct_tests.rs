@@ -615,11 +615,14 @@ fn delegate_source_file_type_alias_caches_generic_params() {
         "Leaf<T> should preserve one type parameter"
     );
     assert_eq!(
-        state
-            .ctx
-            .cached_stable_source_file_symbol_arena_type(leaf_sym, target_file_idx, scope),
+        state.ctx.cached_source_file_symbol_arena_type(
+            leaf_sym,
+            target_file_idx,
+            scope,
+            state.ctx.current_file_idx as u32,
+        ),
         Some((ty, params)),
-        "stable source-file symbol-arena cache hits must preserve generic params",
+        "requester-scoped source-file symbol-arena cache hits must preserve generic params",
     );
 }
 
@@ -1199,87 +1202,6 @@ fn direct_actual_lib_symbol_type_handles_selected_value_interfaces() {
 }
 
 #[test]
-fn direct_cross_file_interface_lowering_handles_simple_builtin_dom_interfaces() {
-    let lib_files = load_lib_files(&["es5.d.ts", "dom.d.ts"]);
-    let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
-    let root = parser.parse_source_file();
-    let mut binder = BinderState::new();
-    binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
-    let arena = Arc::new(parser.get_arena().clone());
-    let binder = Arc::new(binder);
-    let types = TypeInterner::new();
-    let ctx = CheckerContext::new(
-        arena.as_ref(),
-        binder.as_ref(),
-        &types,
-        "fixture.ts".to_string(),
-        CheckerOptions::default(),
-    );
-    let mut state = CheckerState { ctx };
-    let lib_contexts: Vec<LibContext> = lib_files
-        .iter()
-        .map(|lib| LibContext {
-            arena: Arc::clone(&lib.arena),
-            binder: Arc::clone(&lib.binder),
-        })
-        .collect();
-    state.ctx.set_lib_contexts(lib_contexts);
-    state.ctx.set_actual_lib_file_count(lib_files.len());
-
-    let simple_sym_id = state
-        .ctx
-        .binder
-        .file_locals
-        .get("PaymentCurrencyAmount")
-        .expect("PaymentCurrencyAmount should resolve to a dom lib symbol");
-    let simple_arena = state
-        .ctx
-        .binder
-        .symbol_arenas
-        .get(&simple_sym_id)
-        .map(std::convert::AsRef::as_ref)
-        .expect("PaymentCurrencyAmount should have a delegate arena");
-    let (simple_ty, simple_params) = state
-        .direct_cross_file_interface_lowering(
-            simple_sym_id,
-            state.ctx.binder,
-            simple_arena,
-            false,
-            false,
-        )
-        .expect("simple builtin dom interface should lower directly");
-    assert_ne!(simple_ty, TypeId::UNKNOWN);
-    assert_ne!(simple_ty, TypeId::ERROR);
-    assert!(simple_params.is_empty());
-
-    let heritage_sym_id = state
-        .ctx
-        .binder
-        .file_locals
-        .get("AddEventListenerOptions")
-        .expect("AddEventListenerOptions should resolve to a dom lib symbol");
-    let heritage_arena = state
-        .ctx
-        .binder
-        .symbol_arenas
-        .get(&heritage_sym_id)
-        .map(std::convert::AsRef::as_ref)
-        .expect("AddEventListenerOptions should have a delegate arena");
-    assert!(
-        state
-            .direct_cross_file_interface_lowering(
-                heritage_sym_id,
-                state.ctx.binder,
-                heritage_arena,
-                false,
-                false,
-            )
-            .is_none(),
-        "builtin dom interfaces with heritage stay on the fallback path",
-    );
-}
-
-#[test]
 fn direct_actual_lib_symbol_type_handles_iterator_interfaces_with_params() {
     let lib_files = load_lib_files(&["es2015.iterable.d.ts", "esnext.iterator.d.ts"]);
     let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
@@ -1358,6 +1280,71 @@ fn direct_actual_lib_symbol_type_handles_iterator_interfaces_with_params() {
             );
         }
     }
+}
+
+#[test]
+fn direct_actual_lib_symbol_type_handles_plain_iterator_object_with_params() {
+    let lib_files = load_lib_files(&["es2015.iterable.d.ts"]);
+    let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+    let arena = Arc::new(parser.get_arena().clone());
+    let binder = Arc::new(binder);
+    let types = TypeInterner::new();
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "fixture.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    let lib_contexts: Vec<LibContext> = lib_files
+        .iter()
+        .map(|lib| LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    state.ctx.set_lib_contexts(lib_contexts);
+    state.ctx.set_actual_lib_file_count(lib_files.len());
+
+    let iterator_object_sym_id = state
+        .ctx
+        .binder
+        .file_locals
+        .get("IteratorObject")
+        .expect("IteratorObject should resolve to a lib symbol");
+    let delegate_arena = state
+        .ctx
+        .binder
+        .symbol_arenas
+        .get(&iterator_object_sym_id)
+        .map(std::convert::AsRef::as_ref);
+    let (ty, params) = state
+        .direct_actual_lib_symbol_type(
+            iterator_object_sym_id,
+            CrossArenaSymbolMissSource::SymbolArena,
+            delegate_arena,
+            false,
+        )
+        .expect("unaugmented IteratorObject should lower through the direct lib path");
+
+    assert_ne!(
+        ty,
+        TypeId::UNKNOWN,
+        "IteratorObject should not lower to UNKNOWN"
+    );
+    assert_ne!(
+        ty,
+        TypeId::ERROR,
+        "IteratorObject should not lower to ERROR"
+    );
+    assert!(
+        !params.is_empty(),
+        "IteratorObject should preserve generic type parameters",
+    );
 }
 
 #[test]

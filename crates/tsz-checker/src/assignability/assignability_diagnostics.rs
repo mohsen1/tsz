@@ -12,15 +12,6 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    /// Legacy boolean-only relation guard for diagnostic code paths.
-    ///
-    /// Keep these calls grep-distinct from diagnostic decisions that need
-    /// `RelationOutcome` failure classification, weak-union handling, or depth
-    /// reporting.
-    fn diagnostic_relation_boolean_guard(&mut self, source: TypeId, target: TypeId) -> bool {
-        self.is_assignable_to(source, target)
-    }
-
     fn has_explicit_any_generic_variable_annotation(&self, diag_idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(diag_idx) else {
             return false;
@@ -212,8 +203,9 @@ impl<'a> CheckerState<'a> {
         let is_weak_union = outcome
             .map(|o| o.weak_union_violation)
             .unwrap_or_else(|| self.is_weak_union_violation(source, target));
+        // TS2559 takes priority over TS2353 — do not skip when a weak-type violation applies.
         if is_weak_union {
-            return true;
+            return false;
         }
 
         // Use the canonical property classification from the RelationOutcome
@@ -250,6 +242,37 @@ impl<'a> CheckerState<'a> {
         }
         // No property classification available (e.g., non-object types) → don't skip
         false
+    }
+
+    /// Run excess property checking when `source` is a fresh object literal or fresh object type.
+    /// Returns `true` if an excess-property diagnostic was emitted.
+    fn check_excess_properties_for_fresh_source(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        source_idx: NodeIndex,
+    ) -> bool {
+        let is_direct_literal = self
+            .ctx
+            .arena
+            .get(source_idx)
+            .is_some_and(|n| n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION);
+        let is_fresh =
+            crate::query_boundaries::common::is_fresh_object_type(self.ctx.types, source);
+        if !(is_direct_literal || is_fresh) {
+            return false;
+        }
+        let node_idx = if is_direct_literal {
+            source_idx
+        } else {
+            // Fresh type from a non-literal expression (e.g. `return obj = { x: 1, y: 2 }`):
+            // walk through binary assignment expressions to find the object literal.
+            self.find_rhs_object_literal(source_idx)
+                .unwrap_or(source_idx)
+        };
+        let diags_before = self.ctx.diagnostics.len();
+        self.check_object_literal_excess_properties(source, target, node_idx);
+        self.ctx.diagnostics.len() > diags_before
     }
 
     /// Check assignability and emit the standard TS2322/TS2345-style diagnostic when needed.
@@ -296,33 +319,9 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Track whether excess property checking emits diagnostics.
-        // When TS2353 is emitted for excess properties, tsc does NOT also emit TS1360.
-        let mut had_excess_property_error = false;
-        {
-            let is_direct_literal = self
-                .ctx
-                .arena
-                .get(source_idx)
-                .is_some_and(|n| n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION);
-            if is_direct_literal {
-                let diags_before = self.ctx.diagnostics.len();
-                self.check_object_literal_excess_properties(source, target, source_idx);
-                had_excess_property_error = self.ctx.diagnostics.len() > diags_before;
-            } else if crate::query_boundaries::common::is_fresh_object_type(self.ctx.types, source)
-            {
-                // Fresh type from non-literal expression (e.g., `return obj = { x: 1, y: 2 }`).
-                // Walk through binary assignment expressions to find the object literal.
-                let literal_idx = self.find_rhs_object_literal(source_idx);
-                let diags_before = self.ctx.diagnostics.len();
-                self.check_object_literal_excess_properties(
-                    source,
-                    target,
-                    literal_idx.unwrap_or(source_idx),
-                );
-                had_excess_property_error = self.ctx.diagnostics.len() > diags_before;
-            }
-        }
+        // TS2353 and TS1360 are mutually exclusive; skip TS1360 when EPC fires.
+        let had_excess_property_error =
+            self.check_excess_properties_for_fresh_source(source, target, source_idx);
 
         if self.diagnostic_relation_boolean_guard(source, target) {
             return true;
@@ -334,20 +333,18 @@ impl<'a> CheckerState<'a> {
         // Use the canonical assign relation outcome so the weak-union hint is collected alongside
         // the failure reason, avoiding a redundant solver round-trip in
         // should_skip_weak_union_error's fallback path.
-        {
-            let outcome = self.assign_relation_outcome(source, target);
-            if self.should_skip_weak_union_error_with_outcome(
-                source,
-                target,
-                source_idx,
-                Some(&outcome),
-            ) {
-                return true;
-            }
-            if outcome.weak_union_violation {
-                self.error_no_common_properties(source, target, diag_idx);
-                return false;
-            }
+        let outcome = self.assign_relation_outcome(source, target);
+        if self.should_skip_weak_union_error_with_outcome(
+            source,
+            target,
+            source_idx,
+            Some(&outcome),
+        ) {
+            return true;
+        }
+        if outcome.weak_union_violation {
+            self.error_no_common_properties(source, target, diag_idx);
+            return false;
         }
 
         // tsc 6.0: `satisfies` ignores readonly-to-mutable mismatches.
@@ -506,7 +503,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            if !self.is_assignable_to(prop_value_type, target_prop_type) {
+            if !self.diagnostic_relation_boolean_guard(prop_value_type, target_prop_type) {
                 // Report TS2322 at the property name (use _with_anchor to avoid
                 // assignment_diagnostic_anchor_idx walking up to the variable declaration)
                 self.error_type_not_assignable_at_with_anchor(
@@ -744,49 +741,25 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Check excess properties on fresh object types BEFORE the assignability
-        // check. Fresh types from chained assignments (e.g., `return obj = { x: 1, y: 2 }`)
+        // Check excess properties on fresh object types BEFORE the assignability check.
+        // Fresh types from chained assignments (e.g. `return obj = { x: 1, y: 2 }`)
         // are structurally assignable but should still trigger TS2353.
-        let mut had_excess_property_error = false;
-        {
-            let is_direct_literal = self
-                .ctx
-                .arena
-                .get(source_idx)
-                .is_some_and(|n| n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION);
-            if is_direct_literal {
-                let diags_before = self.ctx.diagnostics.len();
-                self.check_object_literal_excess_properties(source, target, source_idx);
-                had_excess_property_error = self.ctx.diagnostics.len() > diags_before;
-            } else if crate::query_boundaries::common::is_fresh_object_type(self.ctx.types, source)
-            {
-                let literal_idx = self.find_rhs_object_literal(source_idx);
-                let diags_before = self.ctx.diagnostics.len();
-                self.check_object_literal_excess_properties(
-                    source,
-                    target,
-                    literal_idx.unwrap_or(source_idx),
-                );
-                had_excess_property_error = self.ctx.diagnostics.len() > diags_before;
-            }
-        }
+        let had_excess_property_error =
+            self.check_excess_properties_for_fresh_source(source, target, source_idx);
         if had_excess_property_error {
             return false;
         }
 
-        // Canonical relation path: execute a RelationRequest to get both the
-        // assignability result and structured failure info in one boundary call.
-
-        // Reset the relation depth flag before the assignability check so we
-        // can detect fresh depth exceedance from this particular relation.
-        self.ctx.relation_depth_exceeded.set(false);
+        // Reset overflow flags before the assignability check so we detect fresh
+        // exceedance from this particular relation rather than a prior one.
+        self.ctx
+            .relation_overflow
+            .set(crate::context::RelationOverflowFlags::default());
         let assignable = self.diagnostic_relation_boolean_guard(source, target);
-        // TS2859: if the solver hit its recursion/complexity limit and could
-        // not establish assignability, emit "Excessive complexity comparing
-        // types". A successful relation may still set the sticky depth flag
-        // while exploring expansive recursive siblings; tsc does not report
-        // TS2859 when an assignable path was found.
-        if !assignable && self.ctx.relation_depth_exceeded.get() {
+        // tsc emits TS2859 ("Excessive complexity") for all relation-checker
+        // overflows regardless of whether it was depth or iteration that fired.
+        // TS2321 ("Excessive stack depth") fires from a separate mechanism.
+        if !assignable && self.ctx.relation_overflow.get().has_overflow() {
             let source_name = self.format_type_diagnostic(source);
             let target_name = self.format_type_diagnostic(target);
             self.error_at_node(

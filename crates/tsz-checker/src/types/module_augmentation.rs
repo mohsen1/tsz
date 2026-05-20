@@ -1151,6 +1151,12 @@ impl<'a> CheckerState<'a> {
         use crate::query_boundaries::state::type_resolution as query;
         use tsz_solver::{CallableShape, ObjectShape};
 
+        // Fast-path: avoids string allocations and hashset bookkeeping when
+        // no augmentations are registered anywhere in the program.
+        if !self.ctx.program_has_module_augmentations() {
+            return base_type;
+        }
+
         let guard_key = (
             module_spec.to_string(),
             interface_name.to_string(),
@@ -1409,7 +1415,7 @@ mod tests {
             .insert(".".to_string(), vec![aug]);
 
         // Set up CheckerState with the binder
-        let types = tsz_solver::TypeInterner::new();
+        let types = tsz_solver::construction::TypeInterner::new();
         let main_arena = Arc::new(NodeArena::new());
         let checker = CheckerState::new(
             &main_arena,
@@ -1462,7 +1468,7 @@ mod tests {
             .expect("fresh Arc")
             .insert(".".to_string(), vec![aug]);
 
-        let types = tsz_solver::TypeInterner::new();
+        let types = tsz_solver::construction::TypeInterner::new();
         let main_arena = Arc::new(NodeArena::new());
         let checker = CheckerState::new(
             &main_arena,

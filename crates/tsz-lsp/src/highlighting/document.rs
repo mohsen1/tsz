@@ -130,7 +130,7 @@ impl<'a> DocumentHighlightProvider<'a> {
                 DocumentHighlight::new(loc.range, kind)
             })
             .collect();
-        let mut seen = Vec::new();
+        let mut seen = Vec::with_capacity(highlights.len());
         highlights.retain(|highlight| {
             let key = (highlight.range, highlight.kind);
             if seen.contains(&key) {

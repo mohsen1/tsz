@@ -1359,6 +1359,54 @@ fn system_exported_object_binding_bracket_access_does_not_add_numeric_dot() {
 }
 
 #[test]
+fn trailing_decimal_numeric_follow_recovery_keeps_call_tail() {
+    let source = "var test = 2.toString();\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("var test = 2., toString;\n();"),
+        "Numeric-follow recovery should preserve the identifier and call tail like tsc.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var test = 2.;"),
+        "Recovered numeric-follow initializer must not drop the identifier and call tail.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn trailing_decimal_access_spacing_still_disambiguates_property_dot() {
+    let source = "var test3 = 3 .toString();\nvar test11 = 3. /* comment */ .toString();\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("var test3 = 3..toString();"),
+        "Integer literal property access separated by whitespace still needs a double dot.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var test11 = 3. /* comment */.toString();"),
+        "Trailing-decimal literals with preserved comments should keep one property dot.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn trailing_decimal_remove_comments_keeps_newline_separator() {
+    let source = "var test15 = 3.\n    // comment\n    .toString();\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            remove_comments: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("var test15 = 3.\n    .toString();"),
+        "Removing comments should preserve the newline after a trailing-decimal literal before property access.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn system_reexported_namespace_folds_export_into_es2015_iife_tail() {
     let source = "namespace N { export const x = 1; }\nexport { N as Out };\n";
     let output = parse_lower_print(
@@ -3166,5 +3214,116 @@ console.log(missingCurliesWithArrow.actual);
     assert!(
         !output.contains("var a = () => { var k = 10; };") && !output.contains("var a = () => ;"),
         "Hardcoded missingCurliesWithArrow fixture output must not be emitted.\nOutput:\n{output}"
+    );
+}
+
+/// Regression: when a System module already has a runtime import from
+/// `"tslib"` (e.g. a side-effect `import "tslib";`), the wrapper-tslib
+/// injection used to skip *both* the dep insertion *and* the helper
+/// `Assign(tslib_1)` setter action. That left `tslib_1` hoisted but never
+/// assigned, so `tslib_1.__decorate(...)` referenced an unassigned binding.
+///
+/// The structural rule: dep insertion is guarded against duplicates, but the
+/// helper `Assign("tslib_1")` is injected whenever no source-supplied
+/// `Assign` already exists for `"tslib"`. The companion case — a namespace
+/// import like `import * as TSLib from "tslib"` — must NOT add the helper
+/// `Assign("tslib_1")` because `commonjs_tslib_import_binding` will be
+/// updated to the user binding (`TSLib`), so helper calls resolve through
+/// that binding without a separate `tslib_1` setter.
+#[test]
+fn system_side_effect_tslib_import_still_assigns_helper_setter() {
+    use crate::context::emit::EmitContext;
+    use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
+    use crate::lowering::LoweringPass;
+
+    let source = "import \"tslib\";\ndeclare var dec: any;\n@dec export class A {}\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        module: ModuleKind::System,
+        import_helpers: true,
+        no_emit_helpers: true,
+        legacy_decorators: true,
+        ..Default::default()
+    };
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let ctx = EmitContext::with_options(opts.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, opts);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    let register_line = output
+        .lines()
+        .find(|line| line.contains("System.register(["))
+        .unwrap_or("");
+    let tslib_count = register_line.matches("\"tslib\"").count();
+    assert_eq!(
+        tslib_count, 1,
+        "System.register deps must list `\"tslib\"` exactly once when the source already imports from it.\nDeps line: {register_line}\nFull output:\n{output}"
+    );
+    assert!(
+        output.contains("var tslib_1"),
+        "Helper namespace binding `tslib_1` must be hoisted when no user `Assign` exists for `\"tslib\"`.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("tslib_1 = tslib_1_1;"),
+        "Setter body must assign `tslib_1 = <setter-param>;` so `tslib_1.__decorate` is defined at execute time.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("tslib_1.__decorate"),
+        "Decorator call must use the helper namespace binding.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_namespace_tslib_import_uses_user_binding_for_helpers() {
+    use crate::context::emit::EmitContext;
+    use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
+    use crate::lowering::LoweringPass;
+
+    // `import * as TSLib from "tslib"` registers `Assign("TSLib")` for the
+    // `"tslib"` dep, so the helper Assign should NOT be added — helper calls
+    // resolve through `TSLib.__decorate` because
+    // `commonjs_tslib_import_binding` is updated to the user binding.
+    let source = "import * as TSLib from \"tslib\";\ndeclare var dec: any;\n@dec export class A {}\nexport const u = TSLib;\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        module: ModuleKind::System,
+        import_helpers: true,
+        no_emit_helpers: true,
+        legacy_decorators: true,
+        ..Default::default()
+    };
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let ctx = EmitContext::with_options(opts.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, opts);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    let register_line = output
+        .lines()
+        .find(|line| line.contains("System.register(["))
+        .unwrap_or("");
+    assert_eq!(
+        register_line.matches("\"tslib\"").count(),
+        1,
+        "Single `\"tslib\"` dep entry.\nDeps line: {register_line}\nFull output:\n{output}"
+    );
+    assert!(
+        output.contains("TSLib.__decorate"),
+        "Helper calls must resolve through the user binding `TSLib`.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("tslib_1 = "),
+        "No redundant helper-binding setter line when the user already provides a binding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var tslib_1"),
+        "No redundant helper-binding hoist when the user already provides a binding.\nOutput:\n{output}"
     );
 }

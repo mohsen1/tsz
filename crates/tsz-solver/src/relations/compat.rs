@@ -1,17 +1,20 @@
 //! TypeScript compatibility layer for assignability rules.
 
 use crate::caches::db::QueryDatabase;
+use crate::construction::TypeDatabase;
 use crate::diagnostics::SubtypeFailureReason;
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type_cached};
+use crate::operations::AssignabilityChecker;
+use crate::relations::lawyer::AnyPropagationRules;
 use crate::relations::subtype::{NoopResolver, SubtypeChecker, TypeResolver};
 use crate::types::{
     IntrinsicKind, LiteralValue, MappedModifier, MappedType, PropertyInfo, TypeData, TypeId,
 };
 use crate::visitor::{
-    TypeVisitor, application_id, index_access_parts, intrinsic_kind,
+    TypeVisitor, application_id, array_element_type, index_access_parts, intrinsic_kind,
     is_empty_object_type_through_type_constraints, is_error_type, keyof_inner_type, lazy_def_id,
-    mapped_type_id, type_param_info, union_list_id,
+    mapped_type_id, tuple_list_id, type_param_info, union_list_id,
 };
-use crate::{AnyPropagationRules, AssignabilityChecker, TypeDatabase};
 use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
 
@@ -1262,9 +1265,16 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return true;
         }
 
+        if let Some(s_mapped_id) = self.mapped_id_or_expanded_application(source)
+            && self.is_homomorphic_mapped_source_assignable_to_target(s_mapped_id, target)
+        {
+            return true;
+        }
+
         // Check mapped-to-mapped structural comparison before full subtype check.
-        if let (Some(TypeData::Mapped(s_mapped_id)), Some(TypeData::Mapped(t_mapped_id))) =
-            (self.interner.lookup(source), self.interner.lookup(target))
+        let s_mapped_for_compare = self.mapped_id_or_expanded_application(source);
+        let t_mapped_for_compare = self.mapped_id_or_expanded_application(target);
+        if let (Some(s_mapped_id), Some(t_mapped_id)) = (s_mapped_for_compare, t_mapped_for_compare)
         {
             let result = self.check_mapped_to_mapped_assignability(s_mapped_id, t_mapped_id);
             if let Some(assignable) = result {
@@ -1437,6 +1447,333 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         false
     }
 
+    fn mapped_id_or_expanded_application(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<crate::types::MappedTypeId> {
+        if let Some(mapped_id) = mapped_type_id(self.interner, type_id) {
+            return Some(mapped_id);
+        }
+        let app_id = application_id(self.interner, type_id)?;
+        let expanded = self.subtype.try_expand_application(app_id)?;
+        mapped_type_id(self.interner, expanded)
+    }
+
+    fn is_homomorphic_mapped_source_assignable_to_target(
+        &mut self,
+        source_mapped_id: crate::types::MappedTypeId,
+        target: TypeId,
+    ) -> bool {
+        if self
+            .subtype
+            .check_homomorphic_mapped_to_target(source_mapped_id, target)
+        {
+            return true;
+        }
+
+        let mapped = self.interner.get_mapped(source_mapped_id);
+
+        if let Some(name_type) = mapped.name_type
+            && !super::subtype::rules::generics::is_filtering_name_type(
+                self.interner,
+                name_type,
+                &mapped,
+            )
+        {
+            return false;
+        }
+
+        if mapped.optional_modifier == Some(MappedModifier::Add) {
+            return false;
+        }
+
+        let Some(mapped_source) = keyof_inner_type(self.interner, mapped.constraint) else {
+            return false;
+        };
+
+        if !self.homomorphic_mapped_sources_match(target, mapped_source) {
+            return false;
+        }
+
+        let k_type_id = self.interner.type_param(mapped.type_param);
+        let target_value_type = self.interner.index_access(mapped_source, k_type_id);
+        self.mapped_template_structurally_assignable(mapped.template, target_value_type)
+    }
+
+    fn mapped_template_structurally_assignable(&mut self, source: TypeId, target: TypeId) -> bool {
+        if source == target {
+            return true;
+        }
+
+        if source == TypeId::NEVER {
+            return true;
+        }
+
+        if let Some(app_id) = application_id(self.interner, source)
+            && let Some(expanded) = self.subtype.try_expand_application(app_id)
+            && self.mapped_template_structurally_assignable(expanded, target)
+        {
+            return true;
+        }
+
+        if let Some(TypeData::Conditional(cond_id)) = self.interner.lookup(source) {
+            let cond = self.interner.conditional_type(cond_id);
+            return self.mapped_template_structurally_assignable(cond.true_type, target)
+                && self.mapped_template_structurally_assignable(cond.false_type, target);
+        }
+
+        if let (Some((source_obj, source_idx)), Some((target_obj, target_idx))) = (
+            index_access_parts(self.interner, source),
+            index_access_parts(self.interner, target),
+        ) {
+            return self.homomorphic_mapped_sources_match(source_obj, target_obj)
+                && self.homomorphic_mapped_sources_match(source_idx, target_idx);
+        }
+
+        if let Some(target_members_id) = union_list_id(self.interner, target) {
+            return self
+                .interner
+                .type_list(target_members_id)
+                .iter()
+                .any(|member| self.mapped_template_structurally_assignable(source, *member));
+        }
+
+        if let Some(source_members_id) = crate::visitor::intersection_list_id(self.interner, source)
+        {
+            return self
+                .interner
+                .type_list(source_members_id)
+                .iter()
+                .any(|member| self.mapped_template_structurally_assignable(*member, target));
+        }
+
+        false
+    }
+
+    fn union_structurally_contains_source(&mut self, target: TypeId, source: TypeId) -> bool {
+        let Some(target_members_id) = union_list_id(self.interner, target) else {
+            return false;
+        };
+        let target_members: Vec<TypeId> = self.interner.type_list(target_members_id).to_vec();
+
+        if let Some(source_members_id) = union_list_id(self.interner, source) {
+            let source_members: Vec<TypeId> = self.interner.type_list(source_members_id).to_vec();
+            if source_members.iter().all(|source_member| {
+                target_members.iter().any(|target_member| {
+                    self.structurally_same_recursive_member(*source_member, *target_member, 8)
+                })
+            }) {
+                return true;
+            }
+            return self.union_has_same_arm_kinds_plus_nullish(&source_members, &target_members);
+        }
+
+        target_members
+            .iter()
+            .any(|target_member| self.structurally_same_recursive_member(source, *target_member, 8))
+    }
+
+    fn union_has_same_arm_kinds_plus_nullish(
+        &mut self,
+        source_members: &[TypeId],
+        target_members: &[TypeId],
+    ) -> bool {
+        if target_members.len() != source_members.len() + 1 {
+            return false;
+        }
+        let nullish_count = target_members
+            .iter()
+            .filter(|member| matches!(**member, TypeId::NULL | TypeId::UNDEFINED))
+            .count();
+        if nullish_count != 1 {
+            return false;
+        }
+        source_members.iter().all(|source_member| {
+            target_members.iter().any(|target_member| {
+                !matches!(*target_member, TypeId::NULL | TypeId::UNDEFINED)
+                    && self.same_top_level_relation_shape(*source_member, *target_member)
+                    && self.is_assignable(*source_member, *target_member)
+            })
+        })
+    }
+
+    fn same_top_level_relation_shape(&self, left: TypeId, right: TypeId) -> bool {
+        matches!(
+            (self.interner.lookup(left), self.interner.lookup(right)),
+            (Some(TypeData::Tuple(_)), Some(TypeData::Tuple(_)))
+                | (
+                    Some(TypeData::Conditional(_)),
+                    Some(TypeData::Conditional(_))
+                )
+                | (Some(TypeData::Mapped(_)), Some(TypeData::Mapped(_)))
+                | (Some(TypeData::Object(_)), Some(TypeData::Object(_)))
+                | (
+                    Some(TypeData::Application(_)),
+                    Some(TypeData::Application(_))
+                )
+                | (Some(TypeData::Lazy(_)), Some(TypeData::Lazy(_)))
+        )
+    }
+
+    fn structurally_same_recursive_member(&self, left: TypeId, right: TypeId, depth: u8) -> bool {
+        if left == right {
+            return true;
+        }
+        if depth == 0 {
+            return true;
+        }
+        if left.is_intrinsic() || right.is_intrinsic() {
+            return false;
+        }
+
+        if let (Some(left_param), Some(right_param)) = (
+            type_param_info(self.interner, left),
+            type_param_info(self.interner, right),
+        ) {
+            return left_param.name == right_param.name;
+        }
+
+        if let (Some((left_obj, left_idx)), Some((right_obj, right_idx))) = (
+            index_access_parts(self.interner, left),
+            index_access_parts(self.interner, right),
+        ) {
+            return self.structurally_same_recursive_member(left_obj, right_obj, depth - 1)
+                && self.structurally_same_recursive_member(left_idx, right_idx, depth - 1);
+        }
+
+        if let (Some(left_tuple), Some(right_tuple)) = (
+            tuple_list_id(self.interner, left),
+            tuple_list_id(self.interner, right),
+        ) {
+            let left_elems = self.interner.tuple_list(left_tuple);
+            let right_elems = self.interner.tuple_list(right_tuple);
+            return left_elems.len() == right_elems.len()
+                && left_elems
+                    .iter()
+                    .zip(right_elems.iter())
+                    .all(|(left, right)| {
+                        left.optional == right.optional
+                            && left.rest == right.rest
+                            && self.structurally_same_recursive_member(
+                                left.type_id,
+                                right.type_id,
+                                depth - 1,
+                            )
+                    });
+        }
+
+        if let (Some(left_elem), Some(right_elem)) = (
+            array_element_type(self.interner, left),
+            array_element_type(self.interner, right),
+        ) {
+            return self.structurally_same_recursive_member(left_elem, right_elem, depth - 1);
+        }
+
+        match (self.interner.lookup(left), self.interner.lookup(right)) {
+            (Some(TypeData::Conditional(left_id)), Some(TypeData::Conditional(right_id))) => {
+                let left_cond = self.interner.conditional_type(left_id);
+                let right_cond = self.interner.conditional_type(right_id);
+                left_cond.is_distributive == right_cond.is_distributive
+                    && self.structurally_same_recursive_member(
+                        left_cond.check_type,
+                        right_cond.check_type,
+                        depth - 1,
+                    )
+                    && self.structurally_same_recursive_member(
+                        left_cond.extends_type,
+                        right_cond.extends_type,
+                        depth - 1,
+                    )
+                    && self.structurally_same_recursive_member(
+                        left_cond.true_type,
+                        right_cond.true_type,
+                        depth - 1,
+                    )
+                    && self.structurally_same_recursive_member(
+                        left_cond.false_type,
+                        right_cond.false_type,
+                        depth - 1,
+                    )
+            }
+            (Some(TypeData::Application(left_id)), Some(TypeData::Application(right_id))) => {
+                let left_app = self.interner.type_application(left_id);
+                let right_app = self.interner.type_application(right_id);
+                self.structurally_same_recursive_member(left_app.base, right_app.base, depth - 1)
+                    && left_app.args.len() == right_app.args.len()
+                    && left_app.args.iter().zip(right_app.args.iter()).all(
+                        |(left_arg, right_arg)| {
+                            self.structurally_same_recursive_member(
+                                *left_arg,
+                                *right_arg,
+                                depth - 1,
+                            )
+                        },
+                    )
+            }
+            (Some(TypeData::Union(left_id)), Some(TypeData::Union(right_id))) => {
+                let left_members = self.interner.type_list(left_id);
+                let right_members = self.interner.type_list(right_id);
+                left_members.len() == right_members.len()
+                    && left_members.iter().all(|left_member| {
+                        right_members.iter().any(|right_member| {
+                            self.structurally_same_recursive_member(
+                                *left_member,
+                                *right_member,
+                                depth - 1,
+                            )
+                        })
+                    })
+            }
+            (Some(TypeData::Mapped(left_id)), Some(TypeData::Mapped(right_id))) => {
+                let left_mapped = self.interner.mapped_type(left_id);
+                let right_mapped = self.interner.mapped_type(right_id);
+                left_mapped.readonly_modifier == right_mapped.readonly_modifier
+                    && left_mapped.optional_modifier == right_mapped.optional_modifier
+                    && self.structurally_same_recursive_member(
+                        left_mapped.constraint,
+                        right_mapped.constraint,
+                        depth - 1,
+                    )
+                    && match (left_mapped.name_type, right_mapped.name_type) {
+                        (Some(left_name), Some(right_name)) => self
+                            .structurally_same_recursive_member(left_name, right_name, depth - 1),
+                        (None, None) => true,
+                        _ => false,
+                    }
+                    && self.structurally_same_recursive_member(
+                        left_mapped.template,
+                        right_mapped.template,
+                        depth - 1,
+                    )
+            }
+            (Some(TypeData::Object(left_id)), Some(TypeData::Object(right_id))) => {
+                let left_shape = self.interner.object_shape(left_id);
+                let right_shape = self.interner.object_shape(right_id);
+                left_shape.properties.len() == right_shape.properties.len()
+                    && left_shape.string_index.is_some() == right_shape.string_index.is_some()
+                    && left_shape.number_index.is_some() == right_shape.number_index.is_some()
+                    && left_shape
+                        .properties
+                        .iter()
+                        .zip(right_shape.properties.iter())
+                        .all(|(left_prop, right_prop)| {
+                            left_prop.name == right_prop.name
+                                && left_prop.optional == right_prop.optional
+                                && left_prop.readonly == right_prop.readonly
+                                && self.structurally_same_recursive_member(
+                                    left_prop.type_id,
+                                    right_prop.type_id,
+                                    depth - 1,
+                                )
+                        })
+            }
+            (Some(TypeData::Lazy(left_def)), Some(TypeData::Lazy(right_def))) => {
+                left_def == right_def
+            }
+            _ => false,
+        }
+    }
+
     /// Check if two mapped types are assignable via structural template comparison.
     ///
     /// When both source and target are mapped types with the same constraint
@@ -1497,6 +1834,15 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
         let source_template = s_mapped.template;
         let mut target_template = t_mapped.template;
+        let source_param = self.interner.type_param(s_mapped.type_param);
+        let target_key_substitution =
+            TypeSubstitution::single(t_mapped.type_param.name, source_param);
+        target_template = instantiate_type_cached(
+            self.interner,
+            self.query_db,
+            target_template,
+            &target_key_substitution,
+        );
 
         // If the target adds optional (`?`), the target template effectively
         // becomes `template | undefined` since optional properties accept undefined.
@@ -1507,11 +1853,25 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             target_template = self.interner.union2(target_template, TypeId::UNDEFINED);
         }
 
+        let target_param = self.interner.type_param(t_mapped.type_param);
+        let equiv_start = self.subtype.type_param_equivalences.len();
+        self.subtype
+            .type_param_equivalences
+            .push((source_param, target_param));
+
+        let structurally_assignable =
+            self.mapped_template_structurally_assignable(source_template, target_template);
+        if structurally_assignable {
+            self.subtype.type_param_equivalences.truncate(equiv_start);
+            return Some(true);
+        }
+
         // If the target removes optional (Required) but source doesn't,
         // fall through to full structural check.
         let target_removes_optional = t_mapped.optional_modifier == Some(MappedModifier::Remove);
         if target_removes_optional && !source_adds_optional && s_mapped.optional_modifier.is_none()
         {
+            self.subtype.type_param_equivalences.truncate(equiv_start);
             return None;
         }
 
@@ -1520,12 +1880,15 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             mapped_type_id(self.interner, source_template),
             mapped_type_id(self.interner, target_template),
         ) {
+            self.subtype.type_param_equivalences.truncate(equiv_start);
             return self.check_mapped_to_mapped_assignability(s_inner, t_inner);
         }
 
         // Compare templates using the subtype checker
         self.configure_subtype(self.strict_function_types);
-        Some(self.subtype.is_subtype_of(source_template, target_template))
+        let result = self.subtype.is_subtype_of(source_template, target_template);
+        self.subtype.type_param_equivalences.truncate(equiv_start);
+        Some(result)
     }
 
     fn mapped_name_types_compatible(
@@ -1586,7 +1949,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
     /// Check fast-path assignability conditions.
     /// Returns Some(result) if fast path applies, None if need to do full check.
-    fn check_assignable_fast_path(&self, source: TypeId, target: TypeId) -> Option<bool> {
+    fn check_assignable_fast_path(&mut self, source: TypeId, target: TypeId) -> Option<bool> {
         if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(target)
             && let Some(resolved_target) = self.subtype.resolver.resolve_lazy(def_id, self.interner)
             && resolved_target != target
@@ -1604,6 +1967,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         if let Some(members_id) = union_list_id(self.interner, target)
             && self.interner.type_list(members_id).contains(&source)
         {
+            return Some(true);
+        }
+        if self.union_structurally_contains_source(target, source) {
             return Some(true);
         }
 
@@ -1923,14 +2289,33 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     }
 
     fn violates_weak_type(&self, source: TypeId, target: TypeId) -> bool {
-        // For intersection targets, ALL members must be weak types.
-        // e.g., `string & { opt?: number }` is NOT weak because `string` is not weak.
-        // This matches tsc's isWeakType() which checks every() for intersections.
+        // For weak intersections, tsc gathers properties from ALL members before
+        // testing common-property overlap — a source that shares a name with any
+        // member does not violate the rule.
         if let Some(TypeData::Intersection(list_id)) = self.interner.lookup(target) {
             let members = self.interner.type_list(list_id);
+            // All members must be weak for the intersection to be considered weak.
+            // e.g., `string & { opt?: number }` is NOT weak because `string` is not weak.
             if members.iter().any(|m| !self.is_weak_type(*m)) {
                 return false;
             }
+            // Collect properties from all members. The intersection is weak iff
+            // source shares no property name with any member's property set.
+            let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
+            let mut all_target_props: Vec<crate::types::PropertyInfo> = Vec::new();
+            for &member in members.iter() {
+                let Some(shape_id) = extractor.extract(member) else {
+                    continue;
+                };
+                let shape = self
+                    .interner
+                    .object_shape(crate::types::ObjectShapeId(shape_id));
+                all_target_props.extend_from_slice(&shape.properties);
+            }
+            if all_target_props.is_empty() {
+                return false;
+            }
+            return self.violates_weak_type_with_target_props(source, &all_target_props);
         }
 
         let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
@@ -1963,12 +2348,11 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // any property that arrays also have. If not, it's a weak type violation.
         //
         // IMPORTANT: Only apply this when the target is a standalone weak type
-        // (Object/ObjectWithIndex), NOT when it's part of an intersection.
-        // Intersections like `{ a?: string } & number[]` should not trigger
-        // weak type violations because the intersection includes array properties.
+        // (Object/ObjectWithIndex). Intersection targets are handled above with
+        // the combined-property path.
         if self.is_array_or_tuple_type(source) {
             // Only trigger the array weak-type check when the target is a
-            // standalone object shape, not an intersection or other compound type.
+            // standalone object shape, not another compound type.
             let target_is_standalone_object = matches!(
                 self.interner.lookup(target),
                 Some(TypeData::Object(_)) | Some(TypeData::ObjectWithIndex(_))
@@ -1990,8 +2374,8 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 }
                 return true; // Non-empty array, target lacks array-like props → violation
             }
-            // For intersection/other compound targets, skip the array check
-            // and fall through to the standard weak type check.
+            // For other compound targets, skip the array check and fall through
+            // to the standard weak type check.
         }
 
         self.violates_weak_type_with_target_props(source, target_props)
@@ -2522,13 +2906,20 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
     }
 
-    /// Whether the underlying subtype checker exceeded its recursion depth limit.
+    /// Whether any recursion limit (depth or iteration count) was exceeded.
     ///
-    /// When true, the relation result is unreliable because the checker gave up
-    /// before reaching a definitive answer. The caller should emit TS2859
-    /// ("Excessive complexity comparing types").
+    /// Use [`iteration_exceeded`] to choose between TS2859 (complexity) and
+    /// TS2321 (stack depth).
     pub const fn depth_exceeded(&self) -> bool {
         self.subtype.depth_exceeded()
+    }
+
+    /// Whether the iteration (relation-count) budget was exhausted.
+    ///
+    /// When true → TS2859 "Excessive complexity comparing types".
+    /// When false but `depth_exceeded()` → TS2321 "Excessive stack depth".
+    pub const fn iteration_exceeded(&self) -> bool {
+        self.subtype.iteration_exceeded()
     }
 }
 
