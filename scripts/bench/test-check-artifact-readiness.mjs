@@ -212,7 +212,9 @@ withTempDir((dir) => {
   assert.equal(result.status, 0, `red row present in artifact should still exit 0, got:\n${result.stderr}`);
   assert.match(result.stdout, /❌.*red.*\| 1/i, "should show 1 red row");
   assert.match(result.stdout, /Phase.*Blocker family/, "should include phase and blocker family columns");
+  assert.match(result.stdout, /Last phase.*Files.*Peak RSS/, "should include residency metadata columns");
   assert.match(result.stdout, /some failure/, "should name the first failure class for red rows");
+  assert.match(result.stdout, /0\.0 MiB/, "should show peak RSS in MiB");
   assert.match(
     result.stdout,
     /recursive type evaluation pressure/,
@@ -267,6 +269,9 @@ withTempDir((dir) => {
   assert.ok(Array.isArray(parsed.rows), "JSON output should have rows array");
   assert.equal(parsed.rows.length, REQUIRED_PROJECT_ROWS.length, "rows array should have all required rows");
   assert.equal(parsed.rows[0].phase, "check", "JSON rows should report phase reached");
+  assert.equal(parsed.rows[0].last_successful_phase, "check", "JSON rows should report last successful phase");
+  assert.equal(parsed.rows[0].files_reached, 1, "JSON rows should report files reached");
+  assert.equal(parsed.rows[0].peak_memory_bytes, 1024, "JSON rows should report peak memory");
   assert.equal(
     parsed.rows[0].owner_family,
     "recursive type evaluation pressure",
