@@ -14,7 +14,7 @@
 #   - this is the primary checkout (not a worktree)
 #   - TypeScript/ is already a symlink
 #   - the source TypeScript/ is missing or uninitialised
-#     (caller should run setup-ts-submodule.sh in the primary first)
+#     (caller should populate the primary checkout or pass --source)
 #
 # Refuses to overwrite a TypeScript/ directory that has local edits
 # tracked by its submodule git, to avoid silently losing in-progress work.
@@ -46,7 +46,7 @@ SOURCE_PATH=""
 usage() {
   cat <<'USAGE'
 Usage:
-  scripts/setup/link-ts-submodule.sh           # symlink TypeScript/ to the primary checkout
+  scripts/setup/link-ts-submodule.sh           # symlink TypeScript/ to the default source
   scripts/setup/link-ts-submodule.sh --force   # ignore dirty state in the local TypeScript/
   scripts/setup/link-ts-submodule.sh --source <repo-or-TypeScript-dir>
                                                 # link to an explicit populated source
