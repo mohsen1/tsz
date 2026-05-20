@@ -2369,7 +2369,7 @@ impl<'a> CheckerState<'a> {
             && return_type != TypeId::VOID
             && return_type != TypeId::UNDEFINED
             && return_type != TypeId::NEVER
-            && self.is_assignable_to(return_type, target)
+            && self.diagnostic_relation_boolean_guard(return_type, target)
         {
             return true;
         }
@@ -2385,7 +2385,7 @@ impl<'a> CheckerState<'a> {
             if construct_return != TypeId::VOID
                 && construct_return != TypeId::UNDEFINED
                 && construct_return != TypeId::NEVER
-                && self.is_assignable_to(construct_return, target)
+                && self.diagnostic_relation_boolean_guard(construct_return, target)
             {
                 return true;
             }
