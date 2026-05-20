@@ -1992,7 +1992,7 @@ fn instantiate_with_options_cached(
     if type_id.is_intrinsic() {
         return type_id;
     }
-    if substitution.is_empty() || substitution.is_identity(interner) {
+    if substitution.is_empty() {
         return type_id;
     }
     instantiate_with_request_cached(
