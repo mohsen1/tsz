@@ -117,7 +117,7 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     fn literal_initializer_text_for_type_id(
-        interner: &tsz_solver::TypeInterner,
+        interner: &tsz_solver::construction::TypeInterner,
         type_id: tsz_solver::types::TypeId,
     ) -> Option<String> {
         if let Some(lit) = tsz_solver::visitor::literal_value(interner, type_id) {

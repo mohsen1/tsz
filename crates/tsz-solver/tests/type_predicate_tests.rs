@@ -5,7 +5,7 @@
 //! a compatible (or more general) predicate.
 
 use super::*;
-use crate::TypeInterner;
+use crate::construction::TypeInterner;
 
 // =============================================================================
 // Helper Functions

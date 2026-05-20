@@ -1,7 +1,8 @@
 use tsz_common::Atom;
 #[cfg(test)]
 use tsz_solver::TupleElement;
-use tsz_solver::{TypeDatabase, TypeId};
+use tsz_solver::TypeId;
+use tsz_solver::construction::TypeDatabase;
 
 pub(crate) use super::super::common::{
     array_element_type, callable_shape_for_type as callable_shape, intersection_members,

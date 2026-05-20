@@ -1,5 +1,6 @@
 use super::*;
-use tsz_solver::{TypeId, TypeInterner};
+use tsz_solver::TypeId;
+use tsz_solver::construction::TypeInterner;
 
 #[test]
 fn exposes_property_checker_boundary_queries() {

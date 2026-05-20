@@ -7,14 +7,17 @@ use tsz_solver::TypeId;
 /// Check if a property with the given name is private or protected on the given type.
 /// Delegates to the solver's type query via `query_boundaries`.
 pub(super) fn has_nonpublic_property(
-    db: &dyn tsz_solver::TypeDatabase,
+    db: &dyn tsz_solver::construction::TypeDatabase,
     type_id: TypeId,
     name: &str,
 ) -> bool {
     crate::query_boundaries::common::has_nonpublic_property(db, type_id, name)
 }
 
-pub(super) fn is_broad_index_type(db: &dyn tsz_solver::TypeDatabase, ty: TypeId) -> bool {
+pub(super) fn is_broad_index_type(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    ty: TypeId,
+) -> bool {
     if matches!(ty, TypeId::STRING | TypeId::NUMBER | TypeId::SYMBOL) {
         return true;
     }
@@ -28,7 +31,7 @@ pub(super) fn is_broad_index_type(db: &dyn tsz_solver::TypeDatabase, ty: TypeId)
 }
 
 pub(super) fn generic_constrained_index(
-    db: &dyn tsz_solver::TypeDatabase,
+    db: &dyn tsz_solver::construction::TypeDatabase,
     object_type: TypeId,
     index_type: TypeId,
     index_constraint: Option<TypeId>,
@@ -39,7 +42,7 @@ pub(super) fn generic_constrained_index(
 }
 
 pub(super) fn same_type_param_name(
-    db: &dyn tsz_solver::TypeDatabase,
+    db: &dyn tsz_solver::construction::TypeDatabase,
     left: TypeId,
     right: TypeId,
 ) -> bool {
@@ -49,7 +52,7 @@ pub(super) fn same_type_param_name(
 }
 
 pub(super) fn same_object_key_space(
-    db: &dyn tsz_solver::TypeDatabase,
+    db: &dyn tsz_solver::construction::TypeDatabase,
     left: TypeId,
     right: TypeId,
 ) -> bool {
@@ -57,7 +60,7 @@ pub(super) fn same_object_key_space(
 }
 
 pub(super) fn remapped_mapped_type_template_index_should_report_ts2536(
-    db: &dyn tsz_solver::TypeDatabase,
+    db: &dyn tsz_solver::construction::TypeDatabase,
     object_type_for_check: TypeId,
     index_type: TypeId,
     index_type_for_check: TypeId,

@@ -1017,7 +1017,9 @@ impl<'a> CheckerState<'a> {
         {
             self.ctx.narrowing_cache.property_cache.borrow_mut().insert(
                 cache_key,
-                Some(tsz_solver::CachedPropertyType::explicit(property_type)),
+                Some(tsz_solver::narrowing::CachedPropertyType::explicit(
+                    property_type,
+                )),
             );
             return Some(
                 tsz_solver::operations::property::PropertyAccessResult::Success {
@@ -1153,7 +1155,9 @@ impl<'a> CheckerState<'a> {
 
         self.ctx.narrowing_cache.property_cache.borrow_mut().insert(
             cache_key,
-            Some(tsz_solver::CachedPropertyType::explicit(property_type)),
+            Some(tsz_solver::narrowing::CachedPropertyType::explicit(
+                property_type,
+            )),
         );
 
         Some(

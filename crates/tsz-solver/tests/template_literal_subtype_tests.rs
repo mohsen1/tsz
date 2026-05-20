@@ -225,8 +225,9 @@ fn test_large_template_cross_product_sets_too_complex_flag() {
 
 #[test]
 fn test_large_template_cross_product_sets_flag_after_lazy_resolution() {
+    use crate::TypeEvaluator;
     use crate::def::DefId;
-    use crate::{TypeEnvironment, TypeEvaluator};
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
     let digits = (0..=9).map(|n| interner.literal_number(n as f64)).collect();
@@ -254,8 +255,9 @@ fn test_large_template_cross_product_sets_flag_after_lazy_resolution() {
 
 #[test]
 fn test_mixed_template_union_counts_lazy_template_alternatives_for_complexity() {
+    use crate::TypeEvaluator;
     use crate::def::DefId;
-    use crate::{TypeEnvironment, TypeEvaluator};
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
     let zero = interner.literal_string("0");
@@ -302,8 +304,9 @@ fn test_mixed_template_union_counts_lazy_template_alternatives_for_complexity() 
 
 #[test]
 fn test_tuple_spread_cross_product_sets_flag_after_lazy_resolution() {
+    use crate::TypeEvaluator;
     use crate::def::DefId;
-    use crate::{TypeEnvironment, TypeEvaluator};
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
     let tuple_members = (0..=9)
@@ -683,9 +686,10 @@ fn test_template_literal_union_hole_distributes_over_remaining_pattern() {
 
 #[test]
 fn test_template_literal_evaluation_preserves_evaluated_pattern_spans() {
+    use crate::TypeEvaluator;
     use crate::def::DefId;
     use crate::diagnostics::format::TypeFormatter;
-    use crate::{TypeEnvironment, TypeEvaluator};
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
     let number_pattern = interner.template_literal(vec![TemplateSpan::Type(TypeId::NUMBER)]);

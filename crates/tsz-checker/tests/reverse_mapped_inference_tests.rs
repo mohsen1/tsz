@@ -10,7 +10,7 @@
 use crate::test_utils::{check_source_codes, check_source_diagnostics};
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 /// Helper: parse, bind, check; return diagnostic codes.
 fn check_and_get_codes(code: &str) -> Vec<u32> {
