@@ -74,6 +74,66 @@ fn computed_string_field_preserves_source_quotes_with_constructor() {
 }
 
 #[test]
+fn computed_field_initializer_continues_with_next_bracketed_line() {
+    let output = print_with_printer_options(
+        "class C {\n    [e] = 0\n    [e2] = 1\n}\n",
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("this[_a] = 0[e2] = 1;"),
+        "A following bracketed line should be parsed as the field initializer's element-access continuation.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_b = e2"),
+        "The bracketed continuation must not become a second computed class field.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn computed_field_typed_initializer_continues_with_next_bracketed_line() {
+    let output = print_with_printer_options(
+        "class C {\n    [key]: number = 0\n    [next]: number\n}\n",
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("this[_a] = 0[next];"),
+        "Typed computed fields should keep the following bracketed line as an initializer continuation.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_b = next"),
+        "The continuation should not allocate a second computed-field temp.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn computed_field_initializer_continues_into_recovered_method_call() {
+    let output = print_with_printer_options(
+        "class C {\n    [e] = 0\n    [e2]() { }\n}\n",
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("this[_a] = 0[e2]();"),
+        "A following computed method-like line should recover as a call continuation on the initializer.\nOutput:\n{output}"
+    );
+    assert!(
+        output.ends_with("{ }\n"),
+        "The recovered method body should remain as a trailing block statement.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn cli_style_computed_string_field_preserves_source_quotes_with_crlf() {
     let source = "class C {\r\n    data = { foo: '' };\r\n    ['this'] = '';\r\n    constructor() {\r\n        var copy: typeof this.data = { foo: '' };\r\n    }\r\n}\r\n";
     let output = print_with_cli_style_pipeline(
@@ -107,6 +167,48 @@ fn constructor_recovered_return_type_survives_arrow_parameter_syntax() {
     assert!(
         output.contains("constructor(fn, value = () => 1): Result"),
         "Constructor recovery should preserve the return type after arrow syntax.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn lowered_instance_field_arrow_initializer_keeps_trailing_comment_after_semicolon() {
+    let output = print_with_printer_options(
+        "class C {\n    a = () => arguments // should error\n    constructor() {}\n}\n",
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            use_define_for_class_fields: false,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("this.a = () => arguments; // should error"),
+        "Lowered class field arrow comment should follow the generated assignment semicolon.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("this.a = () => arguments // should error\n;"),
+        "Arrow body should not emit the field comment before the assignment semicolon.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn lowered_class_expression_field_arrow_initializer_keeps_trailing_comment_after_semicolon() {
+    let output = print_with_cli_style_pipeline(
+        "function D() {\n    return class T {\n        a = () => arguments // should error\n    };\n}\n",
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            use_define_for_class_fields: false,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("this.a = () => arguments; // should error"),
+        "Lowered class expression field arrow comment should follow the generated assignment semicolon.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("this.a = () => arguments // should error\n;"),
+        "Transformed class-expression field should not let the arrow body steal the field comment.\nOutput:\n{output}"
     );
 }
 

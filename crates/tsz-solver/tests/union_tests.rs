@@ -1,7 +1,7 @@
 //! Tests for union type checking (SOLV-3).
 
 use super::*;
-use crate::TypeInterner;
+use crate::construction::TypeInterner;
 use crate::def::DefId;
 
 // =============================================================================

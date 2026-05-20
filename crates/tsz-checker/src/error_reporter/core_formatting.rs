@@ -588,7 +588,7 @@ impl<'a> CheckerState<'a> {
                         };
                         let build_candidates =
                             |predicate: fn(&tsz_solver::PropertyInfo) -> bool,
-                             types: &dyn tsz_solver::TypeDatabase| {
+                             types: &dyn tsz_solver::construction::TypeDatabase| {
                                 let mut candidates: Vec<(String, TypeId)> = shape
                                     .properties
                                     .iter()

@@ -9,9 +9,10 @@
 //! - Deep recursive substitution through nested types
 //! - Handling of constraints and defaults
 
-use crate::TypeDatabase;
+use super::request::{InstantiationOptions, InstantiationRequest};
+use super::result::InstantiationResult;
 use crate::caches::db::QueryDatabase;
-use crate::caches::instantiation_cache::{CanonicalSubst, InstantiationCacheKey};
+use crate::construction::TypeDatabase;
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{
@@ -50,29 +51,6 @@ fn with_constraint_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R 
         }
     });
     r
-}
-
-/// Mode bit: `substitute_infer = true`.
-const MODE_SUBSTITUTE_INFER: u8 = 0b001;
-/// Mode bit: `preserve_meta_types = true`.
-const MODE_PRESERVE_META: u8 = 0b010;
-/// Mode bit: `preserve_unsubstituted_type_params = true`.
-const MODE_PRESERVE_UNSUBSTITUTED: u8 = 0b100;
-/// Mode bit: `shallow_this_only = true`.
-const MODE_SHALLOW_THIS_ONLY: u8 = 0b1000;
-
-/// Build the canonical-substitution component of an `InstantiationCacheKey`.
-///
-/// Returns the empty marker for an empty `TypeSubstitution` so cache lookups
-/// for `substitute_this_type` (which always passes an empty substitution but
-/// carries a non-empty `this_type`) hit the same slot deterministically.
-#[inline]
-fn canonical_subst_for(substitution: &TypeSubstitution) -> CanonicalSubst {
-    if substitution.is_empty() {
-        CanonicalSubst::empty()
-    } else {
-        CanonicalSubst::from_pairs(substitution.canonical_pairs())
-    }
 }
 
 /// Maximum depth for recursive type instantiation.
@@ -208,38 +186,13 @@ impl TypeSubstitution {
         self.map.len()
     }
 
-    /// Check if this substitution is an identity mapping (every type parameter maps to itself).
-    ///
-    /// **WARNING**: This check only verifies name equality, which is insufficient when
-    /// different type parameters share the same name (e.g., alias `T` vs function
-    /// `T extends object`). Callers that have access to the original `TypeParamInfo`
-    /// (like `instantiate_generic`) should use `is_identity_for` instead.
-    pub fn is_identity(&self, interner: &dyn TypeDatabase) -> bool {
-        self.map.iter().all(|(&name, &type_id)| {
-            // Check that the substitution maps a name to the UNCONSTRAINED
-            // TypeParameter with that name. If the target has a constraint or
-            // default, it may differ from the TypeParameter in the body being
-            // instantiated, so the substitution is NOT identity.
-            //
-            // This prevents false identity when a type alias's unconstrained `T`
-            // (the body) would be substituted with a constrained `T extends C`
-            // (from the caller). Without this check, `{ "T" → T_constrained }`
-            // would be treated as identity, leaving the body's unconstrained T
-            // unsubstituted.
-            if let Some(TypeData::TypeParameter(info)) = interner.lookup(type_id) {
-                info.name == name && info.constraint.is_none() && info.default.is_none()
-            } else {
-                false
-            }
-        })
-    }
-
     /// Check if this substitution is an identity mapping against specific type parameters.
     ///
-    /// Unlike `is_identity`, this correctly handles same-name type parameters by
-    /// comparing the interned TypeId of each declared type parameter against the
-    /// substituted value. This is the only correct identity check when the body
-    /// being instantiated may use different type parameters than the substitution source.
+    /// Compares the interned `TypeId` of each declared type parameter against
+    /// its substituted value, which is the only sound identity check when the
+    /// body being instantiated may use different `TypeId`s for same-named
+    /// `TypeParameter`s (declaration-scoped fresh params share name but not
+    /// `TypeId`).
     pub fn is_identity_for(
         &self,
         interner: &dyn TypeDatabase,
@@ -2016,6 +1969,90 @@ impl<'a> TypeInstantiator<'a> {
     }
 }
 
+/// Shared body for the option-only wrappers
+/// (`instantiate_type_preserving_cached`, `instantiate_type_preserving_meta_cached`,
+/// `instantiate_type_with_infer_cached`).
+///
+/// All three apply the same "intrinsic check → empty/identity short-circuit →
+/// delegate to engine" prelude; the only thing that varies is the option set
+/// passed to the instantiator. `instantiate_type_cached` does NOT share this
+/// helper because it has additional allocation-free leaf fast paths
+/// (`TypeParameter`, `IndexAccess(T, P)`) that must precede any cache-key
+/// construction. The `substitute_this_*` variants also bypass this helper
+/// because they intentionally skip the empty-subst short-circuit (their cache
+/// key is keyed on `this_type`, not the substitution map).
+#[inline]
+fn instantiate_with_options_cached(
+    interner: &dyn TypeDatabase,
+    query_db: Option<&dyn QueryDatabase>,
+    type_id: TypeId,
+    substitution: &TypeSubstitution,
+    options: InstantiationOptions,
+) -> TypeId {
+    if type_id.is_intrinsic() {
+        return type_id;
+    }
+    if substitution.is_empty() {
+        return type_id;
+    }
+    instantiate_with_request_cached(
+        interner,
+        query_db,
+        InstantiationRequest::new(type_id, substitution).with_options(options),
+    )
+    .into_type_id()
+}
+
+/// Apply the instantiator walk that `request` describes, with optional
+/// cross-call caching on `query_db`.
+///
+/// This is the single staged entry point that the legacy `_cached` wrappers
+/// share. It owns:
+///
+/// - the option-driven instantiator setup (mode flags, `this_type`),
+/// - the cache probe / fill against [`InstantiationCacheKey`],
+/// - the depth-exceeded collapse into [`InstantiationResult`].
+///
+/// Callers should preserve their own variant-specific fast paths (intrinsic /
+/// empty / identity / leaf shortcuts) before reaching this function so the
+/// allocation-free shortcuts in `instantiate_type_cached` keep working.
+#[inline]
+pub(crate) fn instantiate_with_request_cached(
+    interner: &dyn TypeDatabase,
+    query_db: Option<&dyn QueryDatabase>,
+    request: InstantiationRequest<'_>,
+) -> InstantiationResult {
+    if let Some(db) = query_db {
+        let key = request.cache_key();
+        if let Some(cached) = db.lookup_instantiation_cache(&key) {
+            return InstantiationResult::ok(cached);
+        }
+        let result = run_instantiator(interner, request);
+        if !result.depth_exceeded() {
+            db.insert_instantiation_cache(key, result.type_id());
+        }
+        return result;
+    }
+    run_instantiator(interner, request)
+}
+
+/// Drive a single `TypeInstantiator` configured from `request`, without
+/// touching any cache.
+fn run_instantiator(
+    interner: &dyn TypeDatabase,
+    request: InstantiationRequest<'_>,
+) -> InstantiationResult {
+    let options = request.options();
+    let mut instantiator = TypeInstantiator::new(interner, request.substitution());
+    instantiator.substitute_infer = options.substitute_infer();
+    instantiator.preserve_meta_types = options.preserve_meta_types();
+    instantiator.preserve_unsubstituted_type_params = options.preserve_unsubstituted_type_params();
+    instantiator.shallow_this_only = options.shallow_this_only();
+    instantiator.this_type = request.this_type();
+    let result = instantiator.instantiate(request.type_id());
+    InstantiationResult::from_walk(result, instantiator.depth_exceeded)
+}
+
 /// Convenience function for instantiating a type with a substitution.
 ///
 /// Cache-aware overload of [`instantiate_type`]. When the caller provides a
@@ -2032,6 +2069,24 @@ pub fn instantiate_type(
     instantiate_type_cached(interner, None, type_id, substitution)
 }
 
+/// Instantiate `request` against `interner` without using any cross-call
+/// cache.
+///
+/// This is the typed boundary that mirrors the legacy `instantiate_type_*`
+/// family. Pass an [`InstantiationRequest`] built with the desired
+/// [`InstantiationOptions`] and (optionally) `this_type`; the result reports
+/// both the produced `TypeId` and whether the recursion-depth guard tripped.
+///
+/// Callers that already have a `&dyn QueryDatabase` should keep using
+/// [`instantiate_type_cached`] and friends, which now route through the same
+/// staged engine internally and additionally consult the cross-call cache.
+pub fn instantiate_type_with_request(
+    interner: &dyn TypeDatabase,
+    request: InstantiationRequest<'_>,
+) -> InstantiationResult {
+    instantiate_with_request_cached(interner, None, request)
+}
+
 /// Like [`instantiate_type`], but treats `shadowed_params` as locally bound.
 /// Type parameters in that list are returned unchanged even when their
 /// constraints reference substituted outer type parameters, so a fresh local
@@ -2046,7 +2101,7 @@ pub(crate) fn instantiate_type_with_shadowed(
     if type_id.is_intrinsic() {
         return type_id;
     }
-    if substitution.is_empty() || substitution.is_identity(interner) {
+    if substitution.is_empty() {
         return type_id;
     }
     let mut instantiator = TypeInstantiator::new(interner, substitution);
@@ -2101,31 +2156,16 @@ pub fn instantiate_type_cached(
     }
 
     // Empty/identity short-circuit — no cache key construction needed.
-    if substitution.is_empty() || substitution.is_identity(interner) {
+    if substitution.is_empty() {
         return type_id;
     }
 
-    // Cache probe (only when an explicit `QueryDatabase` is provided).
-    if let Some(db) = query_db {
-        let key = InstantiationCacheKey::new(
-            type_id,
-            canonical_subst_for(substitution),
-            0, // default mode bits for `instantiate_type`
-            None,
-        );
-        if let Some(cached) = db.lookup_instantiation_cache(&key) {
-            return cached;
-        }
-        let mut instantiator = TypeInstantiator::new(interner, substitution);
-        let result = instantiator.instantiate(type_id);
-        if instantiator.depth_exceeded {
-            return TypeId::ERROR;
-        }
-        db.insert_instantiation_cache(key, result);
-        return result;
-    }
-
-    instantiate_type_with_depth_status(interner, type_id, substitution).0
+    instantiate_with_request_cached(
+        interner,
+        query_db,
+        InstantiationRequest::new(type_id, substitution),
+    )
+    .into_type_id()
 }
 
 /// Instantiate every type parameter reachable from `type_id` to its constraint.
@@ -2219,39 +2259,13 @@ pub fn instantiate_type_preserving_cached(
     type_id: TypeId,
     substitution: &TypeSubstitution,
 ) -> TypeId {
-    if type_id.is_intrinsic() {
-        return type_id;
-    }
-    if substitution.is_empty() || substitution.is_identity(interner) {
-        return type_id;
-    }
-    if let Some(db) = query_db {
-        let key = InstantiationCacheKey::new(
-            type_id,
-            canonical_subst_for(substitution),
-            MODE_PRESERVE_UNSUBSTITUTED,
-            None,
-        );
-        if let Some(cached) = db.lookup_instantiation_cache(&key) {
-            return cached;
-        }
-        let mut instantiator = TypeInstantiator::new(interner, substitution);
-        instantiator.preserve_unsubstituted_type_params = true;
-        let result = instantiator.instantiate(type_id);
-        if instantiator.depth_exceeded {
-            return TypeId::ERROR;
-        }
-        db.insert_instantiation_cache(key, result);
-        return result;
-    }
-    let mut instantiator = TypeInstantiator::new(interner, substitution);
-    instantiator.preserve_unsubstituted_type_params = true;
-    let result = instantiator.instantiate(type_id);
-    if instantiator.depth_exceeded {
-        TypeId::ERROR
-    } else {
-        result
-    }
+    instantiate_with_options_cached(
+        interner,
+        query_db,
+        type_id,
+        substitution,
+        InstantiationOptions::new().with_preserve_unsubstituted_type_params(true),
+    )
 }
 
 /// Instantiate a type and report whether instantiation depth overflowed.
@@ -2271,7 +2285,7 @@ pub fn instantiate_type_with_depth_status(
     if type_id.is_intrinsic() {
         return (type_id, false);
     }
-    if substitution.is_empty() || substitution.is_identity(interner) {
+    if substitution.is_empty() {
         return (type_id, false);
     }
     let mut instantiator = TypeInstantiator::new(interner, substitution);
@@ -2304,43 +2318,13 @@ pub fn instantiate_type_preserving_meta_cached(
     type_id: TypeId,
     substitution: &TypeSubstitution,
 ) -> TypeId {
-    // Fast path: intrinsic types never need instantiation. Skip the
-    // substitution probe, the cache-key construction, and the
-    // `TypeInstantiator` setup. Mirrors `instantiate_type_cached` and
-    // `instantiate_type_preserving_cached`.
-    if type_id.is_intrinsic() {
-        return type_id;
-    }
-    if substitution.is_empty() || substitution.is_identity(interner) {
-        return type_id;
-    }
-    if let Some(db) = query_db {
-        let key = InstantiationCacheKey::new(
-            type_id,
-            canonical_subst_for(substitution),
-            MODE_PRESERVE_META,
-            None,
-        );
-        if let Some(cached) = db.lookup_instantiation_cache(&key) {
-            return cached;
-        }
-        let mut instantiator = TypeInstantiator::new(interner, substitution);
-        instantiator.preserve_meta_types = true;
-        let result = instantiator.instantiate(type_id);
-        if instantiator.depth_exceeded {
-            return TypeId::ERROR;
-        }
-        db.insert_instantiation_cache(key, result);
-        return result;
-    }
-    let mut instantiator = TypeInstantiator::new(interner, substitution);
-    instantiator.preserve_meta_types = true;
-    let result = instantiator.instantiate(type_id);
-    if instantiator.depth_exceeded {
-        TypeId::ERROR
-    } else {
-        result
-    }
+    instantiate_with_options_cached(
+        interner,
+        query_db,
+        type_id,
+        substitution,
+        InstantiationOptions::new().with_preserve_meta_types(true),
+    )
 }
 
 /// Convenience function for instantiating a type while substituting infer variables.
@@ -2359,43 +2343,13 @@ pub fn instantiate_type_with_infer_cached(
     type_id: TypeId,
     substitution: &TypeSubstitution,
 ) -> TypeId {
-    // Fast path: intrinsic types have no `Infer(_)` occurrences, so an
-    // infer-substituting walk produces the input unchanged. Skip the
-    // substitution probe, the cache-key construction, and the
-    // `TypeInstantiator` setup.
-    if type_id.is_intrinsic() {
-        return type_id;
-    }
-    if substitution.is_empty() || substitution.is_identity(interner) {
-        return type_id;
-    }
-    if let Some(db) = query_db {
-        let key = InstantiationCacheKey::new(
-            type_id,
-            canonical_subst_for(substitution),
-            MODE_SUBSTITUTE_INFER,
-            None,
-        );
-        if let Some(cached) = db.lookup_instantiation_cache(&key) {
-            return cached;
-        }
-        let mut instantiator = TypeInstantiator::new(interner, substitution);
-        instantiator.substitute_infer = true;
-        let result = instantiator.instantiate(type_id);
-        if instantiator.depth_exceeded {
-            return TypeId::ERROR;
-        }
-        db.insert_instantiation_cache(key, result);
-        return result;
-    }
-    let mut instantiator = TypeInstantiator::new(interner, substitution);
-    instantiator.substitute_infer = true;
-    let result = instantiator.instantiate(type_id);
-    if instantiator.depth_exceeded {
-        TypeId::ERROR
-    } else {
-        result
-    }
+    instantiate_with_options_cached(
+        interner,
+        query_db,
+        type_id,
+        substitution,
+        InstantiationOptions::new().with_substitute_infer(true),
+    )
 }
 
 /// Convenience function for instantiating a generic type with type arguments.
@@ -2474,6 +2428,12 @@ pub fn substitute_this_type(
 /// We DO probe the cache here even though the substitution is empty, because
 /// `this_type.is_some()` makes the `(type_id, this_type)` tuple a meaningful
 /// cache key.
+///
+/// `preserve_unsubstituted_type_params` is forced on so the instantiator's
+/// constraint fallback does not collapse type parameters to their constraints
+/// when the constraint contains a `ThisType` reference. Example: `T extends A`
+/// where `A` has `self(): this` — `substitute_this_type(T, T)` must return
+/// `T`, not the constraint with `ThisType` rewritten.
 pub fn substitute_this_type_cached(
     interner: &dyn TypeDatabase,
     query_db: Option<&dyn QueryDatabase>,
@@ -2484,43 +2444,15 @@ pub fn substitute_this_type_cached(
     if type_id.is_intrinsic() {
         return type_id;
     }
-    if let Some(db) = query_db {
-        let key = InstantiationCacheKey::new(
-            type_id,
-            CanonicalSubst::empty(),
-            MODE_PRESERVE_UNSUBSTITUTED,
-            Some(this_type),
-        );
-        if let Some(cached) = db.lookup_instantiation_cache(&key) {
-            return cached;
-        }
-        let empty_subst = TypeSubstitution::new();
-        let mut instantiator = TypeInstantiator::new(interner, &empty_subst);
-        instantiator.this_type = Some(this_type);
-        instantiator.preserve_unsubstituted_type_params = true;
-        let result = instantiator.instantiate(type_id);
-        if instantiator.depth_exceeded {
-            return TypeId::ERROR;
-        }
-        db.insert_instantiation_cache(key, result);
-        return result;
-    }
     let empty_subst = TypeSubstitution::new();
-    let mut instantiator = TypeInstantiator::new(interner, &empty_subst);
-    instantiator.this_type = Some(this_type);
-    // Preserve type parameters during this-only substitution. Without this,
-    // the instantiator's constraint fallback would collapse type parameters
-    // to their constraints when the constraint contains ThisType.
-    // Example: T extends A where A has self(): this — substitute_this_type(T, T)
-    // would walk into T's constraint A, find ThisType, replace it, and return
-    // the modified constraint instead of T.
-    instantiator.preserve_unsubstituted_type_params = true;
-    let result = instantiator.instantiate(type_id);
-    if instantiator.depth_exceeded {
-        TypeId::ERROR
-    } else {
-        result
-    }
+    instantiate_with_request_cached(
+        interner,
+        query_db,
+        InstantiationRequest::new(type_id, &empty_subst)
+            .with_options(InstantiationOptions::new().with_preserve_unsubstituted_type_params(true))
+            .with_this_type(this_type),
+    )
+    .into_type_id()
 }
 
 /// Shallow variant of [`substitute_this_type`] for call-return-position use.
@@ -2552,39 +2484,19 @@ pub fn substitute_this_type_at_return_position(
     if type_id.is_intrinsic() {
         return type_id;
     }
-    if let Some(db) = query_db {
-        let key = InstantiationCacheKey::new(
-            type_id,
-            CanonicalSubst::empty(),
-            MODE_PRESERVE_UNSUBSTITUTED | MODE_SHALLOW_THIS_ONLY,
-            Some(this_type),
-        );
-        if let Some(cached) = db.lookup_instantiation_cache(&key) {
-            return cached;
-        }
-        let empty_subst = TypeSubstitution::new();
-        let mut instantiator = TypeInstantiator::new(interner, &empty_subst);
-        instantiator.this_type = Some(this_type);
-        instantiator.preserve_unsubstituted_type_params = true;
-        instantiator.shallow_this_only = true;
-        let result = instantiator.instantiate(type_id);
-        if instantiator.depth_exceeded {
-            return TypeId::ERROR;
-        }
-        db.insert_instantiation_cache(key, result);
-        return result;
-    }
     let empty_subst = TypeSubstitution::new();
-    let mut instantiator = TypeInstantiator::new(interner, &empty_subst);
-    instantiator.this_type = Some(this_type);
-    instantiator.preserve_unsubstituted_type_params = true;
-    instantiator.shallow_this_only = true;
-    let result = instantiator.instantiate(type_id);
-    if instantiator.depth_exceeded {
-        TypeId::ERROR
-    } else {
-        result
-    }
+    instantiate_with_request_cached(
+        interner,
+        query_db,
+        InstantiationRequest::new(type_id, &empty_subst)
+            .with_options(
+                InstantiationOptions::new()
+                    .with_preserve_unsubstituted_type_params(true)
+                    .with_shallow_this_only(true),
+            )
+            .with_this_type(this_type),
+    )
+    .into_type_id()
 }
 
 /// Check whether a mapped-type template is a **union or intersection** that

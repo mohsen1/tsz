@@ -3,16 +3,18 @@
 # link-ts-submodule.sh — share the TypeScript submodule across worktrees.
 #
 # When run inside a git worktree (not the primary checkout), replace the
-# local TypeScript/ directory with a symlink to the primary checkout's
-# TypeScript/. The submodule is pinned to a single SHA, so every worktree
-# wants the same content — symlinking avoids 250–500 MB of duplicated
-# fixture data per worktree.
+# local TypeScript/ directory with a symlink to a populated TypeScript/
+# checkout. By default the source is the primary checkout's TypeScript/, but
+# --source can point at another worktree or TypeScript/ directory when the
+# primary checkout has not been populated yet. The submodule is pinned to a
+# single SHA, so every worktree wants the same content — symlinking avoids
+# 250–500 MB of duplicated fixture data per worktree.
 #
 # Idempotent. No-op when:
 #   - this is the primary checkout (not a worktree)
 #   - TypeScript/ is already a symlink
-#   - the primary checkout's TypeScript/ is missing or uninitialised
-#     (caller should run setup-ts-submodule.sh in the primary first)
+#   - the source TypeScript/ is missing or uninitialised
+#     (caller should populate the primary checkout or pass --source)
 #
 # Refuses to overwrite a TypeScript/ directory that has local edits
 # tracked by its submodule git, to avoid silently losing in-progress work.
@@ -20,6 +22,8 @@
 # Usage:
 #   ./scripts/setup/link-ts-submodule.sh           # symlink (default)
 #   ./scripts/setup/link-ts-submodule.sh --force   # ignore dirty state
+#   ./scripts/setup/link-ts-submodule.sh --source ../tsz-main
+#                                                  # link to another populated worktree
 #   ./scripts/setup/link-ts-submodule.sh --unlink  # restore real submodule
 #   ./scripts/setup/link-ts-submodule.sh --quiet   # suppress info output
 
@@ -37,13 +41,34 @@ fi
 FORCE=false
 UNLINK=false
 QUIET=false
+SOURCE_PATH=""
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  scripts/setup/link-ts-submodule.sh           # symlink TypeScript/ to the default source
+  scripts/setup/link-ts-submodule.sh --force   # ignore dirty state in the local TypeScript/
+  scripts/setup/link-ts-submodule.sh --source <repo-or-TypeScript-dir>
+                                                # link to an explicit populated source
+  scripts/setup/link-ts-submodule.sh --unlink  # remove the symlink so a real submodule can be restored
+  scripts/setup/link-ts-submodule.sh --quiet   # suppress info output
+USAGE
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --force)   FORCE=true; shift ;;
     --unlink)  UNLINK=true; shift ;;
     --quiet)   QUIET=true; shift ;;
-    -h|--help) sed -n '2,/^[^#]/{ /^#/s/^# \?//p; }' "$0"; exit 0 ;;
+    --source)
+      if [[ -z "${2:-}" ]]; then
+        echo "Missing value for --source (try --help)" >&2
+        exit 1
+      fi
+      SOURCE_PATH="$2"
+      shift 2
+      ;;
+    -h|--help) usage; exit 0 ;;
     *)         echo "Unknown option: $1 (try --help)" >&2; exit 1 ;;
   esac
 done
@@ -63,7 +88,47 @@ fi
 
 # Primary checkout = parent of the common .git directory.
 MAIN_REPO="$(cd "$COMMON_DIR/.." && pwd -P)"
-MAIN_TS="$MAIN_REPO/TypeScript"
+
+resolve_source_ts() {
+  local source="$1"
+  local source_abs
+  if [[ "$source" = /* ]]; then
+    source_abs="$source"
+  else
+    source_abs="$ROOT_DIR/$source"
+  fi
+
+  if [[ -d "$source_abs/TypeScript" ]]; then
+    cd "$source_abs/TypeScript" && pwd -P
+  elif [[ -d "$source_abs" ]]; then
+    cd "$source_abs" && pwd -P
+  else
+    echo "[link-ts] source path does not exist: $source" >&2
+    return 1
+  fi
+}
+
+if [[ -n "$SOURCE_PATH" ]]; then
+  MAIN_TS="$(resolve_source_ts "$SOURCE_PATH")"
+else
+  MAIN_TS="$MAIN_REPO/TypeScript"
+fi
+
+suggest_sources() {
+  local found=false
+  while IFS= read -r wt; do
+    [[ -n "$wt" ]] || continue
+    [[ "$wt" != "$ROOT_DIR" ]] || continue
+    if [[ -d "$wt/TypeScript/tests/cases" ]]; then
+      found=true
+      echo "          scripts/setup/link-ts-submodule.sh --source \"$wt\""
+    fi
+  done < <(git -C "$ROOT_DIR" worktree list --porcelain | awk '/^worktree / { print substr($0, 10) }')
+
+  if [[ "$found" != true ]]; then
+    echo "          no populated TypeScript/ source found in current worktree list" >&2
+  fi
+}
 
 # --- Unlink path: restore a real submodule from a symlink ------------------
 if [[ "$UNLINK" == true ]]; then
@@ -77,11 +142,17 @@ if [[ "$UNLINK" == true ]]; then
   exit 0
 fi
 
-# --- Validate the primary checkout's TypeScript ----------------------------
-if [ ! -d "$MAIN_TS" ] || [ ! -e "$MAIN_TS/.git" ]; then
-  echo "[link-ts] primary checkout's TypeScript missing or uninitialised:" >&2
+# --- Validate the source TypeScript ----------------------------------------
+if [ ! -d "$MAIN_TS/tests/cases" ] || [ ! -e "$MAIN_TS/.git" ]; then
+  echo "[link-ts] source TypeScript missing or uninitialised:" >&2
   echo "          $MAIN_TS" >&2
-  echo "          run scripts/setup/setup-ts-submodule.sh in $MAIN_REPO first" >&2
+  if [[ -n "$SOURCE_PATH" ]]; then
+    echo "          choose a populated worktree or run scripts/setup/setup-ts-submodule.sh in the source repo" >&2
+  else
+    echo "          run scripts/setup/setup-ts-submodule.sh in $MAIN_REPO first" >&2
+    echo "          or choose a populated worktree source:" >&2
+    suggest_sources >&2
+  fi
   exit 1
 fi
 

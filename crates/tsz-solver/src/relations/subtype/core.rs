@@ -12,12 +12,12 @@
 
 use std::sync::Arc;
 
-use crate::AssignabilityChecker;
-use crate::TypeDatabase;
 use crate::caches::db::QueryDatabase;
+use crate::construction::TypeDatabase;
 use crate::def::DefId;
 use crate::diagnostics::{DynSubtypeTracer, SubtypeFailureReason};
 use crate::objects::{PropertyCollectionResult, collect_properties};
+use crate::operations::AssignabilityChecker;
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{
@@ -610,7 +610,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     pub(crate) fn bind_polymorphic_this(&self, receiver: TypeId, resolved: TypeId) -> TypeId {
         if crate::contains_this_type(self.interner, resolved) {
-            crate::substitute_this_type_cached(self.interner, self.query_db, resolved, receiver)
+            crate::instantiation::instantiate::substitute_this_type_cached(
+                self.interner,
+                self.query_db,
+                resolved,
+                receiver,
+            )
         } else {
             resolved
         }
@@ -2744,6 +2749,35 @@ pub fn are_types_structurally_identical<R: TypeResolver>(
     canon_a == canon_b
 }
 
+/// Check if two types are structurally identical with an outer type-parameter
+/// scope visible to both sides.
+///
+/// This generalizes [`are_types_structurally_identical`] for callers comparing
+/// type expressions whose `TypeData::TypeParameter` references are bound
+/// outside the supplied types — for example, constraints attached to merged
+/// interface declarations, where each declaration's `T` resolves to a distinct
+/// underlying `TypeParameter` `TypeId` even though both should be treated as
+/// the "same" positional parameter under tsc's declaration-merge rule.
+///
+/// `param_names` lists the outer-scope parameter names in declaration order.
+/// References to those names inside `a` or `b` are rewritten to the matching
+/// `BoundParameter(n)` before structural equality is checked.
+pub fn are_types_structurally_identical_in_param_scope<R: TypeResolver>(
+    interner: &dyn TypeDatabase,
+    resolver: &R,
+    a: TypeId,
+    b: TypeId,
+    param_names: &[tsz_common::interner::Atom],
+) -> bool {
+    if a == b {
+        return true;
+    }
+    let mut canonicalizer = crate::canonicalize::Canonicalizer::new(interner, resolver);
+    let canon_a = canonicalizer.canonicalize_with_param_scope(a, param_names);
+    let canon_b = canonicalizer.canonicalize_with_param_scope(b, param_names);
+    canon_a == canon_b
+}
+
 /// Convenience function for one-off subtype checks routed through a `QueryDatabase`.
 /// The `QueryDatabase` enables Salsa memoization when available.
 pub fn is_subtype_of_with_db(db: &dyn QueryDatabase, source: TypeId, target: TypeId) -> bool {
@@ -2795,7 +2829,7 @@ mod intrinsic_object_tests;
 #[cfg(test)]
 mod with_identity_check_mode_tests {
     use super::*;
-    use crate::TypeInterner;
+    use crate::construction::TypeInterner;
 
     #[test]
     fn restores_flags_after_closure() {

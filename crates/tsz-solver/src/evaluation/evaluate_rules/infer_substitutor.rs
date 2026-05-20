@@ -3,7 +3,7 @@
 //! Provides `InferSubstitutor` which performs deep traversal of a type,
 //! replacing all `infer X` references with their bound values.
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::types::{
     CallSignature, CallableShape, ConditionalType, FunctionShape, IndexSignature, MappedType,
     ObjectShape, ParamInfo, PropertyInfo, TemplateSpan, TupleElement, TypeData, TypeId,

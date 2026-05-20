@@ -29,7 +29,7 @@ use tsz_parser::ParserState;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::{NodeArena, NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 use tsz_solver::def::DefinitionStore;
 
 pub(crate) enum ImportKind {

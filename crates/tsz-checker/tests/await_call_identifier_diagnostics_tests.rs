@@ -3,7 +3,7 @@ use tsz_checker::context::CheckerOptions;
 use tsz_checker::diagnostics::diagnostic_codes;
 use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn codes_with_file_is_esm(source: &str, file_is_esm: Option<bool>) -> Vec<u32> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
