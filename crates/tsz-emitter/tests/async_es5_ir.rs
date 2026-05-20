@@ -55,6 +55,44 @@ fn transform_generator_and_print(source: &str) -> String {
     }
 }
 
+fn label_assignment_before(output: &str, needle: &str) -> String {
+    let needle_pos = output
+        .find(needle)
+        .unwrap_or_else(|| panic!("Missing needle `{needle}`.\nOutput:\n{output}"));
+    let prefix = &output[..needle_pos];
+    let marker = "_a.label = ";
+    let label_pos = prefix.rfind(marker).unwrap_or_else(|| {
+        panic!("Missing label assignment before `{needle}`.\nOutput:\n{output}")
+    });
+    prefix[label_pos + marker.len()..]
+        .split(';')
+        .next()
+        .expect("split always returns one segment")
+        .trim()
+        .to_string()
+}
+
+fn if_break_target_after(output: &str, needle: &str) -> String {
+    let needle_pos = output
+        .find(needle)
+        .unwrap_or_else(|| panic!("Missing needle `{needle}`.\nOutput:\n{output}"));
+    let suffix = &output[needle_pos..];
+    let marker = "return [3 /*break*/, ";
+    let target_pos = suffix
+        .find(marker)
+        .unwrap_or_else(|| panic!("Missing generator break after `{needle}`.\nOutput:\n{output}"));
+    suffix[target_pos + marker.len()..]
+        .split(']')
+        .next()
+        .expect("split always returns one segment")
+        .trim()
+        .to_string()
+}
+
+fn count_substring(haystack: &str, needle: &str) -> usize {
+    haystack.matches(needle).count()
+}
+
 #[test]
 fn test_simple_async_function() {
     let output = transform_and_print("async function foo() { }");
@@ -151,6 +189,165 @@ fn test_async_while_with_await_lowers_to_generator_cases() {
     assert!(
         output.contains("case 2: return [2 /*return*/];"),
         "Loop exit should have a final generator return case.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_while_body_await_parenthesizes_binary_condition() {
+    let output = transform_and_print(
+        "async function f(i, limit) { while (i < limit) { await tick(i++); } }",
+    );
+
+    assert!(
+        output.contains("if (!(i < limit)) return [3 /*break*/, 2];"),
+        "Binary while condition should be negated with parentheses.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, tick(i++)];"),
+        "Await in the while body should still lower to a generator yield.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_do_while_body_await_lowers_to_generator_cases() {
+    let output = transform_and_print(
+        "async function f(xs) { do { await g(xs.pop()); } while (xs.length); }",
+    );
+
+    assert!(
+        !output.contains("do "),
+        "Raw do-while statement must not remain around suspended body.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("await "),
+        "Raw await syntax must not remain in ES5 generator output.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, g(xs.pop())];"),
+        "Await in the do-while body should become the first generator yield.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (!xs.length) return [3 /*break*/, 2];"),
+        "Do-while condition should be checked after the body resumes.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [3 /*break*/, 0];"),
+        "Truthy do-while condition should jump back to the body case.\nOutput:\n{output}"
+    );
+    let yield_pos = output.find("return [4 /*yield*/, g(xs.pop())];");
+    let condition_pos = output.find("if (!xs.length) return [3 /*break*/, 2];");
+    assert!(
+        yield_pos.is_some()
+            && condition_pos.is_some()
+            && yield_pos.expect("yield_pos is Some, checked above")
+                < condition_pos.expect("condition_pos is Some, checked above"),
+        "Do-while lowering must preserve body-first semantics.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 2: return [2 /*return*/];"),
+        "Do-while exit should have a final generator return case.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_do_while_single_statement_await_uses_post_body_binary_condition() {
+    let output = transform_and_print(
+        "async function f(i, limit) { do await tick(i++); while (i < limit); }",
+    );
+
+    assert!(
+        !output.contains("do "),
+        "Raw do-while statement must not remain around suspended single-statement body.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("await "),
+        "Raw await syntax must not remain in ES5 generator output.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, tick(i++)];"),
+        "Single-statement do-while body await should become a generator yield.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (!(i < limit)) return [3 /*break*/, 2];"),
+        "Binary do-while condition should be negated with parentheses after the body resumes.\nOutput:\n{output}"
+    );
+    let yield_pos = output.find("return [4 /*yield*/, tick(i++)];");
+    let condition_pos = output.find("if (!(i < limit)) return [3 /*break*/, 2];");
+    assert!(
+        yield_pos.is_some()
+            && condition_pos.is_some()
+            && yield_pos.expect("yield_pos is Some, checked above")
+                < condition_pos.expect("condition_pos is Some, checked above"),
+        "Do-while single-statement lowering must preserve body-first semantics.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_do_while_continue_jumps_to_post_body_condition() {
+    let output = transform_and_print(
+        "async function f(skip, keepGoing) { do { if (skip) continue; await tick(); } while (keepGoing()); }",
+    );
+
+    assert!(
+        !output.contains("continue;"),
+        "Loop-local continue must become a generator jump, not raw JS inside a switch case.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("await "),
+        "Raw await syntax must not remain in ES5 generator output.\nOutput:\n{output}"
+    );
+    let condition_label = label_assignment_before(&output, "if (!keepGoing())");
+    let continue_jump = format!("return [3 /*break*/, {condition_label}];");
+    let condition_pos = output.find("if (!keepGoing())");
+    let continue_jump_pos = output.find(&continue_jump);
+    assert!(
+        continue_jump_pos.is_some()
+            && condition_pos.is_some()
+            && continue_jump_pos.expect("continue jump is present")
+                < condition_pos.expect("condition check is present"),
+        "Continue should jump forward to the post-body condition check before the loop can repeat.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_do_while_break_jumps_to_loop_exit() {
+    let output = transform_and_print(
+        "async function f(done, keepGoing) { do { if (done) break; await tick(); } while (keepGoing()); }",
+    );
+
+    assert!(
+        !output.contains("break;"),
+        "Loop-local break must become a generator jump, not raw JS inside a switch case.\nOutput:\n{output}"
+    );
+    assert!(
+        {
+            let exit_label = if_break_target_after(&output, "if (!keepGoing())");
+            count_substring(&output, &format!("return [3 /*break*/, {exit_label}];")) >= 2
+        },
+        "Break and falsy condition should both target the generated loop-exit case.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_do_while_single_if_body_continue_jumps_to_condition() {
+    let output = transform_and_print(
+        "async function f(skip, keepGoing) { do if (skip) { continue; } else { await tick(); } while (keepGoing()); }",
+    );
+
+    assert!(
+        !output.contains("continue;"),
+        "Loop-local continue in a single-statement do body must become a generator jump.\nOutput:\n{output}"
+    );
+    let condition_label = label_assignment_before(&output, "if (!keepGoing())");
+    let continue_jump = format!("return [3 /*break*/, {condition_label}];");
+    let condition_pos = output.find("if (!keepGoing())");
+    let continue_jump_pos = output.find(&continue_jump);
+    assert!(
+        continue_jump_pos.is_some()
+            && condition_pos.is_some()
+            && continue_jump_pos.expect("continue jump is present")
+                < condition_pos.expect("condition check is present"),
+        "Single-statement do body continue should target the post-body condition check.\nOutput:\n{output}"
     );
 }
 

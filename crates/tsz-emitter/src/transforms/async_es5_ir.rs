@@ -64,90 +64,20 @@ use tsz_parser::parser::syntax_kind_ext;
 mod bindings;
 #[path = "async_es5_ir_discovery.rs"]
 mod discovery;
+#[path = "async_es5_ir_loop_control.rs"]
+mod loop_control;
+#[path = "async_es5_ir_state.rs"]
+mod state;
 
-/// State for tracking async function transformation
-#[derive(Debug, Default)]
-pub struct AsyncTransformState {
-    /// Current label counter for generator switch/case
-    pub label_counter: u32,
-    /// Whether we're currently inside an async function body
-    pub in_async_body: bool,
-    /// Whether any await expressions were found (determines if we need switch/case)
-    pub has_await: bool,
-    /// Whether the body references `arguments` (needs `var arguments_1 = arguments;`)
-    pub captures_arguments: bool,
-    /// Generated name used for captured `arguments` references.
-    pub arguments_capture_name: String,
-}
+use loop_control::AsyncLoopControlTargets;
+pub use state::AsyncTransformState;
+use state::{
+    ForInAssignmentTarget, ForInSuspendedElementIndex, ForInSuspendedObject,
+    SuspendedAssignmentTarget,
+};
 
-enum SuspendedAssignmentTarget {
-    Property(String),
-    Element(Box<IRNode>),
-}
-
-enum ForInAssignmentTarget {
-    Direct(Box<IRNode>),
-    SuspendedProperty {
-        object_suspension: NodeIndex,
-        property: String,
-    },
-    SuspendedElement {
-        object: ForInSuspendedObject,
-        index: ForInSuspendedElementIndex,
-    },
-}
-
-enum ForInSuspendedObject {
-    Direct(Box<IRNode>),
-    Suspended(NodeIndex),
-}
-
-enum ForInSuspendedElementIndex {
-    Direct(Box<IRNode>),
-    Suspended(NodeIndex),
-}
-
-impl AsyncTransformState {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Reset for a new async function
-    pub fn reset(&mut self) {
-        self.label_counter = 0;
-        self.in_async_body = false;
-        self.has_await = false;
-        self.captures_arguments = false;
-        self.arguments_capture_name.clear();
-    }
-
-    /// Get the next label number
-    pub const fn next_label(&mut self) -> u32 {
-        let label = self.label_counter;
-        self.label_counter += 1;
-        label
-    }
-}
-
-/// Generator opcodes for the __generator helper
-pub mod opcodes {
-    /// Resume execution
-    pub const NEXT: u32 = 0;
-    /// Throw an error
-    pub const THROW: u32 = 1;
-    /// Return (complete)
-    pub const RETURN: u32 = 2;
-    /// Break to label
-    pub const BREAK: u32 = 3;
-    /// Yield a value (used for await)
-    pub const YIELD: u32 = 4;
-    /// Yield* delegation
-    pub const YIELD_STAR: u32 = 5;
-    /// Catch
-    pub const CATCH: u32 = 6;
-    /// End finally
-    pub const END_FINALLY: u32 = 7;
-}
+#[path = "async_es5_ir_opcodes.rs"]
+pub mod opcodes;
 
 /// Pieces of an ES5 class factory broken out from a transformed
 /// `ES5ClassIIFE` so that callers can splice the body into a generator
@@ -2675,6 +2605,15 @@ impl<'a> AsyncES5Transformer<'a> {
                 );
             }
 
+            k if k == syntax_kind_ext::DO_STATEMENT => {
+                self.process_do_while_statement_in_async(
+                    idx,
+                    cases,
+                    current_statements,
+                    current_label,
+                );
+            }
+
             k if k == syntax_kind_ext::FOR_STATEMENT => {
                 if !self.process_for_initializer_using_statement_in_async(
                     idx,
@@ -3842,10 +3781,7 @@ impl<'a> AsyncES5Transformer<'a> {
         let condition = self.expression_to_ir(loop_data.condition);
 
         current_statements.push(IRNode::IfBreak {
-            condition: Box::new(IRNode::PrefixUnaryExpr {
-                operator: "!".to_string().into(),
-                operand: Box::new(condition),
-            }),
+            condition: Box::new(Self::negated_condition(condition)),
             target_label: exit_placeholder,
         });
 
@@ -3873,6 +3809,79 @@ impl<'a> AsyncES5Transformer<'a> {
 
         let exit_label = self.state.next_label();
         Self::patch_if_break_target(cases, exit_placeholder, exit_label);
+        *current_label = exit_label;
+    }
+
+    /// Process a do-while statement inside an async function body.
+    ///
+    /// When the body suspends and the condition does not, the state machine must
+    /// enter through the body case first. Emitting a raw `do` statement would
+    /// leave `await` syntax inside the ES5 generator callback.
+    fn process_do_while_statement_in_async(
+        &mut self,
+        idx: NodeIndex,
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+    ) {
+        let Some(node) = self.arena.get(idx) else {
+            return;
+        };
+        let Some(loop_data) = self.arena.get_loop(node) else {
+            return;
+        };
+
+        let condition_has_await = self.contains_await_recursive(loop_data.condition);
+        let body_has_await = self.contains_await_recursive(loop_data.statement);
+
+        if !body_has_await || condition_has_await {
+            current_statements.push(self.statement_to_ir(idx));
+            return;
+        }
+
+        let loop_label = *current_label;
+        let exit_placeholder = self.next_loop_exit_placeholder();
+        let has_loop_continue = self.contains_unlabeled_loop_local_continue(loop_data.statement);
+        let continue_placeholder = if has_loop_continue {
+            self.next_loop_exit_placeholder()
+        } else {
+            loop_label
+        };
+        let loop_control = AsyncLoopControlTargets {
+            break_label: exit_placeholder,
+            continue_label: continue_placeholder,
+        };
+
+        self.process_loop_body_statement_in_async(
+            loop_data.statement,
+            cases,
+            current_statements,
+            current_label,
+            loop_control,
+        );
+
+        let condition_label = has_loop_continue.then(|| {
+            let label = self.state.next_label();
+            current_statements.push(Self::generator_label_assignment(label));
+            label
+        });
+        let condition = self.expression_to_ir(loop_data.condition);
+        current_statements.push(IRNode::IfBreak {
+            condition: Box::new(Self::negated_condition(condition)),
+            target_label: exit_placeholder,
+        });
+        current_statements.push(Self::generator_break_statement(loop_label));
+
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+
+        let exit_label = self.state.next_label();
+        Self::patch_if_break_target(cases, exit_placeholder, exit_label);
+        if let Some(condition_label) = condition_label {
+            Self::patch_if_break_target(cases, continue_placeholder, condition_label);
+        }
         *current_label = exit_label;
     }
 
@@ -4437,6 +4446,22 @@ impl<'a> AsyncES5Transformer<'a> {
         IRNode::ExpressionStatement(Box::new(expression))
     }
 
+    fn negated_condition(condition: IRNode) -> IRNode {
+        let operand = match condition {
+            IRNode::BinaryExpr { .. }
+            | IRNode::LogicalOr { .. }
+            | IRNode::LogicalAnd { .. }
+            | IRNode::ConditionalExpr { .. }
+            | IRNode::CommaExpr(_)
+            | IRNode::CommaExprMultiline(_) => IRNode::Parenthesized(Box::new(condition)),
+            _ => condition,
+        };
+        IRNode::PrefixUnaryExpr {
+            operator: "!".into(),
+            operand: Box::new(operand),
+        }
+    }
+
     fn generator_label_assignment(label: u32) -> IRNode {
         Self::expression_statement(IRNode::assign(
             IRNode::GeneratorLabel,
@@ -4605,43 +4630,6 @@ impl<'a> AsyncES5Transformer<'a> {
 
     fn ir_text(&self, ir: IRNode) -> String {
         crate::transforms::ir_printer::IRPrinter::emit_to_string(&ir)
-    }
-
-    fn patch_if_break_target(
-        cases: &mut [IRGeneratorCase],
-        placeholder_label: u32,
-        target_label: u32,
-    ) {
-        for case in cases {
-            for statement in &mut case.statements {
-                Self::patch_if_break_target_in_node(statement, placeholder_label, target_label);
-            }
-        }
-    }
-
-    fn patch_if_break_target_in_statements(
-        statements: &mut [IRNode],
-        placeholder_label: u32,
-        target_label: u32,
-    ) {
-        for statement in statements {
-            Self::patch_if_break_target_in_node(statement, placeholder_label, target_label);
-        }
-    }
-
-    const fn patch_if_break_target_in_node(
-        node: &mut IRNode,
-        placeholder_label: u32,
-        target_label: u32,
-    ) {
-        if let IRNode::IfBreak {
-            target_label: candidate,
-            ..
-        } = node
-            && *candidate == placeholder_label
-        {
-            *candidate = target_label;
-        }
     }
 
     /// Process a try/catch/finally statement inside an async function body.
