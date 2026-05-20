@@ -2555,7 +2555,7 @@ fn homomorphic_mapped_index_access_skips_non_identity_template() {
 ///
 /// Structural rule: for any `Application(Alias, [T])` where `T` contains a
 /// generic type param and the body evaluates to a fresh Mapped node, the
-/// IndexAccess display must use the alias name.
+/// `IndexAccess` display must use the alias name.
 #[test]
 fn remapped_mapped_type_alias_index_access_shows_alias_name() {
     // Simulates: `type GetterMap<K extends string> = { [P in K as `get${P}`]: { a: P } }`
@@ -2660,7 +2660,7 @@ fn remapped_mapped_type_alias_index_access_independent_of_iteration_var_name() {
 }
 
 /// A Mapped type without a display alias (simulating a raw mapped type not
-/// produced from a known type alias) must format structurally for IndexAccess.
+/// produced from a known type alias) must format structurally for `IndexAccess`.
 #[test]
 fn remapped_mapped_type_without_alias_formats_structurally_in_index_access() {
     let db = TypeInterner::new();
