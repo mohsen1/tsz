@@ -129,7 +129,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         checker
     }
 
-    /// Phase 1: Resolve and pre-compute operands for one conditional evaluation step.
+    /// Resolve and pre-compute operands for one conditional evaluation step.
     ///
     /// Evaluates `check_type` and `extends_type`, normalises object shapes, expands
     /// `Application` check types, and caches the `extends_has_infer` /
@@ -218,7 +218,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
-    /// Phase 2: Subtype check with cache lookup and thread-local depth guard.
+    /// Subtype check with cache lookup and thread-local depth guard.
     ///
     /// Returns `true` if `check_type <: extends_type`, consulting the evaluator's
     /// `conditional_subtype_cache` first and falling back to a full structural check
@@ -247,7 +247,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // (takes the false/else branch of the conditional).
             // This matches tsc's behavior of returning the deferred
             // conditional when instantiation depth is exceeded.
-            CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
             false
         } else if Self::is_primitive_vs_function(self.interner(), check_type, extends_type) {
             // Fast-path: primitive types (string, number, boolean, bigint,
@@ -258,7 +257,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // `string extends Function` from incorrectly taking the true
             // branch, matching tsc's behavior where primitives never extend
             // Function.
-            CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
             false
         } else if Self::function_intrinsic_extends_callable_target(
             self.interner(),
@@ -268,23 +266,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // In conditional types, tsc treats the global `Function`
             // intrinsic as satisfying callable targets. Ordinary
             // assignment intentionally remains stricter.
-            CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
             true
         } else {
             let mut strict_checker = self.conditional_subtype_checker();
-            let r = strict_checker.is_subtype_of(check_type, extends_type);
-            CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
-            r
+            strict_checker.is_subtype_of(check_type, extends_type)
         };
+        CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
         self.cache_conditional_subtype(check_type, extends_type, result);
         result
     }
 
-    /// Phase 3: Tail-call detection and continuation.
+    /// Detect a tail-call pattern in `branch` and return the continuation step.
     ///
-    /// Given a resolved `branch` type, decides whether the conditional evaluation
-    /// loop should continue (tail-call elimination), return an instantiated
-    /// application result, or fall through to a normal `evaluate` call.
+    /// Decides whether the conditional evaluation loop should continue (tail-call
+    /// elimination), return an instantiated application result, or fall through to
+    /// a normal `evaluate` call.
     ///
     /// `tail_application_branch` is updated in-place when a bare `Application`
     /// expands to a `Conditional` (so the display alias survives across iterations).
@@ -407,7 +403,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return self.interner().conditional(*cond);
             }
 
-            // Phase 1: resolve and pre-compute operands for this loop iteration.
             let ops = self.resolve_operands(cond);
             let check_type = ops.check_type;
             let extends_type = ops.extends_type;
@@ -898,7 +893,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 ) && !loop_bindings.is_empty()
                 {
                     let substituted_true = self.substitute_infer(cond.true_type, &loop_bindings);
-                    // Phase 3: tail-call dispatch for the true branch.
                     match self.try_dispatch_tail_call(
                         substituted_true,
                         &mut tail_application_branch,
@@ -1037,7 +1031,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
 
                 // Infer match failed — take the false branch.
-                // Phase 3: tail-call dispatch for the false branch.
                 match self.try_dispatch_tail_call(
                     cond.false_type,
                     &mut tail_application_branch,
@@ -1070,7 +1063,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return self.evaluate(cond.false_type);
             }
 
-            // Phase 2: subtype check with cache and thread-local depth guard.
             let is_sub = self.check_conditional_subtype(check_type, extends_type);
             trace!(
                 check = check_type.0,
@@ -1119,7 +1111,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 cond.false_type
             };
 
-            // Phase 3: tail-call dispatch for the selected result branch.
             match self.try_dispatch_tail_call(
                 result_branch,
                 &mut tail_application_branch,
