@@ -440,6 +440,14 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(&type_text);
             } else if has_initializer
                 && self.initializer_is_new_expression(initializer)
+                && let Some(type_text) = self.construct_return_new_expression_type_text(initializer)
+            {
+                self.write(": ");
+                let type_text = Self::expand_parameters_utility_tuple_type_text(&type_text)
+                    .unwrap_or(type_text);
+                self.write(&type_text);
+            } else if has_initializer
+                && self.initializer_is_new_expression(initializer)
                 && self.new_expression_constructor_is_class_like(initializer)
                 && !(self.source_is_js_file && self.inside_non_ambient_namespace)
                 && let Some(type_text) = self.nameable_new_expression_type_text(initializer)

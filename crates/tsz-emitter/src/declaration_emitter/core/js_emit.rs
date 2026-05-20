@@ -4702,7 +4702,8 @@ impl<'a> DeclarationEmitter<'a> {
         let has_constructor_jsdoc = constructor_jsdoc
             .as_deref()
             .is_some_and(|jsdoc| jsdoc.contains("@constructor"));
-        if returns_new || has_constructor_jsdoc || is_export_equals_root {
+        if !params.nodes.is_empty() || returns_new || has_constructor_jsdoc || is_export_equals_root
+        {
             if let Some(jsdoc) = constructor_jsdoc {
                 self.emit_multiline_jsdoc_comment(&jsdoc);
             }

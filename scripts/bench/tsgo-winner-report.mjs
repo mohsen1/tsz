@@ -119,6 +119,9 @@ export function createTsgoWinnerReport(input, inputPath) {
       lines: asNumber(row.lines),
       kb: asNumber(row.kb),
       project_files: asNumber(row.project_files),
+      files_reached: asNumber(row.compatibility?.files_reached ?? row.project_files),
+      peak_memory_bytes: asNumber(row.compatibility?.peak_memory_bytes),
+      exit_class: row.compatibility?.exit_class ?? null,
       semantic_owner_family: row.compatibility?.semantic_owner_family ?? null,
       loss_closure: lossClosureForRow(row),
     }))

@@ -281,14 +281,11 @@ impl<'a> UsageAnalyzer<'a> {
                             }
                         }
                         // Default export with expression: export default new A()
-                        // Keep constructor references for `new A()` surfaces, but
-                        // do not retain private call helpers for `f()`; the
-                        // declaration emitter retains the inferred return type's
-                        // symbols before pruning.
+                        // Prefer the construct return type as the public surface.
+                        // Fall back to the constructor reference only when type
+                        // info cannot expose an instance type.
                         k if k == syntax_kind_ext::NEW_EXPRESSION => {
-                            let callee =
-                                self.unwrap_export_default_expression(export.export_clause);
-                            self.analyze_entity_name(callee);
+                            self.analyze_export_default_new_expression(export.export_clause);
                         }
                         k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
                             self.analyze_export_default_object_literal_value_references(
@@ -497,10 +494,63 @@ impl<'a> UsageAnalyzer<'a> {
         };
         // Mark the expression as used (could be a type or value reference)
         if export_assign.expression.is_some() {
-            let expr_idx = self.unwrap_export_default_expression(export_assign.expression);
+            let expr_idx = export_assign.expression;
+            if self
+                .arena
+                .get(expr_idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::NEW_EXPRESSION)
+            {
+                self.analyze_export_default_new_expression(expr_idx);
+                return;
+            }
+            let expr_idx = self.unwrap_export_default_expression(expr_idx);
             self.analyze_reference_as_value_and_type(expr_idx);
             self.analyze_export_default_object_literal_value_references(expr_idx);
         }
+    }
+
+    fn analyze_export_default_new_expression(&mut self, expr_idx: NodeIndex) {
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return;
+        };
+        let Some(new_expr) = self.arena.get_call_expr(expr_node) else {
+            return;
+        };
+        if self.walk_construct_return_type_for_new_expression(new_expr.expression) {
+            return;
+        }
+        self.analyze_entity_name(new_expr.expression);
+    }
+
+    fn walk_construct_return_type_for_new_expression(&mut self, callee_idx: NodeIndex) -> bool {
+        let Some(constructor_type) = self
+            .type_cache
+            .node_types
+            .get(&callee_idx.0)
+            .copied()
+            .or_else(|| self.symbol_cached_type(callee_idx))
+        else {
+            return false;
+        };
+        let Some(return_type) = tsz_solver::type_queries::construct_return_type_for_type(
+            self.type_interner,
+            constructor_type,
+        ) else {
+            return false;
+        };
+        if matches!(
+            return_type,
+            tsz_solver::TypeId::ANY | tsz_solver::TypeId::UNKNOWN | tsz_solver::TypeId::ERROR
+        ) {
+            return false;
+        }
+        self.walk_type_id(return_type);
+        true
+    }
+
+    fn symbol_cached_type(&self, node_idx: NodeIndex) -> Option<tsz_solver::TypeId> {
+        let sym_id = self.binder.node_symbols.get(&node_idx.0)?;
+        self.type_cache.symbol_types.get(sym_id).copied()
     }
 
     fn analyze_export_default_object_literal_value_references(&mut self, expr_idx: NodeIndex) {
