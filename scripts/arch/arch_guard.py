@@ -522,7 +522,7 @@ QUERY_BOUNDARY_MODULE_ALLOWANCE_COUNT_CHECKS = [
     (
         "Checker query boundary: module-level lint allowances must not grow (#8225)",
         ROOT / "crates" / "tsz-checker" / "src" / "query_boundaries" / "mod.rs",
-        104,
+        0,
     ),
 ]
 
