@@ -3914,6 +3914,73 @@ interface SourceMap {
     );
 }
 
+#[test]
+fn test_class_computed_property_after_type_annotation_line_break_uses_asi() {
+    let source = r"
+class C {
+    [e]: number
+    [e2]: number
+}
+";
+    let (parser, root) = parse_source(source);
+
+    let source_file = parser.get_arena().get_source_file_at(root).unwrap();
+    let class_idx = source_file.statements.nodes[0];
+    let class_node = parser.get_arena().get(class_idx).unwrap();
+    let class_data = parser.get_arena().get_class(class_node).unwrap();
+    assert_eq!(
+        class_data.members.nodes.len(),
+        2,
+        "line-broken class computed members should not become one indexed-access type"
+    );
+}
+
+#[test]
+fn test_class_computed_method_after_return_type_line_break_uses_asi() {
+    let source = r#"
+class C {
+    ["foo"](): void
+    ["bar"](): void;
+    ["foo"]() {}
+}
+"#;
+    let (parser, root) = parse_source(source);
+
+    let codes: Vec<_> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED)
+            && !codes.contains(&diagnostic_codes::OR_EXPECTED),
+        "line-broken computed method signatures should remain separate members, got {codes:?}",
+    );
+
+    let source_file = parser.get_arena().get_source_file_at(root).unwrap();
+    let class_idx = source_file.statements.nodes[0];
+    let class_node = parser.get_arena().get(class_idx).unwrap();
+    let class_data = parser.get_arena().get_class(class_node).unwrap();
+    assert_eq!(
+        class_data.members.nodes.len(),
+        3,
+        "computed method signatures should not become indexed-access return types"
+    );
+}
+
+#[test]
+fn test_empty_index_signature_after_type_member_annotation_line_break_uses_asi() {
+    let source = r"
+var v: {
+   a: B
+   [];
+};
+";
+    let (parser, _root) = parse_source(source);
+
+    let codes: Vec<_> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&diagnostic_codes::AN_INDEX_SIGNATURE_MUST_HAVE_EXACTLY_ONE_PARAMETER),
+        "empty bracket member should recover as an index signature, got {codes:?}",
+    );
+}
+
 // =============================================================================
 // Import Defer Tests
 // =============================================================================

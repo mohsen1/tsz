@@ -641,11 +641,15 @@ impl ParserState {
                             }
                             Some(ClassAtomKind::Character)
                         } else {
-                            while *pos < body.len()
-                                && *pos < start + 5
-                                && body[*pos].is_ascii_hexdigit()
-                            {
-                                *pos += 1;
+                            if strict_mode && *pos + 1 < body.len() && body[*pos] == b'\\' {
+                                *pos += 2;
+                            } else {
+                                while *pos < body.len()
+                                    && *pos < start + 5
+                                    && body[*pos].is_ascii_hexdigit()
+                                {
+                                    *pos += 1;
+                                }
                             }
                             Some(ClassAtomKind::Unknown)
                         }

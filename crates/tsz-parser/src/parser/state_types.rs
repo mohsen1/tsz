@@ -2685,10 +2685,7 @@ impl ParserState {
     }
 
     fn look_ahead_is_computed_type_member_boundary(&mut self) -> bool {
-        if (self.context_flags & crate::parser::state::CONTEXT_FLAG_TYPE_MEMBER_TYPE_ANNOTATION)
-            == 0
-            || !self.scanner.has_preceding_line_break()
-            || !self.is_token(SyntaxKind::OpenBracketToken)
+        if !self.scanner.has_preceding_line_break() || !self.is_token(SyntaxKind::OpenBracketToken)
         {
             return false;
         }
@@ -2697,6 +2694,7 @@ impl ParserState {
         let current = self.current_token;
 
         self.next_token(); // skip `[`
+        let empty_brackets = self.is_token(SyntaxKind::CloseBracketToken);
         let mut bracket_depth = 1_u32;
         while bracket_depth > 0 && !self.is_token(SyntaxKind::EndOfFileToken) {
             match self.token() {
@@ -2717,6 +2715,13 @@ impl ParserState {
         let is_boundary = if bracket_depth == 0 {
             match self.token() {
                 SyntaxKind::ColonToken | SyntaxKind::OpenParenToken | SyntaxKind::LessThanToken => {
+                    true
+                }
+                SyntaxKind::SemicolonToken
+                | SyntaxKind::CommaToken
+                | SyntaxKind::CloseBraceToken
+                    if empty_brackets =>
+                {
                     true
                 }
                 SyntaxKind::QuestionToken => {

@@ -86,9 +86,6 @@ pub const CONTEXT_FLAG_TEMPLATE_SPAN_EXPRESSION: u32 = 262144;
 pub const CONTEXT_FLAG_PARAMETER_BINDING_PATTERN: u32 = 524288;
 /// Context flag: parsing a function-like body.
 pub const CONTEXT_FLAG_FUNCTION_BODY: u32 = 1048576;
-/// Context flag: parsing a type member property's type annotation.
-pub const CONTEXT_FLAG_TYPE_MEMBER_TYPE_ANNOTATION: u32 = 2097152;
-
 // =============================================================================
 // Parse Diagnostic
 // =============================================================================
