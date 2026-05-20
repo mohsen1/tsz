@@ -927,9 +927,13 @@ pub struct CheckerContext<'a> {
     /// Whether type instantiation depth was exceeded (for TS2589 emission).
     pub depth_exceeded: Cell<bool>,
 
-    /// Whether relation complexity was exceeded during an assignability check
-    /// (for TS2859 "Excessive complexity comparing types" emission).
+    /// Stack-depth limit was exceeded during an assignability/subtype check
+    /// (for TS2321 "Excessive stack depth comparing types" emission).
     pub relation_depth_exceeded: Cell<bool>,
+
+    /// Iteration-count budget exhausted during an assignability/subtype check
+    /// (for TS2859 "Excessive complexity comparing types" emission).
+    pub relation_iteration_exceeded: Cell<bool>,
 
     /// When true, `should_suppress_assignability_diagnostic` skips the callable-
     /// with-type-params suppression. Set by variable declaration checking to

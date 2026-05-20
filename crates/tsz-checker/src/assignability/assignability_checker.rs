@@ -26,6 +26,20 @@ use tsz_solver::TypeId;
 use tsz_solver::computation::TypeResolver;
 
 impl<'a> CheckerState<'a> {
+    /// Merge overflow flags into the checker context (sticky: only ever sets to `true`).
+    ///
+    /// Callers that need a fresh read must reset the context fields before
+    /// invoking the relation.
+    #[inline]
+    fn propagate_overflow_flags(&self, depth_exceeded: bool, iteration_exceeded: bool) {
+        if depth_exceeded {
+            self.ctx.relation_depth_exceeded.set(true);
+        }
+        if iteration_exceeded {
+            self.ctx.relation_iteration_exceeded.set(true);
+        }
+    }
+
     pub(crate) fn callable_has_own_generic_signatures(&self, type_id: TypeId) -> bool {
         if let Some(shape) =
             crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
@@ -1926,11 +1940,10 @@ impl<'a> CheckerState<'a> {
         );
         let result = relation_result.is_related();
 
-        // TS2859: propagate depth-exceeded flag so callers can emit
-        // "Excessive complexity comparing types" diagnostic.
-        if relation_result.depth_exceeded {
-            self.ctx.relation_depth_exceeded.set(true);
-        }
+        self.propagate_overflow_flags(
+            relation_result.depth_exceeded,
+            relation_result.iteration_exceeded,
+        );
 
         if is_cacheable {
             let cache_key = assignability_cache_key(source, target, flags);
@@ -2064,10 +2077,7 @@ impl<'a> CheckerState<'a> {
             self.ctx.sound_mode(),
         );
 
-        // Propagate relation depth exceeded to checker context for TS2859.
-        if outcome.depth_exceeded {
-            self.ctx.relation_depth_exceeded.set(true);
-        }
+        self.propagate_overflow_flags(outcome.depth_exceeded, outcome.iteration_exceeded);
 
         // Checker-only post-check: the solver may say "related" but the checker
         // can downgrade via deferred conditional types or other checker-specific
@@ -3046,9 +3056,10 @@ impl<'a> CheckerState<'a> {
                 },
                 &overrides,
             );
-            if relation_result.depth_exceeded {
-                self.ctx.relation_depth_exceeded.set(true);
-            }
+            self.propagate_overflow_flags(
+                relation_result.depth_exceeded,
+                relation_result.iteration_exceeded,
+            );
             relation_result.is_related()
         };
 
