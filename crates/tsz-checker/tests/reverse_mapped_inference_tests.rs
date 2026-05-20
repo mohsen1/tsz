@@ -670,3 +670,24 @@ g({ x: 1, y: "y", extra: true });
         "Expected TS2353 for excess property via aliased intersection-constrained mapped type, got: {codes:?}"
     );
 }
+
+#[test]
+fn intersection_constraint_mixed_params_not_deferred_incorrectly() {
+    // `{ [K in keyof T & keyof Limit]: U[K] }` indexes a DIFFERENT type parameter
+    // than the one in the keyof arm. The deferral guard must NOT fire here — T and U
+    // are structurally distinct type parameters even though both are generic.
+    // tsc accepts a valid call and rejects an excess-property call the same as for
+    // the homomorphic form, so we verify no spurious errors on the valid shape.
+    let code_valid = r#"
+type Limit = { x: number; y: string };
+declare function f<T, U>(obj: { [K in keyof T & keyof Limit]: U[K] }): U;
+f<{ x: number; y: string }, { x: number; y: string }>({ x: 1, y: "hello" });
+"#;
+    // The two-param form with a distinct template object should not produce
+    // spurious errors on an otherwise-valid argument shape.
+    let codes_valid = check_and_get_codes(code_valid);
+    assert!(
+        !codes_valid.contains(&2322),
+        "Spurious TS2322 on valid mixed-param intersection-constrained mapped type, got: {codes_valid:?}"
+    );
+}
