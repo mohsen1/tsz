@@ -20,9 +20,6 @@
 pub(crate) enum MessageMatch {
     /// Exact equality after `normalize_message_paths`.
     Exact,
-    /// Substring match against the raw diagnostic line (used by
-    /// `parse_error_codes_from_text`, which sees the original text).
-    Contains,
 }
 
 /// What the conformance wrapper does when an output diagnostic matches a
@@ -113,37 +110,16 @@ pub(crate) const KNOWN_PARITY_FINGERPRINTS: &[ParityFingerprintRule] = &[
         parity_issue: ParityIssue(8423),
         action: ParityAction::Drop,
     },
-    // #8424 — discriminated-union narrowing under a generic key parameter:
-    // tsz fails to prove the residual is never.
-    ParityFingerprintRule {
-        code: 2345,
-        message: "Argument of type '({ kind: K; } & OptionOne) | ({ kind: K; } & OptionTwo)' is not assignable to parameter of type 'never'.",
-        message_match: MessageMatch::Contains,
-        reason: "When a generic function narrows a discriminated-union argument by an exhaustive switch on a key parameter, tsc collapses the residual intersection to never; tsz still surfaces the residual intersection in the TS2345 message.",
-        parity_issue: ParityIssue(8424),
-        action: ParityAction::Drop,
-    },
-    // #8424 — same divergence, alternative tsz display form when the
-    // intersection is left un-distributed.
-    ParityFingerprintRule {
-        code: 2345,
-        message: "Argument of type 'Options & { kind: K; }' is not assignable",
-        message_match: MessageMatch::Contains,
-        reason: "Alternative tsz display form for the same narrowing failure: the intersection is reported un-distributed instead of the per-member union shape.",
-        parity_issue: ParityIssue(8424),
-        action: ParityAction::Drop,
-    },
 ];
 
 /// Scope a classification query against the parity catalog uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MatchScope {
-    /// Match against a normalized diagnostic message. Both `Exact` and
-    /// `Contains` entries are eligible.
+    /// Match against a normalized diagnostic message.
     NormalizedMessage,
     /// Match against a raw diagnostic line (`<file>(<l>,<c>): error TS…: <msg>`).
-    /// Only `Contains` entries are eligible — `Exact` requires the normalized
-    /// message without the position prefix.
+    /// Exact catalog entries are normalized-message entries, so raw lines do not
+    /// match the current catalog.
     RawLine,
 }
 
@@ -164,7 +140,6 @@ pub(crate) fn classify_parity(
 fn rule_matches(rule: &ParityFingerprintRule, text: &str, scope: MatchScope) -> bool {
     match (scope, rule.message_match) {
         (MatchScope::NormalizedMessage, MessageMatch::Exact) => rule.message == text,
-        (_, MessageMatch::Contains) => text.contains(rule.message),
         // A raw line still carries the `<file>(<l>,<c>): error TS…: ` prefix,
         // so equality against the bare rendered message is by construction
         // impossible — reject without spending the comparison.

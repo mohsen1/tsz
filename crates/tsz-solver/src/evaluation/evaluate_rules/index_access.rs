@@ -296,6 +296,115 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
         })
     }
 
+    fn same_type_parameter_key(&mut self, left: TypeId, right: TypeId) -> bool {
+        if left == right {
+            return true;
+        }
+
+        let (left_name, left_constraint, right_name, right_constraint) = {
+            let interner = self.evaluator.interner();
+            match (interner.lookup(left), interner.lookup(right)) {
+                (
+                    Some(TypeData::TypeParameter(left_info)),
+                    Some(TypeData::TypeParameter(right_info)),
+                ) => (
+                    left_info.name,
+                    left_info.constraint,
+                    right_info.name,
+                    right_info.constraint,
+                ),
+                _ => return false,
+            }
+        };
+
+        if left_name != right_name {
+            return false;
+        }
+
+        match (left_constraint, right_constraint) {
+            (Some(left_constraint), Some(right_constraint)) => self
+                .evaluator
+                .constraints_semantically_match(left_constraint, right_constraint),
+            (None, None) => true,
+            _ => false,
+        }
+    }
+
+    fn intersection_generic_key_part(&mut self, type_id: TypeId) -> Option<(TypeId, TypeId)> {
+        let members = {
+            let interner = self.evaluator.interner();
+            let list_id = intersection_list_id(interner, type_id)?;
+            interner.type_list(list_id)
+        };
+
+        let mut type_param = None;
+        let mut key_parts = Vec::new();
+
+        for &member in members.iter() {
+            if matches!(
+                self.evaluator.interner().lookup(member),
+                Some(TypeData::TypeParameter(_))
+            ) {
+                if type_param
+                    .is_some_and(|existing| !self.same_type_parameter_key(existing, member))
+                {
+                    return None;
+                }
+                type_param = Some(member);
+            } else {
+                if crate::type_queries::contains_type_parameters_db(
+                    self.evaluator.interner(),
+                    member,
+                ) {
+                    return None;
+                }
+                key_parts.push(member);
+            }
+        }
+
+        let type_param = type_param?;
+        let key_part = match key_parts.len() {
+            0 => return None,
+            1 => key_parts[0],
+            _ => self.evaluator.interner().intersection(key_parts),
+        };
+
+        Some((type_param, key_part))
+    }
+
+    fn generic_index_covering_mapped_constraint(&mut self, constraint: TypeId) -> Option<TypeId> {
+        let members = {
+            let interner = self.evaluator.interner();
+            let list_id = union_list_id(interner, self.index_type)?;
+            interner.type_list(list_id)
+        };
+
+        let mut type_param = None;
+        let mut covered_keys = Vec::with_capacity(members.len());
+
+        for &member in members.iter() {
+            let (member_type_param, key_part) = self.intersection_generic_key_part(member)?;
+            if type_param
+                .is_some_and(|existing| !self.same_type_parameter_key(existing, member_type_param))
+            {
+                return None;
+            }
+            type_param = Some(member_type_param);
+            covered_keys.push(key_part);
+        }
+
+        let type_param = type_param?;
+        let covered_key_space = match covered_keys.len() {
+            0 => return None,
+            1 => covered_keys[0],
+            _ => self.evaluator.interner().union(covered_keys),
+        };
+
+        self.evaluator
+            .constraints_semantically_match(covered_key_space, constraint)
+            .then_some(type_param)
+    }
+
     fn evaluate_type_param(&mut self, param: &TypeParamInfo) -> Option<TypeId> {
         if let Some(constraint) = param.constraint {
             if constraint == self.object_type {
@@ -858,6 +967,8 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                 false
             }
         };
+        let generic_covering_index =
+            self.generic_index_covering_mapped_constraint(mapped.constraint);
 
         // Direct match: index type exactly equals the constraint
         let can_substitute = mapped.constraint == self.index_type
@@ -877,6 +988,10 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             // `string & keyof T` and constraint is `keyof T`, the intersection
             // is a subset of the constraint. This handles for-in loops where the
             || self.intersection_contains_mapped_constraint(mapped.constraint)
+            // Union of `(K & key)` members covering the mapped constraint preserves
+            // the original generic key. This occurs when reading a discriminant
+            // property from `Union & { kind: K }`.
+            || generic_covering_index.is_some()
             || self
                 .evaluator
                 .constraints_semantically_match(self.index_type, mapped.constraint);
@@ -896,7 +1011,8 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                 return Some(self.instantiate_mapped_template_with_constraint_param(&mapped));
             }
 
-            let subst = TypeSubstitution::single(mapped.type_param.name, self.index_type);
+            let substitution_index = generic_covering_index.unwrap_or(self.index_type);
+            let subst = TypeSubstitution::single(mapped.type_param.name, substitution_index);
 
             let value_type = self.evaluator.evaluate(instantiate_type(
                 self.evaluator.interner(),
@@ -907,7 +1023,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             return Some(self.evaluator.apply_mapped_optional_read_semantics(
                 self.object_type,
                 &mapped,
-                self.index_type,
+                substitution_index,
                 value_type,
             ));
         }
@@ -1468,46 +1584,79 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if object_type.is_intrinsic() || index_type.is_intrinsic() {
             return None;
         }
-        // Check if object is a mapped type
-        let mapped_id = match self.interner().lookup(object_type) {
-            Some(TypeData::Mapped(id)) => id,
-            _ => return None,
-        };
-
-        // Check if index is a type parameter
-        let index_constraint = match self.interner().lookup(index_type) {
-            Some(TypeData::TypeParameter(tp)) => tp.constraint?,
-            _ => return None,
-        };
-
-        let mapped = self.interner().get_mapped(MappedTypeId(mapped_id.0));
+        let (mapped_object_type, mapped) = self.mapped_substitution_target(object_type)?;
 
         // Skip if there's a name remapping (as clause)
         if mapped.name_type.is_some() {
             return None;
         }
 
+        let generic_covering_index = {
+            let mut visitor = IndexAccessVisitor {
+                evaluator: self,
+                object_type,
+                index_type,
+            };
+            visitor.generic_index_covering_mapped_constraint(mapped.constraint)
+        };
+
         // The constraint may be unevaluated; the index itself can still evaluate
         // to the mapped constraint while its own constraint stays deferred.
-        let constraint_matches = self
-            .constraints_semantically_match(index_constraint, mapped.constraint)
-            || self.constraints_semantically_match(index_type, mapped.constraint);
+        let constraint_matches = match self.interner().lookup(index_type) {
+            Some(TypeData::TypeParameter(tp)) => tp.constraint.is_some_and(|index_constraint| {
+                self.constraints_semantically_match(index_constraint, mapped.constraint)
+                    || self.constraints_semantically_match(index_type, mapped.constraint)
+            }),
+            _ => generic_covering_index.is_some(),
+        };
 
         if !constraint_matches {
             return None;
         }
 
         // Substitute K into the mapped template
-        let subst = TypeSubstitution::single(mapped.type_param.name, index_type);
+        let substitution_index = generic_covering_index.unwrap_or(index_type);
+        let subst = TypeSubstitution::single(mapped.type_param.name, substitution_index);
 
         let value_type = self.evaluate(instantiate_type(self.interner(), mapped.template, &subst));
 
         Some(self.apply_mapped_optional_read_semantics(
-            object_type,
+            mapped_object_type,
             &mapped,
-            index_type,
+            substitution_index,
             value_type,
         ))
+    }
+
+    fn mapped_substitution_target(&self, object_type: TypeId) -> Option<(TypeId, MappedType)> {
+        let mapped_type = |mapped_id: MappedTypeId| {
+            let mapped = self.interner().get_mapped(mapped_id);
+            (object_type, mapped)
+        };
+
+        match self.interner().lookup(object_type)? {
+            TypeData::Mapped(mapped_id) => Some(mapped_type(mapped_id)),
+            TypeData::Lazy(def_id) => {
+                let resolved = self.resolver().resolve_lazy(def_id, self.interner())?;
+                match self.interner().lookup(resolved)? {
+                    TypeData::Mapped(mapped_id) => {
+                        Some((resolved, self.interner().get_mapped(mapped_id)))
+                    }
+                    _ => None,
+                }
+            }
+            TypeData::TypeQuery(sym_ref) => {
+                let def_id = self.resolver().symbol_to_def_id(sym_ref)?;
+                let resolved = self.resolver().resolve_lazy(def_id, self.interner())?;
+                match self.interner().lookup(resolved)? {
+                    TypeData::Mapped(mapped_id) => {
+                        Some((resolved, self.interner().get_mapped(mapped_id)))
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
     }
 
     fn try_mapped_application_type_param_substitution(

@@ -1,7 +1,10 @@
 use super::state::checking as state_checking;
 use tsz_solver::TypeId;
 
-pub(crate) use super::common::{callable_shape_for_type, intersection_members, union_members};
+pub(crate) use super::common::{
+    application_info, array_element_type, callable_shape_for_type, intersection_members,
+    lazy_def_id, union_members,
+};
 pub(crate) use tsz_solver::type_queries::AssignmentNumericDisplayChildren;
 
 pub(crate) fn assignment_numeric_display_children(

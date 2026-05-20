@@ -1640,8 +1640,7 @@ fn test_normalize_file_not_found_message_key_both_sides_converge() {
 // ---------------------------------------------------------------------------
 
 use crate::parity::fingerprints::{
-    classify_parity, MatchScope, MessageMatch, ParityAction, ParityFingerprintRule,
-    KNOWN_PARITY_FINGERPRINTS,
+    classify_parity, MatchScope, ParityAction, ParityFingerprintRule, KNOWN_PARITY_FINGERPRINTS,
 };
 
 fn classify_normalized(code: u32, message: &str) -> Option<&'static ParityFingerprintRule> {
@@ -1676,44 +1675,13 @@ fn parity_fingerprint_catalog_entries_all_link_to_parity_issues() {
 #[test]
 fn parity_fingerprint_catalog_drop_entries_resolve_to_expected_issue() {
     // (code, scope, text, expected parity issue number).
-    // - `NormalizedMessage` cases pass the bare normalized diagnostic message;
-    // - `RawLine` cases pass a full `file(l,c): error TS…: msg` line so the
-    //   `Contains` entries match the position-prefixed form they see in
-    //   `parse_error_codes_from_text`.
+    // `NormalizedMessage` cases pass the bare normalized diagnostic message.
     let cases: &[(u32, MatchScope, &str, u32)] = &[
-        (
-            2322,
-            MatchScope::NormalizedMessage,
-            "Type 'number | undefined' is not assignable to type 'number'.",
-            8422,
-        ),
-        (
-            2416,
-            MatchScope::NormalizedMessage,
-            "Property '[Symbol.iterator]' in type 'MyMap' is not assignable to the same property in base type 'Map<string, number>'.",
-            8422,
-        ),
         (
             2322,
             MatchScope::NormalizedMessage,
             "Type '(number | (ValueOrArray<number>)[] | (number | (ValueOrArray<number>)[])[])[]' is not assignable to type 'ValueOrArray<number>'.",
             8423,
-        ),
-        (
-            2345,
-            MatchScope::RawLine,
-            "/tmp/test.ts(7,5): error TS2345: Argument of type \
-             '({ kind: K; } & OptionOne) | ({ kind: K; } & OptionTwo)' is not \
-             assignable to parameter of type 'never'.",
-            8424,
-        ),
-        (
-            2345,
-            MatchScope::RawLine,
-            "/tmp/test.ts(9,7): error TS2345: Argument of type \
-             'Options & { kind: K; }' is not assignable to parameter of type \
-             'never'.",
-            8424,
         ),
     ];
 
@@ -1735,38 +1703,6 @@ fn parity_fingerprint_catalog_drop_entries_resolve_to_expected_issue() {
 }
 
 #[test]
-fn parity_fingerprint_catalog_discriminator_intersection_rule_uses_contains() {
-    // The discriminator divergence has to match via substring because the
-    // wrapper feeds raw diagnostic lines through it. Pin the matching mode
-    // so a future refactor can't silently switch to `Exact`.
-    let line = "/tmp/test.ts(7,5): error TS2345: Argument of type \
-        '({ kind: K; } & OptionOne) | ({ kind: K; } & OptionTwo)' is not \
-        assignable to parameter of type 'never'.";
-    let rule =
-        classify_raw(2345, line).expect("discriminator intersection parity rule is registered");
-    assert_eq!(rule.message_match, MessageMatch::Contains);
-}
-
-#[test]
-fn parity_fingerprint_catalog_remaps_circular_tup_to_ts2589() {
-    let line = "/tmp/test.ts(21,19): error TS2322: Type 'Circular<tup>' is \
-        not assignable to type '[number, number, number, number]'.";
-    let rule = classify_raw(2322, line).expect("circular mapped tuple parity rule is registered");
-    let remap = match rule.action {
-        ParityAction::Remap(remap) => remap,
-        ParityAction::Drop => panic!("circular tup parity rule should remap, not drop"),
-    };
-    assert_eq!(remap.code, 2589);
-    assert_eq!(remap.line, 21);
-    assert_eq!(remap.column, 19);
-    assert_eq!(
-        remap.message,
-        "Type instantiation is excessively deep and possibly infinite."
-    );
-    assert_eq!(rule.parity_issue.number(), 8425);
-}
-
-#[test]
 fn parity_fingerprint_catalog_passes_unrelated_diagnostics() {
     // A totally unrelated TS2322 must not be classified by the catalog.
     let unrelated = classify_normalized(2322, "Type 'string' is not assignable to type 'number'.");
@@ -1783,38 +1719,29 @@ fn parity_fingerprint_catalog_passes_unrelated_diagnostics() {
 
 #[test]
 fn parity_fingerprint_catalog_line_classifier_is_code_sensitive() {
-    // The discriminator divergence is registered under TS2345; passing the
-    // same line text under TS2322 must NOT classify.
-    let line = "/tmp/test.ts(9,7): error TS2322: Argument of type \
-        'Options & { kind: K; }' is not assignable to parameter of type \
-        'never'.";
+    // Exact catalog entries are normalized-message entries; raw diagnostic
+    // lines must not classify even if they contain a catalog message.
+    let line = "/tmp/test.ts(9,7): error TS2322: Type \
+        '(number | (ValueOrArray<number>)[] | (number | (ValueOrArray<number>)[])[])[]' \
+        is not assignable to type 'ValueOrArray<number>'.";
     assert!(classify_raw(2322, line).is_none());
 }
 
 #[test]
-fn parity_fingerprint_catalog_drops_extra_iterator_diagnostics_end_to_end() {
-    // Two extra TS2322 / TS2416 diagnostics that the wrapper currently masks
-    // at the fingerprint layer (the error_codes layer is intentionally left
-    // unfiltered for the iterator divergence — its accepted-regression entry
-    // for `builtinIterator.ts` is what keeps CI green), plus one unrelated
-    // TS2322 that must survive the parse path.
-    let raw = "/tmp/test.ts(23,7): error TS2322: Type 'number | undefined' \
-        is not assignable to type 'number'.\n\
-        /tmp/test.ts(42,5): error TS2416: Property '[Symbol.iterator]' in \
-        type 'MyMap' is not assignable to the same property in base type \
-        'Map<string, number>'.\n\
+fn parity_fingerprint_catalog_drops_recursive_alias_fingerprint_end_to_end() {
+    // Exact entries drop only from the fingerprint comparison surface. The raw
+    // error-code list sees position-prefixed lines and remains unfiltered.
+    let raw = "/tmp/test.ts(23,7): error TS2322: Type '(number | \
+        (ValueOrArray<number>)[] | (number | (ValueOrArray<number>)[])[])[]' \
+        is not assignable to type 'ValueOrArray<number>'.\n\
         /tmp/test.ts(99,1): error TS2322: Type 'string' is not assignable \
         to type 'number'.\n";
     let result = parse_batch_output(raw, Path::new("/tmp"), HashMap::new());
 
-    // error_codes is intentionally NOT filtered for these `Exact` entries
-    // — they only drop from the fingerprint comparison surface. Pin this so
-    // a future catalog redesign that filters error_codes too has to update
-    // the test alongside the behavior change.
     assert_eq!(
         result.error_codes,
-        vec![2322, 2416, 2322],
-        "error_codes filtering for iterator divergences is not expected yet",
+        vec![2322, 2322],
+        "exact catalog entries do not filter raw error_codes",
     );
 
     let codes: Vec<u32> = result
@@ -1825,35 +1752,13 @@ fn parity_fingerprint_catalog_drops_extra_iterator_diagnostics_end_to_end() {
     assert_eq!(
         codes,
         vec![2322],
-        "extra iterator-related fingerprints were not dropped",
+        "recursive alias fingerprint was not dropped",
     );
     assert!(
         result.diagnostic_fingerprints[0]
             .message_key
             .contains("'string'"),
         "the unrelated TS2322 must survive parsing",
-    );
-}
-
-#[test]
-fn parity_fingerprint_catalog_remaps_circular_tup_end_to_end() {
-    // The wrapper currently rewrites TS2322 Circular<tup> to TS2589 at 21:19.
-    let raw = "/tmp/test.ts(21,19): error TS2322: Type 'Circular<tup>' is \
-        not assignable to type '[number, number, number, number]'.\n";
-    let result = parse_batch_output(raw, Path::new("/tmp"), HashMap::new());
-
-    assert_eq!(
-        result.error_codes,
-        vec![2589],
-        "Circular<tup> must remap from TS2322 to TS2589 in error_codes",
-    );
-    let fp = &result.diagnostic_fingerprints[0];
-    assert_eq!(fp.code, 2589);
-    assert_eq!(fp.line, 21);
-    assert_eq!(fp.column, 19);
-    assert_eq!(
-        fp.message_key,
-        "Type instantiation is excessively deep and possibly infinite."
     );
 }
 
