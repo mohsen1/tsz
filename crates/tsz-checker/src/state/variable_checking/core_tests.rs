@@ -828,6 +828,141 @@ var flags = [true, false];
 }
 
 #[cfg(test)]
+mod ts2403_recursive_type_tests {
+    use crate::test_utils::check_source_diagnostics;
+
+    #[test]
+    fn recursive_mapped_same_args_no_false_ts2403() {
+        // Same Application args → same type → no TS2403.
+        let source = r#"
+interface FindOperator<T> { foo: T; }
+type FindConditions<T> = {
+    [P in keyof T]?: FindConditions<T[P]> | FindOperator<FindConditions<T[P]>>;
+};
+var x: FindConditions<any>;
+var x: FindConditions<any>;
+"#;
+        let ts2403 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(ts2403.len(), 0, "{ts2403:?}");
+    }
+
+    #[test]
+    fn recursive_mapped_same_type_param_no_false_ts2403() {
+        // Same type-param arg on both sides → identical → no TS2403.
+        let source = r#"
+interface FindOperator<T> { foo: T; }
+type FindConditions<T> = {
+    [P in keyof T]?: FindConditions<T[P]> | FindOperator<FindConditions<T[P]>>;
+};
+function check<K>() {
+    var x: FindConditions<K>;
+    var x: FindConditions<K>;
+}
+"#;
+        let ts2403 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(ts2403.len(), 0, "{ts2403:?}");
+    }
+
+    #[test]
+    fn recursive_mapped_type_different_args_emits_ts2403() {
+        // noExcessiveStackDepthError.ts: recursive mapped type with different
+        // type arguments (any vs type-param Entity) must give TS2403, NOT TS2589.
+        // The identity check must reject Application types with differing args
+        // even when the recursive expansion hits the cycle guard.
+        let source = r#"
+interface FindOperator<T> { foo: T; }
+type FindConditions<T> = {
+    [P in keyof T]?: FindConditions<T[P]> | FindOperator<FindConditions<T[P]>>;
+};
+function foo<Entity>() {
+    var x: FindConditions<any>;
+    var x: FindConditions<Entity>;
+}
+"#;
+        let diags = check_source_diagnostics(source);
+        let ts2403: Vec<_> = diags.iter().filter(|d| d.code == 2403).collect();
+        let ts2589: Vec<_> = diags.iter().filter(|d| d.code == 2589).collect();
+        assert_eq!(
+            ts2403.len(),
+            1,
+            "Expected exactly 1 TS2403 for recursive type with differing args: {diags:?}"
+        );
+        assert_eq!(
+            ts2589.len(),
+            0,
+            "No TS2589 expected for bounded recursive type: {diags:?}"
+        );
+        assert!(
+            ts2403[0].message_text.contains("FindConditions<any>")
+                && ts2403[0].message_text.contains("FindConditions<Entity>"),
+            "Message must reference the two types: {}",
+            ts2403[0].message_text
+        );
+    }
+
+    #[test]
+    fn recursive_mapped_type_renamed_param_different_args_emits_ts2403() {
+        // Variant with renamed iteration variable (Q instead of P) to confirm
+        // the fix is not keyed on the variable name — only on type structure.
+        let source = r#"
+interface Operator<T> { val: T; }
+type Wrapper<T> = {
+    [Q in keyof T]?: Wrapper<T[Q]> | Operator<Wrapper<T[Q]>>;
+};
+function check<Row>() {
+    var w: Wrapper<any>;
+    var w: Wrapper<Row>;
+}
+"#;
+        let diags = check_source_diagnostics(source);
+        let ts2403: Vec<_> = diags.iter().filter(|d| d.code == 2403).collect();
+        let ts2589: Vec<_> = diags.iter().filter(|d| d.code == 2589).collect();
+        assert_eq!(
+            ts2403.len(),
+            1,
+            "Expected 1 TS2403 for renamed-param recursive type: {diags:?}"
+        );
+        assert_eq!(
+            ts2589.len(),
+            0,
+            "No TS2589 expected for bounded recursive type (renamed param): {diags:?}"
+        );
+    }
+
+    #[test]
+    fn recursive_conditional_type_different_args_emits_ts2403() {
+        // Recursive conditional type (Deep<T>) with different type args also
+        // needs to produce TS2403.
+        let source = r#"
+type Deep<T> = T extends object ? { [K in keyof T]: Deep<T[K]> } : T;
+function foo<Entity>() {
+    var x: Deep<any>;
+    var x: Deep<Entity>;
+}
+"#;
+        let diags = check_source_diagnostics(source);
+        let ts2403: Vec<_> = diags.iter().filter(|d| d.code == 2403).collect();
+        let ts2589: Vec<_> = diags.iter().filter(|d| d.code == 2589).collect();
+        assert_eq!(
+            ts2403.len(),
+            1,
+            "Expected 1 TS2403 for recursive conditional type with differing args: {diags:?}"
+        );
+        assert_eq!(
+            ts2589.len(),
+            0,
+            "No TS2589 expected for recursive conditional type: {diags:?}"
+        );
+    }
+}
+
+#[cfg(test)]
 mod fundule_ts2403_tests {
     use crate::test_utils::check_source_diagnostics;
 

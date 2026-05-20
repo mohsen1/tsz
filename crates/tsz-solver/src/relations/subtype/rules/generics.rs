@@ -520,6 +520,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             // where the type args are mutually assignable but the mapped results
                             // are structurally incompatible.
                             if !needs_structural_fallback {
+                                // Identity mode: `any <: T` must not be used to declare args equal.
+                                if self.identity_cycle_check && s_app.args != t_app.args {
+                                    return SubtypeResult::False;
+                                }
                                 return SubtypeResult::True;
                             }
                         }
@@ -602,6 +606,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let visiting_rev = self.def_guard.is_visiting(&(def_pair.1, def_pair.0));
             // Check for cycles before expansion
             if visiting || visiting_rev {
+                // Identity mode: args must be exact; cycle assumption is too loose.
+                if self.identity_cycle_check && s_app.args != t_app.args {
+                    return SubtypeResult::False;
+                }
                 return if self
                     .application_cycle_with_concrete_differing_args_is_unsound(&s_app, &t_app)
                 {
@@ -613,6 +621,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             use crate::recursion::RecursionResult;
             match self.def_guard.enter(def_pair) {
                 RecursionResult::Cycle => {
+                    if self.identity_cycle_check && s_app.args != t_app.args {
+                        return SubtypeResult::False;
+                    }
                     return if self
                         .application_cycle_with_concrete_differing_args_is_unsound(&s_app, &t_app)
                     {

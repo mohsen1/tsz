@@ -357,6 +357,17 @@ impl<'a> CheckerState<'a> {
             {
                 return false;
             }
+            // Same base, different args → not identical. Must run before
+            // evaluate_type_for_assignability, which may reduce recursive
+            // Application types (e.g. FC<any> → `any`), losing the args.
+            if let (Some((pb, p_args)), Some((cb, c_args))) = (
+                crate::query_boundaries::common::application_info(self.ctx.types, prev_type),
+                crate::query_boundaries::common::application_info(self.ctx.types, current_type),
+            ) && pb == cb
+                && p_args != c_args
+            {
+                return false;
+            }
             // For non-generic named types: different Lazy(DefId) → different origins
             let prev_def = crate::query_boundaries::common::lazy_def_id(self.ctx.types, prev_type);
             let curr_def =
