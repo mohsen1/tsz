@@ -266,7 +266,7 @@ impl<'a> CheckerState<'a> {
     /// signature drives the arity, and any signature that needs the
     /// descriptor will be chosen when 3 args are supplied.
     fn legacy_method_decorator_uses_two_args(
-        db: &dyn tsz_solver::TypeDatabase,
+        db: &dyn tsz_solver::construction::TypeDatabase,
         decorator_type: TypeId,
     ) -> bool {
         if let Some(shape) = crate::query_boundaries::class_type::function_shape(db, decorator_type)

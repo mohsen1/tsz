@@ -1925,3 +1925,145 @@ export class Direct {
         "Expected top-level class to keep `static readonly BRAND = \"MyBrand\"`: {output}"
     );
 }
+
+fn build_abstract_constructor_with_index_sig(
+    interner: &TypeInterner,
+    method_name: &str,
+) -> tsz_solver::TypeId {
+    let args = interner.intern_string("args");
+    let method = interner.intern_string(method_name);
+    let x = interner.intern_string("x");
+    let void_fn = interner.function(FunctionShape::new(Vec::new(), TypeId::VOID));
+    let instance_shape = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: vec![PropertyInfo::method(method, void_fn)],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::ANY,
+            readonly: false,
+            param_name: Some(x),
+        }),
+        number_index: None,
+        symbol: None,
+    });
+    interner.callable(CallableShape {
+        call_signatures: Vec::new(),
+        construct_signatures: vec![CallSignature::new(
+            vec![ParamInfo {
+                name: Some(args),
+                type_id: interner.array(TypeId::ANY),
+                optional: false,
+                rest: true,
+            }],
+            instance_shape,
+        )],
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: None,
+        is_abstract: true,
+    })
+}
+
+fn find_call_by_callee<'a>(
+    arena: &tsz_parser::parser::node::NodeArena,
+    callee_name: &str,
+) -> NodeIndex {
+    arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+                return None;
+            }
+            let call = arena.get_call_expr(node)?;
+            (arena.get_identifier_text(call.expression) == Some(callee_name))
+                .then_some(NodeIndex(idx as u32))
+        })
+        .unwrap_or_else(|| panic!("missing call expression for callee `{callee_name}`"))
+}
+
+#[test]
+fn test_mixin_call_prefers_solver_type_for_index_signature() {
+    // When the checker's type cache has a TypeId for a mixin call expression,
+    // the emitter must use it directly. Text-based reconstruction cannot reproduce
+    // call-site refinements like `[x: string]: any` from abstract constructor constraints.
+    let source = r#"
+type AbstractConstructor<T = {}> = abstract new (...args: any[]) => T;
+function Mixin<TBase extends AbstractConstructor>(base: TBase) {
+    abstract class Mixed extends base {
+        abstract mixinMethod(): void;
+    }
+    return Mixed;
+}
+abstract class AbstractBase {}
+export const C = Mixin(AbstractBase);
+"#;
+    let (parser, root) = parse_test_source(source);
+    let call_idx = find_call_by_callee(&parser.arena, "Mixin");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let solver_type = build_abstract_constructor_with_index_sig(&interner, "mixinMethod");
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache.node_types.insert(call_idx.0, solver_type);
+
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let type_text = emitter
+        .call_expression_source_return_type_text(call_idx)
+        .expect("expected call return type text");
+
+    assert!(
+        type_text.contains("[x: string]: any"),
+        "Solver TypeId with index signature should be used when cached: {type_text}"
+    );
+    assert!(
+        type_text.contains("mixinMethod"),
+        "Own instance members must be preserved alongside the index signature: {type_text}"
+    );
+}
+
+#[test]
+fn test_mixin_call_solver_path_is_name_independent() {
+    // The solver-preference path keys on TypeId, not type-parameter spelling.
+    // Renaming `TBase` to `T` or `K` must not change whether the index signature appears.
+    for tparam in ["TBase", "T", "K"] {
+        let source = format!(
+            r#"
+type AC = abstract new (...args: any[]) => any;
+function M<{tparam} extends AC>(base: {tparam}) {{
+    abstract class Mix extends base {{ abstract m(): void; }}
+    return Mix;
+}}
+abstract class B {{}}
+export const C = M(B);
+"#
+        );
+        let (parser, root) = parse_test_source(&source);
+        let call_idx = find_call_by_callee(&parser.arena, "M");
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(&parser.arena, root);
+
+        let interner = TypeInterner::new();
+        let solver_type = build_abstract_constructor_with_index_sig(&interner, "m");
+
+        let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+        type_cache.node_types.insert(call_idx.0, solver_type);
+
+        let emitter =
+            DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+        let type_text = emitter
+            .call_expression_source_return_type_text(call_idx)
+            .expect("expected call return type text");
+
+        assert!(
+            type_text.contains("[x: string]: any"),
+            "Type param name `{tparam}` should not affect index-signature emission: {type_text}"
+        );
+    }
+}

@@ -2621,7 +2621,7 @@ impl<'a> TypePrinter<'a> {
 
 #[cfg(test)]
 mod tests {
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
     use tsz_solver::types::{TupleElement, TypeId, TypeParamInfo};
 
     use super::TypePrinter;

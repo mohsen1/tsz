@@ -1,7 +1,8 @@
 use crate::class_checker::ClassMemberInfo;
 use crate::state::CheckerState;
 use tsz_parser::NodeIndex;
-use tsz_solver::{TypeDatabase, TypeId};
+use tsz_solver::TypeId;
+use tsz_solver::construction::TypeDatabase;
 
 fn collect_signature_return_types(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<TypeId> {
     if let Some(signatures) = crate::query_boundaries::common::call_signatures_for_type(db, type_id)

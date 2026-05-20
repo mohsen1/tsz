@@ -5,7 +5,7 @@ use tsz_checker::context::{CheckerOptions, ScriptTarget};
 use tsz_checker::state::CheckerState;
 use tsz_common::diagnostics::Diagnostic;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn local_module_specifiers(file_name: &str) -> Vec<String> {
     let base = file_name

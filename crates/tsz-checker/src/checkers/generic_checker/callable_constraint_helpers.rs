@@ -221,6 +221,7 @@ impl<'a> CheckerState<'a> {
         let db = self.ctx.types.as_type_database();
         let constraint_is_callable = query::is_callable_type(db, constraint_resolved)
             || query::is_callable_type(db, constraint_evaluated)
+            || query::constraint_expands_to_callable_union(db, constraint_evaluated)
             || self.is_function_constraint(constraint)
             || self.is_function_constraint(constraint_resolved);
         if !constraint_is_callable || !self.invalid_remapped_mapped_template_index_access(type_arg)

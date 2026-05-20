@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
   COMPILE_CANARY_PROJECT_ROWS,
@@ -15,14 +16,11 @@ import {
   extractBenchRunnerRows,
   extractCompileGuardRows,
   extractFixtureSourceRows,
+  rowRequiresFixtureSource,
 } from "./project-row-summary.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
-const GENERATED_ROWS_WITH_FIXTURE_SOURCES = new Set([
-  "vite-vanilla-ts-app",
-  "nextjs-fresh-app",
-]);
 const ROADMAP_REQUIRED_PROJECT_ROW_BY_LABEL = new Map([
   ["utility-types", "utility-types-project"],
   ["rxjs", "rxjs-project"],
@@ -55,6 +53,25 @@ function assertNoDuplicates(label, values) {
 
 function readRepoFile(relativePath) {
   return fs.readFileSync(path.join(ROOT, relativePath), "utf8");
+}
+
+function shellFixtureSources(rowName, env = {}) {
+  const script = `
+set -euo pipefail
+source "${path.join(ROOT, "scripts/bench/project-fixtures.sh")}"
+tsz_project_fixture_sources "${rowName}"
+`;
+  const result = spawnSync("bash", ["-lc", script], {
+    cwd: ROOT,
+    env: { ...process.env, ...env },
+    encoding: "utf8",
+  });
+  assert.equal(
+    result.status,
+    0,
+    `tsz_project_fixture_sources ${rowName} failed:\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+  );
+  return result.stdout.trim().split(/\r?\n/).filter(Boolean);
 }
 
 function extractAll(text, pattern) {
@@ -93,6 +110,9 @@ const requiredRows = sortedUnique(REQUIRED_PROJECT_ROWS);
 const compileCanaryRows = sortedUnique(COMPILE_CANARY_PROJECT_ROWS);
 const allTrackedRows = sortedUnique([...requiredRows, ...compileCanaryRows]);
 const projectRowsByName = new Map(PROJECT_ROW_DEFINITIONS.map((row) => [row.name, row]));
+const fixtureSourceMetadataRows = PROJECT_ROW_DEFINITIONS
+  .filter(rowRequiresFixtureSource)
+  .map((row) => row.name);
 const pinnedSourceRows = PROJECT_ROW_DEFINITIONS
   .filter((row) => row.repo !== undefined || row.ref !== undefined)
   .map((row) => row.name);
@@ -124,6 +144,11 @@ assert.deepEqual(
 
 const benchRunnerScript = readRepoFile("scripts/bench/bench-vs-tsgo.sh");
 const benchRows = extractBenchRunnerRows(benchRunnerScript);
+assert.doesNotMatch(
+  benchRunnerScript,
+  /\[ "\$name" != "nextjs" \] && \[ "\$name" != "large-ts-repo" \]/,
+  "Next.js benchmark rows must collect the tsc oracle before they can be green",
+);
 const compileCanaryGatedBenchmarkRows = sortedUnique(
   [...benchRunnerScript.matchAll(
     /run_[a-z0-9_]+_project_benchmarks\(\)\s*\{([\s\S]*?)\n\}/g,
@@ -156,7 +181,7 @@ const fixtureSourceRows = extractFixtureSourceRows(
 );
 assert.deepEqual(
   fixtureSourceRows,
-  sortedUnique([...pinnedSourceRows, ...GENERATED_ROWS_WITH_FIXTURE_SOURCES]),
+  sortedUnique(fixtureSourceMetadataRows),
   "project-fixtures.sh fixture source rows drifted from scripts/bench/project-rows.mjs",
 );
 assert.deepEqual(
@@ -164,3 +189,21 @@ assert.deepEqual(
   [],
   "project-fixtures.sh fixture source rows must be defined in scripts/bench/project-rows.mjs",
 );
+
+for (const rowName of pinnedSourceRows) {
+  const row = projectRowsByName.get(rowName);
+  const sources = shellFixtureSources(rowName);
+  assert.equal(sources.length, 1, `${rowName} should emit exactly one fixture source`);
+  const [, repository, ref] = sources[0].split("|");
+  assert.equal(repository, row.repo, `${rowName} fixture source repository drifted from project-rows.mjs`);
+  assert.equal(ref, row.ref, `${rowName} fixture source ref drifted from project-rows.mjs`);
+}
+
+{
+  const row = projectRowsByName.get("type-fest-project");
+  const overrideRef = "feedfacecafebeef";
+  const sources = shellFixtureSources(row.name, { [row.ref_env]: overrideRef });
+  const [, repository, ref] = sources[0].split("|");
+  assert.equal(repository, row.repo, "repo env default should still come from project-rows.mjs");
+  assert.equal(ref, overrideRef, "fixture source should honor shell ref overrides");
+}

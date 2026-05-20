@@ -19,12 +19,13 @@ use tsz_common::Atom;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::{FunctionShape, TypeId};
 
 /// Detect spread marker tuples `[...T]` created by the checker for generic
 /// `TypeParameter` spreads. A spread marker is a 1-element tuple where the single
 /// element is a rest element whose inner type is a `TypeParameter`.
-fn is_spread_marker_tuple(db: &dyn tsz_solver::TypeDatabase, type_id: TypeId) -> bool {
+fn is_spread_marker_tuple(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if let Some(elems) = common::tuple_elements(db, type_id) {
         elems.len() == 1 && elems[0].rest && is_type_parameter_type(db, elems[0].type_id)
     } else {
@@ -37,7 +38,7 @@ fn is_spread_marker_tuple(db: &dyn tsz_solver::TypeDatabase, type_id: TypeId) ->
 /// Used to compare contextual type candidates: whichever has more specific
 /// (non-`any`) parameter types provides better contextual typing for callbacks.
 /// Returns 0 for non-callable types.
-fn callable_param_specificity(db: &dyn tsz_solver::QueryDatabase, ty: TypeId) -> usize {
+fn callable_param_specificity(db: &dyn QueryDatabase, ty: TypeId) -> usize {
     if let Some(shape) = common::function_shape_for_type(db, ty) {
         shape
             .params
@@ -49,10 +50,7 @@ fn callable_param_specificity(db: &dyn tsz_solver::QueryDatabase, ty: TypeId) ->
     }
 }
 
-fn contextual_constraint_preserves_literals(
-    db: &dyn tsz_solver::QueryDatabase,
-    type_id: TypeId,
-) -> bool {
+fn contextual_constraint_preserves_literals(db: &dyn QueryDatabase, type_id: TypeId) -> bool {
     if type_id == TypeId::STRING
         || type_id == TypeId::NUMBER
         || type_id == TypeId::BOOLEAN
@@ -93,14 +91,14 @@ fn sanitize_function_shape_binding_pattern_params(
 }
 
 pub(crate) fn should_preserve_contextual_application_shape(
-    db: &dyn tsz_solver::TypeDatabase,
+    db: &dyn TypeDatabase,
     ty: TypeId,
 ) -> bool {
     common::contains_application_in_structure(db, ty)
 }
 
 fn instantiate_function_shape_with_substitution(
-    types: &dyn tsz_solver::QueryDatabase,
+    types: &dyn QueryDatabase,
     func: &tsz_solver::FunctionShape,
     substitution: &crate::query_boundaries::common::TypeSubstitution,
 ) -> tsz_solver::FunctionShape {
@@ -108,7 +106,7 @@ fn instantiate_function_shape_with_substitution(
 }
 
 fn instantiate_contextual_target_shape_for_return_context(
-    types: &dyn tsz_solver::QueryDatabase,
+    types: &dyn QueryDatabase,
     func: &tsz_solver::FunctionShape,
 ) -> tsz_solver::FunctionShape {
     common::instantiate_shape_to_defaults(types, func)
@@ -859,7 +857,7 @@ impl<'a> CheckerState<'a> {
         let resolved = self.resolve_lazy_type(type_id);
         let resolved = self.evaluate_type_with_env(resolved);
         let resolved = self.resolve_type_for_property_access(resolved);
-        let resolver = tsz_solver::IndexSignatureResolver::new(self.ctx.types);
+        let resolver = tsz_solver::objects::IndexSignatureResolver::new(self.ctx.types);
         resolver.resolve_number_index(resolved)
     }
 

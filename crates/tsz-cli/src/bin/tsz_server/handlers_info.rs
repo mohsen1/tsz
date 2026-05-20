@@ -13,7 +13,7 @@ use tsz::lsp::references::FindReferences;
 use tsz::lsp::rename::RenameProvider;
 use tsz::lsp::symbols::document_symbols::DocumentSymbolProvider;
 use tsz::parser::node::NodeAccess;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 /// Bundled context for a parsed file, reducing parameter count in helpers.
 pub(super) struct ParsedFileContext<'a> {

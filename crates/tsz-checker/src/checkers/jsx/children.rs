@@ -1350,13 +1350,10 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            if diagnostic.message_text.starts_with("Type 'Element'") {
-                diagnostic.message_text = diagnostic.message_text.replacen(
-                    "Type 'Element'",
-                    "Type 'ReactElement<any>'",
-                    1,
-                );
-            }
+            diagnostic.message_text =
+                diagnostic
+                    .message_text
+                    .replacen("Type 'Element'", "Type 'ReactElement<any>'", 1);
         }
     }
 

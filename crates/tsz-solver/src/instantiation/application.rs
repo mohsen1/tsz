@@ -10,12 +10,13 @@
 //! This module implements the solver-first architecture principle: pure type logic
 //! belongs in the solver, while the checker handles AST traversal and symbol resolution.
 
+use crate::construction::TypeDatabase;
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::relations::subtype::TypeResolver;
 use crate::type_queries;
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{TypeData, TypeId};
-use crate::{TypeDatabase, TypeSubstitution, instantiate_type};
 use std::cell::RefCell;
 
 /// Result of application type evaluation.
@@ -221,7 +222,11 @@ impl<'a, R: TypeResolver> ApplicationEvaluator<'a, R> {
         let substitution = TypeSubstitution::from_args(self.interner, &type_params, &args);
         let mut instantiated = instantiate_type(self.interner, body_type, &substitution);
         if crate::contains_this_type(self.interner, instantiated) {
-            instantiated = crate::substitute_this_type(self.interner, instantiated, type_id);
+            instantiated = crate::instantiation::instantiate::substitute_this_type(
+                self.interner,
+                instantiated,
+                type_id,
+            );
         }
 
         // Recursively evaluate for nested applications

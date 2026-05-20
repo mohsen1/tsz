@@ -1,8 +1,9 @@
 use tsz_common::Atom;
-use tsz_solver::{
-    ObjectShape, PropertyInfo, QueryDatabase, SubtypeFailureReason, TypeDatabase, TypeId,
-    TypeResolver, TypeSubstitution,
-};
+use tsz_solver::classes::inheritance::InheritanceGraph;
+use tsz_solver::computation::{TypeSubstitution, evaluate_type, instantiate_type_cached};
+use tsz_solver::construction::{QueryDatabase, TypeDatabase};
+use tsz_solver::relations::subtype::TypeResolver;
+use tsz_solver::{ObjectShape, PropertyInfo, SubtypeFailureReason, TypeId};
 
 pub(crate) use super::common::{contains_type_parameters, object_shape_for_type};
 
@@ -12,7 +13,7 @@ pub(crate) fn are_types_structurally_identical<R: TypeResolver>(
     left: TypeId,
     right: TypeId,
 ) -> bool {
-    tsz_solver::are_types_structurally_identical(db, resolver, left, right)
+    tsz_solver::relations::subtype::are_types_structurally_identical(db, resolver, left, right)
 }
 
 /// Return the element type when `type_id` is a mutable `Array<T>` form used for
@@ -60,7 +61,7 @@ pub(crate) fn homomorphic_mapped_projection_target<R: TypeResolver>(
         }
         let body = resolver.resolve_lazy(def_id, type_db)?;
         let substitution = TypeSubstitution::from_args(type_db, &type_params, &app.args);
-        tsz_solver::instantiate_type_cached(type_db, Some(db), body, &substitution)
+        tsz_solver::computation::instantiate_type_cached(type_db, Some(db), body, &substitution)
     };
 
     let mapped = tsz_solver::type_queries::get_mapped_type(type_db, candidate)?;
@@ -108,11 +109,11 @@ pub(crate) fn contextual_function_callable_union_members(
     }
 
     let mut callable_members = Vec::new();
-    let evaluated_target = tsz_solver::evaluate_type(db, target);
+    let evaluated_target = evaluate_type(db, target);
     for candidate in [target, evaluated_target] {
         if let Some(members) = tsz_solver::type_queries::get_union_members(db, candidate) {
             for &member in members.iter() {
-                let evaluated_member = tsz_solver::evaluate_type(db, member);
+                let evaluated_member = evaluate_type(db, member);
                 let callable_member =
                     tsz_solver::type_queries::get_callable_shape_for_type(db, member)
                         .map(|shape| (member, shape))
@@ -199,6 +200,197 @@ pub(crate) fn contextual_callable_member_has_unclassified_generic_parameter_drif
     source_params.len() <= member_sig.params.len()
         && tsz_solver::contains_type_parameters(db, source_param.type_id)
         && tsz_solver::contains_type_parameters(db, member_param.type_id)
+}
+
+pub(crate) fn homomorphic_mapped_source_assignable_to_target<R: TypeResolver>(
+    db: &dyn QueryDatabase,
+    resolver: &R,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    let type_db = db.as_type_database();
+    let Some(source_candidate) = instantiate_mapped_candidate(db, resolver, source) else {
+        return false;
+    };
+    let Some(source_mapped) = tsz_solver::type_queries::get_mapped_type(type_db, source_candidate)
+    else {
+        return false;
+    };
+
+    if source_mapped.name_type.is_some()
+        || source_mapped.optional_modifier == Some(tsz_solver::MappedModifier::Add)
+    {
+        return false;
+    }
+
+    let Some(source_base) = tsz_solver::keyof_inner_type(type_db, source_mapped.constraint) else {
+        return false;
+    };
+
+    let source_key = type_db.type_param(source_mapped.type_param);
+    let source_indexed_value = type_db.index_access(source_base, source_key);
+    let source_indexed_value_eval = db.evaluate_type(source_indexed_value);
+    let source_template = source_mapped.template;
+    let source_template_eval = db.evaluate_type(source_template);
+    let source_template_expanded = instantiate_alias_candidate(db, resolver, source_template);
+    let source_template_expanded_eval =
+        source_template_expanded.map(|expanded| db.evaluate_type(expanded));
+
+    if let Some(target_candidate) = instantiate_mapped_candidate(db, resolver, target)
+        && let Some(target_mapped) =
+            tsz_solver::type_queries::get_mapped_type(type_db, target_candidate)
+    {
+        let Some(target_base) = tsz_solver::keyof_inner_type(type_db, target_mapped.constraint)
+        else {
+            return false;
+        };
+        if !homomorphic_sources_match(type_db, source_base, target_base) {
+            return false;
+        }
+        let mut target_template = target_mapped.template;
+        let target_key_substitution =
+            TypeSubstitution::single(target_mapped.type_param.name, source_key);
+        target_template =
+            instantiate_type_cached(type_db, Some(db), target_template, &target_key_substitution);
+        if target_mapped.optional_modifier == Some(tsz_solver::MappedModifier::Add)
+            && source_mapped.optional_modifier != Some(tsz_solver::MappedModifier::Add)
+        {
+            target_template = type_db.union2(target_template, TypeId::UNDEFINED);
+        }
+        let target_template_eval = db.evaluate_type(target_template);
+        return mapped_templates_structurally_assignable(
+            type_db,
+            source_template,
+            source_template_eval,
+            target_template,
+            target_template_eval,
+        ) || source_template_expanded.is_some_and(|expanded| {
+            mapped_templates_structurally_assignable(
+                type_db,
+                expanded,
+                source_template_expanded_eval.unwrap_or(expanded),
+                target_template,
+                target_template_eval,
+            )
+        });
+    }
+
+    homomorphic_sources_match(type_db, source_base, target)
+        && mapped_templates_structurally_assignable(
+            type_db,
+            source_template,
+            source_template_eval,
+            source_indexed_value,
+            source_indexed_value_eval,
+        )
+        || (homomorphic_sources_match(type_db, source_base, target)
+            && source_template_expanded.is_some_and(|expanded| {
+                mapped_templates_structurally_assignable(
+                    type_db,
+                    expanded,
+                    source_template_expanded_eval.unwrap_or(expanded),
+                    source_indexed_value,
+                    source_indexed_value_eval,
+                )
+            }))
+}
+
+fn instantiate_alias_candidate<R: TypeResolver>(
+    db: &dyn QueryDatabase,
+    resolver: &R,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    let type_db = db.as_type_database();
+    let app = tsz_solver::type_queries::get_type_application(type_db, type_id)?;
+    let def_id = tsz_solver::type_queries::get_lazy_def_id(type_db, app.base)?;
+    let type_params = resolver.get_lazy_type_params(def_id)?;
+    if type_params.is_empty() {
+        return None;
+    }
+    let body = resolver.resolve_lazy(def_id, type_db)?;
+    let substitution = TypeSubstitution::from_args(type_db, &type_params, &app.args);
+    Some(instantiate_type_cached(
+        type_db,
+        Some(db),
+        body,
+        &substitution,
+    ))
+}
+
+fn instantiate_mapped_candidate<R: TypeResolver>(
+    db: &dyn QueryDatabase,
+    resolver: &R,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    let type_db = db.as_type_database();
+    if tsz_solver::type_queries::get_mapped_type(type_db, type_id).is_some() {
+        return Some(type_id);
+    }
+    instantiate_alias_candidate(db, resolver, type_id)
+}
+
+fn homomorphic_sources_match(db: &dyn TypeDatabase, left: TypeId, right: TypeId) -> bool {
+    if left == right {
+        return true;
+    }
+    if let (Some((left_obj, left_idx)), Some((right_obj, right_idx))) = (
+        tsz_solver::index_access_parts(db, left),
+        tsz_solver::index_access_parts(db, right),
+    ) {
+        return homomorphic_sources_match(db, left_obj, right_obj)
+            && homomorphic_sources_match(db, left_idx, right_idx);
+    }
+    false
+}
+
+fn mapped_template_structurally_assignable(
+    db: &dyn TypeDatabase,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    if source == target {
+        return true;
+    }
+    if source == TypeId::NEVER {
+        return true;
+    }
+    if let Some(cond) = tsz_solver::type_queries::get_conditional_type(db, source) {
+        return mapped_template_structurally_assignable(db, cond.true_type, target)
+            && mapped_template_structurally_assignable(db, cond.false_type, target);
+    }
+    if let (Some((source_obj, source_idx)), Some((target_obj, target_idx))) = (
+        tsz_solver::index_access_parts(db, source),
+        tsz_solver::index_access_parts(db, target),
+    ) {
+        return homomorphic_sources_match(db, source_obj, target_obj)
+            && homomorphic_sources_match(db, source_idx, target_idx);
+    }
+    if let Some(target_members_id) = tsz_solver::union_list_id(db, target) {
+        return db
+            .type_list(target_members_id)
+            .iter()
+            .any(|member| mapped_template_structurally_assignable(db, source, *member));
+    }
+    if let Some(source_members_id) = tsz_solver::intersection_list_id(db, source) {
+        return db
+            .type_list(source_members_id)
+            .iter()
+            .any(|member| mapped_template_structurally_assignable(db, *member, target));
+    }
+    false
+}
+
+fn mapped_templates_structurally_assignable(
+    db: &dyn TypeDatabase,
+    source: TypeId,
+    source_eval: TypeId,
+    target: TypeId,
+    target_eval: TypeId,
+) -> bool {
+    mapped_template_structurally_assignable(db, source, target)
+        || mapped_template_structurally_assignable(db, source_eval, target)
+        || mapped_template_structurally_assignable(db, source, target_eval)
+        || mapped_template_structurally_assignable(db, source_eval, target_eval)
 }
 
 // ---------------------------------------------------------------------------
@@ -402,7 +594,7 @@ pub(crate) fn assignability_cache_key(
     RelationCacheKey::for_assignability(
         source,
         target,
-        tsz_solver::RelationPolicy::from_flags(flags).cache_config(),
+        tsz_solver::relations::relation_queries::RelationPolicy::from_flags(flags).cache_config(),
     )
 }
 
@@ -411,7 +603,7 @@ pub(crate) fn subtype_cache_key(source: TypeId, target: TypeId, flags: u16) -> R
     RelationCacheKey::for_subtype(
         source,
         target,
-        tsz_solver::RelationPolicy::from_flags(flags).cache_config(),
+        tsz_solver::relations::relation_queries::RelationPolicy::from_flags(flags).cache_config(),
     )
 }
 pub(crate) use tsz_solver::type_queries::{
@@ -518,7 +710,7 @@ pub(crate) fn classify_for_excess_properties(
 /// This is needed after generic inference when the cache may contain stale
 /// entries from intermediate inference steps.
 pub(crate) fn is_fresh_subtype_of(db: &dyn TypeDatabase, source: TypeId, target: TypeId) -> bool {
-    tsz_solver::is_subtype_of(db, source, target)
+    tsz_solver::relations::subtype::is_subtype_of(db, source, target)
 }
 
 pub(crate) fn get_function_return_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
@@ -550,7 +742,7 @@ pub(crate) fn erase_function_type_params_to_any(db: &dyn TypeDatabase, type_id: 
 
 pub(crate) fn are_types_overlapping_with_env(
     db: &dyn TypeDatabase,
-    env: &tsz_solver::TypeEnvironment,
+    env: &tsz_solver::relations::subtype::TypeEnvironment,
     left: TypeId,
     right: TypeId,
     strict_null_checks: bool,
@@ -560,23 +752,23 @@ pub(crate) fn are_types_overlapping_with_env(
         flags |= tsz_solver::RelationCacheKey::FLAG_STRICT_NULL_CHECKS;
     }
 
-    let policy = tsz_solver::RelationPolicy::from_flags(flags);
-    tsz_solver::query_relation_with_resolver(
+    let policy = tsz_solver::relations::relation_queries::RelationPolicy::from_flags(flags);
+    tsz_solver::relations::relation_queries::query_relation_with_resolver(
         db,
         env,
         left,
         right,
-        tsz_solver::RelationKind::Overlap,
+        tsz_solver::relations::relation_queries::RelationKind::Overlap,
         policy,
-        tsz_solver::RelationContext::default(),
+        tsz_solver::relations::relation_queries::RelationContext::default(),
     )
     .is_related()
 }
 
-pub(crate) fn is_assignable_with_overrides<R: tsz_solver::TypeResolver>(
+pub(crate) fn is_assignable_with_overrides<R: tsz_solver::relations::subtype::TypeResolver>(
     inputs: &AssignabilityQueryInputs<'_, R>,
-    overrides: &dyn tsz_solver::AssignabilityOverrideProvider,
-) -> tsz_solver::RelationResult {
+    overrides: &dyn tsz_solver::relations::compat::AssignabilityOverrideProvider,
+) -> tsz_solver::relations::relation_queries::RelationResult {
     let _span = tracing::debug_span!(
         "is_assignable",
         src = inputs.source.0,
@@ -593,33 +785,35 @@ pub(crate) fn is_assignable_with_overrides<R: tsz_solver::TypeResolver>(
         inheritance_graph,
         sound_mode,
     } = *inputs;
-    let policy = tsz_solver::RelationPolicy::from_flags(flags)
+    let policy = tsz_solver::relations::relation_queries::RelationPolicy::from_flags(flags)
         .with_strict_subtype_checking(sound_mode)
         .with_strict_any_propagation(sound_mode);
-    let context = tsz_solver::RelationContext {
+    let context = tsz_solver::relations::relation_queries::RelationContext {
         query_db: Some(db),
         inheritance_graph: Some(inheritance_graph),
         class_check: None,
     };
-    tsz_solver::query_relation_with_overrides(tsz_solver::RelationQueryInputs {
-        interner: db.as_type_database(),
-        resolver,
-        source,
-        target,
-        kind: tsz_solver::RelationKind::Assignable,
-        policy,
-        context,
-        overrides,
-    })
+    tsz_solver::relations::relation_queries::query_relation_with_overrides(
+        tsz_solver::relations::relation_queries::RelationQueryInputs {
+            interner: db.as_type_database(),
+            resolver,
+            source,
+            target,
+            kind: tsz_solver::relations::relation_queries::RelationKind::Assignable,
+            policy,
+            context,
+            overrides,
+        },
+    )
 }
 
 /// Like `is_assignable_with_overrides` but skips weak type checks (TS2559).
 ///
 /// This matches tsc's `isTypeAssignableTo` behavior, which does NOT
 /// include the weak type check. Used by the flow narrowing guard.
-pub(crate) fn is_assignable_no_weak_checks<R: tsz_solver::TypeResolver>(
+pub(crate) fn is_assignable_no_weak_checks<R: tsz_solver::relations::subtype::TypeResolver>(
     inputs: &AssignabilityQueryInputs<'_, R>,
-    overrides: &dyn tsz_solver::AssignabilityOverrideProvider,
+    overrides: &dyn tsz_solver::relations::compat::AssignabilityOverrideProvider,
 ) -> bool {
     let AssignabilityQueryInputs {
         db,
@@ -630,116 +824,122 @@ pub(crate) fn is_assignable_no_weak_checks<R: tsz_solver::TypeResolver>(
         inheritance_graph,
         sound_mode,
     } = *inputs;
-    let policy = tsz_solver::RelationPolicy::from_flags(flags)
+    let policy = tsz_solver::relations::relation_queries::RelationPolicy::from_flags(flags)
         .with_strict_subtype_checking(sound_mode)
         .with_strict_any_propagation(sound_mode)
         .with_skip_weak_type_checks(true);
-    let context = tsz_solver::RelationContext {
+    let context = tsz_solver::relations::relation_queries::RelationContext {
         query_db: Some(db),
         inheritance_graph: Some(inheritance_graph),
         class_check: None,
     };
-    tsz_solver::query_relation_with_overrides(tsz_solver::RelationQueryInputs {
-        interner: db.as_type_database(),
-        resolver,
-        source,
-        target,
-        kind: tsz_solver::RelationKind::Assignable,
-        policy,
-        context,
-        overrides,
-    })
+    tsz_solver::relations::relation_queries::query_relation_with_overrides(
+        tsz_solver::relations::relation_queries::RelationQueryInputs {
+            interner: db.as_type_database(),
+            resolver,
+            source,
+            target,
+            kind: tsz_solver::relations::relation_queries::RelationKind::Assignable,
+            policy,
+            context,
+            overrides,
+        },
+    )
     .is_related()
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct AssignabilityQueryInputs<'a, R: tsz_solver::TypeResolver> {
+pub(crate) struct AssignabilityQueryInputs<'a, R: tsz_solver::relations::subtype::TypeResolver> {
     pub db: &'a dyn QueryDatabase,
     pub resolver: &'a R,
     pub source: TypeId,
     pub target: TypeId,
     pub flags: u16,
-    pub inheritance_graph: &'a tsz_solver::InheritanceGraph,
+    pub inheritance_graph: &'a InheritanceGraph,
     pub sound_mode: bool,
 }
 
-pub(crate) fn is_assignable_bivariant_with_resolver<R: tsz_solver::TypeResolver>(
+pub(crate) fn is_assignable_bivariant_with_resolver<
+    R: tsz_solver::relations::subtype::TypeResolver,
+>(
     db: &dyn QueryDatabase,
     resolver: &R,
     source: TypeId,
     target: TypeId,
     flags: u16,
-    inheritance_graph: &tsz_solver::InheritanceGraph,
+    inheritance_graph: &InheritanceGraph,
     sound_mode: bool,
-) -> tsz_solver::RelationResult {
-    let policy = tsz_solver::RelationPolicy::from_flags(flags)
+) -> tsz_solver::relations::relation_queries::RelationResult {
+    let policy = tsz_solver::relations::relation_queries::RelationPolicy::from_flags(flags)
         .with_strict_subtype_checking(sound_mode)
         .with_strict_any_propagation(sound_mode);
-    let context = tsz_solver::RelationContext {
+    let context = tsz_solver::relations::relation_queries::RelationContext {
         query_db: Some(db),
         inheritance_graph: Some(inheritance_graph),
         class_check: None,
     };
-    tsz_solver::query_relation_with_resolver(
+    tsz_solver::relations::relation_queries::query_relation_with_resolver(
         db,
         resolver,
         source,
         target,
-        tsz_solver::RelationKind::AssignableBivariantCallbacks,
+        tsz_solver::relations::relation_queries::RelationKind::AssignableBivariantCallbacks,
         policy,
         context,
     )
 }
 
-pub(crate) fn is_subtype_with_resolver<R: tsz_solver::TypeResolver>(
+pub(crate) fn is_subtype_with_resolver<R: tsz_solver::relations::subtype::TypeResolver>(
     db: &dyn QueryDatabase,
     resolver: &R,
     source: TypeId,
     target: TypeId,
     flags: u16,
-    inheritance_graph: &tsz_solver::InheritanceGraph,
+    inheritance_graph: &InheritanceGraph,
     class_check: Option<&dyn Fn(tsz_solver::SymbolRef) -> bool>,
-) -> tsz_solver::RelationResult {
-    let policy = tsz_solver::RelationPolicy::from_flags(flags);
-    let context = tsz_solver::RelationContext {
+) -> tsz_solver::relations::relation_queries::RelationResult {
+    let policy = tsz_solver::relations::relation_queries::RelationPolicy::from_flags(flags);
+    let context = tsz_solver::relations::relation_queries::RelationContext {
         query_db: Some(db),
         inheritance_graph: Some(inheritance_graph),
         class_check,
     };
-    tsz_solver::query_relation_with_resolver(
+    tsz_solver::relations::relation_queries::query_relation_with_resolver(
         db,
         resolver,
         source,
         target,
-        tsz_solver::RelationKind::Subtype,
+        tsz_solver::relations::relation_queries::RelationKind::Subtype,
         policy,
         context,
     )
 }
 
-pub(crate) fn is_redeclaration_identical_with_resolver<R: tsz_solver::TypeResolver>(
+pub(crate) fn is_redeclaration_identical_with_resolver<
+    R: tsz_solver::relations::subtype::TypeResolver,
+>(
     db: &dyn QueryDatabase,
     resolver: &R,
     source: TypeId,
     target: TypeId,
     flags: u16,
-    inheritance_graph: &tsz_solver::InheritanceGraph,
+    inheritance_graph: &InheritanceGraph,
     sound_mode: bool,
 ) -> bool {
-    let policy = tsz_solver::RelationPolicy::from_flags(flags)
+    let policy = tsz_solver::relations::relation_queries::RelationPolicy::from_flags(flags)
         .with_strict_subtype_checking(sound_mode)
         .with_strict_any_propagation(sound_mode);
-    let context = tsz_solver::RelationContext {
+    let context = tsz_solver::relations::relation_queries::RelationContext {
         query_db: Some(db),
         inheritance_graph: Some(inheritance_graph),
         class_check: None,
     };
-    tsz_solver::query_relation_with_resolver(
+    tsz_solver::relations::relation_queries::query_relation_with_resolver(
         db,
         resolver,
         source,
         target,
-        tsz_solver::RelationKind::RedeclarationIdentical,
+        tsz_solver::relations::relation_queries::RelationKind::RedeclarationIdentical,
         policy,
         context,
     )
@@ -756,9 +956,11 @@ pub(crate) struct AssignabilityGateResult {
     pub analysis: Option<AssignabilityFailureAnalysis>,
 }
 
-pub(crate) fn check_assignable_gate_with_overrides<R: tsz_solver::TypeResolver>(
+pub(crate) fn check_assignable_gate_with_overrides<
+    R: tsz_solver::relations::subtype::TypeResolver,
+>(
     inputs: &AssignabilityQueryInputs<'_, R>,
-    overrides: &dyn tsz_solver::AssignabilityOverrideProvider,
+    overrides: &dyn tsz_solver::relations::compat::AssignabilityOverrideProvider,
     ctx: Option<&crate::context::CheckerContext<'_>>,
     collect_failure_analysis: bool,
 ) -> AssignabilityGateResult {
@@ -831,13 +1033,13 @@ pub(crate) struct RelationOutcome {
 /// are carried on `RelationRequest` as explicit policy descriptors for follow-up
 /// centralization, but existing caller-side EPC/missing-property diagnostics still
 /// own those decisions.
-pub(crate) fn execute_relation<R: tsz_solver::TypeResolver>(
+pub(crate) fn execute_relation<R: tsz_solver::relations::subtype::TypeResolver>(
     request: &RelationRequest,
     db: &dyn QueryDatabase,
     resolver: &R,
     flags: u16,
-    inheritance_graph: &tsz_solver::InheritanceGraph,
-    overrides: &dyn tsz_solver::AssignabilityOverrideProvider,
+    inheritance_graph: &InheritanceGraph,
+    overrides: &dyn tsz_solver::relations::compat::AssignabilityOverrideProvider,
     ctx: Option<&crate::context::CheckerContext<'_>>,
     sound_mode: bool,
 ) -> RelationOutcome {
@@ -1140,7 +1342,11 @@ pub(crate) fn classify_object_properties(
             // Property exists in target — check type compatibility.
             // Account for optional properties: target `prop?: T` accepts `T | undefined`.
             let effective_target_type = target_prop_type;
-            if !tsz_solver::is_subtype_of(db, source_prop.type_id, effective_target_type) {
+            if !tsz_solver::relations::subtype::is_subtype_of(
+                db,
+                source_prop.type_id,
+                effective_target_type,
+            ) {
                 all_matching_compatible = false;
                 classification.incompatible_properties.push((
                     source_prop.name,
@@ -1168,7 +1374,7 @@ pub(crate) fn classify_object_properties(
     if !classification.excess_properties.is_empty() && all_matching_compatible {
         let trimmed_source = db.object(matching_props);
         classification.trimmed_source_assignable =
-            tsz_solver::is_subtype_of(db, trimmed_source, target);
+            tsz_solver::relations::subtype::is_subtype_of(db, trimmed_source, target);
     }
 
     Some(classification)
@@ -1248,7 +1454,8 @@ pub(crate) fn index_signature_key_type_accepts_symbol(
     db: &dyn TypeDatabase,
     key_type: TypeId,
 ) -> bool {
-    key_type == TypeId::SYMBOL || tsz_solver::is_subtype_of(db, TypeId::SYMBOL, key_type)
+    key_type == TypeId::SYMBOL
+        || tsz_solver::relations::subtype::is_subtype_of(db, TypeId::SYMBOL, key_type)
 }
 
 /// Property-name index for assignability failure classification.
@@ -1400,20 +1607,23 @@ fn is_global_object_or_function_shape(
     })
 }
 
-pub(crate) fn analyze_assignability_failure_with_context<R: tsz_solver::TypeResolver>(
+pub(crate) fn analyze_assignability_failure_with_context<
+    R: tsz_solver::relations::subtype::TypeResolver,
+>(
     db: &dyn TypeDatabase,
     ctx: &crate::context::CheckerContext<'_>,
     resolver: &R,
     source: TypeId,
     target: TypeId,
 ) -> AssignabilityFailureAnalysis {
-    let analysis = tsz_solver::analyze_assignability_failure_with_resolver(
-        db,
-        resolver,
-        source,
-        target,
-        |checker| ctx.configure_compat_checker(checker),
-    );
+    let analysis =
+        tsz_solver::relations::relation_queries::analyze_assignability_failure_with_resolver(
+            db,
+            resolver,
+            source,
+            target,
+            |checker| ctx.configure_compat_checker(checker),
+        );
     AssignabilityFailureAnalysis {
         weak_union_violation: analysis.weak_union_violation,
         failure_reason: analysis.failure_reason,
@@ -1427,7 +1637,9 @@ pub(crate) fn analyze_assignability_failure_with_context<R: tsz_solver::TypeReso
 /// Must be called BEFORE types are evaluated/expanded.
 ///
 /// Returns `Some(true/false)` if conclusive, `None` to fall through.
-pub(crate) fn check_application_variance_assignability<R: tsz_solver::TypeResolver>(
+pub(crate) fn check_application_variance_assignability<
+    R: tsz_solver::relations::subtype::TypeResolver,
+>(
     inputs: &AssignabilityQueryInputs<'_, R>,
 ) -> Option<bool> {
     let AssignabilityQueryInputs {
@@ -1439,15 +1651,15 @@ pub(crate) fn check_application_variance_assignability<R: tsz_solver::TypeResolv
         inheritance_graph,
         sound_mode,
     } = *inputs;
-    let policy = tsz_solver::RelationPolicy::from_flags(flags)
+    let policy = tsz_solver::relations::relation_queries::RelationPolicy::from_flags(flags)
         .with_strict_subtype_checking(sound_mode)
         .with_strict_any_propagation(sound_mode);
-    let context = tsz_solver::RelationContext {
+    let context = tsz_solver::relations::relation_queries::RelationContext {
         query_db: Some(db),
         inheritance_graph: Some(inheritance_graph),
         class_check: None,
     };
-    tsz_solver::check_application_variance(
+    tsz_solver::relations::relation_queries::check_application_variance(
         db.as_type_database(),
         resolver,
         Some(db),
@@ -1461,7 +1673,8 @@ pub(crate) fn check_application_variance_assignability<R: tsz_solver::TypeResolv
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tsz_solver::{IndexSignature, TypeInterner};
+    use tsz_solver::IndexSignature;
+    use tsz_solver::construction::TypeInterner;
 
     #[test]
     fn target_property_index_uses_first_atom_match() {

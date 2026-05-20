@@ -2,12 +2,12 @@
 //! primitive/array/function/application property resolution.
 
 use super::*;
-use crate::apparent_primitive_member_kind;
 use crate::evaluation::evaluate_rules::apparent::make_apparent_method_type;
 use crate::instantiation::instantiate::{
     TypeSubstitution, instantiate_type_cached, instantiate_type_with_infer_cached,
     substitute_this_type_cached,
 };
+use crate::objects::apparent_primitive_member_kind;
 use crate::types::{
     MappedType, MappedTypeId, PropertyInfo, PropertyLookup, TupleElement, TypeApplicationId,
     TypeParamInfo,

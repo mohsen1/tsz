@@ -2,7 +2,7 @@ use super::*;
 use tsz_binder::BinderState;
 use tsz_common::position::LineMap;
 use tsz_parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 /// Helper to create a provider and get hints for the given source code.
 fn get_hints_for_source(source: &str) -> Vec<InlayHint> {

@@ -2,10 +2,10 @@
 # Build WASM for Node.js (CJS) and bundler (ESM) targets, then assemble the
 # unified @mohsen-azimi/tsz-dev package in pkg/.
 
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PKG="$PROJECT_ROOT/pkg"
 
 extract_workspace_package_field() {

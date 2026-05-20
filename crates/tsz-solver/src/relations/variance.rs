@@ -27,8 +27,8 @@
 //! Also supports lazy type resolution, recursive variance composition,
 //! and Ref(SymbolRef) type handling.
 
-use crate::TypeDatabase;
 use crate::caches::db::QueryDatabase;
+use crate::construction::TypeDatabase;
 use crate::def::DefId;
 use crate::def::resolver::TypeResolver;
 use crate::types::{

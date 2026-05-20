@@ -4,7 +4,8 @@ use crate::flow_graph_builder::FlowGraphBuilder;
 use tsz_binder::BinderState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
-use tsz_solver::{PropertyInfo, TypeId, TypeInterner, Visibility};
+use tsz_solver::construction::TypeInterner;
+use tsz_solver::{PropertyInfo, TypeId, Visibility};
 fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
     let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -3249,7 +3250,7 @@ function test() {
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     // TS2454 requires strictNullChecks (matches tsc behavior)
     let opts = crate::context::CheckerOptions {
         strict_null_checks: true,
@@ -3320,7 +3321,7 @@ function test() {
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let mut checker = CheckerState::new(
         arena,
         &binder,
@@ -3372,7 +3373,7 @@ function f2(s: Set<string> | Set<number>) {
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let opts = crate::context::CheckerOptions {
         strict_null_checks: true,
         ..Default::default()
@@ -3432,7 +3433,7 @@ if (x instanceof X) {
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let opts = crate::context::CheckerOptions {
         strict_null_checks: true,
         ..Default::default()
@@ -3489,7 +3490,7 @@ function f(v: 0 | 1): number {
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let opts = crate::context::CheckerOptions {
         strict_null_checks: true,
         ..Default::default()
@@ -3528,7 +3529,7 @@ function f(e: E): number {
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let opts = crate::context::CheckerOptions {
         strict_null_checks: true,
         ..Default::default()
@@ -3581,7 +3582,7 @@ function g(e: E): number {
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let opts = crate::context::CheckerOptions {
         strict_null_checks: true,
         allow_unreachable_code: Some(false),
@@ -3640,7 +3641,7 @@ function calculate(op: Operation, a: number, b: number): number {
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let opts = crate::context::CheckerOptions {
         strict_null_checks: true,
         ..Default::default()
@@ -3690,7 +3691,7 @@ function handle(dir: Direction): string {
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let opts = crate::context::CheckerOptions {
         strict_null_checks: true,
         ..Default::default()
@@ -3739,7 +3740,7 @@ function describe(c: Color): string {
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let opts = crate::context::CheckerOptions {
         strict_null_checks: true,
         ..Default::default()
@@ -3789,7 +3790,7 @@ function calculate(op: Operation): number {
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let opts = crate::context::CheckerOptions {
         strict_null_checks: true,
         ..Default::default()
@@ -3837,7 +3838,7 @@ function g(e: E): string {
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let opts = crate::context::CheckerOptions {
         strict_null_checks: true,
         ..Default::default()
@@ -3877,7 +3878,7 @@ function expression(): Animal {
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let opts = crate::context::CheckerOptions {
         strict_null_checks: true,
         ..Default::default()
@@ -3919,7 +3920,7 @@ const unreachable = (x: unknown): number => {
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let opts = crate::context::CheckerOptions {
         strict_null_checks: true,
         allow_unreachable_code: Some(false),
@@ -3968,7 +3969,7 @@ const unreachable = (x: any): number => {
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let opts = crate::context::CheckerOptions {
         strict_null_checks: true,
         allow_unreachable_code: Some(false),
@@ -4055,7 +4056,7 @@ if (typeof x === "string" && x) {
 #[test]
 fn test_typeof_and_truthiness_narrows_in_then_block() {
     use tsz_binder::BinderState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     let source = r#"
 let x: string | number | null;

@@ -74,6 +74,10 @@ name = "object_literal_getter_widening_tests"
 path = "tests/object_literal_getter_widening_tests.rs"
 
 [[test]]
+name = "object_union_assignability_fast_path_tests"
+path = "tests/object_union_assignability_fast_path_tests.rs"
+
+[[test]]
 name = "optional_chain_literal_nullish_ts2339_tests"
 path = "tests/optional_chain_literal_nullish_ts2339_tests.rs"
 
@@ -1436,6 +1440,10 @@ path = "tests/stage3_lib_namespace_resolution_tests.rs"
 [[test]]
 name = "ts2321_ts2859_tests"
 path = "tests/ts2321_ts2859_tests.rs"
+
+[[test]]
+name = "deeply_nested_conditional_mapped_recursion_tests"
+path = "tests/deeply_nested_conditional_mapped_recursion_tests.rs"
 
 [lints]
 workspace = true

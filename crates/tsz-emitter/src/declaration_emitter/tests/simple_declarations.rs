@@ -1473,6 +1473,36 @@ function p() { return Promise.resolve(); }
 }
 
 #[test]
+fn test_jsdoc_nested_object_binding_params_and_promise_star() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+class Y {
+    /**
+     * @param {Object} error
+     * @param {string?} error.reason
+     * @param {Object} error.suberr
+     * @param {string?} error.suberr.reason
+     * @param {string?} error.suberr.code
+     * @returns {Promise.<*>}
+     */
+    async cancel({reason, suberr}) {}
+}
+"#,
+    );
+
+    for expected in [
+        "reason: string | null;",
+        "suberr: {\n            reason: string | null;\n            code: string | null;\n        };",
+        "): Promise<any>;",
+    ] {
+        assert!(
+            output.contains(expected),
+            "Expected nested JSDoc parameter output `{expected}`: {output}"
+        );
+    }
+}
+
+#[test]
 fn test_js_trailing_jsdoc_type_aliases_are_emitted() {
     let source = r#"
 export {};
@@ -2591,6 +2621,44 @@ export function fn3(uuid) {}
 }
 
 #[test]
+fn test_jsdoc_typedef_same_file_typeof_export_stays_unqualified() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/** @satisfies {(uuid: string) => void} */
+export const fn1 = uuid => {};
+
+/** @typedef {Parameters<typeof fn1>} Foo */
+
+/** @type Foo */
+export const v1 = ["abc"];
+
+/** @satisfies {(label: string) => void} */
+export const renamed = label => {};
+
+/** @typedef {ReturnType<typeof renamed>} Bar */
+"#,
+    );
+
+    assert!(
+        output.contains("export function fn1(uuid: string): void;"),
+        "Expected @satisfies parameter fallback to keep exported const-function signature: {output}"
+    );
+    assert!(
+        output.contains("export type Foo = Parameters<typeof fn1>;"),
+        "Expected JSDoc typedef alias to keep same-file typeof reference unqualified: {output}"
+    );
+    assert!(
+        output.contains("export type Bar = ReturnType<typeof renamed>;"),
+        "Expected renamed same-file typeof reference to stay unqualified too: {output}"
+    );
+    assert!(
+        !output.contains("typeof import(\".\").fn1")
+            && !output.contains("typeof import(\".\").renamed"),
+        "Same-file JSDoc typedef aliases should not self-import exported values: {output}"
+    );
+}
+
+#[test]
 fn test_js_function_declaration_emits_constrained_jsdoc_template() {
     let output = emit_js_dts(
         r#"
@@ -3687,6 +3755,46 @@ if (holder.guard.isLeader()) {
     assert!(
         output.contains("declare var holder: {\n    guard: RoyalGuard;\n};"),
         "Expected shorthand object member to use the declared annotation instead of a narrowed flow type: {output}"
+    );
+}
+
+#[test]
+fn test_object_shorthand_definite_assignment_uses_non_nullish_declared_type() {
+    let source = r#"
+const a: string | undefined = 'ff';
+const foo = { a! };
+
+const b: string | undefined = 'plain';
+const plain = { b };
+
+const c: number | null | undefined = 1;
+const numeric = { c! };
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+    let (parser, _) = parse_test_source(source);
+    let shorthand_exclamation_count = parser
+        .arena
+        .nodes
+        .iter()
+        .filter_map(|node| parser.arena.get_shorthand_property(node))
+        .filter(|data| data.exclamation_token_pos != 0)
+        .count();
+    assert_eq!(
+        shorthand_exclamation_count, 2,
+        "Expected parser recovery to preserve two shorthand definite-assignment markers"
+    );
+
+    assert!(
+        output.contains("declare const foo: {\n    a: string;\n};"),
+        "Expected recovered `{{a!}}` shorthand to use the non-nullish declared type: {output}"
+    );
+    assert!(
+        output.contains("declare const plain: {\n    b: string | undefined;\n};"),
+        "Expected plain shorthand to preserve the declared union type: {output}"
+    );
+    assert!(
+        output.contains("declare const numeric: {\n    c: number;\n};"),
+        "Expected recovered shorthand to remove both null and undefined from top-level unions: {output}"
     );
 }
 
@@ -8084,12 +8192,52 @@ foo.default = 2;
     );
 
     assert!(
-        output.contains("declare namespace foo {\n    let x: number;"),
-        "Expected ordinary expando property to emit as an ambient namespace member: {output}"
+        output.contains("declare namespace foo {\n    export let x: number;"),
+        "Expected direct expando property to get export let when a reserved-word sibling requires aliasing: {output}"
     );
     assert!(
         output.contains("let _default: number;\n    export { _default as default };"),
         "Expected reserved expando property to use local alias plus export specifier: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_expando_function_member_exported_when_alias_sibling_present() {
+    let output = emit_js_dts(
+        r#"
+function bar() {}
+bar.greet = function(name) { return name; };
+bar.default = 42;
+"#,
+    );
+
+    assert!(
+        output.contains("export function greet"),
+        "Expected function-valued expando member to get export when a reserved-word sibling requires aliasing: {output}"
+    );
+    assert!(
+        output.contains("let _default: number;\n    export { _default as default };"),
+        "Expected reserved-word alias emission for default: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_expando_contextual_keyword_member_exported_when_alias_sibling_present() {
+    let output = emit_js_dts(
+        r#"
+function baz() {}
+baz.get = 1;
+baz.default = 2;
+"#,
+    );
+
+    assert!(
+        output.contains("export let get: number;"),
+        "Expected contextual-keyword property to get export let when reserved-word sibling requires aliasing: {output}"
+    );
+    assert!(
+        output.contains("let _default: number;\n    export { _default as default };"),
+        "Expected reserved-word alias emission for default: {output}"
     );
 }
 

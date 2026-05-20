@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use tsz_binder::BinderState;
 use tsz_parser::parser::{NodeIndex, ParserState, node::NodeAccess};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 /// Inlined from TypeScript/tests/cases/conformance/parser/ecmascript2018/asyncGenerators/
 /// parser.asyncGenerators.classMethods.es2018.ts to avoid submodule dependency in CI.

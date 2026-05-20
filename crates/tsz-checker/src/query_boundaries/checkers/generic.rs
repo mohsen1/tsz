@@ -1,4 +1,5 @@
-use tsz_solver::{TypeDatabase, TypeId};
+use tsz_solver::TypeId;
+use tsz_solver::construction::TypeDatabase;
 
 pub(crate) use super::super::common::{
     callable_shape_for_type, contains_free_type_parameters, contains_generic_type_parameters,
@@ -103,6 +104,12 @@ pub(crate) fn full_conditional_type_components(
 /// Check if a type is callable (Function or Callable shape).
 pub(crate) fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_callable_type(db, type_id)
+}
+
+/// Check whether a constraint is, or evaluates to, a union whose members all
+/// carry call or construct signatures.
+pub(crate) fn constraint_expands_to_callable_union(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::constraint_expands_to_callable_union(db, type_id)
 }
 
 /// Check if a type has construct signatures or is a constructor function.

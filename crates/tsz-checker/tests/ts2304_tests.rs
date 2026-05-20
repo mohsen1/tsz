@@ -13,7 +13,7 @@ use tsz_checker::context::LibContext as CheckerLibContext;
 use tsz_checker::diagnostics::Diagnostic;
 use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn diagnostic_contains(diagnostic: &Diagnostic, fragment: &str) -> bool {
     format!("{diagnostic:?}").contains(fragment)

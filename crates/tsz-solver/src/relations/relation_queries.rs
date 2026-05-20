@@ -4,9 +4,9 @@
 //! overlap) behind one API so checker code can call Solver queries instead
 //! of wiring checker internals directly to concrete checker engines.
 
-use crate::TypeDatabase;
 use crate::caches::db::QueryDatabase;
 use crate::classes::inheritance::InheritanceGraph;
+use crate::construction::TypeDatabase;
 use crate::operations::AssignabilityChecker;
 use crate::relations::compat::{
     AssignabilityOverrideProvider, CompatChecker, NoopOverrideProvider,
