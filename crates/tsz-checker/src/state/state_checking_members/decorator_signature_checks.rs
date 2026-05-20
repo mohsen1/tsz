@@ -269,7 +269,10 @@ impl<'a> CheckerState<'a> {
             if Self::legacy_method_decorator_uses_two_args(self.ctx.types, resolved) {
                 vec![TypeId::ANY, TypeId::STRING]
             } else {
-                vec![TypeId::ANY, TypeId::STRING, TypeId::ANY]
+                let descriptor_type = self
+                    .legacy_method_or_accessor_descriptor_type(member_node)
+                    .unwrap_or(TypeId::ANY);
+                vec![TypeId::ANY, TypeId::STRING, descriptor_type]
             }
         } else {
             self.es_method_or_accessor_decorator_args(member_node)
@@ -585,9 +588,7 @@ impl<'a> CheckerState<'a> {
             return Some(self.ctx.types.factory().union2(TypeId::VOID, value_type));
         }
 
-        let descriptor_value = self.legacy_method_or_accessor_descriptor_value_type(member_idx)?;
-        let descriptor_type =
-            self.resolve_decorator_context_type("TypedPropertyDescriptor", vec![descriptor_value])?;
+        let descriptor_type = self.legacy_method_or_accessor_descriptor_type(member_idx)?;
         Some(
             self.ctx
                 .types
@@ -609,6 +610,14 @@ impl<'a> CheckerState<'a> {
             }
             _ => None,
         }
+    }
+
+    fn legacy_method_or_accessor_descriptor_type(
+        &mut self,
+        member_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let descriptor_value = self.legacy_method_or_accessor_descriptor_value_type(member_idx)?;
+        self.resolve_decorator_context_type("TypedPropertyDescriptor", vec![descriptor_value])
     }
 
     fn legacy_method_or_accessor_descriptor_value_type(

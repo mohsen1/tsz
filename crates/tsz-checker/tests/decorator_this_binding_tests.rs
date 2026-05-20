@@ -16,6 +16,32 @@
 use tsz_checker::test_utils::{check_source_codes, check_source_codes_experimental_decorators};
 
 #[test]
+fn legacy_method_decorator_uses_descriptor_type_for_generic_return() {
+    let codes = check_source_codes_experimental_decorators(
+        r#"
+declare const decorator: MethodDecorator;
+
+class A {
+    @decorator
+    async foo() {}
+
+    @decorator
+    async bar(): Promise<number> { return 0; }
+
+    @decorator
+    baz(n: Promise<number>): Promise<number> { return n; }
+}
+"#,
+    )
+    .to_vec();
+
+    assert!(
+        !codes.contains(&1270),
+        "Legacy `MethodDecorator` should infer the descriptor generic from the actual member descriptor and avoid TS1270; got: {codes:?}"
+    );
+}
+
+#[test]
 fn property_access_decorator_binds_this_for_method() {
     // Faithful reproduction of `esDecorators-preservesThis.ts` (Stage-3).
     let codes = check_source_codes(
