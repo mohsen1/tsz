@@ -2574,12 +2574,14 @@ impl<'a> DeclarationEmitter<'a> {
         Self::jsdoc_has_property_tags(jsdoc) || Self::parse_jsdoc_typedef_alias(jsdoc).is_some()
     }
 
-    pub(in crate::declaration_emitter) fn jsdoc_chain_without_type_tags(
+    pub(in crate::declaration_emitter) fn jsdoc_chain_without_type_or_alias_tags(
         chain: &[String],
     ) -> Vec<String> {
         chain
             .iter()
-            .filter(|jsdoc| !Self::jsdoc_contains_type_tag(jsdoc))
+            .filter(|jsdoc| {
+                !Self::jsdoc_contains_type_tag(jsdoc) && !Self::jsdoc_contains_type_alias_tag(jsdoc)
+            })
             .cloned()
             .collect()
     }

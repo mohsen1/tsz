@@ -771,7 +771,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_leading_jsdoc_comments(stmt_node.pos);
             self.writer.truncate(before_jsdoc_len);
             let mut filtered = if has_jsdoc_type_function_signature {
-                Self::jsdoc_chain_without_type_tags(&self.current_statement_jsdoc_chain)
+                Self::jsdoc_chain_without_type_or_alias_tags(&self.current_statement_jsdoc_chain)
             } else {
                 self.current_statement_jsdoc_chain.clone()
             };
@@ -961,7 +961,7 @@ impl<'a> DeclarationEmitter<'a> {
         if has_jsdoc_overload_signatures {
             // JSDoc overload comments are emitted with each overload signature.
         } else if has_jsdoc_type_function_signature {
-            let filtered = Self::jsdoc_chain_without_type_tags(&jsdoc_chain);
+            let filtered = Self::jsdoc_chain_without_type_or_alias_tags(&jsdoc_chain);
             if !self.emit_jsdoc_comment_chain_preserving_source_for_pos_verbatim(
                 stmt_node.pos,
                 &filtered,
