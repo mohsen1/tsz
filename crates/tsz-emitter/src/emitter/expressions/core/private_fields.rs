@@ -67,7 +67,7 @@ impl<'a> Printer<'a> {
 
     /// Check if a receiver expression is simple (this keyword or an identifier)
     /// and doesn't need to be cached in a temp variable to avoid double-evaluation.
-    fn receiver_is_simple(&self, idx: NodeIndex) -> bool {
+    pub(crate) fn receiver_is_simple(&self, idx: NodeIndex) -> bool {
         let Some(node) = self.arena.get(idx) else {
             return true;
         };
