@@ -283,16 +283,9 @@ pub struct EmitContext {
     /// Used by export assignment to emit `return X` instead of `module.exports = X` in AMD.
     pub original_module_kind: Option<ModuleKind>,
 
-    /// Outer `options.module` value while the CommonJS-export-body masking is
-    /// active. The mask temporarily sets `options.module = None` so that
-    /// inner statements do not re-apply module-level transforms, but
-    /// dynamic-import lowering and helper detection must still see the
-    /// outer module kind. This field stays disjoint from
-    /// `original_module_kind`: the wrapper records the wrapper kind there
-    /// (AMD/UMD/System), while this field records the masked-out
-    /// `options.module` (CommonJS or NodeXX), so an exported function or
-    /// class body inside an AMD wrapper still dispatches `import()`
-    /// through the AMD branch.
+    /// Outer `options.module` saved while a CommonJS-export-body mask is
+    /// active. Kept separate from `original_module_kind` so the AMD/UMD/System
+    /// wrapper kind survives a nested CJS-export mask.
     pub cjs_export_body_outer_module: Option<ModuleKind>,
 
     pub file_is_module: bool,
@@ -426,15 +419,10 @@ impl EmitContext {
         )
     }
 
-    /// Resolve the module kind that should drive emission decisions in a
-    /// sub-emitter (ES5 class lowering, namespace IIFE, etc.).
-    ///
-    /// `options.module` is `None` while a `CommonJS`-export body mask is
-    /// active, so callers that previously read `original_module_kind` plus
-    /// `options.module` need to also consult `cjs_export_body_outer_module`:
-    /// the immediate enclosing body emission is `CommonJS`-style, so it takes
-    /// priority over the wrapper kind for the sub-emitter's own decisions.
-    pub fn outer_module_kind(&self) -> ModuleKind {
+    /// Module kind that should drive emission decisions in a sub-emitter
+    /// (ES5 class lowering, namespace IIFE, etc.). Picks the CommonJS-export
+    /// mask first, then the wrapper kind, then `options.module`.
+    pub const fn outer_module_kind(&self) -> ModuleKind {
         if let Some(outer) = self.cjs_export_body_outer_module {
             return outer;
         }
@@ -444,17 +432,9 @@ impl EmitContext {
         self.options.module
     }
 
-    /// Check if we're effectively in `CommonJS` mode, even when the module kind
-    /// is temporarily set to `None` inside export body emission.
-    ///
-    /// During CJS export emission, `options.module` is temporarily set to `None`
-    /// to prevent re-applying CJS transforms. But JSX calls still need to know
-    /// the true module kind to emit `(0, jsx_runtime_1.jsx)()` vs `_jsx()`.
-    ///
-    /// AMD/UMD/System wrappers also emit a `CommonJS`-style body (they expose
-    /// `require`/`exports` to the wrapped statements), so CJS-flavored emit
-    /// decisions remain in effect throughout the wrapper body even if a
-    /// nested CJS-export mask has cleared `options.module` to `None`.
+    /// True when the emitted body is `CommonJS`-flavored: a real `CommonJS`
+    /// module, a `CommonJS`-export body mask, or an AMD/UMD/System wrapper
+    /// (whose body exposes `require`/`exports`).
     pub const fn is_effectively_commonjs(&self) -> bool {
         if self.options.module.is_commonjs() {
             return true;
@@ -464,18 +444,12 @@ impl EmitContext {
         {
             return true;
         }
-        if let Some(original) = self.original_module_kind {
-            if original.is_commonjs() {
-                return true;
-            }
-            if matches!(
-                original,
-                ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System
-            ) {
-                return true;
-            }
+        if let Some(original) = self.original_module_kind
+            && original.is_commonjs()
+        {
+            return true;
         }
-        false
+        self.is_inside_module_wrapper_body()
     }
 }
 
