@@ -1,5 +1,7 @@
+use tsz_solver::construction::TypeDatabase;
 use tsz_solver::narrowing::NullishFilter;
-use tsz_solver::{PropertyInfo, TypeDatabase, TypeId, TypeResolver};
+use tsz_solver::relations::subtype::TypeResolver;
+use tsz_solver::{PropertyInfo, TypeId};
 
 /// Re-export of the solver's binary operation result type.
 ///
@@ -8,7 +10,7 @@ use tsz_solver::{PropertyInfo, TypeDatabase, TypeId, TypeResolver};
 pub(crate) use tsz_solver::operations::BinaryOpResult;
 
 pub(crate) fn evaluate_contextual_structure_with(
-    db: &dyn tsz_solver::QueryDatabase,
+    db: &dyn tsz_solver::construction::QueryDatabase,
     type_id: TypeId,
     evaluate_leaf: &mut dyn FnMut(TypeId) -> TypeId,
 ) -> TypeId {
@@ -16,17 +18,23 @@ pub(crate) fn evaluate_contextual_structure_with(
 }
 
 pub(crate) fn evaluate_plus_chain(
-    db: &dyn tsz_solver::QueryDatabase,
+    db: &dyn tsz_solver::construction::QueryDatabase,
     operand_types: &[TypeId],
 ) -> Option<TypeId> {
     tsz_solver::operations::BinaryOpEvaluator::new(db).evaluate_plus_chain(operand_types)
 }
 
-pub(crate) fn is_arithmetic_operand(db: &dyn tsz_solver::QueryDatabase, type_id: TypeId) -> bool {
+pub(crate) fn is_arithmetic_operand(
+    db: &dyn tsz_solver::construction::QueryDatabase,
+    type_id: TypeId,
+) -> bool {
     tsz_solver::operations::BinaryOpEvaluator::new(db).is_arithmetic_operand(type_id)
 }
 
-pub(crate) fn is_bigint_like(db: &dyn tsz_solver::QueryDatabase, type_id: TypeId) -> bool {
+pub(crate) fn is_bigint_like(
+    db: &dyn tsz_solver::construction::QueryDatabase,
+    type_id: TypeId,
+) -> bool {
     tsz_solver::operations::BinaryOpEvaluator::new(db).is_bigint_like(type_id)
 }
 
@@ -43,7 +51,7 @@ pub(crate) enum WriteTargetLogicalResult {
 }
 
 pub(crate) fn write_target_logical_result_type(
-    db: &dyn tsz_solver::QueryDatabase,
+    db: &dyn tsz_solver::construction::QueryDatabase,
     operator: WriteTargetLogicalOperator,
     left_type: TypeId,
     right_type: TypeId,
@@ -124,7 +132,7 @@ pub(crate) fn compute_best_common_type<R: TypeResolver>(
 /// in `remove_subtypes_for_bct` for repeated BCT call sites.
 pub(crate) fn compute_best_common_type_cached<R: TypeResolver>(
     db: &dyn TypeDatabase,
-    query_db: Option<&dyn tsz_solver::QueryDatabase>,
+    query_db: Option<&dyn tsz_solver::construction::QueryDatabase>,
     types: &[TypeId],
     resolver: Option<&R>,
 ) -> TypeId {
@@ -230,7 +238,8 @@ pub(crate) fn is_literal_permissive_object_context(type_id: TypeId) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tsz_solver::{PropertyInfo, TupleElement, TypeInterner};
+    use tsz_solver::construction::TypeInterner;
+    use tsz_solver::{PropertyInfo, TupleElement};
 
     fn fresh_object(db: &TypeInterner, name: &str, ty: TypeId) -> TypeId {
         db.object_fresh(vec![PropertyInfo::new(db.intern_string(name), ty)])

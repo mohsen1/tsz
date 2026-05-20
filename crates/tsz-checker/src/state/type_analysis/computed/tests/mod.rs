@@ -21,7 +21,7 @@ fn make_prop(name: tsz_common::Atom, declaration_order: u32) -> PropertyInfo {
 
 #[test]
 fn synthetic_namespace_default_normalization_preserves_default_before_augmentations() {
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let default_atom = types.intern_string("default");
     let configs_atom = types.intern_string("configs");
     let mut props = vec![make_prop(configs_atom, 0), make_prop(default_atom, 1)];
@@ -95,7 +95,7 @@ fn ordered_namespace_export_entries_follow_first_declaration_span() {
     exports.set("first".to_string(), first);
     exports.set("second".to_string(), second);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let checker = CheckerState::new(
         parser.get_arena(),
         &binder,

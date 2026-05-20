@@ -1,5 +1,5 @@
 use serde_json::Value;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 use crate::wasm_api::diagnostics::{
     diagnostic_category_name, flatten_diagnostic_message_text, format_ts_diagnostic,

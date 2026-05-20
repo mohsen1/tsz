@@ -1,8 +1,8 @@
 use tsz_solver::computation::{ContextualTypeContext, TypeSubstitution};
+use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::operations::{AssignabilityChecker, CallResult};
-use tsz_solver::{
-    FunctionShape, QueryDatabase, TypeDatabase, TypeEnvironment, TypeId, TypeResolver,
-};
+use tsz_solver::relations::subtype::{TypeEnvironment, TypeResolver};
+use tsz_solver::{FunctionShape, TypeId};
 
 pub(crate) use super::super::common::array_element_type as array_element_type_for_type;
 pub(crate) use super::super::common::is_type_parameter_like as is_type_parameter_type;
@@ -250,7 +250,7 @@ pub(crate) fn resolve_new<C: AssignabilityChecker>(
 pub(crate) fn compute_contextual_types_with_context(
     db: &dyn QueryDatabase,
     ctx: &crate::context::CheckerContext<'_>,
-    env: &tsz_solver::TypeEnvironment,
+    env: &tsz_solver::relations::subtype::TypeEnvironment,
     shape: &tsz_solver::FunctionShape,
     arg_types: &[TypeId],
     contextual_type: Option<TypeId>,

@@ -10,7 +10,7 @@
 //!   `Object`  = global Object interface (registered via `TypeEnvironment`)
 
 use super::*;
-use crate::TypeInterner;
+use crate::construction::TypeInterner;
 use crate::def::DefId;
 
 fn make_to_string(interner: &TypeInterner) -> TypeId {

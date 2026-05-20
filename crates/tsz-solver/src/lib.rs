@@ -184,7 +184,9 @@ pub mod construction {
     pub use crate::intern::type_factory::*;
     pub use crate::intern::{TypeInterner, clear_thread_local_cache};
 }
-pub use intern::TypeInterner;
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use construction::{QueryDatabase, TypeDatabase, TypeInterner};
 #[cfg(test)]
 pub(crate) use operations::infer_generic_function;
 pub use visitors::visitor::{
@@ -213,7 +215,6 @@ pub use visitors::visitor::{
     unwrap_readonly_or_noinfer, walk_referenced_types,
 };
 
-pub use caches::db::{QueryDatabase, TypeDatabase};
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use contextual::{
@@ -248,21 +249,6 @@ pub(crate) use operations::compound_assignment::{
 #[cfg(test)]
 pub(crate) use operations::{
     AssignabilityChecker, BinaryOpEvaluator, BinaryOpResult, CallEvaluator, CallResult,
-};
-pub use relations::compat::{AssignabilityOverrideProvider, CompatChecker, NoopOverrideProvider};
-pub use relations::judge::{
-    CallableKind, DefaultJudge, IterableKind, Judge, JudgeConfig, PropertyResult, TruthinessKind,
-};
-pub use relations::lawyer::AnyPropagationRules;
-pub use relations::relation_queries::{
-    AssignabilityFailureAnalysis, RelationContext, RelationKind, RelationPolicy,
-    RelationQueryInputs, RelationResult, analyze_assignability_failure_with_resolver,
-    are_type_params_assignable, check_application_variance, query_relation,
-    query_relation_with_overrides, query_relation_with_resolver,
-};
-pub use relations::subtype::{
-    AnyPropagationMode, SubtypeChecker, SubtypeResult, TypeEnvironment, TypeResolver,
-    are_types_structurally_identical, is_subtype_of, reset_subtype_thread_local_state,
 };
 pub use type_queries::is_const_type_variable;
 pub use types::{

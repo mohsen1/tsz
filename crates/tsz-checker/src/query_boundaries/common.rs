@@ -1,24 +1,25 @@
 use tsz_solver::computation as c;
 use tsz_solver::{
-    CallSignature, CallableShape, ObjectShape, TupleElement, TypeApplication, TypeDatabase, TypeId,
+    CallSignature, CallableShape, ObjectShape, TupleElement, TypeApplication, TypeId,
     TypePredicate, operations::widening,
 };
 
 #[allow(unused_imports)]
-pub(crate) use tsz_solver::TypeInterner;
+pub(crate) use tsz_solver::construction::TypeInterner;
+pub(crate) use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 pub(crate) use tsz_solver::judge::{DefaultJudge, Judge, JudgeConfig};
 pub(crate) use tsz_solver::narrowing::OptionalPropertyChainKey;
 pub(crate) use tsz_solver::objects::{IndexKind, IndexSignatureResolver};
 pub(crate) use tsz_solver::operations::property::PropertyAccessResult;
 pub(crate) use tsz_solver::operations::{AssignabilityChecker, CallResult};
+pub(crate) use tsz_solver::relations::subtype::{TypeEnvironment, TypeResolver};
 pub(crate) use tsz_solver::type_queries::{
     RemappedMappedIndexAccessResult, TypeTraversalKind, constraint_allows_mutable_array_like,
     is_remapped_mapped_index_access, remapped_mapped_index_access_result,
 };
 pub(crate) use tsz_solver::{
     FunctionShape, IntrinsicKind, MappedType, ObjectFlags, ParamInfo, PendingDiagnostic,
-    PendingDiagnosticBuilder, QueryDatabase, SourceLocation, SubtypeFailureReason, TypeEnvironment,
-    TypeFormatter, TypeResolver,
+    PendingDiagnosticBuilder, SourceLocation, SubtypeFailureReason, TypeFormatter,
     computation::{ContextualTypeContext, TypeSubstitution, instantiate_generic},
 };
 
@@ -776,7 +777,7 @@ pub(crate) use tsz_solver::operations::iterators::IteratorInfo;
 
 /// Get iterator/iterable info from a type.
 pub(crate) fn get_iterator_info(
-    db: &dyn tsz_solver::QueryDatabase,
+    db: &dyn tsz_solver::construction::QueryDatabase,
     type_id: TypeId,
     is_async: bool,
 ) -> Option<IteratorInfo> {
@@ -958,7 +959,7 @@ pub(crate) fn construct_return_type_for_type(
 
 /// Intersect constructor return types between a constructor type and its base.
 pub(crate) fn intersect_constructor_returns(
-    db: &dyn tsz_solver::QueryDatabase,
+    db: &dyn tsz_solver::construction::QueryDatabase,
     ctor_type: TypeId,
     base_type: TypeId,
 ) -> TypeId {
@@ -1097,7 +1098,7 @@ pub(crate) fn classify_for_literal_value(
 /// Check if a type is a valid mapped type key constraint (keyof, string, number,
 /// symbol, union of these, or a type parameter with such a constraint).
 pub(crate) fn is_valid_mapped_type_key_type(
-    db: &dyn tsz_solver::QueryDatabase,
+    db: &dyn tsz_solver::construction::QueryDatabase,
     type_id: TypeId,
 ) -> bool {
     let evaluator = tsz_solver::operations::BinaryOpEvaluator::new(db);
@@ -1668,7 +1669,7 @@ pub(crate) fn union_list_id(
 /// All checker code that needs binary-op evaluation must construct the evaluator
 /// through this function instead of calling `BinaryOpEvaluator::new()` directly.
 pub(crate) fn new_binary_op_evaluator(
-    db: &dyn tsz_solver::QueryDatabase,
+    db: &dyn tsz_solver::construction::QueryDatabase,
 ) -> tsz_solver::operations::BinaryOpEvaluator<'_> {
     tsz_solver::operations::BinaryOpEvaluator::new(db)
 }

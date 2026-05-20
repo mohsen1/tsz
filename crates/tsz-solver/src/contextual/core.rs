@@ -2,7 +2,7 @@
 //!
 //! See the parent [`contextual`](super) module for overview documentation.
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::contextual::extractors::{
     ApplicationArgExtractor, ArrayElementExtractor, ParameterExtractor, ParameterForCallExtractor,
     PropertyExtractor, RestOrOptionalTailPositionExtractor, RestParameterExtractor,
@@ -31,9 +31,12 @@ pub struct ContextualTypeContext<'a> {
 /// Evaluatable wrappers such as `ConstructorParameters<T>` are normalized first so
 /// generic call round-2 contextual typing doesn't pass the whole tuple application
 /// through as a single argument type.
-pub fn rest_argument_element_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
+pub fn rest_argument_element_type(
+    db: &dyn crate::construction::TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
     fn rest_argument_element_type_inner(
-        db: &dyn crate::TypeDatabase,
+        db: &dyn crate::construction::TypeDatabase,
         type_id: TypeId,
         depth: usize,
     ) -> TypeId {
@@ -798,7 +801,7 @@ impl<'a> ContextualTypeContext<'a> {
     /// with the application arguments, and retry the `ThisType` extraction.
     pub fn get_this_type_from_marker_with_resolver(
         &self,
-        resolver: &dyn crate::TypeResolver,
+        resolver: &dyn crate::relations::subtype::TypeResolver,
     ) -> Option<TypeId> {
         // First try the simple extraction (no expansion needed).
         if let Some(result) = self.get_this_type_from_marker() {
@@ -870,7 +873,7 @@ impl<'a> ContextualTypeContext<'a> {
     #[inline]
     pub fn get_this_type_from_marker_expanding(
         &self,
-        resolver: &dyn crate::TypeResolver,
+        resolver: &dyn crate::relations::subtype::TypeResolver,
     ) -> Option<TypeId> {
         self.get_this_type_from_marker_with_resolver(resolver)
     }

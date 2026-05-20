@@ -2069,32 +2069,44 @@ c = d;
                 tsz_solver::visitor::lazy_def_id(&program.type_interner, app.base)
             },
         ) {
-        let variances = tsz_solver::QueryDatabase::get_type_param_variance(&query_cache, def_id)
-            .map(|variances| format!("{variances:?}"))
-            .unwrap_or_else(|| "<none>".to_string());
-        let params = tsz_solver::TypeResolver::get_lazy_type_params(&query_cache, def_id)
-            .map(|params| format!("{params:?}"))
-            .unwrap_or_else(|| "<none>".to_string());
-        let body =
-            tsz_solver::TypeResolver::resolve_lazy(&query_cache, def_id, &program.type_interner)
-                .map(|body| checker.format_type(body))
+        let variances =
+            tsz_solver::construction::QueryDatabase::get_type_param_variance(&query_cache, def_id)
+                .map(|variances| format!("{variances:?}"))
                 .unwrap_or_else(|| "<none>".to_string());
+        let params = tsz_solver::relations::subtype::TypeResolver::get_lazy_type_params(
+            &query_cache,
+            def_id,
+        )
+        .map(|params| format!("{params:?}"))
+        .unwrap_or_else(|| "<none>".to_string());
+        let body = tsz_solver::relations::subtype::TypeResolver::resolve_lazy(
+            &query_cache,
+            def_id,
+            &program.type_interner,
+        )
+        .map(|body| checker.format_type(body))
+        .unwrap_or_else(|| "<none>".to_string());
         let ctx_params = checker
             .ctx
             .get_def_type_params(def_id)
             .map(|params| format!("{params:?}"))
             .unwrap_or_else(|| "<none>".to_string());
-        let ctx_body =
-            tsz_solver::TypeResolver::resolve_lazy(&checker.ctx, def_id, &program.type_interner)
-                .map(|body| checker.format_type(body))
-                .unwrap_or_else(|| "<none>".to_string());
-        let policy = tsz_solver::RelationPolicy::from_flags(checker.ctx.pack_relation_flags());
-        let context = tsz_solver::RelationContext {
+        let ctx_body = tsz_solver::relations::subtype::TypeResolver::resolve_lazy(
+            &checker.ctx,
+            def_id,
+            &program.type_interner,
+        )
+        .map(|body| checker.format_type(body))
+        .unwrap_or_else(|| "<none>".to_string());
+        let policy = tsz_solver::relations::relation_queries::RelationPolicy::from_flags(
+            checker.ctx.pack_relation_flags(),
+        );
+        let context = tsz_solver::relations::relation_queries::RelationContext {
             query_db: Some(&query_cache),
             inheritance_graph: Some(&checker.ctx.inheritance_graph),
             class_check: None,
         };
-        let solver_variance = tsz_solver::check_application_variance(
+        let solver_variance = tsz_solver::relations::relation_queries::check_application_variance(
             &program.type_interner,
             &checker.ctx,
             Some(&query_cache),
@@ -2249,7 +2261,7 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
     let source_type = checker.get_type_of_node(decl.initializer);
     let target_type = checker.get_type_from_type_node(decl.type_annotation);
     let read_constraint_type =
-        |object_type| match tsz_solver::QueryDatabase::resolve_property_access(
+        |object_type| match tsz_solver::construction::QueryDatabase::resolve_property_access(
             &query_cache,
             object_type,
             "constraint",
@@ -7771,7 +7783,7 @@ fn single_file_definition_store_from_binder() {
     let mut binder = crate::binder::BinderState::new();
     binder.bind_source_file(&parsed.arena, parsed.source_file);
 
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
     let store = create_definition_store_from_binder(&binder, &interner);
 
     // All 6 top-level declarations should have DefIds
@@ -7838,7 +7850,7 @@ type LocalType = number;
     let mut binder = crate::binder::BinderState::new();
     binder.bind_source_file(&parsed.arena, parsed.source_file);
 
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
     let store = create_definition_store_from_binder(&binder, &interner);
 
     // AugmentedGlobal should have is_global_augmentation = true
@@ -9086,7 +9098,7 @@ fn solver_from_semantic_defs_matches_core_helper() {
     let mut binder = crate::binder::BinderState::new();
     binder.bind_source_file(&parsed.arena, parsed.source_file);
 
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
 
     // Path A: core helper (delegates to solver factory internally)
     let store_a = crate::parallel::create_definition_store_from_binder(&binder, &interner);

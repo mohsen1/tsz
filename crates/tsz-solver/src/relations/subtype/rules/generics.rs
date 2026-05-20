@@ -2030,7 +2030,7 @@ pub(crate) struct FlattenedMapped {
 /// Returns None if the mapped type isn't in homomorphic form (e.g., has name remapping,
 /// or template isn't `X[K]` where K is the iteration param).
 pub(crate) fn flatten_mapped_chain(
-    interner: &dyn crate::TypeDatabase,
+    interner: &dyn crate::construction::TypeDatabase,
     mapped_id: MappedTypeId,
 ) -> Option<FlattenedMapped> {
     use crate::types::MappedModifier;
@@ -2096,7 +2096,7 @@ pub(crate) fn flatten_mapped_chain(
 /// to mapped types that filter keys via as-clauses, since all properties in the
 /// result type are also properties of T with the same types.
 pub(crate) fn is_filtering_name_type(
-    interner: &dyn crate::TypeDatabase,
+    interner: &dyn crate::construction::TypeDatabase,
     name_type: TypeId,
     mapped: &MappedType,
 ) -> bool {
@@ -2121,7 +2121,7 @@ pub(crate) fn is_filtering_name_type(
 
 /// Check if a type is a type parameter with the given name.
 fn is_type_param_with_name(
-    interner: &dyn crate::TypeDatabase,
+    interner: &dyn crate::construction::TypeDatabase,
     type_id: TypeId,
     name: tsz_common::interner::Atom,
 ) -> bool {

@@ -6,7 +6,7 @@
 //! - Distributivity rules between unions and intersections
 //! - Type parameter compatibility in union/intersection contexts
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::type_queries::data::get_object_shape_id;
 use crate::types::{
     MappedModifier, MappedTypeId, ObjectShapeId, PropertyInfo, TupleElement, TypeId, TypeParamInfo,

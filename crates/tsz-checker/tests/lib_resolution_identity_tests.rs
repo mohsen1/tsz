@@ -26,7 +26,7 @@ use tsz_checker::test_utils::{
 };
 use tsz_common::common::ModuleKind;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
     let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -1268,7 +1268,7 @@ fn test_array_base_display_properties_preserve_lib_order() {
     checker.ctx.set_actual_lib_file_count(lib_files.len());
     checker.prime_boxed_types();
 
-    let array_base = tsz_solver::TypeDatabase::get_array_base_type(checker.ctx.types)
+    let array_base = tsz_solver::construction::TypeDatabase::get_array_base_type(checker.ctx.types)
         .expect("expected registered Array<T> base");
     let display_props: Vec<_> = checker
         .ctx

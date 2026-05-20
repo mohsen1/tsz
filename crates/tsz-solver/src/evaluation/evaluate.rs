@@ -11,8 +11,8 @@
 //! - Handles deferred evaluation when type parameters are unknown
 //! - Supports distributivity for naked type parameters in unions
 
-use crate::TypeDatabase;
 use crate::caches::db::QueryDatabase;
+use crate::construction::TypeDatabase;
 use crate::def::{DefId, DefKind};
 use crate::diagnostics::display_provenance::{
     self, AliasApplicationPriority, AliasApplicationProvenance,

@@ -1,6 +1,7 @@
 use crate::state::CheckerState;
 use tsz_common::interner::Atom;
-use tsz_solver::{MappedTypeId, QueryDatabase, TypeDatabase, TypeId};
+use tsz_solver::construction::{QueryDatabase, TypeDatabase};
+use tsz_solver::{MappedTypeId, TypeId};
 
 pub(crate) use super::super::common::{
     is_generic_type, lazy_def_id, object_shape_for_type as object_shape,
@@ -14,7 +15,7 @@ pub(crate) use tsz_solver::type_queries::{
 /// Evaluates a complex type (conditional, mapped, index access, etc.) using
 /// the provided `TypeResolver` to resolve lazy references. This delegates to
 /// `TypeEvaluator::with_resolver` + `evaluate` in a single call.
-pub(crate) fn evaluate_type_with_resolver<R: tsz_solver::TypeResolver>(
+pub(crate) fn evaluate_type_with_resolver<R: tsz_solver::relations::subtype::TypeResolver>(
     db: &dyn TypeDatabase,
     resolver: &R,
     type_id: TypeId,
@@ -368,7 +369,7 @@ pub(crate) struct EvalWithCacheResult {
 /// Returns the result plus side-effects (depth exceeded, cache drain).
 /// This is the canonical boundary for TypeEvaluator construction with cache
 /// management — checker code must not construct TypeEvaluator directly.
-pub(crate) fn evaluate_type_with_cache<R: tsz_solver::TypeResolver>(
+pub(crate) fn evaluate_type_with_cache<R: tsz_solver::relations::subtype::TypeResolver>(
     db: &dyn TypeDatabase,
     resolver: &R,
     type_id: TypeId,
@@ -398,7 +399,7 @@ pub(crate) fn evaluate_type_with_cache<R: tsz_solver::TypeResolver>(
 /// detection fires on an Application type. This catches self-referential
 /// conditional types that produce the same Application TypeId on each
 /// expansion (e.g., `type Foo<T> = T extends unknown ? Foo<T> : unknown`).
-pub(crate) fn evaluate_type_for_ts2589<R: tsz_solver::TypeResolver>(
+pub(crate) fn evaluate_type_for_ts2589<R: tsz_solver::relations::subtype::TypeResolver>(
     db: &dyn TypeDatabase,
     resolver: &R,
     type_id: TypeId,
@@ -418,7 +419,7 @@ pub(crate) fn evaluate_type_for_ts2589<R: tsz_solver::TypeResolver>(
 ///
 /// Used during heritage merging where `this` must remain unbound until the
 /// final derived interface is constructed.
-pub(crate) fn evaluate_type_suppressing_this<R: tsz_solver::TypeResolver>(
+pub(crate) fn evaluate_type_suppressing_this<R: tsz_solver::relations::subtype::TypeResolver>(
     db: &dyn TypeDatabase,
     resolver: &R,
     type_id: TypeId,
@@ -444,7 +445,7 @@ struct CheckerDeclarationCycleHost<'a, 'b> {
     state: &'a mut CheckerState<'b>,
 }
 
-impl tsz_solver::TypeResolver for CheckerDeclarationCycleHost<'_, '_> {
+impl tsz_solver::relations::subtype::TypeResolver for CheckerDeclarationCycleHost<'_, '_> {
     fn resolve_ref(
         &self,
         symbol: tsz_solver::SymbolRef,

@@ -1,4 +1,6 @@
-use tsz_solver::{ObjectShape, TypeDatabase, TypeId, TypeResolver};
+use tsz_solver::construction::TypeDatabase;
+use tsz_solver::relations::subtype::TypeResolver;
+use tsz_solver::{ObjectShape, TypeId};
 
 pub(crate) use tsz_solver::objects::PropertyCollectionResult;
 

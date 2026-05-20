@@ -1,4 +1,5 @@
-use tsz_solver::{QueryDatabase, TypeDatabase, TypeId};
+use tsz_solver::TypeId;
+use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 
 pub(crate) use super::super::common::{callable_shape_for_type, intersection_members, lazy_def_id};
 pub(crate) use tsz_solver::type_queries::{
@@ -82,7 +83,8 @@ pub(crate) fn is_readonly_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tsz_solver::{PropertyInfo, TypeInterner};
+    use tsz_solver::PropertyInfo;
+    use tsz_solver::construction::TypeInterner;
 
     fn fresh_object(db: &TypeInterner, name: &str, ty: TypeId) -> TypeId {
         db.object_fresh(vec![PropertyInfo::new(db.intern_string(name), ty)])

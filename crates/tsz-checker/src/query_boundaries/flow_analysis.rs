@@ -1,4 +1,5 @@
-use tsz_solver::{QueryDatabase, TypeDatabase, TypeId};
+use tsz_solver::TypeId;
+use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 
 pub(crate) use super::common::{
     LiteralValueKind, PredicateSignatureKind, array_element_type as get_array_element_type,
@@ -40,7 +41,7 @@ pub(crate) fn enum_member_domain(db: &dyn TypeDatabase, type_id: TypeId) -> Type
 
 pub(crate) fn type_has_typeof_result(
     db: &dyn QueryDatabase,
-    env: Option<&tsz_solver::TypeEnvironment>,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
     type_id: TypeId,
     typeof_result: &str,
 ) -> bool {
@@ -53,7 +54,7 @@ pub(crate) fn type_has_typeof_result(
 
 pub(crate) fn cases_exhaust_type(
     db: &dyn QueryDatabase,
-    env: Option<&tsz_solver::TypeEnvironment>,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
     switch_type: TypeId,
     case_types: &[TypeId],
 ) -> bool {
@@ -78,7 +79,7 @@ pub(crate) fn cases_exhaust_type(
 
 fn resolve_assignment_reduction_type(
     db: &dyn TypeDatabase,
-    env: Option<&tsz_solver::TypeEnvironment>,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
     type_id: TypeId,
 ) -> TypeId {
     let resolved = get_lazy_def_id(db, type_id)
@@ -91,7 +92,7 @@ fn resolve_assignment_reduction_type(
 
 fn assignment_source_assignable_to_member(
     db: &dyn TypeDatabase,
-    env: Option<&tsz_solver::TypeEnvironment>,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
     source: TypeId,
     member: TypeId,
 ) -> bool {
@@ -104,7 +105,7 @@ fn assignment_source_assignable_to_member(
 
 fn assigned_value_preserves_enum_identity(
     db: &dyn TypeDatabase,
-    env: Option<&tsz_solver::TypeEnvironment>,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
     assigned_type: TypeId,
     initial_enum_def: tsz_solver::def::DefId,
 ) -> bool {
@@ -131,7 +132,7 @@ fn assigned_value_preserves_enum_identity(
 /// later read still reports nominal enum mismatches.
 pub(crate) fn narrow_enum_assignment_target(
     db: &dyn TypeDatabase,
-    env: Option<&tsz_solver::TypeEnvironment>,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
     initial_resolved: TypeId,
     assigned_resolved: TypeId,
     initial_type: TypeId,
@@ -154,7 +155,7 @@ pub(crate) fn narrow_enum_assignment_target(
 /// assigned type.
 pub(crate) fn narrow_assignment(
     db: &dyn TypeDatabase,
-    env: Option<&tsz_solver::TypeEnvironment>,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
     initial_type: TypeId,
     assigned_type: TypeId,
 ) -> TypeId {
@@ -217,19 +218,20 @@ pub(crate) fn are_types_mutually_subtype(
     left: TypeId,
     right: TypeId,
 ) -> bool {
-    tsz_solver::is_subtype_of(db, left, right) || tsz_solver::is_subtype_of(db, right, left)
+    tsz_solver::relations::subtype::is_subtype_of(db, left, right)
+        || tsz_solver::relations::subtype::is_subtype_of(db, right, left)
 }
 
 pub(crate) fn is_assignable(db: &dyn TypeDatabase, source: TypeId, target: TypeId) -> bool {
     let _span = tracing::trace_span!("flow_assignable", src = source.0, tgt = target.0,).entered();
 
-    tsz_solver::query_relation(
+    tsz_solver::relations::relation_queries::query_relation(
         db,
         source,
         target,
-        tsz_solver::RelationKind::Assignable,
-        tsz_solver::RelationPolicy::default(),
-        tsz_solver::RelationContext::default(),
+        tsz_solver::relations::relation_queries::RelationKind::Assignable,
+        tsz_solver::relations::relation_queries::RelationPolicy::default(),
+        tsz_solver::relations::relation_queries::RelationContext::default(),
     )
     .is_related()
 }
@@ -239,15 +241,15 @@ pub(crate) fn is_assignable_strict_null(
     source: TypeId,
     target: TypeId,
 ) -> bool {
-    tsz_solver::query_relation(
+    tsz_solver::relations::relation_queries::query_relation(
         db,
         source,
         target,
-        tsz_solver::RelationKind::Assignable,
-        tsz_solver::RelationPolicy::from_flags(
+        tsz_solver::relations::relation_queries::RelationKind::Assignable,
+        tsz_solver::relations::relation_queries::RelationPolicy::from_flags(
             tsz_solver::RelationCacheKey::FLAG_STRICT_NULL_CHECKS,
         ),
-        tsz_solver::RelationContext::default(),
+        tsz_solver::relations::relation_queries::RelationContext::default(),
     )
     .is_related()
 }
@@ -297,7 +299,7 @@ pub(crate) fn is_promise_like_type(db: &dyn QueryDatabase, type_id: TypeId) -> b
 
 pub(crate) fn are_types_mutually_subtype_with_env(
     db: &dyn TypeDatabase,
-    env: &tsz_solver::TypeEnvironment,
+    env: &tsz_solver::relations::subtype::TypeEnvironment,
     left: TypeId,
     right: TypeId,
     strict_null_checks: bool,
@@ -308,7 +310,7 @@ pub(crate) fn are_types_mutually_subtype_with_env(
 
 pub(crate) fn is_assignable_with_env(
     db: &dyn TypeDatabase,
-    env: &tsz_solver::TypeEnvironment,
+    env: &tsz_solver::relations::subtype::TypeEnvironment,
     source: TypeId,
     target: TypeId,
     strict_null_checks: bool,
@@ -318,14 +320,14 @@ pub(crate) fn is_assignable_with_env(
         flags |= tsz_solver::RelationCacheKey::FLAG_STRICT_NULL_CHECKS;
     }
 
-    tsz_solver::query_relation_with_resolver(
+    tsz_solver::relations::relation_queries::query_relation_with_resolver(
         db,
         env,
         source,
         target,
-        tsz_solver::RelationKind::Assignable,
-        tsz_solver::RelationPolicy::from_flags(flags),
-        tsz_solver::RelationContext::default(),
+        tsz_solver::relations::relation_queries::RelationKind::Assignable,
+        tsz_solver::relations::relation_queries::RelationPolicy::from_flags(flags),
+        tsz_solver::relations::relation_queries::RelationContext::default(),
     )
     .is_related()
 }
@@ -411,7 +413,7 @@ pub(crate) fn type_param_info(
 /// directly.
 pub(crate) fn evaluate_application_type(
     db: &dyn TypeDatabase,
-    env: &tsz_solver::TypeEnvironment,
+    env: &tsz_solver::relations::subtype::TypeEnvironment,
     type_id: TypeId,
 ) -> TypeId {
     tsz_solver::computation::ApplicationEvaluator::new(db, env).evaluate_or_original(type_id)
@@ -419,7 +421,7 @@ pub(crate) fn evaluate_application_type(
 
 fn types_are_subtype_with_env(
     db: &dyn TypeDatabase,
-    env: &tsz_solver::TypeEnvironment,
+    env: &tsz_solver::relations::subtype::TypeEnvironment,
     source: TypeId,
     target: TypeId,
     strict_null_checks: bool,
@@ -429,14 +431,14 @@ fn types_are_subtype_with_env(
         flags |= tsz_solver::RelationCacheKey::FLAG_STRICT_NULL_CHECKS;
     }
 
-    tsz_solver::query_relation_with_resolver(
+    tsz_solver::relations::relation_queries::query_relation_with_resolver(
         db,
         env,
         source,
         target,
-        tsz_solver::RelationKind::Subtype,
-        tsz_solver::RelationPolicy::from_flags(flags),
-        tsz_solver::RelationContext::default(),
+        tsz_solver::relations::relation_queries::RelationKind::Subtype,
+        tsz_solver::relations::relation_queries::RelationPolicy::from_flags(flags),
+        tsz_solver::relations::relation_queries::RelationContext::default(),
     )
     .is_related()
 }
@@ -444,7 +446,7 @@ fn types_are_subtype_with_env(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     #[test]
     fn assignment_reduction_preserves_top_like_initial_types() {

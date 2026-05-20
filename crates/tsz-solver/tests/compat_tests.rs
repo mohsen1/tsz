@@ -1,13 +1,14 @@
 use super::*;
 use crate::SubtypeFailureReason;
-use crate::TypeInterner;
 use crate::caches::db::QueryDatabase;
+use crate::computation::TypeEnvironment;
+use crate::construction::TypeInterner;
 use crate::def::DefId;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::{
     CallSignature, CallableShape, ConditionalType, FunctionShape, IndexSignature, MappedType,
     ObjectFlags, ObjectShape, ParamInfo, PropertyInfo, SymbolRef, TemplateSpan, TupleElement,
-    TypeEnvironment, TypeParamInfo, Visibility,
+    TypeParamInfo, Visibility,
 };
 
 fn make_animal_dog(interner: &TypeInterner) -> (TypeId, TypeId) {

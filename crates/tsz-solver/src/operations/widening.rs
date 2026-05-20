@@ -27,7 +27,11 @@ use crate::types::{ObjectFlags, TypeData, TypeId};
 /// its `display_alias` mapping. This function copies the mapping forward so the formatter
 /// can still show the alias name instead of the expanded structural form.
 #[inline]
-fn propagate_display_alias(db: &dyn crate::TypeDatabase, original: TypeId, widened: TypeId) {
+fn propagate_display_alias(
+    db: &dyn crate::construction::TypeDatabase,
+    original: TypeId,
+    widened: TypeId,
+) {
     if original != widened
         && let Some(alias) = display_provenance::display_alias(db, original)
     {
@@ -43,7 +47,7 @@ fn propagate_display_alias(db: &dyn crate::TypeDatabase, original: TypeId, widen
 }
 
 fn readonly_property_preserves_top_level_type(
-    db: &dyn crate::TypeDatabase,
+    db: &dyn crate::construction::TypeDatabase,
     type_id: TypeId,
 ) -> bool {
     matches!(
@@ -66,7 +70,7 @@ fn readonly_property_preserves_top_level_type(
 /// let widened = widen_type(db, string_literal_type);
 /// assert_eq!(widened, TypeId::STRING);
 /// ```
-pub fn widen_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
+pub fn widen_type(db: &dyn crate::construction::TypeDatabase, type_id: TypeId) -> TypeId {
     // Fast path: most intrinsic types are already widened and never change.
     // Boolean literals (true/false) are intrinsic but DO need widening to boolean.
     if type_id.is_intrinsic()
@@ -111,7 +115,10 @@ pub fn widen_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
 /// Does NOT recurse into function/callable parameter types, preserving
 /// literal parameters so `(x: "bar") => number` displays as-is rather than
 /// being widened to `(x: string) => number`.
-pub fn widen_type_for_display(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
+pub fn widen_type_for_display(
+    db: &dyn crate::construction::TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
     use rustc_hash::FxHashMap;
     let mut cache = FxHashMap::default();
     widen_type_cached(db, type_id, &mut cache, false, false, false, false)
@@ -134,7 +141,10 @@ pub fn widen_type_for_display(db: &dyn crate::TypeDatabase, type_id: TypeId) -> 
 /// type carries no semantic meaning (the diagnostic is structural). Narrowing
 /// flow displays should keep using `widen_type_for_display` so that
 /// `string | false` doesn't collapse to `string | boolean`.
-pub fn widen_argument_type_for_display(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
+pub fn widen_argument_type_for_display(
+    db: &dyn crate::construction::TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
     use rustc_hash::FxHashMap;
     let mut cache = FxHashMap::default();
     widen_type_cached(db, type_id, &mut cache, true, false, false, true)
@@ -148,7 +158,10 @@ pub fn widen_argument_type_for_display(db: &dyn crate::TypeDatabase, type_id: Ty
 /// (e.g., `(x: 1 | 2) => void` → `(x: number) => void`) creates a resolved T
 /// that is structurally incompatible with the original arg type under strict
 /// function type checking, causing false TS2322.
-pub fn widen_type_for_inference(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
+pub fn widen_type_for_inference(
+    db: &dyn crate::construction::TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
     use rustc_hash::FxHashMap;
     let mut cache = FxHashMap::default();
     widen_type_cached(db, type_id, &mut cache, true, false, true, false)
@@ -164,7 +177,10 @@ pub fn widen_type_for_inference(db: &dyn crate::TypeDatabase, type_id: TypeId) -
 /// `'6'`) instead of collapsing to `'number'` / `'number'` (which would also
 /// self-suppress the diagnostic via the equal-display short-circuit in the
 /// reporter).
-pub fn display_widen_for_redeclaration(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
+pub fn display_widen_for_redeclaration(
+    db: &dyn crate::construction::TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
     if matches!(
         db.lookup(type_id),
         Some(crate::types::TypeData::Literal(_) | crate::types::TypeData::Union(_))
@@ -181,7 +197,7 @@ pub fn display_widen_for_redeclaration(db: &dyn crate::TypeDatabase, type_id: Ty
 /// return types and parameter types. Used for TS2403 redeclaration checking
 /// where `var fn = (s: string) => 3` should compare as `(s: string) => number`
 /// against `var fn: (s: string) => number`.
-pub fn widen_type_deep(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
+pub fn widen_type_deep(db: &dyn crate::construction::TypeDatabase, type_id: TypeId) -> TypeId {
     // Fast path: intrinsics (except boolean literals)
     if type_id.is_intrinsic()
         && type_id != crate::types::TypeId::BOOLEAN_TRUE
@@ -214,7 +230,7 @@ pub fn widen_type_deep(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId 
 }
 
 fn widen_type_cached(
-    db: &dyn crate::TypeDatabase,
+    db: &dyn crate::construction::TypeDatabase,
     type_id: TypeId,
     // Keyed on `(TypeId, widen_boolean_intrinsics)` so the same compound
     // type processed under different boolean-widening contexts inside one
@@ -707,7 +723,7 @@ fn widen_type_cached(
 /// This differs from `widen_type` which recursively widens everything including
 /// union members and direct literals. This function only enters objects/arrays/tuples.
 pub(crate) fn widen_object_literal_properties(
-    db: &dyn crate::TypeDatabase,
+    db: &dyn crate::construction::TypeDatabase,
     type_id: TypeId,
 ) -> TypeId {
     if type_id.is_intrinsic() {
@@ -774,7 +790,10 @@ pub(crate) fn widen_object_literal_properties(
 /// Used by relational operators (`<`, `>`, `<=`, `>=`) to normalize types
 /// before comparability checks. This is distinct from general widening because
 /// it also handles enum types and template literals.
-pub fn get_base_type_for_comparison(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
+pub fn get_base_type_for_comparison(
+    db: &dyn crate::construction::TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
     // BOOLEAN_TRUE/FALSE are intrinsic IDs that look up as `Literal(Boolean)`,
     // which the match below widens to `BOOLEAN`. All other intrinsics fall
     // through to `_ => type_id`, so they can short-circuit the lookup.
@@ -830,7 +849,7 @@ pub fn get_base_type_for_comparison(db: &dyn crate::TypeDatabase, type_id: TypeI
 ///
 /// Used for binary operator error messages where tsc shows widened types
 /// for literal operands but preserves enum type names.
-pub fn widen_literal_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
+pub fn widen_literal_type(db: &dyn crate::construction::TypeDatabase, type_id: TypeId) -> TypeId {
     if type_id == TypeId::BOOLEAN_TRUE || type_id == TypeId::BOOLEAN_FALSE {
         return TypeId::BOOLEAN;
     }
@@ -873,7 +892,7 @@ pub fn widen_literal_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> Type
 /// literal types in the message text.
 #[allow(dead_code)] // Reserved for TS2367 diagnostic message formatting
 pub(crate) fn widen_non_string_bigint_literal(
-    db: &dyn crate::TypeDatabase,
+    db: &dyn crate::construction::TypeDatabase,
     type_id: TypeId,
 ) -> TypeId {
     if type_id == TypeId::BOOLEAN_TRUE || type_id == TypeId::BOOLEAN_FALSE {
@@ -910,7 +929,10 @@ pub(crate) fn widen_non_string_bigint_literal(
 /// let array_type = interner.array(interner.literal_number(1));
 /// let const_array = apply_const_assertion(&interner, array_type);
 /// ```
-pub fn apply_const_assertion(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
+pub fn apply_const_assertion(
+    db: &dyn crate::construction::TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
     use crate::visitor::ConstAssertionVisitor;
     let mut visitor = ConstAssertionVisitor::new(db);
     visitor.apply_const_assertion(type_id)
