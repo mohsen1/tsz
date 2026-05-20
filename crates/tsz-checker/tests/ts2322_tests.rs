@@ -1444,6 +1444,38 @@ t = () => 1;
 }
 
 #[test]
+fn callable_application_source_missing_member_reports_only_ts2322_for_renamed_params() {
+    let source = r#"
+type Fn<T> = (value: T) => number;
+type Callback<U> = (item: U) => string;
+
+interface NeedsMethod {
+    f(value: number): void;
+}
+
+declare let first: NeedsMethod;
+declare let fnSource: Fn<number>;
+first = fnSource;
+
+declare let second: NeedsMethod;
+declare let callbackSource: Callback<number>;
+second = callbackSource;
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    let ts2322_count = diagnostics
+        .iter()
+        .filter(|diag| diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .count();
+
+    assert_eq!(
+        ts2322_count, 2,
+        "Expected TS2322 for both callable application assignments. Diagnostics: {diagnostics:#?}"
+    );
+    assert_no_missing_property_diagnostics(&diagnostics);
+}
+
+#[test]
 fn callable_argument_missing_call_signature_member_has_no_missing_property_related() {
     let source = r#"
 interface T {

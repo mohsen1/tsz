@@ -106,6 +106,29 @@ pub(crate) fn contains_index_access_type(
     tsz_solver::type_queries::contains_index_access_type(db, type_id)
 }
 
+pub(crate) fn has_call_signatures_or_callable_application(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    has_call_signatures_or_callable_application_inner(db, type_id, 0)
+}
+
+fn has_call_signatures_or_callable_application_inner(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    type_id: TypeId,
+    depth: usize,
+) -> bool {
+    if depth > 4 {
+        return false;
+    }
+    if super::common::has_call_signatures(db, type_id) {
+        return true;
+    }
+    type_application(db, type_id).is_some_and(|app| {
+        has_call_signatures_or_callable_application_inner(db, app.base, depth + 1)
+    })
+}
+
 pub(crate) fn application_base_has_conditional_alias_body(
     db: &dyn tsz_solver::construction::TypeDatabase,
     def_store: &tsz_solver::def::DefinitionStore,
