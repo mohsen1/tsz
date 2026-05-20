@@ -65,6 +65,11 @@ fn is_less_than_or_equal(bytes: &[u8], idx: usize) -> bool {
 }
 
 #[inline]
+fn is_spaced_less_than(bytes: &[u8], idx: usize) -> bool {
+    idx > 0 && bytes[idx - 1].is_ascii_whitespace()
+}
+
+#[inline]
 fn is_greater_than_or_equal(bytes: &[u8], idx: usize) -> bool {
     idx > 0 && bytes[idx - 1] == b'='
 }
@@ -169,6 +174,22 @@ fn build_context(
     })
 }
 
+fn build_angle_context(
+    source: &str,
+    delimiter_offset: usize,
+    cursor: usize,
+) -> Option<IncompleteCallContext> {
+    if is_spaced_less_than(source.as_bytes(), delimiter_offset) {
+        return None;
+    }
+    build_context(
+        source,
+        delimiter_offset,
+        cursor,
+        CallDelimiter::AngleBracket,
+    )
+}
+
 /// Scan backward from `cursor` to find an unmatched `(` that looks like the
 /// start of an incomplete call expression.
 ///
@@ -205,8 +226,9 @@ pub fn find_incomplete_paren_call(source: &str, cursor: usize) -> Option<Incompl
 /// Scan backward from `cursor` to find an unmatched `<` that looks like the
 /// start of an incomplete generic type-argument list.
 ///
-/// `<=` and `>=` are not treated as angle brackets.  The scan stops at
-/// statement boundaries (`\n`, `\r`, `;`) when the angle depth is 0.
+/// `<=`, `>=`, and spaced less-than comparisons are not treated as angle
+/// brackets.  The scan stops at statement boundaries (`\n`, `\r`, `;`) when
+/// the angle depth is 0.
 ///
 /// Returns `None` when no trigger can be located.
 pub fn find_incomplete_angle_call(source: &str, cursor: usize) -> Option<IncompleteCallContext> {
@@ -224,7 +246,7 @@ pub fn find_incomplete_angle_call(source: &str, cursor: usize) -> Option<Incompl
             b'>' if !is_greater_than_or_equal(bytes, idx) => depth += 1,
             b'<' if !is_less_than_or_equal(bytes, idx) => {
                 if depth == 0 {
-                    return build_context(source, idx, cursor, CallDelimiter::AngleBracket);
+                    return build_angle_context(source, idx, cursor);
                 }
                 depth -= 1;
             }
@@ -264,7 +286,9 @@ pub fn count_top_level_commas(source: &str, start: usize, end: usize) -> u32 {
             b']' => bracket = bracket.saturating_sub(1),
             b'{' => brace += 1,
             b'}' => brace = brace.saturating_sub(1),
-            b'<' if !is_less_than_or_equal(bytes, i) => angle += 1,
+            b'<' if !is_less_than_or_equal(bytes, i) && !is_spaced_less_than(bytes, i) => {
+                angle += 1;
+            }
             b'>' if !is_greater_than_or_equal(bytes, i) => angle = angle.saturating_sub(1),
             b',' if paren == 0 && bracket == 0 && brace == 0 && angle == 0 => commas += 1,
             _ => {}
@@ -429,6 +453,18 @@ mod tests {
     }
 
     #[test]
+    fn angle_spaced_less_than_comparison_is_not_generic_trigger() {
+        let src = "foo < value";
+        assert!(find_incomplete_angle_call(src, src.len()).is_none());
+    }
+
+    #[test]
+    fn angle_nested_spaced_less_than_comparison_is_not_generic_trigger() {
+        let src = "outer(foo < value";
+        assert!(find_incomplete_angle_call(src, src.len()).is_none());
+    }
+
+    #[test]
     fn angle_less_than_generic_trigger_still_works() {
         let src = "foo<T";
         let ctx = find_incomplete_angle_call(src, src.len()).unwrap();
@@ -468,6 +504,12 @@ mod tests {
     #[test]
     fn commas_after_less_equal_comparison_are_top_level() {
         let src = "a <= b, c";
+        assert_eq!(count_top_level_commas(src, 0, src.len()), 1);
+    }
+
+    #[test]
+    fn commas_after_spaced_less_than_comparison_are_top_level() {
+        let src = "a < b, c";
         assert_eq!(count_top_level_commas(src, 0, src.len()), 1);
     }
 

@@ -1965,7 +1965,7 @@ fn build_abstract_constructor_with_index_sig(
     })
 }
 
-fn find_call_by_callee<'a>(
+fn find_call_by_callee(
     arena: &tsz_parser::parser::node::NodeArena,
     callee_name: &str,
 ) -> NodeIndex {
