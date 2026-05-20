@@ -2216,53 +2216,60 @@ const f: ((value: number) => void) & { tag: string } = (value) => { value; };
     }
 }
 
-/// Hybrid interface (callable + named property): parameter flows from call signature.
+// Hybrid interface (callable + optional named property): unannotated parameter must be
+// contextually typed from the call signature, not left as implicit any.
+// Optional extra property makes the plain lambda assignable to the hybrid interface.
 #[test]
 fn test_hybrid_interface_contextual_types_callback_parameter() {
     for source in [
         r#"
 interface Handler {
   (evt: string): void;
-  name: string;
+  name?: string;
 }
-const h: Handler = Object.assign((evt: string) => { evt.toLowerCase(); }, { name: "h" });
+declare function register(h: Handler): void;
+register((evt) => { evt.toLowerCase(); });
 "#,
         r#"
 interface Processor {
   (item: number): boolean;
-  version: number;
+  version?: number;
 }
-const p: Processor = Object.assign((item: number) => item > 0, { version: 1 });
+declare function process(p: Processor): void;
+process((item) => item > 0);
 "#,
     ] {
         let diagnostics = check_default(source);
         assert_eq!(
             diagnostic_count(&diagnostics, 7006),
             0,
-            "Hybrid interface parameter must not be implicitly any"
+            "Hybrid interface callable constituent must flow parameter type to unannotated lambda — \
+             TS7006 fires when contextual typing fails"
         );
     }
 }
 
-/// Generic `((arg: T) => void) & { label: string }`: parameter inherits `T`.
-/// Tested with two type-parameter names (`T`, `U`).
+// Generic `((arg: T) => void) & { label?: string }`: unannotated parameter must inherit T
+// from the explicit type argument. Optional extra property keeps the lambda assignable.
+// Two iteration-variable names prove the rule is not tied to a specific spelling.
 #[test]
 fn test_generic_function_object_intersection_types_callback_parameter() {
     for source in [
         r#"
-declare function wrap<T>(fn: ((arg: T) => void) & { label: string }): T;
-wrap<number>(Object.assign((arg: number) => { arg.toFixed(); }, { label: "n" }));
+declare function wrap<T>(fn: ((arg: T) => void) & { label?: string }): T;
+wrap<number>((arg) => { arg.toFixed(); });
 "#,
         r#"
-declare function wrap<U>(fn: ((item: U) => boolean) & { id: number }): U;
-wrap<string>(Object.assign((item: string) => item.length > 0, { id: 1 }));
+declare function wrap<U>(fn: ((item: U) => boolean) & { id?: number }): U;
+wrap<string>((item) => item.length > 0);
 "#,
     ] {
         let diagnostics = check_default(source);
         assert_eq!(
             diagnostic_count(&diagnostics, 7006),
             0,
-            "Generic intersection parameter must not be implicitly any"
+            "Generic intersection callable constituent must flow T to unannotated lambda parameter — \
+             TS7006 fires when contextual typing fails"
         );
     }
 }
