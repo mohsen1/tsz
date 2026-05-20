@@ -961,7 +961,6 @@ jobs:
             .ci-metrics/conformance-failures-*.txt
           include-hidden-files: true
           if-no-files-found: warn
-          include-hidden-files: true
           retention-days: 1
 
   conformance-aggregate:
