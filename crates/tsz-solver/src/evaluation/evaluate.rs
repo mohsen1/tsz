@@ -2948,8 +2948,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     for prefix in alternatives {
                         for spread in &spread_alternatives {
                             let mut next = Vec::with_capacity(prefix.len() + spread.len());
-                            next.extend(prefix.iter().copied());
-                            next.extend(spread.iter().copied());
+                            next.extend_from_slice(&prefix);
+                            next.extend_from_slice(spread);
                             distributed.push(next);
                         }
                     }
