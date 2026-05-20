@@ -767,7 +767,7 @@ prep_node_artifacts() {
   (
     cd scripts
     if [[ ! -x node_modules/.bin/tsc ]]; then
-      npm install --silent
+      npm install --silent --include=dev
     else
       echo "Using cached scripts/node_modules"
     fi
@@ -1965,7 +1965,7 @@ run_build() {
   ci_section "Seed scripts node_modules for parallel job cache"
   if [[ ! -x scripts/node_modules/.bin/tsc ]]; then
     if command -v npm >/dev/null 2>&1; then
-      (cd scripts && npm install --silent)
+      (cd scripts && npm install --silent --include=dev)
     else
       echo "warn: npm not found in build image; skipping scripts/node_modules seed (shards will reinstall on cache-miss)" >&2
     fi

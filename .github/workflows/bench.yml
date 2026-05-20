@@ -977,6 +977,12 @@ jobs:
               --region=us-central1 \
               --format='value(status)' 2>/dev/null || true
           }
+          capture_cloudbuild_log() {
+            gcloud builds log "${{ steps.cloudbuild-submit.outputs.build_id }}" \
+              --project=tsz-ci \
+              --region=us-central1 \
+              > "bench-cloudbuild-${{ matrix.label }}.log" 2>&1 || true
+          }
           download_shard_artifacts() {
             local prefix="gs://tsz-ci_cloudbuild/bench-shards/${BENCH_TARGET_SHA}/${{ matrix.label }}"
             storage_cp "${prefix}/bench-status-${{ matrix.label }}.env" "bench-status-${{ matrix.label }}.env" || return 1
@@ -991,6 +997,7 @@ jobs:
             if [[ "$status" == "SUCCESS" ]]; then
               if ! download_shard_artifacts; then
                 echo "Cloud Build shard succeeded but did not publish a status artifact for ${{ matrix.label }}."
+                capture_cloudbuild_log
                 exit 1
               fi
               # shellcheck disable=SC1091
@@ -1007,6 +1014,7 @@ jobs:
               FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
                 echo "Cloud Build benchmark shard ${{ steps.cloudbuild-submit.outputs.build_id }} ended with status ${status}."
                 download_shard_artifacts || true
+                capture_cloudbuild_log
                 exit 1
                 ;;
             esac
@@ -1014,6 +1022,7 @@ jobs:
             if (( SECONDS >= deadline )); then
               echo "No finished Cloud Build benchmark shard artifact is available for ${{ matrix.label }} after ${{ matrix.timeout }} minutes."
               [[ -z "$status" ]] || echo "Last Cloud Build benchmark shard status: ${status} (${{ steps.cloudbuild-submit.outputs.build_id }})."
+              capture_cloudbuild_log
               exit 1
             fi
 
@@ -1030,6 +1039,7 @@ jobs:
             bench-results-${{ matrix.label }}.json
             bench-run-${{ matrix.label }}.log
             bench-postmortem-${{ matrix.label }}.log
+            bench-cloudbuild-${{ matrix.label }}.log
           retention-days: 7
           if-no-files-found: warn
           compression-level: 1
