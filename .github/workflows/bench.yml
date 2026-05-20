@@ -297,23 +297,34 @@ jobs:
             timeout 45s gcloud storage cp "$1" "$2" >/dev/null 2>&1
           }
 
+          manifest_value() {
+            local file="$1"
+            local key="$2"
+            grep -E "^${key}=" "${file}" | tail -n1 | cut -d= -f2-
+          }
+
+          target_sha="${{ env.BENCH_TARGET_SHA }}"
           deadline=$((SECONDS + wait_seconds))
           while true; do
             rm -f latest-bench-prep.env bench-prep.env bench-prep.tar
             if storage_cp \
               "gs://tsz-ci_cloudbuild/bench-prep/latest/bench-prep.env" \
               latest-bench-prep.env; then
-              # shellcheck disable=SC1091
-              source latest-bench-prep.env
-              latest_target_sha="${BENCH_TARGET_SHA:-}"
-              latest_build_date="${BENCH_BUILD_DATE:-}"
+              latest_target_sha="$(manifest_value latest-bench-prep.env BENCH_TARGET_SHA)"
+              latest_build_date="$(manifest_value latest-bench-prep.env BENCH_BUILD_DATE)"
+              latest_pgo_optimized="$(manifest_value latest-bench-prep.env BENCH_PGO_OPTIMIZED)"
               if [[ -z "${latest_target_sha}" ]]; then
                 echo "Cloud Build manifest did not include BENCH_TARGET_SHA."
                 exit 1
               fi
+              if [[ "${latest_pgo_optimized}" != "1" ]]; then
+                echo "Cloud Build latest manifest is not marked PGO optimized."
+                exit 1
+              fi
+
               if [[ "${{ github.event_name }}" == "workflow_dispatch" &&
-                    "${latest_target_sha}" != "${{ env.BENCH_TARGET_SHA }}" ]]; then
-                echo "Cloud Build artifact is for ${latest_target_sha}; waiting for ${{ env.BENCH_TARGET_SHA }}."
+                    "${latest_target_sha}" != "${target_sha}" ]]; then
+                echo "Cloud Build artifact is for ${latest_target_sha}; waiting for ${target_sha}."
               elif [[ "${{ github.event_name }}" == "schedule" &&
                       "${latest_build_date}" != "$(date -u +%F)" ]]; then
                 echo "Cloud Build artifact is from ${latest_build_date:-unknown}; waiting for today's build."
@@ -323,14 +334,19 @@ jobs:
                 storage_cp \
                   "gs://tsz-ci_cloudbuild/bench-prep/${latest_target_sha}/bench-prep.tar" \
                   bench-prep.tar; then
-                # shellcheck disable=SC1091
-                source bench-prep.env
-                if [[ "${BENCH_TARGET_SHA:-}" != "${latest_target_sha}" ]]; then
-                  echo "SHA-scoped Cloud Build manifest is for ${BENCH_TARGET_SHA:-unknown}; expected ${latest_target_sha}."
+                scoped_target_sha="$(manifest_value bench-prep.env BENCH_TARGET_SHA)"
+                scoped_build_date="$(manifest_value bench-prep.env BENCH_BUILD_DATE)"
+                scoped_pgo_optimized="$(manifest_value bench-prep.env BENCH_PGO_OPTIMIZED)"
+                if [[ "${scoped_target_sha}" != "${latest_target_sha}" ]]; then
+                  echo "SHA-scoped Cloud Build manifest is for ${scoped_target_sha:-unknown}; expected ${latest_target_sha}."
                   exit 1
                 fi
-                if [[ "${BENCH_BUILD_DATE:-}" != "${latest_build_date}" ]]; then
-                  echo "SHA-scoped Cloud Build manifest date ${BENCH_BUILD_DATE:-unknown} did not match latest date ${latest_build_date:-unknown}."
+                if [[ "${scoped_build_date}" != "${latest_build_date}" ]]; then
+                  echo "SHA-scoped Cloud Build manifest date ${scoped_build_date:-unknown} did not match latest date ${latest_build_date:-unknown}."
+                  exit 1
+                fi
+                if [[ "${scoped_pgo_optimized}" != "1" ]]; then
+                  echo "SHA-scoped Cloud Build manifest is not marked PGO optimized."
                   exit 1
                 fi
                 tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
