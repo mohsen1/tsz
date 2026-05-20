@@ -1,8 +1,5 @@
-use tsz_solver::types::TypeData;
-use tsz_solver::{TypeId, contains_type_matching};
+use tsz_solver::TypeId;
 use tsz_solver::construction::TypeDatabase;
-
-use crate::query_boundaries::common as common_query;
 
 /// True when some `TypeApplication` reachable from `type_id` (or from its
 /// preserved display alias) has `TypeId::UNKNOWN` as a direct type argument.
@@ -10,21 +7,7 @@ pub(crate) fn type_application_args_contain_unknown(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> bool {
-    let direct_hit = |id: TypeId| {
-        contains_type_matching(db, id, |key| match key {
-            TypeData::Application(app_id) => {
-                db.type_application(*app_id).args.contains(&TypeId::UNKNOWN)
-            }
-            _ => false,
-        })
-    };
-    // The rendered form follows the display alias when set (e.g. an evaluated
-    // tuple shape may render via its original `Application(...)` alias), so
-    // the structural check must follow the alias too.
-    direct_hit(type_id)
-        || db
-            .get_display_alias(type_id)
-            .is_some_and(|alias| alias != type_id && direct_hit(alias))
+    tsz_solver::type_queries::type_application_args_contain_unknown(db, type_id)
 }
 
 /// True when any sub-type of `type_id` is either `Array<never>` (rendered as
@@ -34,21 +17,12 @@ pub(crate) fn type_contains_never_array_or_index_into_never(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> bool {
-    // The body routes through the `array_element_type` and
-    // `index_access_types` query-boundary helpers; the workspace architecture
-    // guard reserves the direct array `TypeData` variant for the solver.
-    tsz_solver::collect_referenced_types(db, type_id)
-        .iter()
-        .any(|&id| {
-            common_query::array_element_type(db, id) == Some(TypeId::NEVER)
-                || common_query::index_access_types(db, id)
-                    .is_some_and(|(object, _)| object == TypeId::NEVER)
-        })
+    tsz_solver::type_queries::type_contains_never_array_or_index_into_never(db, type_id)
 }
 
 /// True when any sub-type of `type_id` is a `KeyOf(_)` type.
 pub(crate) fn type_contains_keyof_anywhere(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    contains_type_matching(db, type_id, |key| matches!(key, TypeData::KeyOf(_)))
+    tsz_solver::type_queries::type_contains_keyof_anywhere(db, type_id)
 }
 
 pub(crate) fn is_top_level_error_or_error_union_member(
@@ -293,16 +267,13 @@ mod tests {
         let db = TypeInterner::new();
         let never_arr = db.array(TypeId::NEVER);
         let shape = tsz_solver::ObjectShape {
-            flags: tsz_solver::ObjectFlags::default(),
-            properties: Vec::new(),
             string_index: Some(tsz_solver::IndexSignature {
                 key_type: TypeId::STRING,
                 value_type: never_arr,
                 readonly: false,
                 param_name: None,
             }),
-            number_index: None,
-            symbol: None,
+            ..Default::default()
         };
         let obj = db.object_with_index(shape);
         assert!(type_contains_never_array_or_index_into_never(&db, obj));

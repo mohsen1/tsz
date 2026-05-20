@@ -69,6 +69,45 @@ pub fn contains_named_or_bound_type_parameters_db(db: &dyn TypeDatabase, type_id
     })
 }
 
+/// True when some `TypeApplication` reachable from `type_id` (or from its
+/// preserved display alias) has `TypeId::UNKNOWN` as a direct type argument.
+pub fn type_application_args_contain_unknown(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    let direct_hit = |id: TypeId| {
+        contains_type_matching(db, id, |key| match key {
+            TypeData::Application(app_id) => {
+                db.type_application(*app_id).args.contains(&TypeId::UNKNOWN)
+            }
+            _ => false,
+        })
+    };
+
+    direct_hit(type_id)
+        || db
+            .get_display_alias(type_id)
+            .is_some_and(|alias| alias != type_id && direct_hit(alias))
+}
+
+/// True when any sub-type of `type_id` is either `Array<never>` (rendered as
+/// `never[]`) or an indexed access whose object type is `never` (rendered as
+/// `never[...]`).
+pub fn type_contains_never_array_or_index_into_never(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    crate::collect_referenced_types(db, type_id)
+        .iter()
+        .any(|&id| {
+            crate::array_element_type(db, id) == Some(TypeId::NEVER)
+                || crate::index_access_parts(db, id)
+                    .is_some_and(|(object, _)| object == TypeId::NEVER)
+        })
+}
+
+/// True when any sub-type of `type_id` is a `KeyOf(_)` type.
+pub fn type_contains_keyof_anywhere(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    contains_type_matching(db, type_id, |key| matches!(key, TypeData::KeyOf(_)))
+}
+
 /// Like `contains_type_parameters_db`, but ignores references to a known
 /// locally-bound mapped key parameter. See
 /// [`contains_free_type_parameters_except_name`] for the leaf-treatment
