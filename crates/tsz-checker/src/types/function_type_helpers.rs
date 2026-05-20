@@ -542,6 +542,11 @@ impl<'a> CheckerState<'a> {
             // (e.g., `type MyPromise<T> = Promise<T>` with `declare var MyPromise: typeof Promise`).
             // The merged symbol prevents is_global_promise_type from recognizing it.
             false
+        } else if self.return_type_annotation_is_exactly_promise(type_annotation) {
+            // The declared annotation resolves to the lib Promise symbol. Some
+            // evaluated Promise<T> forms lose the lazy base identity and arrive
+            // as an Application over an object shape; tsc still accepts them.
+            false
         } else if self.is_non_promise_application_type(return_type) {
             // Return type is an Application with a non-Promise base (e.g., MyPromise<T>).
             // TSC requires exactly Promise<T>, not subclasses.

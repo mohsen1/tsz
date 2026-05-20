@@ -348,9 +348,9 @@ impl<'a> CheckerContext<'a> {
 
     /// `SymbolId` of the standard-library `Promise` declaration, if loaded.
     ///
-    /// Looks only at actual lib contexts or merged/cloned lib symbols. Compare
-    /// the returned id with a `SymbolId` directly to decide whether a symbol IS
-    /// the lib `Promise` — do not re-match on the symbol's name string.
+    /// Looks only at actual lib contexts. Cloned lib symbols are handled by
+    /// `sym_id_is_lib_promise`, which combines provenance with the well-known
+    /// global name.
     pub fn lib_promise_sym_id(&self) -> Option<SymbolId> {
         self.actual_lib_global_type_symbol_id("Promise")
     }
@@ -358,10 +358,18 @@ impl<'a> CheckerContext<'a> {
     /// True when `sym_id` is the standard-library `Promise` symbol.
     pub fn sym_id_is_lib_promise(&self, sym_id: SymbolId) -> bool {
         self.lib_promise_sym_id() == Some(sym_id)
+            || self.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                symbol.escaped_name.as_str() == "Promise"
+                    && self.symbol_is_from_actual_or_cloned_lib(sym_id)
+            })
     }
 
     fn sym_id_is_lib_promise_like(&self, sym_id: SymbolId) -> bool {
         self.actual_lib_global_type_symbol_id("PromiseLike") == Some(sym_id)
+            || self.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                symbol.escaped_name.as_str() == "PromiseLike"
+                    && self.symbol_is_from_actual_or_cloned_lib(sym_id)
+            })
     }
 
     /// True when `sym_id` is the standard-library `Promise` or `PromiseLike` symbol.
