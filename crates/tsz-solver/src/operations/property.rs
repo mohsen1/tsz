@@ -144,6 +144,37 @@ impl PropertyAccessResult {
             _ => None,
         }
     }
+
+    /// Returns true when this result is a candidate for a constraint-evaluation
+    /// retry: either the property was not found, or the resolved type is a bare
+    /// `ANY` from a direct (non-index-signature) lookup.
+    #[inline]
+    pub const fn is_degenerate(&self) -> bool {
+        matches!(
+            self,
+            Self::PropertyNotFound { .. }
+                | Self::Success {
+                    type_id: TypeId::ANY,
+                    from_index_signature: false,
+                    ..
+                }
+        )
+    }
+
+    /// Returns true when this result is meaningfully better than a bare-`ANY`
+    /// fallback — i.e., the constraint-evaluation retry should be accepted.
+    #[inline]
+    pub fn is_improved_over_any(&self) -> bool {
+        match self {
+            Self::Success {
+                type_id,
+                from_index_signature,
+                ..
+            } => *type_id != TypeId::ANY || *from_index_signature,
+            Self::PropertyNotFound { .. } => false,
+            _ => true,
+        }
+    }
 }
 
 /// Evaluates property access.
@@ -727,26 +758,32 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     self.skip_this_binding.set(true);
                     let mut result =
                         self.resolve_property_access_inner(constraint, prop_name, Some(prop_atom));
-                    if matches!(
-                        result,
-                        PropertyAccessResult::Success {
-                            type_id: TypeId::ANY,
-                            from_index_signature: false,
-                            ..
-                        }
-                    ) {
+
+                    // Degenerate result (PropertyNotFound or bare ANY): evaluate the
+                    // constraint fully and retry. Handles Application/alias constraints
+                    // that must be expanded before property lookup works. For cross-file
+                    // `Lazy(DefId)` constraints the noop resolver leaves the constraint
+                    // unchanged, so the checker's env-aware retry path takes over.
+                    if result.is_degenerate() {
                         let evaluated = self.db.evaluate_type_with_options(
                             constraint,
                             self.no_unchecked_indexed_access,
                         );
-                        if evaluated != constraint {
-                            result = self.resolve_property_access_inner(
+                        if evaluated != constraint
+                            && evaluated != TypeId::ANY
+                            && evaluated != TypeId::ERROR
+                        {
+                            let retry = self.resolve_property_access_inner(
                                 evaluated,
                                 prop_name,
                                 Some(prop_atom),
                             );
+                            if retry.is_improved_over_any() {
+                                result = retry;
+                            }
                         }
                     }
+
                     self.skip_this_binding.set(prev);
                     result
                 } else {
