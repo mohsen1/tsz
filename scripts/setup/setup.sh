@@ -28,10 +28,24 @@ skip()  { echo "  $(dim "$1")"; }
 # ── Flags ────────────────────────────────────────────────────────────────────
 QUICK=false
 FORCE=false
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  scripts/setup/setup.sh          # full setup
+  scripts/setup/setup.sh --quick  # skip cargo check at the end
+  scripts/setup/setup.sh --force  # redo every step even if already done
+
+Runs the standard local setup flow after a fresh clone.
+USAGE
+}
+
 for arg in "$@"; do
   case "$arg" in
     --quick) QUICK=true ;;
     --force) FORCE=true ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown option: $arg (try --help)" >&2; exit 1 ;;
   esac
 done
 

@@ -29,8 +29,8 @@ impl<'a> TypeLowering<'a> {
                 self.add_type_param_binding(name, type_id);
             }
             let true_type = self.lower_type(data.true_type);
-            let false_type = self.lower_type(data.false_type);
             self.pop_type_param_scope();
+            let false_type = self.lower_type(data.false_type);
 
             let cond = ConditionalType {
                 check_type,
