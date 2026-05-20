@@ -879,7 +879,7 @@ impl<'a> CheckerState<'a> {
                         // to the full outer intersection so nested literals are checked
                         // against all members, not just the recursive member alone.
                         let nested_target =
-                            tsz_solver::utils::widen_if_recursive_intersection_member(
+                            crate::query_boundaries::common::widen_recursive_intersection_member(
                                 self.ctx.types,
                                 nested_target,
                                 resolved_target,
