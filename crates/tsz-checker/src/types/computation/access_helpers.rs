@@ -435,6 +435,44 @@ impl<'a> CheckerState<'a> {
         crate::query_boundaries::common::mapped_type_id(self.ctx.types, resolved).is_some()
     }
 
+    /// Choose the best receiver `TypeId` for a write-position indexed-access
+    /// diagnostic, matching tsc's displayed form.
+    ///
+    /// - `raw_object_type` is the pre-evaluation form (may be an application
+    ///   like `Errors<T>`); used as-is when available so the alias name is
+    ///   preserved in the message.
+    /// - `object_type` is the evaluated form; used as the fallback to strip
+    ///   transparent empty-object members from intersections like `A & {}`.
+    pub(crate) fn display_receiver_for_generic_indexed_write(
+        &self,
+        object_type: TypeId,
+        raw_object_type: TypeId,
+    ) -> TypeId {
+        // When the caller already has the Application form (e.g. `Errors<T>`),
+        // use it directly — the evaluated form would be the expanded structural
+        // intersection, which produces a noisier diagnostic.
+        if crate::query_boundaries::common::is_generic_application(self.ctx.types, raw_object_type)
+        {
+            return raw_object_type;
+        }
+
+        let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, object_type)
+        else {
+            return object_type;
+        };
+
+        // Strip transparent `{}` members; return the sole meaningful member or
+        // the full intersection when two or more meaningful members are present.
+        let mut it = members
+            .into_iter()
+            .filter(|&m| !crate::query_boundaries::common::is_empty_object_type(self.ctx.types, m));
+        match (it.next(), it.next()) {
+            (Some(single), None) => single,
+            _ => object_type,
+        }
+    }
+
     /// Decide whether a write-context element access on a *concrete* receiver
     /// should keep the deferred `IndexAccess(receiver, index)` form instead
     /// of resolving through the receiver's index signature.
