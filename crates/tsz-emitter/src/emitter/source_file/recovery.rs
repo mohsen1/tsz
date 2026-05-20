@@ -184,6 +184,14 @@ impl<'a> Printer<'a> {
         .find(|operator| previous_text.ends_with(operator))?;
 
         let mut start = previous_end.checked_sub(operator.len())?;
+
+        if (operator == "+" || operator == "-")
+            && start > previous_start
+            && bytes.get(start - 1) == operator.as_bytes().first()
+        {
+            return None;
+        }
+
         while start > previous_start && matches!(bytes[start - 1], b' ' | b'\t') {
             start -= 1;
         }
