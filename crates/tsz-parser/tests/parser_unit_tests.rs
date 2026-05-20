@@ -2,6 +2,7 @@
 //! type syntax, declarations, class syntax, statements, and error recovery.
 
 use crate::parser::node::NodeArena;
+use crate::parser::node_flags;
 use crate::parser::node_view::NodeAccess;
 use crate::parser::syntax_kind_ext;
 use crate::parser::test_fixture::{parse_source, parse_source_named};
@@ -442,6 +443,58 @@ fn precedence_satisfies_expression() {
         syntax_kind_ext::SATISFIES_EXPRESSION,
         "should be satisfies expression"
     );
+}
+
+#[test]
+fn precedence_as_const_after_satisfies_wraps_satisfies_expression() {
+    for source in [
+        "const x = { a: 1 } satisfies Record<string, number> as const;",
+        "const x = value satisfies Foo | Bar as const;",
+        "const x = ((value) satisfies Alias) as const;",
+    ] {
+        let (parser, root) = parse_source(source);
+        assert_no_errors(&parser, source);
+
+        let arena = parser.get_arena();
+        let init = get_var_initializer(arena, root);
+        let outer = arena.get(init).expect("initializer");
+        assert_eq!(
+            outer.kind,
+            syntax_kind_ext::AS_EXPRESSION,
+            "`as const` should wrap the satisfies expression for {source}"
+        );
+
+        let outer_assertion = arena
+            .get_type_assertion(outer)
+            .expect("outer as expression data");
+        let outer_type = arena
+            .get(outer_assertion.type_node)
+            .expect("outer as expression type");
+        assert_eq!(
+            outer_type.kind,
+            SyntaxKind::ConstKeyword as u16,
+            "`as const` should keep `const` as the outer assertion type for {source}"
+        );
+
+        let mut inner_idx = outer_assertion.expression;
+        loop {
+            let inner = arena.get(inner_idx).expect("inner expression");
+            if inner.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                break;
+            }
+            inner_idx = arena
+                .get_parenthesized(inner)
+                .expect("parenthesized expression data")
+                .expression;
+        }
+
+        let inner = arena.get(inner_idx).expect("unwrapped inner expression");
+        assert_eq!(
+            inner.kind,
+            syntax_kind_ext::SATISFIES_EXPRESSION,
+            "outer `as const` should contain a satisfies expression for {source}"
+        );
+    }
 }
 
 #[test]
@@ -2506,6 +2559,45 @@ fn expr_tagged_template() {
 }
 
 #[test]
+fn expr_tagged_template_with_type_arguments() {
+    for (source, context) in [
+        (
+            "const value = tag<number>`hello`;",
+            "no-substitution tagged template type arguments",
+        ),
+        (
+            "const value = tag<number>`hello ${name}`;",
+            "substituted tagged template type arguments",
+        ),
+    ] {
+        let (parser, root) = parse_source(source);
+        assert_no_errors(&parser, context);
+
+        let arena = parser.get_arena();
+        let init = get_var_initializer(arena, root);
+        let node = arena.get(init).expect("initializer");
+        assert_eq!(
+            node.kind,
+            syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION,
+            "{context}: should parse as a tagged template expression"
+        );
+
+        let tagged = arena
+            .get_tagged_template(node)
+            .expect("tagged template data");
+        let type_arguments = tagged
+            .type_arguments
+            .as_ref()
+            .expect("tagged template should retain type arguments");
+        assert_eq!(
+            type_arguments.nodes.len(),
+            1,
+            "{context}: expected exactly one type argument"
+        );
+    }
+}
+
+#[test]
 fn expr_spread_element() {
     // `[1, ...arr, 2]`
     let (parser, root) = parse_source("const x = [1, ...arr, 2];");
@@ -3487,6 +3579,49 @@ fn decl_await_using() {
     // `await using x = getResource();`
     let (parser, _root) = parse_source("async function f() { await using x = getResource(); }");
     assert_no_errors(&parser, "await using declaration");
+}
+
+#[test]
+fn decl_using_and_await_using_in_blocks_are_variable_statements() {
+    for (source, expected_flags, context) in [
+        (
+            "function f() { using x = getResource(); }",
+            node_flags::USING,
+            "using declaration in function block",
+        ),
+        (
+            "async function f() { await using x = getResource(); }",
+            node_flags::AWAIT_USING,
+            "await using declaration in async function block",
+        ),
+    ] {
+        let (parser, root) = parse_source(source);
+        assert_no_errors(&parser, context);
+
+        let arena = parser.get_arena();
+        let function_node = arena
+            .get(get_first_statement(arena, root))
+            .expect("function declaration");
+        let function = arena.get_function(function_node).expect("function data");
+        let body_node = arena.get(function.body).expect("function body");
+        let body = arena.get_block(body_node).expect("block data");
+        let stmt = arena.get(body.statements.nodes[0]).expect("body statement");
+
+        assert_eq!(
+            stmt.kind,
+            syntax_kind_ext::VARIABLE_STATEMENT,
+            "{context} should parse as a variable statement"
+        );
+        let variable = arena.get_variable(stmt).expect("variable statement data");
+        let declaration_list = arena
+            .get(variable.declarations.nodes[0])
+            .expect("declaration list");
+        assert_eq!(
+            declaration_list.flags as u32 & node_flags::AWAIT_USING,
+            expected_flags,
+            "{context} should preserve declaration flags"
+        );
+    }
 }
 
 // =============================================================================

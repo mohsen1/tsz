@@ -108,9 +108,11 @@ impl<'a> ClassES5Emitter<'a> {
 
     pub const fn set_tslib_prefix(&mut self, enable: bool) {
         self.tslib_prefix = enable;
+        self.transformer.set_tslib_prefix(enable);
     }
 
     pub fn set_tslib_import_binding(&mut self, binding: String) {
+        self.transformer.set_tslib_import_binding(binding.clone());
         self.tslib_import_binding = binding;
     }
 

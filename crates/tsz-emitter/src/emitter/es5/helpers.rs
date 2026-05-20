@@ -1431,6 +1431,7 @@ impl<'a> Printer<'a> {
                             return;
                         }
                         if !needs_param_prologue
+                            && !self.has_pending_new_target_capture()
                             && block.statements.nodes.len() == 1
                             && self.is_simple_return_statement(block.statements.nodes[0])
                             && self.is_single_line(block_node)
@@ -1586,7 +1587,11 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(in crate::emitter) fn emit_function_expression_es5_params(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_function_expression_es5_params(
+        &mut self,
+        node: &Node,
+        idx: NodeIndex,
+    ) {
         let Some(func) = self.arena.get_function(node) else {
             return;
         };
@@ -1604,10 +1609,14 @@ impl<'a> Printer<'a> {
             self.write("*");
         }
 
+        let needs_new_target_capture = self.function_body_contains_new_target(func);
+        let function_name =
+            self.function_expression_emit_name(idx, func.name, needs_new_target_capture);
+
         // Name (if any)
-        if func.name.is_some() {
+        if let Some(name) = function_name.as_deref() {
             self.write_space();
-            self.emit(func.name);
+            self.write(name);
         } else {
             // Space before ( only for anonymous functions: function (x) vs function name(x)
             self.write(" ");
@@ -1635,12 +1644,20 @@ impl<'a> Printer<'a> {
         let prev_emitting_function_body_block = self.emitting_function_body_block;
         self.emitting_function_body_block = true;
         self.prepare_logical_assignment_value_temps(func.body);
+        let previous_new_target_capture = needs_new_target_capture.then(|| {
+            self.push_new_target_capture_for_initializer(
+                self.ordinary_function_new_target_initializer(function_name.as_deref()),
+            )
+        });
         if param_transforms.has_transforms() {
             self.emit_block_with_param_prologue(func.body, &param_transforms);
-        } else if is_simple_body {
+        } else if is_simple_body && !needs_new_target_capture {
             self.emit_single_line_block(func.body);
         } else {
             self.emit(func.body);
+        }
+        if let Some(previous) = previous_new_target_capture {
+            self.restore_new_target_capture(previous);
         }
         self.emitting_function_body_block = prev_emitting_function_body_block;
         self.pop_temp_scope();
@@ -1664,6 +1681,13 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        let needs_new_target_capture = self.function_body_contains_new_target(func);
+        let function_name = if func.name.is_some() {
+            Some(self.get_identifier_text_idx(func.name))
+        } else {
+            needs_new_target_capture.then_some("_a".to_string())
+        };
+
         self.write("function");
 
         if func.asterisk_token {
@@ -1671,9 +1695,9 @@ impl<'a> Printer<'a> {
         }
 
         // Name
-        if func.name.is_some() {
+        if let Some(name) = function_name.as_deref() {
             self.write_space();
-            self.emit(func.name);
+            self.write(name);
         }
 
         // Parameters - only emit names, not types for JavaScript
@@ -1687,10 +1711,18 @@ impl<'a> Printer<'a> {
         let prev_emitting_function_body_block = self.emitting_function_body_block;
         self.emitting_function_body_block = true;
         self.prepare_logical_assignment_value_temps(func.body);
+        let previous_new_target_capture = needs_new_target_capture.then(|| {
+            self.push_new_target_capture_for_initializer(
+                self.ordinary_function_new_target_initializer(function_name.as_deref()),
+            )
+        });
         if param_transforms.has_transforms() {
             self.emit_block_with_param_prologue(func.body, &param_transforms);
         } else {
             self.emit(func.body);
+        }
+        if let Some(previous) = previous_new_target_capture {
+            self.restore_new_target_capture(previous);
         }
         self.emitting_function_body_block = prev_emitting_function_body_block;
         self.pop_temp_scope();

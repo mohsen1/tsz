@@ -2,6 +2,7 @@
 use crate::parser::test_fixture::parse_source;
 use crate::parser::{NodeIndex, ParserState};
 use crate::syntax::transform_utils::contains_arguments_reference;
+use crate::syntax::transform_utils::contains_new_target_reference;
 use crate::syntax::transform_utils::contains_this_reference;
 
 fn class_member_initializer(source: &str, member_index: usize) -> (ParserState, NodeIndex) {
@@ -66,6 +67,41 @@ fn contains_arguments_reference_ignores_missing_reference() {
     let body = func.body;
 
     assert!(!contains_arguments_reference(parser.get_arena(), body));
+}
+
+#[test]
+fn contains_new_target_reference_detects_current_function_body() {
+    let (parser, root) = parse_source("function f() { return new.target; }");
+    let sf = parser.get_arena().get_source_file_at(root).unwrap();
+    let statement = sf.statements.nodes[0];
+    let statement_node = parser.get_arena().get(statement).unwrap();
+    let func = parser.get_arena().get_function(statement_node).unwrap();
+
+    assert!(contains_new_target_reference(parser.get_arena(), func.body));
+}
+
+#[test]
+fn contains_new_target_reference_follows_arrows_but_not_nested_regular_functions() {
+    let (parser, root) = parse_source(
+        "function f() { const g = () => new.target; function h() { return new.target; } }",
+    );
+    let sf = parser.get_arena().get_source_file_at(root).unwrap();
+    let statement = sf.statements.nodes[0];
+    let statement_node = parser.get_arena().get(statement).unwrap();
+    let func = parser.get_arena().get_function(statement_node).unwrap();
+
+    assert!(contains_new_target_reference(parser.get_arena(), func.body));
+
+    let (parser, root) = parse_source("function f() { function h() { return new.target; } }");
+    let sf = parser.get_arena().get_source_file_at(root).unwrap();
+    let statement = sf.statements.nodes[0];
+    let statement_node = parser.get_arena().get(statement).unwrap();
+    let func = parser.get_arena().get_function(statement_node).unwrap();
+
+    assert!(!contains_new_target_reference(
+        parser.get_arena(),
+        func.body
+    ));
 }
 
 #[test]

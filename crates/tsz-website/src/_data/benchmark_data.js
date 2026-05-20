@@ -5,6 +5,7 @@ import { marked } from "marked";
 import {
   COMPILE_CANARY_PROJECT_ROWS,
   COMPATIBILITY_CORPUS_ROWS,
+  PROJECT_ROWS_BY_NAME,
   REQUIRED_PROJECT_ROWS,
 } from "../../../../scripts/bench/project-rows.mjs";
 import { fmt } from "./loc.js";
@@ -23,10 +24,43 @@ function formatMemory(bytes) {
   return `${(value / (1024 ** 3)).toFixed(1)} GiB RAM`;
 }
 
+function measurementProfileSummary(data) {
+  const profile = data?.measurement_profile;
+  if (!profile || typeof profile !== "object") return null;
+
+  const mode = String(profile.mode || "").trim();
+  if (!mode) return null;
+
+  const pgo = profile.profile_guided_optimization || {};
+  if (mode === "release-pgo" && pgo.optimized) {
+    const parts = ["tsz release-pgo"];
+    if (Number.isFinite(Number(pgo.training_input_count))) {
+      parts.push(`${Number(pgo.training_input_count)} PGO training inputs`);
+    }
+    if (pgo.profile_fingerprint) {
+      parts.push(`profile ${String(pgo.profile_fingerprint).slice(0, 12)}`);
+    }
+    if (pgo.profile_data_source === "cache") {
+      parts.push("cached profile data");
+    }
+    if (pgo.training_metadata_available === false) {
+      parts.push("training metadata unavailable");
+    }
+    return parts.join(", ");
+  }
+
+  if (mode === "release-untrained") return "tsz release build without PGO";
+  if (mode === "quick-untrained") return "quick-mode tsz build without PGO";
+  if (mode === "tsz-override") return "caller-provided tsz binary";
+  return `tsz ${mode}`;
+}
+
 function runnerEnvironmentSummary(data) {
   const parts = [];
   const generatedAt = formatUtcTimestamp(data?.generated_at);
   if (generatedAt) parts.push(`Generated ${generatedAt}`);
+  const measurement = measurementProfileSummary(data);
+  if (measurement) parts.push(measurement);
 
   const env = data?.runner_environment;
   if (!env || typeof env !== "object") {
@@ -104,6 +138,25 @@ function hasTiming(value) {
   return Number.isFinite(time) && time > 0;
 }
 
+function isProjectBenchmark(row) {
+  return Boolean(row?.name && PROJECT_ROWS_BY_NAME[row.name]);
+}
+
+function hasGreenProjectCompatibility(row) {
+  if (!isProjectBenchmark(row)) return true;
+
+  const compatibility = row?.compatibility;
+  if (!compatibility || typeof compatibility !== "object") return false;
+
+  const state = String(compatibility.state || "").toLowerCase();
+  const exitClass = String(compatibility.exit_class || "").toLowerCase();
+  const diagnosticStatus = String(compatibility.diagnostic_status || "").toLowerCase();
+  return state === "green"
+    && exitClass === "exit success"
+    && (!diagnosticStatus || diagnosticStatus === "none")
+    && hasCompleteCompatibilityMetadata(compatibility);
+}
+
 function fastestTiming(row) {
   const timings = [row?.tsz_ms, row?.tsgo_ms].map(Number).filter((time) => Number.isFinite(time) && time > 0);
   return timings.length ? Math.min(...timings) : Infinity;
@@ -131,7 +184,11 @@ function compareByTszSpeedup(a, b) {
 }
 
 function hasSuccessfulTiming(row) {
-  return !row?.status && row?.winner !== "error" && hasTiming(row?.tsz_ms) && hasTiming(row?.tsgo_ms);
+  return !row?.status
+    && row?.winner !== "error"
+    && hasTiming(row?.tsz_ms)
+    && hasTiming(row?.tsgo_ms)
+    && hasGreenProjectCompatibility(row);
 }
 
 function isFailedBenchmark(row) {
@@ -249,6 +306,7 @@ function normalizedKnownBlockers(compatibility, diagnosticSubsystems, fallbackBl
   if (exitClass === "fixture invalid") add("reference fixture invalid");
   if (exitClass === "runner error") add("benchmark runner error");
   if (exitClass === "tsz unavailable") add("tsz unavailable in benchmark runner");
+  if (exitClass === "oracle unavailable") add("tsc oracle unavailable");
   if (phase && phase !== "check") add(`${phase} phase blocker`);
 
   for (const group of diagnosticSubsystems) {
@@ -338,6 +396,16 @@ function missingCompatibilityMetadata(row, artifact) {
     missing.push("fixture sources missing/malformed/unpinned");
   }
   return missing;
+}
+
+function hasCompleteCompatibilityMetadata(compatibility) {
+  if (!compatibility || typeof compatibility !== "object") return false;
+  return COMPATIBILITY_METADATA_FIELDS.every(([field]) => (
+    Object.prototype.hasOwnProperty.call(compatibility, field)
+  )) && (
+    !Object.prototype.hasOwnProperty.call(compatibility, "fixture_sources") ||
+    hasCompleteFixtureSources(compatibility)
+  );
 }
 
 function hasCompleteFixtureSources(compatibility) {
@@ -504,6 +572,30 @@ function withExpectedProjectRows(results) {
 function compatibilityState(row) {
   const compatibility = row?.compatibility || {};
   const diagnosticStatus = String(compatibility.diagnostic_status || "").toLowerCase();
+  const recordedState = String(compatibility.state || "").toLowerCase();
+  if (recordedState === "gray") {
+    return {
+      className: "gray",
+      stateLabel: "Gray",
+      exitClass: firstPresent(compatibility.exit_class, "missing or incomplete artifact"),
+      phase: firstPresent(compatibility.phase, "artifact"),
+      diagnosticDeltas: firstPresent(compatibility.diagnostic_deltas, "not available"),
+    };
+  }
+  const compatibilityGreen = (
+    recordedState === "green" ||
+    String(compatibility.exit_class || "").toLowerCase() === "exit success"
+  ) && diagnosticStatus === "none";
+  if (compatibilityGreen && hasCompleteCompatibilityMetadata(compatibility)) {
+    return {
+      className: "green",
+      stateLabel: "Green",
+      exitClass: firstPresent(compatibility.exit_class, "exit success"),
+      phase: firstPresent(compatibility.phase, "check"),
+      diagnosticDeltas: firstPresent(compatibility.diagnostic_deltas, "none recorded"),
+    };
+  }
+
   if (hasSuccessfulTiming(row)) {
     if (diagnosticStatus && diagnosticStatus !== "none") {
       return {
@@ -2203,4 +2295,3 @@ export function getProjectCompatibilityDashboard() {
   </ul>
 </section>`;
 }
-

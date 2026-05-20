@@ -56,6 +56,94 @@ await fs.writeFile(artifact, `${JSON.stringify({
       tsz_ms: 20,
       tsgo_ms: 30,
       winner: "tsz",
+      compatibility: {
+        generated_at: "2026-05-16T00:00:00.000Z",
+        source_commit: "local",
+        workflow_name: "Bench",
+        workflow_run_id: "1001",
+        workflow_run_url: "https://github.com/mohsen1/tsz/actions/runs/1001",
+        workflow_run_attempt: "1",
+        run_status: "completed",
+        state: "green",
+        exit_class: "exit success",
+        first_failure_class: null,
+        owner_track: null,
+        phase: "check",
+        last_successful_phase: "check",
+        diagnostic_status: "none",
+        diagnostic_deltas: [],
+        diagnostic_subsystems: [],
+        known_blockers: [],
+        reduced_repro_path: null,
+        repro: {},
+        exit_codes: { tsc: [0], tsz: [0], tsgo: [0] },
+        files_reached: 10,
+        files_reached_reason: null,
+        peak_memory_bytes: 104857600,
+        peak_memory_bytes_reason: null,
+        fixture_sources: [
+          {
+            name: "utility-types",
+            repository: "https://github.com/piotrwitek/utility-types.git",
+            ref: "utility-ref",
+          },
+        ],
+        emit_status: "not in scope (noEmit project check)",
+        dts_status: "not in scope (noEmit project check)",
+      },
+    },
+    {
+      name: "type-challenges-solutions-project",
+      lines: 78,
+      kb: 0,
+      tsz_ms: null,
+      tsgo_ms: null,
+      winner: "error",
+      status: "compile canary tracked in CI; not timed by vs-tsgo benchmarks",
+      compatibility: {
+        generated_at: "2026-05-16T00:00:00.000Z",
+        source_commit: "local",
+        workflow_name: "Bench",
+        workflow_run_id: "1001",
+        workflow_run_url: "https://github.com/mohsen1/tsz/actions/runs/1001",
+        workflow_run_attempt: "1",
+        run_status: "completed",
+        state: "green",
+        exit_class: "exit success",
+        first_failure_class: null,
+        owner_track: null,
+        phase: "check",
+        last_successful_phase: "check",
+        diagnostic_status: "none",
+        diagnostic_deltas: [],
+        diagnostic_subsystems: [],
+        known_blockers: [],
+        reduced_repro_path: "type-challenges-solutions/.tsz-compile/solutions",
+        repro: {
+          tsconfig_path: "type-challenges-solutions/.tsz-compile/tsconfig.tsz-guard.json",
+          source_root: "type-challenges-solutions/.tsz-compile/solutions",
+          first_failure_path: null,
+          first_failure_line: null,
+          first_failure_column: null,
+          first_failure_code: null,
+          reduced_repro_path: "type-challenges-solutions/.tsz-compile/solutions",
+          command: "$TSZ_BIN --noEmit -p type-challenges-solutions/.tsz-compile/tsconfig.tsz-guard.json",
+        },
+        exit_codes: { tsc: [0], tsz: [0], tsgo: [] },
+        files_reached: 78,
+        files_reached_reason: null,
+        peak_memory_bytes: null,
+        peak_memory_bytes_reason: "not measured on platform",
+        fixture_sources: [
+          {
+            name: "type-challenges-solutions",
+            repository: "https://github.com/ghaiklor/type-challenges-solutions.git",
+            ref: "91a6d2986650475f29eeb3bd18ebd025128aa07e",
+          },
+        ],
+        emit_status: "not in scope (noEmit project check)",
+        dts_status: "not in scope (noEmit project check)",
+      },
     },
   ],
 }, null, 2)}\n`, "utf8");
@@ -219,6 +307,44 @@ await fs.writeFile(failedOnlyArtifact, `${JSON.stringify({
         dts_status: "not in scope (noEmit project check)",
       },
     },
+    {
+      name: "large-ts-repo",
+      lines: 1000000,
+      kb: 80000,
+      tsz_ms: 1000,
+      tsgo_ms: 10,
+      winner: "tsgo",
+      factor: 100,
+      status: null,
+      compatibility: {
+        state: "gray",
+        exit_class: "oracle unavailable",
+        first_failure_class: "tsc oracle unavailable",
+        owner_track: "Track 1 tsc oracle evidence",
+        phase: "oracle",
+        last_successful_phase: null,
+        diagnostic_status: "tsc oracle unavailable",
+        diagnostic_deltas: ["tsc oracle was not collected for this project row"],
+        diagnostic_subsystems: [],
+        known_blockers: ["tsc oracle unavailable"],
+        reduced_repro_path: null,
+        repro: {},
+        exit_codes: { tsc: [], tsz: [0], tsgo: [0] },
+        files_reached: 6061,
+        files_reached_reason: null,
+        peak_memory_bytes: null,
+        peak_memory_bytes_reason: "not measured on platform",
+        fixture_sources: [
+          {
+            name: "large-ts-repo",
+            repository: "https://github.com/mohsen1/large-ts-repo.git",
+            ref: "large-ref",
+          },
+        ],
+        emit_status: "not in scope (noEmit project check)",
+        dts_status: "not in scope (noEmit project check)",
+      },
+    },
   ],
 }, null, 2)}\n`, "utf8");
 
@@ -260,6 +386,7 @@ try {
   assert.match(charts, /type-challenges solutions project/);
 
   const compatibilityDashboard = getProjectCompatibilityDashboard();
+  assert.match(compatibilityDashboard, /type-challenges solutions[\s\S]*compat-state green/);
   assert.doesNotMatch(compatibilityDashboard, /type-challenges assertions/);
 
   process.env.TSZ_WEBSITE_BENCHMARK_ARTIFACT = failedOnlyArtifact;
@@ -278,6 +405,9 @@ try {
   assert.match(failedOnlyCompatibility, /freshness warning: older than latest completed bench run 1003/);
   assert.match(failedOnlyCompatibility, /freshness warning: older than 2026-05-17T00:00:00Z bench artifact/);
   assert.match(failedOnlyCompatibility, /freshness warning: run status: cancelled/);
+  assert.match(failedOnlyCompatibility, /failure: tsc oracle unavailable/);
+  assert.match(failedOnlyCompatibility, /owner track: Track 1 tsc oracle evidence/);
+  assert.match(failedOnlyCompatibility, /source: large-ts-repo @ large-ref/);
   assert.match(failedOnlyCompatibility, /owner track: Tracks 1, 2, 5/);
   assert.match(failedOnlyCompatibility, /compatibility metadata malformed/);
   assert.match(failedOnlyCompatibility, /owner family: mapped\/conditional\/key-space utility surface/);

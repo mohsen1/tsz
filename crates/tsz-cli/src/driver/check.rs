@@ -76,7 +76,7 @@ pub(super) struct CollectDiagnosticsResult {
     pub diagnostics: Vec<Diagnostic>,
     pub request_cache_counters: RequestCacheCounters,
     /// Aggregate query-cache statistics from the selected checking path.
-    pub query_cache_stats: Option<tsz_solver::QueryCacheStatistics>,
+    pub query_cache_stats: Option<tsz_solver::construction::QueryCacheStatistics>,
     /// Aggregate definition-store statistics (populated for `--extendedDiagnostics`).
     pub def_store_stats: Option<tsz_solver::StoreStatistics>,
     /// Module dependency graph statistics (populated for `--extendedDiagnostics`).
@@ -724,10 +724,11 @@ pub(super) fn collect_diagnostics(
                     );
                 }
 
-                // Map resolved path to file index
-                // NOTE: Only mark as resolved if there's NO error. When there's a resolution
-                // error (TS2307, etc.), the module should NOT be in resolved_module_specifiers
-                // so that the checker will emit the appropriate error.
+                // Map resolved path to file index.
+                // Only mark as resolved when there is no error. When there is a
+                // resolution error (TS2307, TS6263, etc.) the module should NOT
+                // be in resolved_module_specifiers so that the checker emits the
+                // appropriate diagnostic without triggering additional member checks.
                 if outcome.error.is_none() {
                     if let Some(ref resolved_path) = outcome.resolved_path {
                         resolved_module_specifiers.insert((file_idx, specifier.clone()));
@@ -1030,7 +1031,7 @@ pub(super) fn collect_diagnostics(
         return CollectDiagnosticsResult {
             diagnostics,
             request_cache_counters,
-            query_cache_stats: Some(tsz_solver::QueryCacheStatistics::default()),
+            query_cache_stats: Some(tsz_solver::construction::QueryCacheStatistics::default()),
             def_store_stats: None,
             module_dep_stats,
         };
@@ -1095,7 +1096,7 @@ pub(super) fn collect_diagnostics(
         return CollectDiagnosticsResult {
             diagnostics,
             request_cache_counters,
-            query_cache_stats: Some(tsz_solver::QueryCacheStatistics::default()),
+            query_cache_stats: Some(tsz_solver::construction::QueryCacheStatistics::default()),
             def_store_stats: None,
             module_dep_stats,
         };
@@ -1577,7 +1578,7 @@ pub(super) fn collect_diagnostics(
         // Create shared cross-file query cache for multi-file projects.
         // Eliminates redundant type evaluations and relation checks across files.
         let shared_query_cache = if work_items.len() > 1 {
-            Some(tsz_solver::SharedQueryCache::new())
+            Some(tsz_solver::construction::SharedQueryCache::new())
         } else {
             None
         };
@@ -1736,7 +1737,7 @@ pub(super) fn collect_diagnostics(
         // come from the shared store computed once after the loop (workers
         // all see the same shared store, so summing per-file was both
         // wasted work and N× inflated).
-        let mut parallel_qc_stats = tsz_solver::QueryCacheStatistics::default();
+        let mut parallel_qc_stats = tsz_solver::construction::QueryCacheStatistics::default();
         let parallel_ds_stats = tsz_solver::StoreStatistics::default();
         {
             let mut tc_out = type_cache_output
@@ -2197,7 +2198,7 @@ pub(super) struct CheckFileForParallelContext<'a> {
     shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>>,
     /// Shared cross-file query cache for multi-file projects.
     /// Eliminates redundant type evaluations and relation checks across files.
-    shared_query_cache: Option<&'a tsz_solver::SharedQueryCache>,
+    shared_query_cache: Option<&'a tsz_solver::construction::SharedQueryCache>,
     no_check: bool,
     check_js: bool,
     /// `true` when `checkJs: false` was explicitly specified in compiler options.
@@ -2314,7 +2315,7 @@ pub(super) type CheckFileResult = (
     Vec<Diagnostic>,
     Option<TypeCache>,
     RequestCacheCounters,
-    tsz_solver::QueryCacheStatistics,
+    tsz_solver::construction::QueryCacheStatistics,
     tsz_solver::StoreStatistics,
 );
 
@@ -2492,7 +2493,7 @@ pub(super) fn check_file_for_parallel<'a>(
             Vec::new(),
             None,
             RequestCacheCounters::default(),
-            tsz_solver::QueryCacheStatistics::default(),
+            tsz_solver::construction::QueryCacheStatistics::default(),
             tsz_solver::StoreStatistics::default(),
         );
     }
@@ -2638,7 +2639,7 @@ fn check_files_sequentially_with_reuse<F>(
     program_context: &tsz::checker::context::ProgramContext,
     resolved_modules_per_file: &Arc<Vec<Arc<rustc_hash::FxHashSet<String>>>>,
     shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>>,
-    shared_query_cache: Option<&tsz_solver::SharedQueryCache>,
+    shared_query_cache: Option<&tsz_solver::construction::SharedQueryCache>,
     no_check: bool,
     check_js: bool,
     explicit_check_js_false: bool,
@@ -2687,7 +2688,7 @@ where
                 Vec::new(),
                 None,
                 RequestCacheCounters::default(),
-                tsz_solver::QueryCacheStatistics::default(),
+                tsz_solver::construction::QueryCacheStatistics::default(),
                 tsz_solver::StoreStatistics::default(),
             ));
             continue;
@@ -2758,7 +2759,7 @@ where
         let qc_stats = if loop_idx + 1 == work_items.len() {
             query_cache.statistics()
         } else {
-            tsz_solver::QueryCacheStatistics::default()
+            tsz_solver::construction::QueryCacheStatistics::default()
         };
         let ds_stats = tsz_solver::StoreStatistics::default();
         // The reuse path is gated on `!extract_type_cache` at the
@@ -2790,7 +2791,7 @@ fn check_files_in_parallel_chunks_with_reuse<F>(
     program_context: &tsz::checker::context::ProgramContext,
     resolved_modules_per_file: &Arc<Vec<Arc<rustc_hash::FxHashSet<String>>>>,
     shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>>,
-    shared_query_cache: Option<&tsz_solver::SharedQueryCache>,
+    shared_query_cache: Option<&tsz_solver::construction::SharedQueryCache>,
     no_check: bool,
     check_js: bool,
     explicit_check_js_false: bool,
@@ -5450,7 +5451,7 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
         program
             .type_interner
             .set_exact_optional_property_types(resolved.checker.exact_optional_property_types);
-        let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+        let query_cache = tsz_solver::construction::QueryCache::new(&program.type_interner);
         let mut checker = CheckerState::with_options(
             &program.files[0].arena,
             &rebuilt_binder,

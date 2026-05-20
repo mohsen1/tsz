@@ -1656,6 +1656,95 @@ export function getStyles() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn declaration_emit_symlinked_import_type_package_ref_reports_when_dependency_is_resolution_only() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("Folder/monorepo/package-a/index.d.ts"),
+        r#"export declare const styles: import("styled-components").InterpolationValue[];
+"#,
+    );
+    write_file(
+        &base.join("Folder/node_modules/styled-components/package.json"),
+        r#"{
+  "name": "styled-components",
+  "version": "3.3.3",
+  "typings": "typings/styled-components.d.ts"
+}"#,
+    );
+    write_file(
+        &base.join("Folder/node_modules/styled-components/typings/styled-components.d.ts"),
+        r#"export interface InterpolationValue {}
+"#,
+    );
+    write_file(
+        &base.join("Folder/monorepo/core/index.ts"),
+        r#"import { styles } from "package-a";
+
+export function getStyles() {
+    return styles;
+}
+"#,
+    );
+    std::fs::create_dir_all(base.join("Folder/monorepo/package-a/node_modules"))
+        .expect("package-a node_modules");
+    std::fs::create_dir_all(base.join("Folder/monorepo/core/node_modules"))
+        .expect("core node_modules");
+    std::os::unix::fs::symlink(
+        base.join("Folder/node_modules/styled-components"),
+        base.join("Folder/monorepo/package-a/node_modules/styled-components"),
+    )
+    .expect("styled-components symlink");
+    std::os::unix::fs::symlink(
+        base.join("Folder/monorepo/package-a"),
+        base.join("Folder/monorepo/core/node_modules/package-a"),
+    )
+    .expect("package-a symlink");
+
+    let mut args = default_args();
+    args.project = Some(base.join("Folder/monorepo/core/tsconfig.json"));
+    write_file(
+        &base.join("Folder/monorepo/core/tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "module": "commonjs",
+    "strict": true,
+    "declaration": true
+  },
+  "files": ["index.ts"]
+}"#,
+    );
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts2883_messages: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2883)
+        .map(|d| d.message_text.clone())
+        .collect();
+
+    assert_eq!(
+        ts2883_messages.len(),
+        1,
+        "expected one TS2883 diagnostic for resolution-only symlinked import type, got: {ts2883_messages:#?}"
+    );
+    assert!(
+        ts2883_messages[0].contains("InterpolationValue"),
+        "expected TS2883 to name imported member, got: {}",
+        ts2883_messages[0]
+    );
+    assert!(
+        ts2883_messages[0]
+            .contains("../package-a/node_modules/styled-components/typings/styled-components"),
+        "expected TS2883 to preserve source-package node_modules path, got: {}",
+        ts2883_messages[0]
+    );
+}
+
 #[test]
 fn declaration_emit_commonjs_call_tuple_reports_nested_reference_ts2883() {
     let temp = TempDir::new().expect("temp dir");
@@ -2829,7 +2918,7 @@ export const publicProcedure = trpc.procedure;
     ])
     .expect("batch-style args");
 
-    tsz_solver::clear_thread_local_cache();
+    tsz_solver::construction::clear_thread_local_cache();
     tsz_solver::reset_subtype_thread_local_state();
     tsz::checker::clear_all_thread_local_state();
 
@@ -3773,8 +3862,13 @@ fn compile_module_none_outfile_keeps_cached_reference_dependencies() {
 
     write_file(&referenced_path, "const referencedValue = 4;\n");
     let result = with_types_versions_env(None, || {
-        compile_with_cache_and_changes(&args, base, &mut cache, &[referenced_path.clone()])
-            .expect("compile should succeed")
+        compile_with_cache_and_changes(
+            &args,
+            base,
+            &mut cache,
+            std::slice::from_ref(&referenced_path),
+        )
+        .expect("compile should succeed")
     });
     assert!(
         result.diagnostics.iter().all(|diag| diag.code == 1323),
@@ -5612,7 +5706,7 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
     let program = tsz::parallel::compile_files_with_libs(files, &lib_paths);
     let file = &program.files[0];
     let binder = tsz::parallel::create_binder_from_bound_file(file, &program, 0);
-    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let query_cache = tsz_solver::construction::QueryCache::new(&program.type_interner);
     let mut checker = CheckerState::new(
         &file.arena,
         &binder,
@@ -6482,7 +6576,7 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
     let mut binder = BinderState::new();
     binder.bind_source_file_with_libs(&arena, root, &lib_files);
 
-    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let query_cache = tsz_solver::construction::QueryCache::new(&program.type_interner);
     let mut checker = CheckerState::new(
         &arena,
         &binder,
@@ -20115,7 +20209,7 @@ function process(image) {
     let program = tsz::parallel::compile_files_with_libs(files, &lib_paths);
     let file = &program.files[0];
     let binder = tsz::parallel::create_binder_from_bound_file(file, &program, 0);
-    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let query_cache = tsz_solver::construction::QueryCache::new(&program.type_interner);
     let mut checker = CheckerState::new(
         &file.arena,
         &binder,

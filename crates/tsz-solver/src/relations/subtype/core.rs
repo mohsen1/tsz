@@ -2775,18 +2775,6 @@ pub fn is_subtype_of_with_db(db: &dyn QueryDatabase, source: TypeId, target: Typ
     checker.is_subtype_of(source, target)
 }
 
-/// Convenience function for one-off subtype checks with compiler flags.
-/// The flags are a packed u16 bitmask matching RelationCacheKey.flags.
-pub fn is_subtype_of_with_flags(
-    interner: &dyn TypeDatabase,
-    source: TypeId,
-    target: TypeId,
-    flags: u16,
-) -> bool {
-    let mut checker = SubtypeChecker::new(interner).apply_flags(flags);
-    checker.is_subtype_of(source, target)
-}
-
 // Re-enabled subtype tests - verifying API compatibility
 #[cfg(test)]
 #[path = "../../../tests/subtype_tests.rs"]
@@ -2823,6 +2811,10 @@ mod overlap_tests;
 #[cfg(test)]
 #[path = "../../../tests/intersection_optional_subtype_tests.rs"]
 mod intersection_optional_subtype_tests;
+
+#[cfg(test)]
+#[path = "../../../tests/intrinsic_object_tests.rs"]
+mod intrinsic_object_tests;
 
 #[cfg(test)]
 mod with_identity_check_mode_tests {

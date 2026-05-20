@@ -262,6 +262,12 @@ impl<'a> Printer<'a> {
             self.register_system_import_substitutions(source, &dep_vars, &empty_system_plan);
         }
 
+        if let Some((_, tslib_var)) = value_deps.iter().find(|(dep, _)| dep == "tslib")
+            && !tslib_var.is_empty()
+        {
+            self.commonjs_tslib_import_binding = tslib_var.clone();
+        }
+
         self.emit_module_wrapper_body(source_node, source_idx);
         self.ctx.options.suppress_use_strict = false;
 
@@ -420,8 +426,34 @@ impl<'a> Printer<'a> {
 
         let mut system_plan = self.collect_system_dependency_plan(dependencies, source);
         self.add_system_jsx_runtime_dependency(dependencies, &mut system_plan);
-        let system_dependencies =
+        let mut system_dependencies =
             self.collect_active_system_dependencies(dependencies, source, &system_plan);
+        // Must run after collect_active_system_dependencies so collect_system_dependency_vars
+        // sees the injected "tslib" entry.
+        let needs_tslib_dependency = self.transforms.helpers_populated()
+            && self.transforms.helpers().any_needed()
+            || self.import_helpers_need_tslib_binding_for_class_emit(&source.statements);
+        if self.ctx.options.import_helpers && needs_tslib_dependency {
+            if !system_dependencies.iter().any(|d| d == "tslib") {
+                system_dependencies.insert(0, "tslib".to_string());
+            }
+            // When the source already supplies an `Assign` for "tslib" (e.g.
+            // `import * as TSLib from "tslib"` registers `Assign("TSLib")`),
+            // helper calls resolve through that binding via the later
+            // `commonjs_tslib_import_binding = dep_vars["tslib"]` update — no
+            // helper-specific setter line is needed. Only inject the helper
+            // `Assign("tslib_1")` when no user `Assign` exists (side-effect
+            // `import "tslib"` or no source import at all). Without it,
+            // `tslib_1.__decorate` references a hoisted-but-never-assigned
+            // binding when the wrapper provides tslib instead of CJS.
+            let actions = system_plan.actions.entry("tslib".to_string()).or_default();
+            let has_assign_action = actions
+                .iter()
+                .any(|action| matches!(action, SystemDependencyAction::Assign(_)));
+            if !has_assign_action {
+                actions.push(SystemDependencyAction::Assign("tslib_1".to_string()));
+            }
+        }
 
         self.write("System.register(");
         if let Some(name) = self.ctx.options.bundled_module_name.clone() {
@@ -502,6 +534,10 @@ impl<'a> Printer<'a> {
         }
         self.write_line();
         self.increase_indent();
+
+        if let Some(tslib_var) = dep_vars.get("tslib") {
+            self.commonjs_tslib_import_binding = tslib_var.clone();
+        }
 
         self.emit_system_execute_body(source_node, &dep_vars, &hoisted_func_stmts, &system_plan);
 
@@ -1339,6 +1375,24 @@ impl<'a> Printer<'a> {
             if seen_side_effect.insert(resolved.clone()) {
                 side_effect_deps.push(resolved);
             }
+        }
+
+        // Must run after the main loops so the seen_value guard prevents double-insertion
+        // when "tslib" was already present as a source import.
+        let needs_tslib_dependency = self.transforms.helpers_populated()
+            && self.transforms.helpers().any_needed()
+            || self.import_helpers_need_tslib_binding_for_class_emit(&source.statements);
+        if (collect_for_amd || collect_for_umd)
+            && self.ctx.options.import_helpers
+            && needs_tslib_dependency
+            && !seen_value.contains("tslib")
+        {
+            let tslib_var = if collect_for_amd {
+                self.next_commonjs_module_var("tslib")
+            } else {
+                String::new()
+            };
+            value_deps.insert(0, ("tslib".to_string(), tslib_var));
         }
 
         (value_deps, side_effect_deps, dep_vars)

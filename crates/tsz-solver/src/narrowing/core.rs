@@ -333,6 +333,37 @@ impl CachedPropertyType {
 type NarrowedPropertyCache = FxHashMap<PropertyCacheKey, Option<CachedPropertyType>>;
 type RequiredPropertyCache = FxHashMap<PropertyCacheKey, bool>;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NarrowingCacheStatistics {
+    pub resolve_cache_entries: usize,
+    pub narrowed_property_cache_entries: usize,
+    pub required_property_cache_entries: usize,
+    pub split_nullish_cache_entries: usize,
+    pub contains_type_parameters_cache_entries: usize,
+    pub optional_chain_cache_entries: usize,
+    pub optional_property_chain_cache_entries: usize,
+    pub contextual_resolve_cache_entries: usize,
+    pub discriminant_index_entries: usize,
+    pub narrow_type_cache_entries: usize,
+    pub estimated_size_bytes: usize,
+}
+
+impl NarrowingCacheStatistics {
+    #[must_use]
+    pub const fn total_entries(self) -> usize {
+        self.resolve_cache_entries
+            + self.narrowed_property_cache_entries
+            + self.required_property_cache_entries
+            + self.split_nullish_cache_entries
+            + self.contains_type_parameters_cache_entries
+            + self.optional_chain_cache_entries
+            + self.optional_property_chain_cache_entries
+            + self.contextual_resolve_cache_entries
+            + self.discriminant_index_entries
+            + self.narrow_type_cache_entries
+    }
+}
+
 /// Narrowing context for type guards and control flow analysis.
 /// Shared across multiple narrowing contexts to persist resolution results.
 #[derive(Default, Clone, Debug)]
@@ -430,6 +461,118 @@ impl NarrowingCache {
                 Default::default(),
             )),
         }
+    }
+
+    #[must_use]
+    pub fn cache_statistics(&self) -> NarrowingCacheStatistics {
+        NarrowingCacheStatistics {
+            resolve_cache_entries: self.resolve_cache.borrow().len(),
+            narrowed_property_cache_entries: self.property_cache.borrow().len(),
+            required_property_cache_entries: self.required_property_cache.borrow().len(),
+            split_nullish_cache_entries: self.split_nullish_cache.borrow().len(),
+            contains_type_parameters_cache_entries: self
+                .contains_type_parameters_cache
+                .borrow()
+                .len(),
+            optional_chain_cache_entries: self.optional_chain_cache.borrow().len(),
+            optional_property_chain_cache_entries: self
+                .optional_property_chain_cache
+                .borrow()
+                .len(),
+            contextual_resolve_cache_entries: self.contextual_resolve_cache.borrow().len(),
+            discriminant_index_entries: self.discriminant_index.borrow().len(),
+            narrow_type_cache_entries: self.narrow_type_cache.borrow().len(),
+            estimated_size_bytes: self.estimated_size_bytes(),
+        }
+    }
+
+    #[must_use]
+    pub fn estimated_size_bytes(&self) -> usize {
+        const BUCKET_OVERHEAD: usize = 64;
+
+        let mut size = std::mem::size_of::<Self>();
+
+        {
+            let map = self.resolve_cache.borrow();
+            size += map.capacity() * (BUCKET_OVERHEAD + std::mem::size_of::<(TypeId, TypeId)>());
+        }
+        {
+            let set = self.resolve_visiting.borrow();
+            size += set.capacity() * (BUCKET_OVERHEAD + std::mem::size_of::<TypeId>());
+        }
+        {
+            let map = self.property_cache.borrow();
+            size += map.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<PropertyCacheKey>()
+                    + std::mem::size_of::<Option<CachedPropertyType>>());
+        }
+        {
+            let map = self.required_property_cache.borrow();
+            size += map.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<PropertyCacheKey>()
+                    + std::mem::size_of::<bool>());
+        }
+        {
+            let map = self.split_nullish_cache.borrow();
+            size += map.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<TypeId>()
+                    + std::mem::size_of::<SplitNullishParts>());
+        }
+        {
+            let map = self.contains_type_parameters_cache.borrow();
+            size += map.capacity() * (BUCKET_OVERHEAD + std::mem::size_of::<(TypeId, bool)>());
+        }
+        {
+            let map = self.optional_chain_cache.borrow();
+            size += map.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<(TypeId, Atom)>()
+                    + std::mem::size_of::<TypeId>());
+        }
+        {
+            let map = self.optional_property_chain_cache.borrow();
+            size += map.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<OptionalPropertyChainKey>()
+                    + std::mem::size_of::<TypeId>());
+            size += map
+                .keys()
+                .map(|key| key.properties.capacity() * std::mem::size_of::<Atom>())
+                .sum::<usize>();
+        }
+        {
+            let map = self.contextual_resolve_cache.borrow();
+            size += map.capacity() * (BUCKET_OVERHEAD + std::mem::size_of::<(TypeId, TypeId)>());
+        }
+        {
+            let map = self.discriminant_index.borrow();
+            size += map.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<(TypeId, Atom)>()
+                    + std::mem::size_of::<Arc<DiscriminantMembers>>());
+            for members in map.values() {
+                size += members.capacity()
+                    * (BUCKET_OVERHEAD
+                        + std::mem::size_of::<TypeId>()
+                        + std::mem::size_of::<Vec<TypeId>>());
+                size += members
+                    .values()
+                    .map(|variants| variants.capacity() * std::mem::size_of::<TypeId>())
+                    .sum::<usize>();
+            }
+        }
+        {
+            let map = self.narrow_type_cache.borrow();
+            size += map.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<NarrowTypeCacheKey>()
+                    + std::mem::size_of::<TypeId>());
+        }
+
+        size
     }
 }
 
@@ -2470,5 +2613,90 @@ impl<'a> NarrowingContext<'a> {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod cache_visibility_tests {
+    use super::*;
+    use crate::intern::TypeInterner;
+
+    #[test]
+    fn narrowing_cache_statistics_report_entries_and_size() {
+        let db = TypeInterner::new();
+        let prop = db.intern_string("prop");
+        let key = (TypeId::STRING, 7, prop);
+        let chain_key = OptionalPropertyChainKey {
+            root_type: TypeId::STRING,
+            properties: vec![prop],
+            optional_mask: 1,
+            no_unchecked_indexed_access: true,
+        };
+        let cache = NarrowingCache::new();
+        let empty = cache.cache_statistics();
+
+        assert_eq!(empty.total_entries(), 0);
+        assert!(empty.estimated_size_bytes > 0);
+
+        cache
+            .resolve_cache
+            .borrow_mut()
+            .insert(TypeId::STRING, TypeId::NUMBER);
+        cache
+            .property_cache
+            .borrow_mut()
+            .insert(key, Some(CachedPropertyType::explicit(TypeId::BOOLEAN)));
+        cache.required_property_cache.borrow_mut().insert(key, true);
+        cache
+            .split_nullish_cache
+            .borrow_mut()
+            .insert(TypeId::STRING, (Some(TypeId::STRING), Some(TypeId::NULL)));
+        cache
+            .contains_type_parameters_cache
+            .borrow_mut()
+            .insert(TypeId::STRING, false);
+        cache
+            .optional_chain_cache
+            .borrow_mut()
+            .insert((TypeId::STRING, prop), TypeId::BOOLEAN);
+        cache
+            .optional_property_chain_cache
+            .borrow_mut()
+            .insert(chain_key, TypeId::BOOLEAN);
+        cache
+            .contextual_resolve_cache
+            .borrow_mut()
+            .insert(TypeId::STRING, TypeId::BOOLEAN);
+        let mut discriminants = FxHashMap::default();
+        discriminants.insert(TypeId::STRING, vec![TypeId::BOOLEAN]);
+        cache
+            .discriminant_index
+            .borrow_mut()
+            .insert((TypeId::STRING, prop), Arc::new(discriminants));
+        cache.narrow_type_cache.borrow_mut().insert(
+            NarrowTypeCacheKey {
+                source_type: TypeId::STRING,
+                guard: TypeGuard::Truthy,
+                sense: GuardSense::Positive,
+                compiler_flags: 0,
+                resolver_generation: 0,
+            },
+            TypeId::STRING,
+        );
+
+        let stats = cache.cache_statistics();
+        assert_eq!(stats.resolve_cache_entries, 1);
+        assert_eq!(stats.narrowed_property_cache_entries, 1);
+        assert_eq!(stats.required_property_cache_entries, 1);
+        assert_eq!(stats.split_nullish_cache_entries, 1);
+        assert_eq!(stats.contains_type_parameters_cache_entries, 1);
+        assert_eq!(stats.optional_chain_cache_entries, 1);
+        assert_eq!(stats.optional_property_chain_cache_entries, 1);
+        assert_eq!(stats.contextual_resolve_cache_entries, 1);
+        assert_eq!(stats.discriminant_index_entries, 1);
+        assert_eq!(stats.narrow_type_cache_entries, 1);
+        assert_eq!(stats.total_entries(), 10);
+        assert!(stats.estimated_size_bytes > empty.estimated_size_bytes);
+        assert!(cache.estimated_size_bytes() >= stats.estimated_size_bytes);
     }
 }

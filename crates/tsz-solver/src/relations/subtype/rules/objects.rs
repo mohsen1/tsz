@@ -611,15 +611,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // `{ readonly x: T }` IS assignable to `{ x: T }`. When the source
         // property is readonly, its write_type is irrelevant (it may be NONE or
         // a sentinel value), so skip the write check entirely.
-        // TypeId::NONE is also a sentinel for "no distinct write type" (used by
-        // readonly properties from the lowering pass). Treat NONE as "same as
-        // type_id" so it doesn't falsely trigger split-accessor detection.
-        let has_split_accessor = if source.readonly {
-            false
-        } else {
-            (source.write_type != TypeId::NONE && source.write_type != source.type_id)
-                || (target.write_type != TypeId::NONE && target.write_type != target.type_id)
-        };
+        let has_split_accessor =
+            !source.readonly && (source.has_split_accessor() || target.has_split_accessor());
 
         if !target.readonly && has_split_accessor {
             let source_write = self.bind_property_receiver_this(
@@ -1140,10 +1133,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 {
                     return SubtypeResult::False;
                 }
-                if !t_prop.readonly
-                    && (sp.write_type != TypeId::NONE && sp.write_type != sp.type_id
-                        || t_prop.write_type != TypeId::NONE && t_prop.write_type != t_prop.type_id)
-                {
+                if !t_prop.readonly && (sp.has_split_accessor() || t_prop.has_split_accessor()) {
                     let source_write = self.bind_property_receiver_this(
                         source_receiver,
                         self.optional_property_write_type(sp),

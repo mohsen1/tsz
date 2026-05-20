@@ -112,6 +112,8 @@ BENCH_NPM_INSTALL_TIMEOUT="${BENCH_NPM_INSTALL_TIMEOUT:-900}"
 BENCH_PGO_TSZ_TIMEOUT="${BENCH_PGO_TSZ_TIMEOUT:-900}"
 BENCH_CARGO_BUILD_TIMEOUT="${BENCH_CARGO_BUILD_TIMEOUT:-1200}"
 BENCH_PGO_MARKER="$TSZ_OUTPUT_DIR/.bench-pgo-optimized"
+declare -a BENCH_PGO_TRAINING_INPUTS=()
+declare -a BENCH_PGO_TRAINING_FAILED_INPUTS=()
 while [[ $# -gt 0 ]]; do
     case $1 in
         --quick) QUICK_MODE=true; shift ;;
@@ -244,6 +246,92 @@ pgo_profile_fingerprint() {
                 printf '%s  %s\n' "$(hash_file_sha256 "$PROJECT_ROOT/$file")" "$file"
             done
     } | hash_stdin_sha256
+}
+
+pgo_training_fingerprint() {
+    {
+        printf 'BENCH_PGO_SYNTHETIC=%s\n' "${BENCH_PGO_SYNTHETIC:-1}"
+        printf 'BENCH_PGO_FETCH_UTILITY_TYPES=%s\n' "${BENCH_PGO_FETCH_UTILITY_TYPES:-1}"
+        printf 'BENCH_PGO_FETCH_CORE_PROJECTS=%s\n' "${BENCH_PGO_FETCH_CORE_PROJECTS:-0}"
+        printf 'BENCH_PGO_PANIC_UNWIND=%s\n' "${BENCH_PGO_PANIC_UNWIND:-0}"
+        printf 'BENCH_PGO_EXTRA_INPUTS=%s\n' "${BENCH_PGO_EXTRA_INPUTS:-}"
+        printf 'BENCH_PGO_TSZ_TIMEOUT=%s\n' "$BENCH_PGO_TSZ_TIMEOUT"
+        local label
+        for label in "${BENCH_PGO_TRAINING_INPUTS[@]}"; do
+            printf 'training_input=%s\n' "$label"
+        done
+        for label in "${BENCH_PGO_TRAINING_FAILED_INPUTS[@]}"; do
+            printf 'training_failed=%s\n' "$label"
+        done
+    } | hash_stdin_sha256
+}
+
+write_pgo_training_metadata() {
+    local out_file="$1"
+    local profile_fingerprint="$2"
+    local llvm_profdata="$3"
+    local training_fingerprint
+    training_fingerprint="$(pgo_training_fingerprint)"
+    {
+        printf 'profile_fingerprint=%s\n' "$profile_fingerprint"
+        printf 'training_fingerprint=%s\n' "$training_fingerprint"
+        printf 'llvm_profdata=%s\n' "$llvm_profdata"
+        printf 'training_metadata_available=1\n'
+        printf 'BENCH_PGO_SYNTHETIC=%s\n' "${BENCH_PGO_SYNTHETIC:-1}"
+        printf 'BENCH_PGO_FETCH_UTILITY_TYPES=%s\n' "${BENCH_PGO_FETCH_UTILITY_TYPES:-1}"
+        printf 'BENCH_PGO_FETCH_CORE_PROJECTS=%s\n' "${BENCH_PGO_FETCH_CORE_PROJECTS:-0}"
+        printf 'BENCH_PGO_PANIC_UNWIND=%s\n' "${BENCH_PGO_PANIC_UNWIND:-0}"
+        printf 'BENCH_PGO_EXTRA_INPUTS=%s\n' "${BENCH_PGO_EXTRA_INPUTS:-}"
+        printf 'BENCH_PGO_TSZ_TIMEOUT=%s\n' "$BENCH_PGO_TSZ_TIMEOUT"
+        printf 'training_input_count=%s\n' "${#BENCH_PGO_TRAINING_INPUTS[@]}"
+        printf 'training_failure_count=%s\n' "${#BENCH_PGO_TRAINING_FAILED_INPUTS[@]}"
+        local label
+        for label in "${BENCH_PGO_TRAINING_INPUTS[@]}"; do
+            printf 'training_input=%s\n' "$label"
+        done
+        for label in "${BENCH_PGO_TRAINING_FAILED_INPUTS[@]}"; do
+            printf 'training_failed=%s\n' "$label"
+        done
+    } > "$out_file"
+}
+
+write_pgo_training_unavailable_metadata() {
+    local out_file="$1"
+    local profile_fingerprint="$2"
+    local llvm_profdata="$3"
+    {
+        printf 'profile_fingerprint=%s\n' "$profile_fingerprint"
+        printf 'training_fingerprint=\n'
+        printf 'llvm_profdata=%s\n' "$llvm_profdata"
+        printf 'training_metadata_available=0\n'
+        printf 'BENCH_PGO_SYNTHETIC=%s\n' "${BENCH_PGO_SYNTHETIC:-1}"
+        printf 'BENCH_PGO_FETCH_UTILITY_TYPES=%s\n' "${BENCH_PGO_FETCH_UTILITY_TYPES:-1}"
+        printf 'BENCH_PGO_FETCH_CORE_PROJECTS=%s\n' "${BENCH_PGO_FETCH_CORE_PROJECTS:-0}"
+        printf 'BENCH_PGO_PANIC_UNWIND=%s\n' "${BENCH_PGO_PANIC_UNWIND:-0}"
+        printf 'BENCH_PGO_EXTRA_INPUTS=%s\n' "${BENCH_PGO_EXTRA_INPUTS:-}"
+        printf 'BENCH_PGO_TSZ_TIMEOUT=%s\n' "$BENCH_PGO_TSZ_TIMEOUT"
+        printf 'training_input_count=0\n'
+        printf 'training_failure_count=0\n'
+    } > "$out_file"
+}
+
+write_pgo_marker() {
+    local marker="$1"
+    local profile_use="$2"
+    local metadata_file="$3"
+    local profile_data_source="$4"
+    {
+        printf 'optimized=1\n'
+        printf 'binary_profile=release-pgo\n'
+        printf 'profile-use=%s\n' "$profile_use"
+        printf 'built_at=%s\n' "$(date -u +%FT%TZ)"
+        printf 'profile_data_source=%s\n' "$profile_data_source"
+        if [ -f "$metadata_file" ]; then
+            cat "$metadata_file"
+        else
+            printf 'training_metadata_available=0\n'
+        fi
+    } > "$marker"
 }
 
 print_subheader() {
@@ -526,6 +614,7 @@ project_failure_status() {
         timeout) echo "compiler timed out" ;;
         oom) echo "compiler OOM or killed" ;;
         crash) echo "compiler crashed" ;;
+        "oracle unavailable") echo "tsc oracle unavailable" ;;
         *) echo "diagnostic mismatch or compiler error" ;;
     esac
 }
@@ -707,11 +796,14 @@ collect_pgo_workload() {
     local pgo_tsz="$1"
     local env_prefix=()
     [[ -n "${TSZ_LIB_DIR:-}" ]] && env_prefix=("TSZ_LIB_DIR=$TSZ_LIB_DIR")
+    BENCH_PGO_TRAINING_INPUTS=()
+    BENCH_PGO_TRAINING_FAILED_INPUTS=()
 
-_pgo_run() {
+    _pgo_run() {
         local label="$1"
         shift
         local run_status=0
+        BENCH_PGO_TRAINING_INPUTS+=("$label")
         if [[ "${BENCH_PGO_VERBOSE:-0}" == "1" ]]; then
             local t0 t1
             t0=$(date +%s)
@@ -719,6 +811,7 @@ _pgo_run() {
                 run_status=0
             else
                 run_status=$?
+                BENCH_PGO_TRAINING_FAILED_INPUTS+=("$label:$run_status")
                 if [ "$run_status" -eq 124 ]; then
                     echo -e "${YELLOW}PGO training input \"$label\" timed out after ${BENCH_PGO_TSZ_TIMEOUT}s${NC}"
                 else
@@ -732,6 +825,7 @@ _pgo_run() {
                 run_status=0
             else
                 run_status=$?
+                BENCH_PGO_TRAINING_FAILED_INPUTS+=("$label:$run_status")
                 if [ "$run_status" -eq 124 ]; then
                     echo -e "${YELLOW}PGO training input \"$label\" timed out after ${BENCH_PGO_TSZ_TIMEOUT}s${NC}"
                 else
@@ -929,14 +1023,17 @@ check_prerequisites() {
         # runs, but quick mode prefers a deterministic fast rebuild.
         local pgo_dir="$BENCH_TARGET_DIR/pgo-data"
         local pgo_merged="$pgo_dir/merged.profdata"
+        local pgo_training_metadata="$pgo_dir/profile.metadata"
         # Cross-run profdata cache so iterative bench dev doesn't redo the
         # instrumented-build + training cycle when the source/toolchain/training
         # workload fingerprint has not changed since the last bench run.
         local pgo_cache_dir="$BENCH_TARGET_DIR/pgo-cache"
         local pgo_cache_profdata="$pgo_cache_dir/merged.profdata"
         local pgo_cache_marker="$pgo_cache_dir/profile.fingerprint"
+        local pgo_cache_metadata="$pgo_cache_dir/profile.metadata"
         local pgo_target_dir
         local optimized_target_dir
+        local pgo_profile_data_source="fresh"
         local pgo_optimized=false
         mkdir -p "$BENCH_TARGET_DIR"
         pgo_target_dir="$(mktemp -d "$BENCH_TARGET_DIR/pgo-build.XXXXXX")"
@@ -960,6 +1057,12 @@ check_prerequisites() {
                     echo -e "${CYAN}PGO cache hit: reusing $pgo_cache_profdata${NC}"
                     mkdir -p "$pgo_dir"
                     cp "$pgo_cache_profdata" "$pgo_merged"
+                    if [ -f "$pgo_cache_metadata" ]; then
+                        cp "$pgo_cache_metadata" "$pgo_training_metadata"
+                    else
+                        write_pgo_training_unavailable_metadata "$pgo_training_metadata" "$pgo_fingerprint" "$llvm_profdata"
+                    fi
+                    pgo_profile_data_source="cache"
                     skip_pgo_collect=true
                     profdata_ready=true
                 else
@@ -1016,10 +1119,12 @@ check_prerequisites() {
                 local profraw_files=("$pgo_dir"/*.profraw)
                 if [[ -e "${profraw_files[0]}" ]]; then
                     "$llvm_profdata" merge -o "$pgo_merged" "${profraw_files[@]}"
+                    write_pgo_training_metadata "$pgo_training_metadata" "$pgo_fingerprint" "$llvm_profdata"
                     profdata_ready=true
                     if [[ "${BENCH_PGO_CACHE:-1}" == "1" ]]; then
                         mkdir -p "$pgo_cache_dir"
                         cp "$pgo_merged" "$pgo_cache_profdata"
+                        cp "$pgo_training_metadata" "$pgo_cache_metadata"
                         printf '%s\n' "$pgo_fingerprint" > "$pgo_cache_marker"
                     fi
                 else
@@ -1071,7 +1176,7 @@ check_prerequisites() {
             mkdir -p "$TSZ_OUTPUT_DIR"
             install -m 755 "$optimized_target_dir/dist/tsz" "$TSZ"
             if [[ "$pgo_optimized" == true ]]; then
-                printf 'profile-use=%s\nbuilt_at=%s\n' "$pgo_merged" "$(date -u +%FT%TZ)" > "$BENCH_PGO_MARKER"
+                write_pgo_marker "$BENCH_PGO_MARKER" "$pgo_merged" "$pgo_training_metadata" "$pgo_profile_data_source"
             else
                 rm -f "$BENCH_PGO_MARKER"
             fi
@@ -1752,7 +1857,17 @@ run_project_benchmark() {
                 ratio=$(printf "%.2f" "$(echo "$tsz_mean / $tsgo_mean" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
             fi
 
-            record_project_compatibility "$name" "exit success" "check" "none" "" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "0" "0"
+            local success_exit_class="exit success"
+            local success_phase="check"
+            local success_diagnostic_status="none"
+            local success_diagnostic_delta=""
+            if [ -z "$tsc_exit_codes" ]; then
+                success_exit_class="oracle unavailable"
+                success_phase="oracle"
+                success_diagnostic_status="tsc oracle unavailable"
+                success_diagnostic_delta="tsc oracle was not collected for this project row"
+            fi
+            record_project_compatibility "$name" "$success_exit_class" "$success_phase" "$success_diagnostic_status" "$success_diagnostic_delta" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "0" "0"
             RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},${tsz_ms},${tsgo_ms},${tsz_lps},${tsgo_lps},${winner},${ratio},\n"
         fi
     fi
@@ -1787,8 +1902,19 @@ export_results_json() {
     QUICK_MODE_VALUE="$QUICK_MODE" \
     FILTER_VALUE="$FILTER" \
     TSZ_BIN_VALUE="$TSZ" \
+    TSZ_IS_OVERRIDE_VALUE="$TSZ_IS_OVERRIDE" \
     TSGO_BIN_VALUE="$TSGO" \
     TSC_BIN_VALUE="$TSC" \
+    BENCH_PGO_MARKER_VALUE="$BENCH_PGO_MARKER" \
+    BENCH_PGO_VALUE="${BENCH_PGO:-1}" \
+    BENCH_REQUIRE_PGO_VALUE="${BENCH_REQUIRE_PGO:-0}" \
+    BENCH_PGO_CACHE_VALUE="${BENCH_PGO_CACHE:-1}" \
+    BENCH_PGO_SYNTHETIC_VALUE="${BENCH_PGO_SYNTHETIC:-1}" \
+    BENCH_PGO_FETCH_UTILITY_TYPES_VALUE="${BENCH_PGO_FETCH_UTILITY_TYPES:-1}" \
+    BENCH_PGO_FETCH_CORE_PROJECTS_VALUE="${BENCH_PGO_FETCH_CORE_PROJECTS:-0}" \
+    BENCH_PGO_PANIC_UNWIND_VALUE="${BENCH_PGO_PANIC_UNWIND:-0}" \
+    BENCH_PGO_EXTRA_INPUTS_VALUE="${BENCH_PGO_EXTRA_INPUTS:-}" \
+    BENCH_PGO_TSZ_TIMEOUT_VALUE="$BENCH_PGO_TSZ_TIMEOUT" \
     LARGE_TS_DIR_VALUE="$LARGE_TS_DIR" \
     NEXTJS_DIR_VALUE="$NEXTJS_DIR" \
     NEXT_APP_BENCH_DIR_VALUE="$NEXT_APP_BENCH_DIR" \
@@ -2003,6 +2129,7 @@ function knownBlockersFrom(recorded, diagnosticSubsystems, diagnosticDeltas) {
   if (exitClass === "fixture invalid") add("reference fixture invalid");
   if (exitClass === "runner error") add("benchmark runner error");
   if (exitClass === "tsz unavailable") add("tsz unavailable in benchmark runner");
+  if (exitClass === "oracle unavailable") add("tsc oracle unavailable");
   if (phase && phase !== "check") add(`${phase} phase blocker`);
 
   for (const group of diagnosticSubsystems) {
@@ -2085,7 +2212,11 @@ function lastSuccessfulPhaseFrom(recorded) {
 function rowStateFrom(recorded) {
   if (recorded.state) return recorded.state;
   if (recorded.exit_class === "exit success" && recorded.diagnostic_status === "none") return "green";
-  if (recorded.exit_class === "fixture invalid" || recorded.exit_class === "tsz unavailable") return "gray";
+  if (
+    recorded.exit_class === "fixture invalid" ||
+    recorded.exit_class === "tsz unavailable" ||
+    recorded.exit_class === "oracle unavailable"
+  ) return "gray";
   if (String(recorded.diagnostic_status || "").toLowerCase().includes("diagnostic mismatch")) return "yellow";
   return "red";
 }
@@ -2206,6 +2337,29 @@ const tszWins = rows.filter((row) => row.winner === "tsz").length;
 const tsgoWins = rows.filter((row) => row.winner === "tsgo").length;
 const errorCases = rows.filter((row) => row.status).length;
 
+function hasCompletePhaseMetadata(compatibility) {
+  return [
+    "state",
+    "phase",
+    "last_successful_phase",
+    "exit_class",
+    "diagnostic_status",
+  ].every((field) => Object.hasOwn(compatibility, field));
+}
+
+function isGreenRow(row) {
+  if (row.status) return false;
+  if (row.artifact_missing === true) return false;
+  if (!row.compatibility) return true;
+  return hasCompletePhaseMetadata(row.compatibility) &&
+    row.compatibility.state === "green" &&
+    row.compatibility.exit_class === "exit success" &&
+    row.compatibility.diagnostic_status === "none";
+}
+
+const greenTszWins = rows.filter((row) => row.winner === "tsz" && isGreenRow(row)).length;
+const greenTsgoWins = rows.filter((row) => row.winner === "tsgo" && isGreenRow(row)).length;
+
 function runnerEnvironment() {
   const cpus = os.cpus();
   const firstCpu = cpus[0] || {};
@@ -2249,11 +2403,118 @@ function runnerEnvironment() {
   };
 }
 
+function boolValue(value, defaultValue = false) {
+  if (value === undefined || value === null || value === "") return defaultValue;
+  return value === true || value === "1" || String(value).toLowerCase() === "true";
+}
+
+function numberValue(value, fallback = null) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function readPgoMarker(markerPath) {
+  const fields = {};
+  const trainingInputs = [];
+  const trainingFailedInputs = [];
+  if (!markerPath || !fs.existsSync(markerPath)) {
+    return { found: false, fields, training_inputs: trainingInputs, training_failed_inputs: trainingFailedInputs };
+  }
+
+  const lines = fs.readFileSync(markerPath, "utf8").split(/\r?\n/);
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const separator = line.indexOf("=");
+    if (separator === -1) continue;
+    const key = line.slice(0, separator);
+    const value = line.slice(separator + 1);
+    if (key === "training_input") {
+      trainingInputs.push(value);
+    } else if (key === "training_failed") {
+      trainingFailedInputs.push(value);
+    } else {
+      fields[key] = value;
+    }
+  }
+
+  return { found: true, fields, training_inputs: trainingInputs, training_failed_inputs: trainingFailedInputs };
+}
+
+function pgoConfig(fields) {
+  return {
+    synthetic: boolValue(fields.BENCH_PGO_SYNTHETIC ?? process.env.BENCH_PGO_SYNTHETIC_VALUE, true),
+    fetch_utility_types: boolValue(
+      fields.BENCH_PGO_FETCH_UTILITY_TYPES ?? process.env.BENCH_PGO_FETCH_UTILITY_TYPES_VALUE,
+      true,
+    ),
+    fetch_core_projects: boolValue(
+      fields.BENCH_PGO_FETCH_CORE_PROJECTS ?? process.env.BENCH_PGO_FETCH_CORE_PROJECTS_VALUE,
+      false,
+    ),
+    panic_unwind: boolValue(fields.BENCH_PGO_PANIC_UNWIND ?? process.env.BENCH_PGO_PANIC_UNWIND_VALUE, false),
+    extra_inputs: (fields.BENCH_PGO_EXTRA_INPUTS ?? process.env.BENCH_PGO_EXTRA_INPUTS_VALUE) || null,
+    training_timeout_seconds: numberValue(
+      fields.BENCH_PGO_TSZ_TIMEOUT ?? process.env.BENCH_PGO_TSZ_TIMEOUT_VALUE,
+      null,
+    ),
+    cache_enabled: boolValue(process.env.BENCH_PGO_CACHE_VALUE, true),
+  };
+}
+
+function measurementProfile() {
+  const quickMode = process.env.QUICK_MODE_VALUE === "true";
+  const tszOverride = process.env.TSZ_IS_OVERRIDE_VALUE === "true";
+  const pgoRequested = !quickMode && !tszOverride && boolValue(process.env.BENCH_PGO_VALUE, true);
+  const markerPath = process.env.BENCH_PGO_MARKER_VALUE || null;
+  const marker = tszOverride ? readPgoMarker(null) : readPgoMarker(markerPath);
+  const fields = marker.fields;
+  const pgoOptimized = marker.found && (
+    fields.optimized === "1" ||
+    fields.binary_profile === "release-pgo" ||
+    Boolean(fields["profile-use"])
+  );
+  const mode = tszOverride
+    ? "tsz-override"
+    : quickMode
+      ? "quick-untrained"
+      : pgoOptimized
+        ? "release-pgo"
+        : "release-untrained";
+  const trainingInputCount = numberValue(fields.training_input_count, marker.training_inputs.length);
+  const trainingFailureCount = numberValue(fields.training_failure_count, marker.training_failed_inputs.length);
+
+  return {
+    mode,
+    tsz_binary_source: tszOverride ? "override" : "bench-dist",
+    profile_guided_optimization: {
+      requested: pgoRequested,
+      required: boolValue(process.env.BENCH_REQUIRE_PGO_VALUE, false),
+      optimized: pgoOptimized,
+      marker_path: markerPath,
+      marker_found: marker.found,
+      profile_use: fields["profile-use"] || null,
+      profile_fingerprint: fields.profile_fingerprint || null,
+      training_fingerprint: fields.training_fingerprint || null,
+      profile_data_source: fields.profile_data_source || null,
+      built_at: fields.built_at || null,
+      llvm_profdata: fields.llvm_profdata || null,
+      training_metadata_available: boolValue(fields.training_metadata_available, false),
+      training_input_count: trainingInputCount,
+      training_failure_count: trainingFailureCount,
+      training_inputs: marker.training_inputs,
+      training_failed_inputs: marker.training_failed_inputs,
+      config: pgoConfig(fields),
+    },
+  };
+}
+
 const generatedAt = new Date().toISOString();
+const currentMeasurementProfile = measurementProfile();
 const payload = {
   ...compatibilityArtifactMetadata({}, generatedAt),
   benchmark_runner: "scripts/bench/bench-vs-tsgo.sh",
   runner_environment: runnerEnvironment(),
+  measurement_profile: currentMeasurementProfile,
   validation: {
     hyperfine_exit_codes_required: true,
   },
@@ -2263,12 +2524,15 @@ const payload = {
     tsz: process.env.TSZ_BIN_VALUE || null,
     tsgo: process.env.TSGO_BIN_VALUE || null,
     tsc: process.env.TSC_BIN_VALUE || null,
+    tsz_profile: currentMeasurementProfile.mode,
   },
   totals: {
     benchmarks_run: Number(process.env.BENCHMARKS_RUN_VALUE || rows.length),
     rows: rows.length,
     tsz_wins: tszWins,
     tsgo_wins: tsgoWins,
+    green_tsz_wins: greenTszWins,
+    green_tsgo_wins: greenTsgoWins,
     error_cases: errorCases,
   },
   results: rows,

@@ -13,7 +13,8 @@
 
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::{
-    LiteralValue, ParamInfo, TemplateSpan, TupleElement, TypeData, TypeId, TypeParamInfo,
+    LiteralValue, ParamInfo, TemplateSpan, TupleElement, TypeApplication, TypeData, TypeId,
+    TypeParamInfo,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
@@ -1090,6 +1091,36 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         .then_some(alias)
     }
 
+    /// Try to match a source Application's type args against a pattern Application's args.
+    ///
+    /// Returns `Some(true)` if all args matched, `Some(false)` if bases matched but an arg
+    /// failed, `None` if the bases are incompatible (caller should try another candidate).
+    ///
+    /// One-directional subtyping (`source.base <: pattern.base`) is accepted because
+    /// covariant interface hierarchies (e.g. `Promise<T> <: PromiseLike<T>`) preserve
+    /// positional type-argument correspondence.
+    fn try_match_application_args_to_pattern(
+        &self,
+        source: &TypeApplication,
+        pattern: &TypeApplication,
+        bindings: &mut FxHashMap<Atom, TypeId>,
+        visited: &mut FxHashSet<(TypeId, TypeId)>,
+        checker: &mut SubtypeChecker<'_, R>,
+    ) -> Option<bool> {
+        if source.args.len() != pattern.args.len() {
+            return None;
+        }
+        if source.base != pattern.base && !checker.is_subtype_of(source.base, pattern.base) {
+            return None;
+        }
+        for (source_arg, pattern_arg) in source.args.iter().zip(pattern.args.iter()) {
+            if !self.match_infer_pattern(*source_arg, *pattern_arg, bindings, visited, checker) {
+                return Some(false);
+            }
+        }
+        Some(true)
+    }
+
     /// Main pattern matching function for infer types.
     ///
     /// Matches a source type against a pattern containing `infer` types,
@@ -1333,25 +1364,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         self.interner().lookup(current_source)
                     {
                         let source_app = self.interner().type_application(source_app_id);
-                        let bases_match = source_app.args.len() == pattern_app.args.len()
-                            && (source_app.base == pattern_app.base
-                                || (checker.is_subtype_of(source_app.base, pattern_app.base)
-                                    && checker.is_subtype_of(pattern_app.base, source_app.base)));
-                        if bases_match {
-                            for (source_arg, pattern_arg) in
-                                source_app.args.iter().zip(pattern_app.args.iter())
-                            {
-                                if !self.match_infer_pattern(
-                                    *source_arg,
-                                    *pattern_arg,
-                                    bindings,
-                                    visited,
-                                    checker,
-                                ) {
-                                    return false;
-                                }
-                            }
-                            return true;
+                        if let Some(result) = self.try_match_application_args_to_pattern(
+                            &source_app,
+                            &pattern_app,
+                            bindings,
+                            visited,
+                            checker,
+                        ) {
+                            return result;
                         }
                         if source_app.args.len() == pattern_app.args.len() {
                             let candidate_pattern = self
@@ -1379,6 +1399,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         break;
                     };
                     current_source = peeled;
+                }
+
+                // Source may have been evaluated from Application(Promise,[T]) to Object before
+                // reaching this point; display_alias records the original Application for recovery.
+                if let Some(recovered) = self.try_recover_application_from_display_alias(source)
+                    && let Some(TypeData::Application(recovered_app_id)) =
+                        self.interner().lookup(recovered)
+                {
+                    let recovered_app = self.interner().type_application(recovered_app_id);
+                    if let Some(result) = self.try_match_application_args_to_pattern(
+                        &recovered_app,
+                        &pattern_app,
+                        bindings,
+                        visited,
+                        checker,
+                    ) {
+                        return result;
+                    }
                 }
 
                 // Fallback: Structural expansion

@@ -877,8 +877,12 @@ impl<'a> IRPrinter<'a> {
                 let should_emit_single_line = *is_expression_body || is_source_single_line;
 
                 let has_rest_to_lower = self.target_es5 && parameters.iter().any(|p| p.rest);
+                let has_new_target_capture = body
+                    .first()
+                    .is_some_and(|node| matches!(node, IRNode::NewTargetCapture { .. }));
                 if !has_defaults
                     && !has_rest_to_lower
+                    && !has_new_target_capture
                     && should_emit_single_line
                     && body.len() == 1
                     && match &body[0] {
@@ -907,6 +911,7 @@ impl<'a> IRPrinter<'a> {
                 }
                 if !has_defaults
                     && !has_rest_to_lower
+                    && !has_new_target_capture
                     && should_emit_single_line
                     && body.len() == 2
                     && matches!(body[0], IRNode::VarDeclList(_))
@@ -987,6 +992,11 @@ impl<'a> IRPrinter<'a> {
                         self.emit_node(decl);
                     }
                 }
+                self.write(";");
+            }
+            IRNode::NewTargetCapture { initializer } => {
+                self.write("var _newTarget = ");
+                self.emit_node(initializer);
                 self.write(";");
             }
             IRNode::ExpressionStatement(expr) => {

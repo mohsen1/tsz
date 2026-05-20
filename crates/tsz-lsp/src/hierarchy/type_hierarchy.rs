@@ -96,25 +96,24 @@ impl<'a> TypeHierarchyProvider<'a> {
     /// to find parent types. For each parent type name found in a heritage
     /// clause, searches the file for its declaration and returns an item.
     pub fn supertypes(&self, _root: NodeIndex, position: Position) -> Vec<TypeHierarchyItem> {
-        let mut results = Vec::new();
-
         let offset = match self.line_map.position_to_offset(position, self.source_text) {
             Some(o) => o,
-            None => return results,
+            None => return Vec::new(),
         };
 
         let node_idx = find_node_at_offset(self.arena, offset);
         if node_idx.is_none() {
-            return results;
+            return Vec::new();
         }
 
         let decl_idx = match self.find_type_declaration_at_or_around(node_idx) {
             Some(idx) => idx,
-            None => return results,
+            None => return Vec::new(),
         };
 
         // Collect supertype names from heritage clauses
         let supertype_names = self.collect_heritage_type_names(decl_idx);
+        let mut results = Vec::with_capacity(supertype_names.len());
 
         // For each supertype name, find its declaration in the file
         for name in &supertype_names {

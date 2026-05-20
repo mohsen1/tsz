@@ -4055,7 +4055,7 @@ fn test_shared_def_store_propagated_through_cache_constructor() {
     let def_id = shared_store.register(info);
 
     let interner = TypeInterner::new();
-    let query_cache = tsz_solver::QueryCache::new(&interner);
+    let query_cache = tsz_solver::construction::QueryCache::new(&interner);
     let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), "let x = 1;".to_string());
     let root = parser.parse_source_file();
     let arena = parser.get_arena();

@@ -607,6 +607,9 @@ mod partial_pick_indexed_access_write_tests;
 #[path = "../tests/private_brands.rs"]
 mod private_brands;
 #[cfg(test)]
+#[path = "tests/promise_like_infer_tests.rs"]
+mod promise_like_infer_tests;
+#[cfg(test)]
 #[path = "tests/property_alias_display_tests.rs"]
 mod property_alias_display_tests;
 #[cfg(test)]
@@ -621,6 +624,9 @@ mod repro_parserreal;
 #[cfg(test)]
 #[path = "../tests/reverse_mapped_inference_tests.rs"]
 mod reverse_mapped_inference_tests;
+#[cfg(test)]
+#[path = "tests/split_accessor_variance_tests.rs"]
+mod split_accessor_variance_tests;
 #[cfg(test)]
 #[path = "tests/strict_callback_param_method_tests.rs"]
 mod strict_callback_param_method_tests;

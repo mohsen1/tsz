@@ -8,16 +8,18 @@ use tsz_scanner::SyntaxKind;
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ReferenceTarget {
     Arguments,
+    NewTarget,
     This,
     Super,
 }
 
 impl ReferenceTarget {
-    const fn identifier_name(self) -> &'static str {
+    const fn identifier_name(self) -> Option<&'static str> {
         match self {
-            Self::Arguments => "arguments",
-            Self::This => "this",
-            Self::Super => "super",
+            Self::Arguments => Some("arguments"),
+            Self::NewTarget => None,
+            Self::This => Some("this"),
+            Self::Super => Some("super"),
         }
     }
 
@@ -100,6 +102,15 @@ pub fn contains_arguments_reference(arena: &NodeArena, node_idx: NodeIndex) -> b
     contains_target_reference(arena, node_idx, ReferenceTarget::Arguments)
 }
 
+/// Check if a node contains `new.target` in the current lexical context.
+///
+/// Regular functions and classes own a new `new.target` binding. Arrow functions
+/// inherit it from the surrounding function-like body.
+#[must_use]
+pub fn contains_new_target_reference(arena: &NodeArena, node_idx: NodeIndex) -> bool {
+    contains_target_reference(arena, node_idx, ReferenceTarget::NewTarget)
+}
+
 /// Check if a node contains an async arrow function in the current lexical
 /// context. Nested regular functions and classes form new lexical `this`
 /// boundaries, while nested arrow functions remain in the same context.
@@ -174,10 +185,25 @@ fn contains_target_reference(
         }
     }
 
+    if target == ReferenceTarget::NewTarget
+        && node.kind == syntax_kind_ext::META_PROPERTY
+        && let Some(access) = arena.get_access_expr(node)
+        && arena
+            .get(access.expression)
+            .is_some_and(|kw| kw.kind == SyntaxKind::NewKeyword as u16)
+        && arena
+            .get(access.name_or_argument)
+            .and_then(|name| arena.get_identifier(name))
+            .is_some_and(|identifier| identifier.escaped_text == "target")
+    {
+        return true;
+    }
+
     if node.is_identifier()
+        && let Some(target_name) = target.identifier_name()
         && let Some(identifier) = arena.get_identifier(node)
     {
-        return identifier.escaped_text == target.identifier_name();
+        return identifier.escaped_text == target_name;
     }
 
     target_reference_children(arena, node_idx, target)
@@ -210,8 +236,9 @@ fn collect_target_references(
     }
 
     if node.is_identifier()
+        && let Some(target_name) = target.identifier_name()
         && let Some(identifier) = arena.get_identifier(node)
-        && identifier.escaped_text == target.identifier_name()
+        && identifier.escaped_text == target_name
     {
         refs.push(node_idx);
         return;

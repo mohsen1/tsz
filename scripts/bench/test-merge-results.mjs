@@ -58,6 +58,42 @@ const SAMPLE_COMPATIBILITY = {
   },
 };
 
+const SAMPLE_MEASUREMENT_PROFILE = {
+  mode: "release-pgo",
+  tsz_binary_source: "bench-dist",
+  profile_guided_optimization: {
+    requested: true,
+    required: true,
+    optimized: true,
+    marker_path: "/tmp/tsz/.target-bench/dist/.bench-pgo-optimized",
+    marker_found: true,
+    profile_use: "/tmp/tsz/.target-bench/pgo-data/merged.profdata",
+    profile_fingerprint: "abcdef123456",
+    training_fingerprint: "123456abcdef",
+    profile_data_source: "fresh",
+    built_at: "2026-05-20T01:02:03Z",
+    llvm_profdata: "/toolchain/bin/llvm-profdata",
+    training_metadata_available: true,
+    training_input_count: 2,
+    training_failure_count: 0,
+    training_inputs: ["stdin:scalar", "synthetic:mapped_type.ts"],
+    training_failed_inputs: [],
+    config: {
+      synthetic: true,
+      fetch_utility_types: true,
+      fetch_core_projects: false,
+      panic_unwind: false,
+      extra_inputs: null,
+      training_timeout_seconds: 900,
+      cache_enabled: true,
+    },
+  },
+};
+
+function cloneJson(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
 function withTempDir(fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-merge-results-"));
   try {
@@ -181,6 +217,27 @@ withTempDir((dir) => {
 
 withTempDir((dir) => {
   const canaryRow = COMPILE_ONLY_CANARY_PROJECT_ROWS[0];
+  const input = writeInput(dir, "input.json", [projectRow("standalone")]);
+  const compatibilityJsonl = path.join(dir, "project-compatibility.jsonl");
+  fs.writeFileSync(
+    compatibilityJsonl,
+    `${JSON.stringify({ ...SAMPLE_COMPATIBILITY, name: canaryRow, files_reached: 78 })}\n`,
+    "utf8",
+  );
+
+  const result = runMergeInputs(dir, ["--compat-jsonl", compatibilityJsonl, input]);
+  assert.equal(result.status, 0, result.stderr);
+  const merged = JSON.parse(fs.readFileSync(result.output, "utf8"));
+  const row = merged.results.find((candidate) => candidate.name === canaryRow);
+  assert.ok(row, "expected merge to add compile-canary compatibility row");
+  assert.equal(row.lines, 78);
+  assert.match(row.status, /compile canary tracked in CI/);
+  assert.equal(row.compatibility.state, "green");
+  assert.equal(merged.validation.project_compatibility_required_fields, true);
+});
+
+withTempDir((dir) => {
+  const canaryRow = COMPILE_ONLY_CANARY_PROJECT_ROWS[0];
   const { diagnostic_subsystems: _diagnosticSubsystems, ...compatibility } = SAMPLE_COMPATIBILITY;
   const result = runMerge(dir, [projectRow(canaryRow, compatibility)]);
   assert.equal(result.status, 1);
@@ -279,6 +336,55 @@ withTempDir((dir) => {
   assert.deepEqual(
     merged.validation.runner_environment_warnings[0].mismatched_fields,
     ["cpu_count", "total_memory_bytes", "cloud_build_machine_type"],
+  );
+});
+
+withTempDir((dir) => {
+  const result = runMerge(
+    dir,
+    [projectRow("standalone")],
+    { measurement_profile: SAMPLE_MEASUREMENT_PROFILE },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const merged = JSON.parse(fs.readFileSync(result.output, "utf8"));
+  assert.deepEqual(merged.measurement_profile, SAMPLE_MEASUREMENT_PROFILE);
+  assert.deepEqual(merged.validation.measurement_profile_warnings, []);
+});
+
+withTempDir((dir) => {
+  const firstProfile = cloneJson(SAMPLE_MEASUREMENT_PROFILE);
+  const secondProfile = cloneJson(SAMPLE_MEASUREMENT_PROFILE);
+  secondProfile.profile_guided_optimization.profile_fingerprint = "fedcba654321";
+  secondProfile.profile_guided_optimization.training_fingerprint = "654321fedcba";
+  secondProfile.profile_guided_optimization.training_inputs.push("utility-types");
+  secondProfile.profile_guided_optimization.training_input_count = 3;
+
+  const first = writeInput(
+    dir,
+    "bench-results-pgo-a.json",
+    [projectRow("first")],
+    { measurement_profile: firstProfile },
+  );
+  const second = writeInput(
+    dir,
+    "bench-results-pgo-b.json",
+    [projectRow("second")],
+    { measurement_profile: secondProfile },
+  );
+  const result = runMergeInputs(dir, [first, second]);
+  assert.equal(result.status, 0, result.stderr);
+  const merged = JSON.parse(fs.readFileSync(result.output, "utf8"));
+  assert.deepEqual(merged.measurement_profile, firstProfile);
+  assert.equal(merged.validation.measurement_profile_warnings.length, 1);
+  assert.equal(merged.validation.measurement_profile_warnings[0].file, "bench-results-pgo-b.json");
+  assert.deepEqual(
+    merged.validation.measurement_profile_warnings[0].mismatched_fields,
+    [
+      "profile_guided_optimization.profile_fingerprint",
+      "profile_guided_optimization.training_fingerprint",
+      "profile_guided_optimization.training_input_count",
+      "profile_guided_optimization.training_inputs",
+    ],
   );
 });
 

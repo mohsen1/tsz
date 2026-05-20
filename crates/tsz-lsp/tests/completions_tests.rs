@@ -4806,3 +4806,124 @@ fn test_completions_quoted_type_literal_property_detail() {
         "Quoted property detail must be `string`, got: {prop2_detail:?}"
     );
 }
+
+// ─── auto-import sort-text tests ─────────────────────────────────────────────
+
+/// Auto-import completions from regular code (outside any import clause) must
+/// use `AUTO_IMPORT` sort text ("16"), matching TypeScript's
+/// `SortText.AutoImportSuggestions`.
+#[test]
+fn test_auto_import_sort_text_regular_code() {
+    let mut project = crate::Project::new();
+    project.set_file(
+        "/src/utils.ts".to_string(),
+        "export function helperAlpha() {}\nexport function helperBeta() {}".to_string(),
+    );
+    // Cursor at end of empty file — regular code position, not inside import clause.
+    project.set_file("/src/main.ts".to_string(), "helperA".to_string());
+
+    let completions = project
+        .get_completions("/src/main.ts", Position::new(0, 7))
+        .unwrap_or_default();
+
+    let helper = completions
+        .iter()
+        .find(|i| i.label == "helperAlpha" || i.label == "helperBeta");
+    assert!(
+        helper.is_some(),
+        "Expected auto-import candidate; got labels: {:?}",
+        completions.iter().map(|i| &i.label).collect::<Vec<_>>()
+    );
+    let sort = helper.unwrap().effective_sort_text();
+    assert_eq!(
+        sort,
+        crate::completions::sort_priority::AUTO_IMPORT,
+        "Regular-code auto-import must use AUTO_IMPORT sort text; got {sort:?}"
+    );
+}
+
+/// Auto-import completions offered inside `import {{ | }} from '…'` (named
+/// bindings clause) must use `LOCATION_PRIORITY` sort text ("11"), matching
+/// TypeScript's `SortText.LocationPriority` for `importStatementCompletion`.
+#[test]
+fn test_auto_import_sort_text_inside_named_import_clause() {
+    let mut project = crate::Project::new();
+    project.set_file(
+        "/src/widgets.ts".to_string(),
+        "export function widgetOne() {}\nexport function widgetTwo() {}".to_string(),
+    );
+    // Cursor is inside `import { | }` — the named-bindings list.
+    // Position (0, 9) lands between the braces.
+    project.set_file(
+        "/src/app.ts".to_string(),
+        "import {  } from './widgets';".to_string(),
+    );
+
+    let completions = project
+        .get_completions("/src/app.ts", Position::new(0, 9))
+        .unwrap_or_default();
+
+    let widget = completions
+        .iter()
+        .find(|i| i.label == "widgetOne" || i.label == "widgetTwo");
+    assert!(
+        widget.is_some(),
+        "Expected widget candidate inside import clause; got labels: {:?}",
+        completions.iter().map(|i| &i.label).collect::<Vec<_>>()
+    );
+    let sort = widget.unwrap().effective_sort_text();
+    assert_eq!(
+        sort,
+        crate::completions::sort_priority::LOCATION_PRIORITY,
+        "Import-clause auto-import must use LOCATION_PRIORITY sort text; got {sort:?}"
+    );
+}
+
+/// Verify that the import-clause sort text ("11") lexicographically precedes the
+/// regular-code auto-import sort text ("16"). Editors sort completion items by
+/// `sortText` as a string, so lexicographic ordering is exactly what matters.
+#[test]
+fn test_auto_import_import_clause_sorts_before_regular_auto_import() {
+    use crate::completions::sort_priority;
+    // String comparison is intentional — `sortText` is compared lexicographically
+    // by editors, matching TypeScript's own SortText design.
+    assert!(
+        sort_priority::LOCATION_PRIORITY < sort_priority::AUTO_IMPORT,
+        "LOCATION_PRIORITY ({}) must sort before AUTO_IMPORT ({})",
+        sort_priority::LOCATION_PRIORITY,
+        sort_priority::AUTO_IMPORT
+    );
+}
+
+/// Different names for bound variables (`K` vs `X`, `Widget` vs `Component`)
+/// must not affect whether the import-clause sort text applies.  The rule is
+/// structural (cursor is inside `NAMED_IMPORTS`), not spelling-dependent.
+#[test]
+fn test_auto_import_import_clause_sort_text_name_independent() {
+    for export_name in &["alphaExport", "betaExport", "gammaExport"] {
+        let mut project = crate::Project::new();
+        project.set_file(
+            "/src/lib.ts".to_string(),
+            format!("export function {export_name}() {{}}"),
+        );
+        project.set_file(
+            "/src/consumer.ts".to_string(),
+            "import {  } from './lib';".to_string(),
+        );
+        let completions = project
+            .get_completions("/src/consumer.ts", Position::new(0, 9))
+            .unwrap_or_default();
+
+        let item = completions.iter().find(|i| i.label == *export_name);
+        assert!(
+            item.is_some(),
+            "Expected `{export_name}` inside import clause; got: {:?}",
+            completions.iter().map(|i| &i.label).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            item.unwrap().effective_sort_text(),
+            crate::completions::sort_priority::LOCATION_PRIORITY,
+            "`{export_name}` inside import clause must get LOCATION_PRIORITY sort text"
+        );
+    }
+}

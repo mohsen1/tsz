@@ -138,6 +138,7 @@ impl SymbolIndex {
 
         // With nested structure, we can directly get all files for this symbol
         if let Some(file_refs) = self.symbol_refs.get(name) {
+            result.reserve(file_refs.values().map(Vec::len).sum());
             for locations in file_refs.values() {
                 result.extend(locations.iter().cloned());
             }
@@ -335,7 +336,8 @@ impl SymbolIndex {
         source_text: &str,
     ) {
         let file_name_owned = file_name.to_string();
-        let mut file_symbol_names = FxHashSet::default();
+        let mut file_symbol_names =
+            FxHashSet::with_capacity_and_hasher(arena.identifiers.len(), Default::default());
         let line_map = LineMap::build(source_text);
 
         // Pool Scan: Index all identifier mentions from the AST
@@ -829,7 +831,7 @@ impl SymbolIndex {
 
         // Collect all symbols that start with the prefix
         // We iterate from the start position until we find a symbol that doesn't match
-        let mut result = Vec::new();
+        let mut result = Vec::with_capacity(self.sorted_names.len().saturating_sub(start));
         for name in &self.sorted_names[start..] {
             if name.starts_with(prefix) {
                 result.push(name.clone());

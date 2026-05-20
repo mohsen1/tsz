@@ -36,6 +36,9 @@ type ApplicationEvalCacheKey = (DefId, smallvec::SmallVec<[TypeId; 4]>, bool);
 type ElementAccessTypeCacheKey = (TypeId, TypeId, Option<u32>, bool);
 type PropertyAccessCacheKey = (TypeId, Atom, bool, bool);
 
+const SUBTYPE_POLICY_TRACE_OP: &str = "is_subtype_of_with_policy";
+const ASSIGNABILITY_POLICY_TRACE_OP: &str = "is_assignable_to_with_policy";
+
 /// Thread-safe shared query cache for cross-file type checking.
 ///
 /// In multi-file projects (e.g., ts-toolbelt with 242 files), each file checker
@@ -1470,7 +1473,12 @@ impl QueryDatabase for QueryCache<'_> {
         self.subtype_reduction_cache.insert(key, result);
     }
 
-    fn is_subtype_of_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
+    fn is_subtype_of_with_policy(
+        &self,
+        source: TypeId,
+        target: TypeId,
+        policy: RelationPolicy,
+    ) -> bool {
         // Fast identity/top/bottom paths — avoid cache key construction, RefCell
         // borrow, and SubtypeChecker allocation entirely.
         if source == target
@@ -1498,25 +1506,21 @@ impl QueryDatabase for QueryCache<'_> {
             let query_id = query_trace::next_query_id();
             query_trace::relation_start(
                 query_id,
-                "is_subtype_of_with_flags",
+                SUBTYPE_POLICY_TRACE_OP,
                 source,
                 target,
-                flags,
+                policy.flags,
             );
             query_id
         });
-        let key = RelationCacheKey::for_subtype(
-            source,
-            target,
-            RelationPolicy::from_flags(flags).cache_config(),
-        );
+        let key = RelationCacheKey::for_subtype(source, target, policy.cache_config());
         let cached = self.subtype_cache.borrow().get(&key).copied();
 
         if let Some(result) = cached {
             self.subtype_cache_hits
                 .set(self.subtype_cache_hits.get() + 1);
             if let Some(query_id) = trace_query_id {
-                query_trace::relation_end(query_id, "is_subtype_of_with_flags", result, true);
+                query_trace::relation_end(query_id, SUBTYPE_POLICY_TRACE_OP, result, true);
             }
             return result;
         }
@@ -1529,7 +1533,7 @@ impl QueryDatabase for QueryCache<'_> {
             self.subtype_cache_hits
                 .set(self.subtype_cache_hits.get() + 1);
             if let Some(query_id) = trace_query_id {
-                query_trace::relation_end(query_id, "is_subtype_of_with_flags", result, true);
+                query_trace::relation_end(query_id, SUBTYPE_POLICY_TRACE_OP, result, true);
             }
             return result;
         }
@@ -1542,7 +1546,7 @@ impl QueryDatabase for QueryCache<'_> {
             source,
             target,
             RelationKind::Subtype,
-            RelationPolicy::from_flags(flags),
+            policy,
             RelationContext::default(),
         );
         let result = result.related;
@@ -1552,12 +1556,17 @@ impl QueryDatabase for QueryCache<'_> {
             shared.subtype_cache.insert(key, result);
         }
         if let Some(query_id) = trace_query_id {
-            query_trace::relation_end(query_id, "is_subtype_of_with_flags", result, false);
+            query_trace::relation_end(query_id, SUBTYPE_POLICY_TRACE_OP, result, false);
         }
         result
     }
 
-    fn is_assignable_to_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
+    fn is_assignable_to_with_policy(
+        &self,
+        source: TypeId,
+        target: TypeId,
+        policy: RelationPolicy,
+    ) -> bool {
         // Fast identity/top/bottom paths — avoid cache key construction, RefCell
         // borrow, and CompatChecker allocation entirely.
         if source == target
@@ -1585,30 +1594,20 @@ impl QueryDatabase for QueryCache<'_> {
             let query_id = query_trace::next_query_id();
             query_trace::relation_start(
                 query_id,
-                "is_assignable_to_with_flags",
+                ASSIGNABILITY_POLICY_TRACE_OP,
                 source,
                 target,
-                flags,
+                policy.flags,
             );
             query_id
         });
-        // Task A: Use passed flags instead of hardcoded 0,0.
-        // The flags bitmask is the legacy `u16` protocol owned by the
-        // checker's `pack_relation_flags()`; convert it to a typed
-        // `RelationCacheConfig` that matches the effective defaults of a
-        // fresh `CompatChecker` so write-paths and read-paths share the
-        // same cache slot.
-        let key = RelationCacheKey::for_assignability(
-            source,
-            target,
-            RelationPolicy::from_flags(flags).cache_config(),
-        );
+        let key = RelationCacheKey::for_assignability(source, target, policy.cache_config());
 
         if let Some(result) = self.check_cache(&self.assignability_cache, key) {
             self.assignability_cache_hits
                 .set(self.assignability_cache_hits.get() + 1);
             if let Some(query_id) = trace_query_id {
-                query_trace::relation_end(query_id, "is_assignable_to_with_flags", result, true);
+                query_trace::relation_end(query_id, ASSIGNABILITY_POLICY_TRACE_OP, result, true);
             }
             return result;
         }
@@ -1621,7 +1620,7 @@ impl QueryDatabase for QueryCache<'_> {
             self.assignability_cache_hits
                 .set(self.assignability_cache_hits.get() + 1);
             if let Some(query_id) = trace_query_id {
-                query_trace::relation_end(query_id, "is_assignable_to_with_flags", result, true);
+                query_trace::relation_end(query_id, ASSIGNABILITY_POLICY_TRACE_OP, result, true);
             }
             return result;
         }
@@ -1634,7 +1633,7 @@ impl QueryDatabase for QueryCache<'_> {
             source,
             target,
             RelationKind::Assignable,
-            RelationPolicy::from_flags(flags),
+            policy,
             RelationContext::default(),
         );
         let result = result.related;
@@ -1645,19 +1644,19 @@ impl QueryDatabase for QueryCache<'_> {
             shared.assignability_cache.insert(key, result);
         }
         if let Some(query_id) = trace_query_id {
-            query_trace::relation_end(query_id, "is_assignable_to_with_flags", result, false);
+            query_trace::relation_end(query_id, ASSIGNABILITY_POLICY_TRACE_OP, result, false);
         }
         result
     }
 
     /// Convenience wrapper for `is_subtype_of` with default flags.
     fn is_subtype_of(&self, source: TypeId, target: TypeId) -> bool {
-        self.is_subtype_of_with_flags(source, target, 0) // Default non-strict mode for backward compatibility
+        self.is_subtype_of_with_policy(source, target, RelationPolicy::unflagged_compatibility())
     }
 
     /// Convenience wrapper for `is_assignable_to` with default flags.
     fn is_assignable_to(&self, source: TypeId, target: TypeId) -> bool {
-        self.is_assignable_to_with_flags(source, target, 0) // Default non-strict mode for backward compatibility
+        self.is_assignable_to_with_policy(source, target, RelationPolicy::unflagged_compatibility())
     }
 
     fn lookup_subtype_cache(&self, key: RelationCacheKey) -> Option<bool> {

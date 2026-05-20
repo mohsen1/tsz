@@ -69,8 +69,8 @@ pub fn build_import_paths(current_file: &str, project_files: &[String]) -> Vec<I
         None => ".",
     };
 
-    let mut entries = Vec::new();
-    let mut seen_dirs = std::collections::HashSet::new();
+    let mut entries = Vec::with_capacity(project_files.len());
+    let mut seen_dirs = std::collections::HashSet::with_capacity(project_files.len());
 
     for file in project_files {
         if file == current_file {

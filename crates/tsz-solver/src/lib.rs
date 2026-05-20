@@ -93,6 +93,7 @@ pub mod type_handles {
 /// These functions inspect types but don't modify or create them.
 /// Safe for any consumer to import directly.
 pub mod query {
+    pub use crate::caches::db::TypeStore;
     pub use crate::visitors::visitor::{
         application_id, array_element_type, bound_parameter_index, callable_shape_id,
         collect_enum_def_ids, collect_infer_bindings, collect_lazy_def_ids,
@@ -171,13 +172,15 @@ pub mod computation {
 /// `query_boundaries` in the checker crate.
 pub mod construction {
     pub use crate::caches::db::{QueryDatabase, TypeDatabase};
-    pub use crate::caches::query_cache::QueryCache;
-    pub use crate::intern::TypeInterner;
+    pub use crate::caches::query_cache::{
+        QueryCache, QueryCacheStatistics, RelationCacheProbe, RelationCacheStats, SharedQueryCache,
+    };
     pub use crate::intern::type_factory::*;
+    pub use crate::intern::{TypeInterner, clear_thread_local_cache};
 }
 pub use intern::TypeInterner;
-pub use intern::clear_thread_local_cache;
-pub use operations::infer_generic_function;
+#[cfg(test)]
+pub(crate) use operations::infer_generic_function;
 pub use visitors::visitor::{
     apparent_intrinsic_kind, application_id, array_element_type, bound_parameter_index,
     callable_shape_id, collect_enum_def_ids, collect_infer_bindings, collect_lazy_def_ids,
@@ -205,9 +208,6 @@ pub use visitors::visitor::{
 };
 
 pub use caches::db::{QueryDatabase, TypeDatabase};
-pub use caches::query_cache::{
-    QueryCache, QueryCacheStatistics, RelationCacheProbe, RelationCacheStats, SharedQueryCache,
-};
 pub use canonicalize::Canonicalizer;
 pub use classes::inheritance::InheritanceGraph;
 pub use contextual::{ContextualTypeContext, apply_contextual_type, rest_argument_element_type};
@@ -298,9 +298,9 @@ pub use types::{
 };
 // unsoundness_audit: accessed via tsz_solver::unsoundness_audit module path
 pub use operations::widening::{
-    apply_const_assertion, display_widen_for_redeclaration, get_base_type_for_comparison,
-    widen_argument_type_for_display, widen_literal_type, widen_type, widen_type_deep,
-    widen_type_for_display, widen_type_for_inference,
+    display_widen_for_redeclaration, get_base_type_for_comparison, widen_argument_type_for_display,
+    widen_literal_type, widen_type, widen_type_deep, widen_type_for_display,
+    widen_type_for_inference,
 };
 
 // Test modules: Most are loaded by their source files via #[path = "tests/..."] declarations.

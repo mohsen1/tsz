@@ -55,7 +55,7 @@ use tsz::parser::ParseDiagnostic;
 use tsz::parser::node::NodeArena;
 use tsz::parser::syntax_kind_ext;
 use tsz::scanner::SyntaxKind;
-use tsz_solver::QueryCache;
+use tsz_solver::construction::QueryCache;
 
 fn diagnostic_source_line<'a>(
     program: &'a MergedProgram,
@@ -195,7 +195,7 @@ pub struct CompilationResult {
     /// Estimated heap memory of the `TypeInterner` in bytes (populated for `--extendedDiagnostics`).
     pub interner_estimated_bytes: usize,
     /// Aggregate query-cache statistics (populated for `--extendedDiagnostics`).
-    pub query_cache_stats: Option<tsz_solver::QueryCacheStatistics>,
+    pub query_cache_stats: Option<tsz_solver::construction::QueryCacheStatistics>,
     /// Aggregate definition-store statistics (populated for `--extendedDiagnostics`).
     pub def_store_stats: Option<tsz_solver::StoreStatistics>,
     /// Phase timing breakdown for `--diagnostics` / `--extendedDiagnostics`.
@@ -1938,6 +1938,7 @@ fn compile_inner(
             program: &program,
             options: &resolved,
             base_dir: &base_dir,
+            root_file_paths: &root_file_paths,
             root_dir: root_dir.as_deref(),
             out_dir: out_dir.as_deref(),
             declaration_dir: declaration_dir.as_deref(),

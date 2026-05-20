@@ -54,8 +54,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn react_component_alias_def_has_react_origin(&self, def_id: tsz_solver::DefId) -> bool {
-        if self
-            .ctx
+        self.ctx
             .definition_store
             .get_symbol_id(def_id)
             .is_some_and(|raw| {
@@ -63,12 +62,6 @@ impl<'a> CheckerState<'a> {
                 self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
                     || self.symbol_parent_chain_contains_name(sym_id, "React")
             })
-        {
-            return true;
-        }
-
-        let display = self.format_type(self.ctx.types.factory().lazy(def_id));
-        display.starts_with("React.")
     }
 
     fn symbol_parent_chain_contains_name(

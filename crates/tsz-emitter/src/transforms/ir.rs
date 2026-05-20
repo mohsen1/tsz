@@ -174,6 +174,9 @@ pub enum IRNode {
     /// Multiple variable declarations: `var a = 1, b = 2;`
     VarDeclList(Vec<Self>),
 
+    /// `var _newTarget = ...;` capture emitted before parameter/body prologues.
+    NewTargetCapture { initializer: Box<Self> },
+
     /// Internal async-transform marker: start a new hoisted `var` statement group.
     HoistedVarGroupBreak,
 
@@ -909,6 +912,7 @@ impl IRNode {
             | Self::StaticBlockIIFE { statements: nodes } => {
                 nodes.iter().any(|node| node.contains_identifier(name))
             }
+            Self::NewTargetCapture { initializer } => initializer.contains_identifier(name),
             Self::ObjectLiteral { properties, .. } => properties
                 .iter()
                 .any(|property| property.contains_identifier(name)),
@@ -1223,6 +1227,9 @@ impl IRNode {
             | Self::Sequence(nodes)
             | Self::StaticBlockIIFE { statements: nodes } => {
                 nodes.iter().any(Self::contains_captured_this_reference)
+            }
+            Self::NewTargetCapture { initializer } => {
+                initializer.contains_captured_this_reference()
             }
             Self::ObjectLiteral { properties, .. } => properties
                 .iter()

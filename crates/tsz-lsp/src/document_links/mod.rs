@@ -44,9 +44,25 @@ impl<'a> DocumentLinkProvider<'a> {
     /// and dynamic import / `require()` calls, then extracts module specifier
     /// strings and builds document links.
     pub fn provide_document_links(&self, root: NodeIndex) -> Vec<DocumentLink> {
-        let mut links = Vec::new();
+        let mut links = self.link_buffer_for_root(root);
         self.collect_links(root, &mut links);
         links
+    }
+
+    fn link_buffer_for_root(&self, root: NodeIndex) -> Vec<DocumentLink> {
+        let Some(node) = self.arena.get(root) else {
+            return Vec::new();
+        };
+
+        if node.kind != syntax_kind_ext::SOURCE_FILE {
+            return Vec::new();
+        }
+
+        self.arena
+            .get_source_file(node)
+            .map_or_else(Vec::new, |source_file| {
+                Vec::with_capacity(source_file.statements.nodes.len())
+            })
     }
 
     /// Recursively collect document links from the AST.

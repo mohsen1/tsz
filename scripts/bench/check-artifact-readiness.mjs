@@ -56,6 +56,57 @@ function rowState(row) {
 
 const STATE_ICON = { green: "✅", yellow: "⚠️", red: "❌", gray: "⬜", missing: "🚫" };
 
+function analyzeMeasurementProfile(artifact) {
+  const profile = artifact?.measurement_profile;
+  if (!profile || typeof profile !== "object") {
+    return {
+      present: false,
+      mode: null,
+      tsz_binary_source: null,
+      pgo_requested: null,
+      pgo_required: null,
+      pgo_optimized: null,
+      profile_fingerprint: null,
+      training_fingerprint: null,
+      training_input_count: null,
+      training_failure_count: null,
+      warning: "measurement_profile missing",
+    };
+  }
+
+  const pgo = profile.profile_guided_optimization && typeof profile.profile_guided_optimization === "object"
+    ? profile.profile_guided_optimization
+    : {};
+  const mode = typeof profile.mode === "string" && profile.mode.trim()
+    ? profile.mode.trim()
+    : null;
+  const warning = (() => {
+    if (!mode) return "measurement_profile.mode missing";
+    if (mode === "release-pgo") {
+      const missing = [];
+      if (pgo.optimized !== true) missing.push("pgo optimized flag");
+      if (!pgo.profile_fingerprint) missing.push("profile fingerprint");
+      if (!pgo.training_fingerprint) missing.push("training fingerprint");
+      if (missing.length) return `release-pgo metadata missing ${missing.join(", ")}`;
+    }
+    return null;
+  })();
+
+  return {
+    present: true,
+    mode,
+    tsz_binary_source: profile.tsz_binary_source ?? null,
+    pgo_requested: pgo.requested ?? null,
+    pgo_required: pgo.required ?? null,
+    pgo_optimized: pgo.optimized ?? null,
+    profile_fingerprint: pgo.profile_fingerprint ?? null,
+    training_fingerprint: pgo.training_fingerprint ?? null,
+    training_input_count: pgo.training_input_count ?? null,
+    training_failure_count: pgo.training_failure_count ?? null,
+    warning,
+  };
+}
+
 function analyzeArtifact(artifact) {
   const byName = new Map(
     (artifact.results ?? []).map((r) => [r?.name, r]),
@@ -78,6 +129,7 @@ function analyzeArtifact(artifact) {
   });
 
   return {
+    measurementProfile: analyzeMeasurementProfile(artifact),
     rows,
     missing: rows.filter((r) => r.state === "missing"),
     red: rows.filter((r) => r.state === "red"),
@@ -87,7 +139,7 @@ function analyzeArtifact(artifact) {
   };
 }
 
-function buildJson({ artifactAbsent, parseError, artifact, rows, missing, red, yellow, gray, green }) {
+function buildJson({ artifactAbsent, parseError, artifact, measurementProfile, rows, missing, red, yellow, gray, green }) {
   const missingNames = missing?.map((r) => r.name) ?? REQUIRED_PROJECT_ROWS;
   return {
     artifact_absent: artifactAbsent,
@@ -95,6 +147,7 @@ function buildJson({ artifactAbsent, parseError, artifact, rows, missing, red, y
     source_commit: artifact?.source_commit ?? null,
     generated_at: artifact?.generated_at ?? null,
     workflow_run_url: artifact?.workflow_run_url ?? null,
+    measurement_profile: measurementProfile ?? null,
     required_row_count: rows?.length ?? REQUIRED_PROJECT_ROWS.length,
     green: green?.length ?? 0,
     yellow: yellow?.length ?? 0,
@@ -130,10 +183,14 @@ function artifactAge(generatedAt) {
   return `${h} h ago`;
 }
 
-function buildReport({ artifact, rows, missing, red, yellow, gray, green }) {
+function buildReport({ artifact, measurementProfile, rows, missing, red, yellow, gray, green }) {
   const sourceCommit = artifact?.source_commit?.slice(0, 10) ?? "unknown";
   const generatedAt = artifact?.generated_at ?? null;
   const workflowUrl = artifact?.workflow_run_url ?? null;
+  const profile = measurementProfile ?? analyzeMeasurementProfile(artifact);
+  const profileLabel = profile.present
+    ? `${profile.mode ?? "unknown"}${profile.warning ? ` (${profile.warning})` : ""}`
+    : profile.warning;
 
   const lines = [
     `## Benchmark artifact readiness — ${new Date().toUTCString()}`,
@@ -143,6 +200,9 @@ function buildReport({ artifact, rows, missing, red, yellow, gray, green }) {
     `| Artifact SHA | \`${sourceCommit}\` |`,
     `| Generated | ${generatedAt ?? "—"} (${artifactAge(generatedAt)}) |`,
     `| Workflow run | ${workflowUrl ? `[link](${workflowUrl})` : "—"} |`,
+    `| Measurement profile | ${profileLabel} |`,
+    `| PGO profile | ${profile.profile_fingerprint ? `\`${profile.profile_fingerprint.slice(0, 12)}\`` : "—"} |`,
+    `| PGO training | ${profile.training_fingerprint ? `\`${profile.training_fingerprint.slice(0, 12)}\`` : "—"} |`,
     `| Required rows | ${rows.length} |`,
     `| ✅ green | ${green.length} |`,
     `| ⚠️ yellow | ${yellow.length} |`,
@@ -207,20 +267,42 @@ if (artifactAbsent || parseError) {
   writeReport(buildAbsentReport(parseError));
   if (jsonOutput) {
     process.stdout.write(
-      JSON.stringify(buildJson({ artifactAbsent: true, parseError, artifact: null, rows: null, missing: null, red: null, yellow: null, gray: null, green: null })) + "\n",
+      JSON.stringify(buildJson({
+        artifactAbsent: true,
+        parseError,
+        artifact: null,
+        measurementProfile: null,
+        rows: null,
+        missing: null,
+        red: null,
+        yellow: null,
+        gray: null,
+        green: null,
+      })) + "\n",
     );
   }
   process.exit(2);
 }
 
 const analysis = analyzeArtifact(artifact);
-const { rows, missing, red, yellow, gray, green } = analysis;
+const { measurementProfile, rows, missing, red, yellow, gray, green } = analysis;
 
 writeReport(buildReport({ artifact, ...analysis }));
 
 if (jsonOutput) {
   process.stdout.write(
-    JSON.stringify(buildJson({ artifactAbsent: false, parseError: null, artifact, rows, missing, red, yellow, gray, green })) + "\n",
+    JSON.stringify(buildJson({
+      artifactAbsent: false,
+      parseError: null,
+      artifact,
+      measurementProfile,
+      rows,
+      missing,
+      red,
+      yellow,
+      gray,
+      green,
+    })) + "\n",
   );
 }
 

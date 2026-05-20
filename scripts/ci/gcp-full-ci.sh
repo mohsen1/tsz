@@ -868,6 +868,29 @@ test_dir = Path("TypeScript/tests/cases")
 files = []
 source_suffixes = {".ts", ".tsx", ".js", ".jsx", ".mts", ".cts"}
 declaration_suffixes = (".d.ts", ".d.mts", ".d.cts")
+
+def has_skip_directive(path):
+    # Keep shard-plan totals aligned with the Rust runner, which discovers the
+    # file but excludes it from result totals when `@skip` is present.
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if not stripped.startswith("//"):
+            continue
+        directive = stripped[2:].lstrip().lower()
+        if directive.startswith("@skip") and (
+            len(directive) == len("@skip")
+            or not (
+                directive[len("@skip")].isalnum()
+                or directive[len("@skip")] == "_"
+            )
+        ):
+            return True
+    return False
+
 for path in test_dir.rglob("*"):
     if not path.is_file():
         continue
@@ -879,6 +902,8 @@ for path in test_dir.rglob("*"):
     if "/fourslash/" in path_str:
         continue
     if "APISample" in path_str or "APILibCheck" in path_str:
+        continue
+    if has_skip_directive(path):
         continue
     files.append(path)
 

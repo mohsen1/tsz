@@ -1,4 +1,4 @@
-use crate::query_boundaries::state::type_resolution as query;
+use crate::query_boundaries::type_computation::complex as type_query;
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
 use tsz_solver::computation::TypeSubstitution;
@@ -229,19 +229,13 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        let return_app = query::get_application_info(self.ctx.types, return_type).or_else(|| {
-            self.ctx
-                .types
-                .get_display_alias(return_type)
-                .and_then(|alias| query::get_application_info(self.ctx.types, alias))
-        });
+        let return_app = type_query::application_infos_for_type(self.ctx.types, return_type)
+            .into_iter()
+            .next();
         let contextual_app =
-            query::get_application_info(self.ctx.types, contextual_type).or_else(|| {
-                self.ctx
-                    .types
-                    .get_display_alias(contextual_type)
-                    .and_then(|alias| query::get_application_info(self.ctx.types, alias))
-            });
+            type_query::application_infos_for_type(self.ctx.types, contextual_type)
+                .into_iter()
+                .next();
         if let (Some((return_base, _)), Some((contextual_base, contextual_args))) =
             (return_app, contextual_app)
             && return_base == contextual_base
@@ -254,12 +248,9 @@ impl<'a> CheckerState<'a> {
         }
 
         let Some((contextual_base, contextual_args)) =
-            query::get_application_info(self.ctx.types, contextual_type).or_else(|| {
-                self.ctx
-                    .types
-                    .get_display_alias(contextual_type)
-                    .and_then(|alias| query::get_application_info(self.ctx.types, alias))
-            })
+            type_query::application_infos_for_type(self.ctx.types, contextual_type)
+                .into_iter()
+                .next()
         else {
             return false;
         };

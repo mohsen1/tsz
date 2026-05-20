@@ -14,6 +14,10 @@
 //! - **Type parameters**: Never widened
 //! - **Unique symbols**: Never widened
 
+use crate::diagnostics::display_provenance::{
+    self, AliasApplicationPriority, AliasApplicationProvenance,
+    FreshObjectLiteralDisplayProvenance, UnionOriginProvenance,
+};
 use crate::types::{ObjectFlags, TypeData, TypeId};
 
 /// Propagate `display_alias` from the original type to the widened type.
@@ -25,9 +29,16 @@ use crate::types::{ObjectFlags, TypeData, TypeId};
 #[inline]
 fn propagate_display_alias(db: &dyn crate::TypeDatabase, original: TypeId, widened: TypeId) {
     if original != widened
-        && let Some(alias) = db.get_display_alias(original)
+        && let Some(alias) = display_provenance::display_alias(db, original)
     {
-        db.store_display_alias(widened, alias);
+        display_provenance::record_alias_application(
+            db,
+            AliasApplicationProvenance {
+                evaluated: widened,
+                application: alias,
+            },
+            AliasApplicationPriority::PreserveExisting,
+        );
     }
 }
 
@@ -362,7 +373,13 @@ fn widen_type_cached(
                 // shapes for some members but reuses existing ones for others.
                 let origin_members = widened_members.clone();
                 let widened = db.union(widened_members);
-                db.store_union_origin(widened, origin_members);
+                display_provenance::record_union_origin(
+                    db,
+                    UnionOriginProvenance {
+                        union_type_id: widened,
+                        origin_members,
+                    },
+                );
                 propagate_display_alias(db, type_id, widened);
                 widened
             } else {
@@ -451,7 +468,13 @@ fn widen_type_cached(
 
                 // Carry forward display properties from the original TypeId.
                 if let Some(display_props) = db.get_display_properties(type_id) {
-                    db.store_display_properties(widened_type_id, display_props.as_ref().clone());
+                    display_provenance::record_fresh_object_literal_display(
+                        db,
+                        FreshObjectLiteralDisplayProvenance {
+                            type_id: widened_type_id,
+                            properties: display_props.as_ref().clone(),
+                        },
+                    );
                 }
                 propagate_display_alias(db, type_id, widened_type_id);
 
@@ -829,7 +852,13 @@ pub fn widen_literal_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> Type
                 .map_or(canonical_members.as_ref(), Vec::as_slice);
             let mapped: Vec<TypeId> = members.iter().map(|&m| widen_literal_type(db, m)).collect();
             let result = db.union(mapped.clone());
-            db.store_union_origin(result, mapped);
+            display_provenance::record_union_origin(
+                db,
+                UnionOriginProvenance {
+                    union_type_id: result,
+                    origin_members: mapped,
+                },
+            );
             result
         }
 

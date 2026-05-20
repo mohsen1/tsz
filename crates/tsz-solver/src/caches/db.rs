@@ -11,6 +11,9 @@ use crate::intern::TypeInterner;
 use crate::intern::type_factory::TypeFactory;
 use crate::narrowing;
 use crate::objects::element_access::{ElementAccessEvaluator, ElementAccessResult};
+use crate::relations::relation_queries::{
+    RelationContext, RelationKind, RelationPolicy, query_relation,
+};
 use crate::relations::subtype::TypeResolver;
 use crate::types::{
     CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId, FunctionShape,
@@ -22,6 +25,25 @@ use crate::types::{
 use std::sync::Arc;
 use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
+
+/// Read-only access to interned type storage.
+///
+/// This is the narrow capability for helpers that only inspect existing
+/// type data and do not need construction, provenance, cache, or policy hooks.
+pub trait TypeStore {
+    fn lookup(&self, id: TypeId) -> Option<TypeData>;
+    fn type_list(&self, id: TypeListId) -> Arc<[TypeId]>;
+}
+
+impl<T: TypeDatabase + ?Sized> TypeStore for T {
+    fn lookup(&self, id: TypeId) -> Option<TypeData> {
+        TypeDatabase::lookup(self, id)
+    }
+
+    fn type_list(&self, id: TypeListId) -> Arc<[TypeId]> {
+        TypeDatabase::type_list(self, id)
+    }
+}
 
 /// Query interface for the solver.
 ///
@@ -1063,35 +1085,39 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     /// Task #49: Global Canonical Mapping
     fn canonical_id(&self, type_id: TypeId) -> TypeId;
 
-    /// Subtype check with compiler flags.
-    ///
-    /// The `flags` parameter is a packed u16 bitmask matching `RelationCacheKey.flags`:
-    /// - bit 0: `strict_null_checks`
-    /// - bit 1: `strict_function_types`
-    /// - bit 2: `exact_optional_property_types`
-    /// - bit 3: `no_unchecked_indexed_access`
-    /// - bit 4: `disable_method_bivariance`
-    /// - bit 5: `allow_void_return`
-    /// - bit 6: `allow_bivariant_rest`
-    /// - bit 7: `allow_bivariant_param_count`
     fn is_subtype_of(&self, source: TypeId, target: TypeId) -> bool {
         // Default implementation: use non-strict mode for backward compatibility
-        // Individual callers can use is_subtype_of_with_flags for explicit flag control
-        self.is_subtype_of_with_flags(source, target, 0)
+        self.is_subtype_of_with_policy(source, target, RelationPolicy::unflagged_compatibility())
+    }
+
+    /// Subtype check with a typed relation policy.
+    ///
+    /// Prefer this for new relation paths. It keeps relation behavior and cache
+    /// partitioning described by [`RelationPolicy`] instead of extending the
+    /// legacy packed `u16` flag protocol.
+    fn is_subtype_of_with_policy(
+        &self,
+        source: TypeId,
+        target: TypeId,
+        policy: RelationPolicy,
+    ) -> bool {
+        query_relation(
+            self.as_type_database(),
+            source,
+            target,
+            RelationKind::Subtype,
+            policy,
+            RelationContext::default(),
+        )
+        .related
     }
 
     /// Subtype check with explicit compiler flags.
     ///
-    /// The `flags` parameter is a packed u16 bitmask matching `RelationCacheKey.flags`.
+    /// The `flags` parameter is the legacy packed `u16` bitmask consumed at the
+    /// relation boundary. New callers should use [`Self::is_subtype_of_with_policy`].
     fn is_subtype_of_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
-        // Default implementation: use SubtypeChecker with default flags
-        // (This will be overridden by QueryCache with proper caching)
-        crate::relations::subtype::is_subtype_of_with_flags(
-            self.as_type_database(),
-            source,
-            target,
-            flags,
-        )
+        self.is_subtype_of_with_policy(source, target, RelationPolicy::from_flags(flags))
     }
 
     /// TypeScript assignability check with full compatibility rules (The Lawyer).
@@ -1110,14 +1136,38 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     /// Uses separate cache from `is_subtype_of` to prevent cache poisoning.
     fn is_assignable_to(&self, source: TypeId, target: TypeId) -> bool {
         // Default implementation: use non-strict mode for backward compatibility
-        // Individual callers can use is_assignable_to_with_flags for explicit flag control
-        self.is_assignable_to_with_flags(source, target, 0)
+        self.is_assignable_to_with_policy(source, target, RelationPolicy::unflagged_compatibility())
+    }
+
+    /// Assignability check with a typed relation policy.
+    ///
+    /// Prefer this for new relation paths. It keeps relation behavior and cache
+    /// partitioning described by [`RelationPolicy`] instead of extending the
+    /// legacy packed `u16` flag protocol.
+    fn is_assignable_to_with_policy(
+        &self,
+        source: TypeId,
+        target: TypeId,
+        policy: RelationPolicy,
+    ) -> bool {
+        query_relation(
+            self.as_type_database(),
+            source,
+            target,
+            RelationKind::Assignable,
+            policy,
+            RelationContext::default(),
+        )
+        .related
     }
 
     /// Assignability check with explicit compiler flags.
     ///
-    /// The `flags` parameter is a packed u16 bitmask matching `RelationCacheKey.flags`.
-    fn is_assignable_to_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool;
+    /// The `flags` parameter is the legacy packed `u16` bitmask consumed at the
+    /// relation boundary. New callers should use [`Self::is_assignable_to_with_policy`].
+    fn is_assignable_to_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
+        self.is_assignable_to_with_policy(source, target, RelationPolicy::from_flags(flags))
+    }
 
     /// Look up a cached subtype result for the given key.
     /// Returns `None` if the result is not cached.
@@ -1330,16 +1380,7 @@ impl QueryDatabase for TypeInterner {
 
     fn is_assignable_to(&self, source: TypeId, target: TypeId) -> bool {
         // Default implementation: use non-strict mode for backward compatibility
-        self.is_assignable_to_with_flags(source, target, 0)
-    }
-
-    fn is_assignable_to_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
-        use crate::relations::compat::CompatChecker;
-        let mut checker = CompatChecker::new(self);
-        if flags != 0 {
-            checker.apply_flags(flags);
-        }
-        checker.is_assignable(source, target)
+        self.is_assignable_to_with_policy(source, target, RelationPolicy::unflagged_compatibility())
     }
 
     fn resolve_property_access(

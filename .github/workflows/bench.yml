@@ -106,16 +106,10 @@ jobs:
             active_runs=""
             while IFS=$'\t' read -r run_id run_sha run_url; do
               [[ -n "${run_id:-}" ]] || continue
-              if [[ "${run_sha}" != "${target_sha}" ]]; then
-                echo "Cancelling stale Bench run ${run_id} for ${run_sha}; target is ${target_sha}."
-                gh run cancel --repo "${{ github.repository }}" "${run_id}" || true
-                gh api -X POST "repos/${{ github.repository }}/actions/runs/${run_id}/force-cancel" --silent || true
-                continue
-              fi
               active_runs+="${run_id}"$'\t'"${run_sha}"$'\t'"${run_url}"$'\n'
             done <<< "$active_runs_raw"
             if [[ -n "$active_runs" ]]; then
-              echo "Another Bench run for ${target_sha} is already active; skipping this benchmark instead of queuing."
+              echo "Another Bench run is already active; skipping ${target_sha} instead of cancelling or queuing."
               printf '%s\n' "$active_runs"
               should_run=false
             fi
@@ -862,6 +856,26 @@ jobs:
           path: bench-artifacts
           merge-multiple: true
 
+      - name: Download benchmark prep artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: bench-prep-ready
+          path: .
+
+      - name: Run PGO compile canaries
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tar -xf bench-prep.tar
+          test -x .target-bench/dist/tsz
+          test -f .target-bench/dist/.bench-pgo-optimized
+
+          TSZ_BIN="$GITHUB_WORKSPACE/.target-bench/dist/tsz" \
+          TSZ_PROJECT_COMPILE_SET=canary \
+          TSZ_PROJECT_COMPILE_FILTER='type-challenges-solutions-project' \
+          scripts/ci/project-compile-guard.sh
+
       - name: Merge benchmark results
         shell: bash
         run: |
@@ -879,7 +893,10 @@ jobs:
             find bench-artifacts -maxdepth 2 -type f -print || true
             exit 1
           fi
-          node scripts/bench/merge-results.mjs "$GITHUB_WORKSPACE/bench-results.json" "${json_files[@]}"
+          node scripts/bench/merge-results.mjs \
+            "$GITHUB_WORKSPACE/bench-results.json" \
+            --compat-jsonl "$GITHUB_WORKSPACE/.target/project-compile-guard/project-compatibility.jsonl" \
+            "${json_files[@]}"
 
       - name: Summarize green tsgo winners
         shell: bash
@@ -889,6 +906,34 @@ jobs:
             "$GITHUB_WORKSPACE/bench-results.json" \
             "$GITHUB_WORKSPACE/bench-results-tsgo-winners.json"
 
+      - name: Compare project winner regressions
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          previous="$GITHUB_WORKSPACE/bench-results-previous-latest.json"
+          report_json="$GITHUB_WORKSPACE/bench-results-project-winner-regressions.json"
+          report_md="$GITHUB_WORKSPACE/bench-results-project-winner-regressions.md"
+
+          if ! gsutil -q cp "${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.json" "$previous"; then
+            echo "No previous latest benchmark artifact available; skipping project winner regression comparison." | tee "$report_md"
+            echo '{"schema_version":1,"skipped":true,"reason":"previous latest benchmark artifact unavailable"}' > "$report_json"
+            exit 0
+          fi
+
+          set +e
+          node scripts/bench/project-winner-regression-report.mjs \
+            "$previous" \
+            "$GITHUB_WORKSPACE/bench-results.json" \
+            "$report_json" | tee "$report_md"
+          status="${PIPESTATUS[0]}"
+          set -e
+
+          if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+            cat "$report_md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$status"
+
       - name: Upload merged benchmark artifact
         uses: actions/upload-artifact@v4
         with:
@@ -896,6 +941,8 @@ jobs:
           path: |
             bench-results.json
             bench-results-tsgo-winners.json
+            bench-results-project-winner-regressions.json
+            bench-results-project-winner-regressions.md
           retention-days: 30
           if-no-files-found: error
           compression-level: 1

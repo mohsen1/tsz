@@ -175,6 +175,51 @@ fn umd_es5_class_method_dynamic_import_uses_loader_branch() {
 }
 
 #[test]
+fn umd_import_helpers_declares_tslib_for_class_and_decorator_helpers() {
+    let source = r#"import * as dep from "dep";
+declare var dec: any;
+@dec
+export class Derived extends dep.Base {}
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::UMD,
+            target: ScriptTarget::ES5,
+            import_helpers: true,
+            legacy_decorators: true,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("define([\"require\", \"exports\", \"tslib\", \"dep\"], factory);"),
+        "UMD AMD branch should list tslib before value imports when helpers are imported.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var tslib_1 = require(\"tslib\");"),
+        "UMD factory body should declare the tslib binding through require().\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("tslib_1.__extends(Derived, _super);"),
+        "UMD ES5 class helper should use the declared tslib binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("Derived = tslib_1.__decorate(["),
+        "UMD decorator helper should use the declared tslib binding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("})(function (require, exports, tslib_1)"),
+        "UMD should not rely on a tslib factory parameter that the CJS branch cannot supply.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn amd_dynamic_import_only_file_gets_wrapper_and_async_require() {
     let source = r#"const path = "./other";
 import(path);
@@ -658,6 +703,33 @@ export { ns, AnEnum, ns as FooBar, AnEnum as BarEnum };
         output
             .contains(r#"})(AnEnum || (exports_1("BarEnum", exports_1("AnEnum", AnEnum = {}))));"#),
         "System enum IIFE tail should retain local and aliased exports.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_wrapper_folds_direct_exported_dotted_namespace() {
+    let source = r#"
+export namespace A.B.C {
+    export function foo() {}
+}
+
+export function bar() {
+    return A.B.C.foo();
+}
+"#;
+    let output = emit_system_es2015(source);
+
+    assert!(
+        output.contains(r#"})(A || (exports_1("A", A = {})));"#),
+        "Direct exported dotted namespaces in System modules should register the root binding through exports_1.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return A.B.C.foo();"),
+        "Namespace value references should keep using the local root binding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.A = A = {}"),
+        "System namespace export folding must not use CommonJS exports assignment.\nOutput:\n{output}"
     );
 }
 

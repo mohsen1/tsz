@@ -411,6 +411,15 @@ pub struct Printer<'a> {
     /// when it would otherwise collide with parameter `x`.
     pub(crate) pending_function_body_parameters: Vec<NodeIndex>,
 
+    /// ES5 replacement for `new.target` in the current lexical function-like
+    /// body. Arrows inherit this value; regular functions/classes replace it
+    /// with their own capture while their body is emitted.
+    pub(crate) current_new_target_substitution: Option<String>,
+
+    /// Pending ES5 `new.target` capture initializer for the function-like body
+    /// that is about to be emitted.
+    pub(crate) pending_new_target_capture_initializer: Option<String>,
+
     /// The name of the current namespace we're emitting inside (if any).
     /// Used for nested exported namespaces to emit proper IIFE parameters.
     pub(crate) current_namespace_name: Option<String>,
@@ -1119,6 +1128,8 @@ impl<'a> Printer<'a> {
             namespace_export_inner: false,
             emitting_function_body_block: false,
             pending_function_body_parameters: Vec::new(),
+            current_new_target_substitution: None,
+            pending_new_target_capture_initializer: None,
             current_namespace_name: None,
             parent_namespace_name: None,
             current_namespace_source_path: None,
@@ -1806,6 +1817,15 @@ impl<'a> Printer<'a> {
                     // The expression is the keyword token (new/import)
                     if let Some(kw_node) = self.arena.get(access.expression) {
                         if kw_node.kind == SyntaxKind::NewKeyword as u16 {
+                            if self.ctx.target_es5 {
+                                let substitution = self
+                                    .current_new_target_substitution
+                                    .as_deref()
+                                    .unwrap_or("_newTarget")
+                                    .to_string();
+                                self.write(&substitution);
+                                return;
+                            }
                             self.write("new");
                         } else if kw_node.kind == SyntaxKind::ImportKeyword as u16 {
                             self.write("import");

@@ -1,6 +1,10 @@
 //! Direct cross-file query fast paths that avoid constructing child checkers.
 
-use super::source_alias_attribution::record_source_file_type_alias_body_rejection_kind;
+use super::cross_file_direct_actual_lib::{
+    allow_actual_lib_declaration_proof_bypass, allow_generic_actual_lib_direct_fallback,
+    is_direct_actual_lib_value_interface_name, iterator_object_has_global_augmentations,
+};
+use super::source_alias_attribution::record_source_alias_rejection_kinds;
 use crate::query_boundaries::common;
 use crate::state::CheckerState;
 use tsz_binder::{BinderState, SymbolId, symbol_flags};
@@ -24,7 +28,6 @@ struct DirectActualLibAliasBodyProof {
     def_id: DefId,
     outcome: DirectActualLibAliasBodyOutcome,
 }
-
 // Track 7 transitional allowlist; prefer stable lib identity over additions.
 const DIRECT_ACTUAL_LIB_ALIAS_BODY_ADMISSIONS: &[&str] = &[
     "Capitalize",
@@ -112,6 +115,21 @@ fn is_dom_like_builtin_lib_file_name(file_name: &str) -> bool {
         || stem.starts_with("webworker.")
 }
 
+pub(crate) fn is_dom_builtin_lib_declaration_arena(arena: &NodeArena) -> bool {
+    arena.source_files.first().is_some_and(|source_file| {
+        if !source_file.is_declaration_file {
+            return false;
+        }
+        let basename = file_basename(&source_file.file_name);
+        let stem = basename
+            .strip_suffix(".generated.d.ts")
+            .or_else(|| basename.strip_suffix(".d.ts"))
+            .unwrap_or(basename);
+        let stem = stem.strip_prefix("lib.").unwrap_or(stem);
+        stem == "dom" || stem.starts_with("dom.")
+    })
+}
+
 pub(crate) fn is_direct_actual_lib_declaration_arena(arena: &NodeArena) -> bool {
     arena.source_files.first().is_some_and(|source_file| {
         if !source_file.is_declaration_file {
@@ -177,76 +195,6 @@ pub(super) fn is_direct_lowering_source_file_arena(arena: &NodeArena) -> bool {
         .source_files
         .first()
         .is_some_and(|source_file| !source_file.is_declaration_file)
-}
-
-fn allow_generic_actual_lib_direct_fallback(name: &str) -> bool {
-    matches!(
-        name,
-        "Array"
-            | "ArrayIterator"
-            | "Iterator"
-            | "Map"
-            | "MapIterator"
-            | "Object"
-            | "Promise"
-            | "PromiseLike"
-            | "RegExpStringIterator"
-            | "Set"
-            | "SetIterator"
-            | "StringIterator"
-            | "WeakMap"
-            | "WeakSet"
-    )
-}
-
-fn allow_actual_lib_declaration_proof_bypass(name: &str) -> bool {
-    matches!(name, "Iterator")
-}
-
-fn is_direct_actual_lib_value_interface_name(name: &str) -> bool {
-    matches!(
-        name,
-        "Array"
-            | "Date"
-            | "DateTimeFormatOptions"
-            | "Error"
-            | "Function"
-            | "Iterator"
-            | "IteratorObject"
-            | "Locale"
-            | "Map"
-            | "NumberFormatOptions"
-            | "NumberFormatOptionsCurrencyDisplayRegistry"
-            | "NumberFormatOptionsSignDisplayRegistry"
-            | "NumberFormatOptionsStyleRegistry"
-            | "NumberFormatOptionsUseGroupingRegistry"
-            | "NumberFormatPartTypeRegistry"
-            | "NumberFormatRangePartTypeRegistry"
-            | "Object"
-            | "Promise"
-            | "RegExp"
-            | "Set"
-            | "Symbol"
-            | "WeakMap"
-            | "WeakSet"
-    )
-}
-
-fn iterator_object_has_global_augmentations(ctx: &crate::context::CheckerContext<'_>) -> bool {
-    if ctx
-        .binder
-        .global_augmentations
-        .get("IteratorObject")
-        .is_some_and(|augmentations| !augmentations.is_empty())
-    {
-        return true;
-    }
-
-    ctx.binder
-        .file_locals
-        .get("IteratorObject")
-        .and_then(|sym_id| ctx.binder.get_symbol(sym_id))
-        .is_some_and(|symbol| symbol.declarations.len() > 1)
 }
 
 impl<'a> CheckerState<'a> {
@@ -526,7 +474,7 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn lib_type_alias_declaration_name_matches(
+    pub(super) fn lib_type_alias_declaration_name_matches(
         arena: &NodeArena,
         decl_idx: NodeIndex,
         name: &str,
@@ -678,6 +626,23 @@ impl<'a> CheckerState<'a> {
         delegate_arena: Option<&NodeArena>,
         needs_cross_file_delegation: bool,
     ) -> Option<(TypeId, Vec<TypeParamInfo>)> {
+        if let Some(result) = self.direct_builtin_lib_interface_symbol_type(
+            sym_id,
+            delegate_arena_source,
+            delegate_arena,
+            needs_cross_file_delegation,
+        ) {
+            return Some(result);
+        }
+        if let Some(result) = self.direct_value_merged_builtin_lib_interface_symbol_type(
+            sym_id,
+            delegate_arena_source,
+            delegate_arena,
+            needs_cross_file_delegation,
+        ) {
+            return Some(result);
+        }
+
         if needs_cross_file_delegation
             || delegate_arena_source != CrossArenaSymbolMissSource::SymbolArena
             || !delegate_arena.is_some_and(is_direct_actual_lib_declaration_arena)
@@ -872,9 +837,7 @@ impl<'a> CheckerState<'a> {
         (!declarations.is_empty()).then_some(declarations)
     }
 
-    fn interface_declarations_have_heritage_or_computed_names(
-        declarations: &[(NodeIndex, &NodeArena)],
-    ) -> bool {
+    fn interface_declarations_have_heritage(declarations: &[(NodeIndex, &NodeArena)]) -> bool {
         declarations.iter().any(|(decl_idx, arena)| {
             let Some(node) = arena.get(*decl_idx) else {
                 return false;
@@ -890,6 +853,20 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
 
+            false
+        })
+    }
+
+    fn interface_declarations_have_computed_names(
+        declarations: &[(NodeIndex, &NodeArena)],
+    ) -> bool {
+        declarations.iter().any(|(decl_idx, arena)| {
+            let Some(node) = arena.get(*decl_idx) else {
+                return false;
+            };
+            let Some(interface) = arena.get_interface(node) else {
+                return false;
+            };
             interface.members.nodes.iter().copied().any(|member_idx| {
                 let Some(member_node) = arena.get(member_idx) else {
                     return false;
@@ -1379,7 +1356,11 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn source_file_type_node_contains_kind(arena: &NodeArena, root: NodeIndex, kind: u16) -> bool {
+    pub(super) fn source_file_type_node_contains_kind(
+        arena: &NodeArena,
+        root: NodeIndex,
+        kind: u16,
+    ) -> bool {
         let mut stack = vec![root];
         while let Some(idx) = stack.pop() {
             if arena.get(idx).is_some_and(|node| node.kind == kind) {
@@ -1390,7 +1371,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    fn source_file_type_node_contains_identifier_name(
+    pub(super) fn source_file_type_node_contains_identifier_name(
         arena: &NodeArena,
         root: NodeIndex,
         name: &str,
@@ -1675,8 +1656,9 @@ impl<'a> CheckerState<'a> {
                 &type_param_names,
             )
         };
+        let record_rejection = record_source_alias_rejection_kinds;
         if !body_is_direct_lowerable {
-            record_source_file_type_alias_body_rejection_kind(symbol_arena, type_alias.type_node);
+            record_rejection(symbol_arena, delegate_binder, type_alias, &type_param_names);
             record(DirectSourceFileTypeAliasLoweringOutcome::BodyNotDirectLowerable);
             return None;
         }
@@ -1772,8 +1754,11 @@ impl<'a> CheckerState<'a> {
             record(DirectCrossFileInterfaceLoweringOutcome::MissingDeclarations);
             return None;
         };
+        let has_heritage = Self::interface_declarations_have_heritage(&declarations);
+        let has_computed_names = Self::interface_declarations_have_computed_names(&declarations);
         if direct_source_file_arena {
-            if Self::interface_declarations_have_heritage_or_computed_names(&declarations)
+            if has_heritage
+                || has_computed_names
                 || !Self::source_file_interface_declarations_are_direct_lowerable(
                     &declarations,
                     delegate_binder,
@@ -1782,9 +1767,7 @@ impl<'a> CheckerState<'a> {
                 record(DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration);
                 return None;
             }
-        } else if !allow_complex_declarations
-            && Self::interface_declarations_have_heritage_or_computed_names(&declarations)
-        {
+        } else if !allow_complex_declarations && (has_heritage || has_computed_names) {
             record(DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration);
             return None;
         }
@@ -1994,6 +1977,10 @@ impl<'a> CheckerState<'a> {
         (!results.is_empty()).then_some(results)
     }
 }
+
+#[cfg(test)]
+#[path = "cross_file_direct_actual_lib_tests.rs"]
+mod actual_lib_tests;
 
 #[cfg(test)]
 #[path = "cross_file_direct_tests.rs"]

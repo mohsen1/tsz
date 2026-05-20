@@ -18,6 +18,79 @@ function hasProjectCompatibilityRows(rows) {
   return rows.some((row) => PROJECT_COMPATIBILITY_ROW_SET.has(row?.name));
 }
 
+function parseArgs(argv) {
+  const [, , outFile, ...rest] = argv;
+  const inputFiles = [];
+  const compatibilityJsonlFiles = [];
+
+  for (let index = 0; index < rest.length; index += 1) {
+    const arg = rest[index];
+    if (arg === "--compat-jsonl") {
+      const file = rest[index + 1];
+      if (!file) {
+        console.error("Missing value for --compat-jsonl");
+        process.exit(2);
+      }
+      compatibilityJsonlFiles.push(file);
+      index += 1;
+      continue;
+    }
+    inputFiles.push(arg);
+  }
+
+  return { outFile, inputFiles, compatibilityJsonlFiles };
+}
+
+function readJsonl(file) {
+  return fs.readFileSync(file, "utf8")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+}
+
+function mergeCompatibilityCanaries(results, compatibilityJsonlFiles) {
+  if (compatibilityJsonlFiles.length === 0) return results;
+
+  const canaryNames = new Set(COMPILE_CANARY_PROJECT_ROWS);
+  const byName = new Map();
+  const merged = results.map((row) => {
+    if (row?.name) byName.set(row.name, row);
+    return row;
+  });
+
+  for (const file of compatibilityJsonlFiles) {
+    for (const compatibility of readJsonl(file)) {
+      const name = compatibility?.name;
+      if (!canaryNames.has(name)) continue;
+      const existing = byName.get(name);
+      if (existing) {
+        existing.compatibility = compatibility;
+        existing.status ||= "compile canary tracked in CI; not timed by vs-tsgo benchmarks";
+        continue;
+      }
+
+      const row = {
+        name,
+        lines: Number.isFinite(Number(compatibility.files_reached)) ? Number(compatibility.files_reached) : 0,
+        kb: 0,
+        tsz_ms: null,
+        tsgo_ms: null,
+        tsz_lps: null,
+        tsgo_lps: null,
+        winner: "error",
+        ratio: 0,
+        status: "compile canary tracked in CI; not timed by vs-tsgo benchmarks",
+        compatibility,
+      };
+      byName.set(name, row);
+      merged.push(row);
+    }
+  }
+
+  return merged;
+}
+
 function runnerHardwareSignature(environment) {
   return {
     platform: environment?.platform || null,
@@ -46,6 +119,74 @@ function validateRunnerEnvironmentConsistency(environments) {
         mismatched_fields: mismatchedFields,
         expected: baseline,
         actual: current,
+      });
+    }
+  }
+  return warnings;
+}
+
+function measurementProfileSignature(profile) {
+  const pgo = profile?.profile_guided_optimization || {};
+  return {
+    mode: profile?.mode || null,
+    tsz_binary_source: profile?.tsz_binary_source || null,
+    profile_guided_optimization: {
+      requested: pgo.requested ?? null,
+      required: pgo.required ?? null,
+      optimized: pgo.optimized ?? null,
+      profile_fingerprint: pgo.profile_fingerprint || null,
+      training_fingerprint: pgo.training_fingerprint || null,
+      profile_data_source: pgo.profile_data_source || null,
+      training_metadata_available: pgo.training_metadata_available ?? null,
+      training_input_count: pgo.training_input_count ?? null,
+      training_failure_count: pgo.training_failure_count ?? null,
+      training_inputs: Array.isArray(pgo.training_inputs) ? pgo.training_inputs : [],
+      training_failed_inputs: Array.isArray(pgo.training_failed_inputs) ? pgo.training_failed_inputs : [],
+      config: {
+        synthetic: pgo.config?.synthetic ?? null,
+        fetch_utility_types: pgo.config?.fetch_utility_types ?? null,
+        fetch_core_projects: pgo.config?.fetch_core_projects ?? null,
+        panic_unwind: pgo.config?.panic_unwind ?? null,
+        extra_inputs: pgo.config?.extra_inputs || null,
+        training_timeout_seconds: pgo.config?.training_timeout_seconds ?? null,
+        cache_enabled: pgo.config?.cache_enabled ?? null,
+      },
+    },
+  };
+}
+
+function flattenForComparison(value, prefix = "", output = {}) {
+  if (Array.isArray(value)) {
+    output[prefix] = JSON.stringify(value);
+    return output;
+  }
+  if (value && typeof value === "object") {
+    for (const key of Object.keys(value).sort()) {
+      flattenForComparison(value[key], prefix ? `${prefix}.${key}` : key, output);
+    }
+    return output;
+  }
+  output[prefix] = value;
+  return output;
+}
+
+function validateMeasurementProfileConsistency(profiles) {
+  if (profiles.length <= 1) return [];
+
+  const baseline = flattenForComparison(measurementProfileSignature(profiles[0].profile));
+  const baselineSignature = measurementProfileSignature(profiles[0].profile);
+  const warnings = [];
+  for (const { file, profile } of profiles.slice(1)) {
+    const currentSignature = measurementProfileSignature(profile);
+    const current = flattenForComparison(currentSignature);
+    const allKeys = new Set([...Object.keys(baseline), ...Object.keys(current)]);
+    const mismatchedFields = [...allKeys].filter((key) => baseline[key] !== current[key]).sort();
+    if (mismatchedFields.length > 0) {
+      warnings.push({
+        file: path.basename(file),
+        mismatched_fields: mismatchedFields,
+        expected: baselineSignature,
+        actual: currentSignature,
       });
     }
   }
@@ -156,16 +297,16 @@ function tallyWins(results) {
 }
 
 function main() {
-  const [, , outFile, ...inputFiles] = process.argv;
+  const { outFile, inputFiles, compatibilityJsonlFiles } = parseArgs(process.argv);
 
   if (!outFile || inputFiles.length === 0) {
-    console.error("Usage: scripts/bench/merge-results.mjs <out-file> <input-json...>");
+    console.error("Usage: scripts/bench/merge-results.mjs <out-file> [--compat-jsonl <file>] <input-json...>");
     process.exit(2);
   }
 
-  const missingInputFiles = inputFiles.filter((file) => !fs.existsSync(file));
+  const missingInputFiles = [...inputFiles, ...compatibilityJsonlFiles].filter((file) => !fs.existsSync(file));
   if (missingInputFiles.length > 0) {
-    console.error("Missing benchmark JSON inputs:");
+    console.error("Missing benchmark inputs:");
     for (const file of missingInputFiles) {
       console.error(`  ${file}`);
     }
@@ -182,7 +323,10 @@ function main() {
     process.exit(1);
   }
 
-  const results = payloads.flatMap(({ payload }) => payload.results || []);
+  const results = mergeCompatibilityCanaries(
+    payloads.flatMap(({ payload }) => payload.results || []),
+    compatibilityJsonlFiles,
+  );
 
   const failures = collectProjectCompatibilityFailures(results);
   if (failures.length > 0) {
@@ -203,6 +347,11 @@ function main() {
     .filter(({ environment }) => environment && typeof environment === "object");
   const runnerEnvironment = runnerEnvironments[0]?.environment ?? null;
   const runnerEnvironmentWarnings = validateRunnerEnvironmentConsistency(runnerEnvironments);
+  const measurementProfiles = payloads
+    .map(({ file, payload }) => ({ file, profile: payload.measurement_profile }))
+    .filter(({ profile }) => profile && typeof profile === "object");
+  const measurementProfile = measurementProfiles[0]?.profile ?? null;
+  const measurementProfileWarnings = validateMeasurementProfileConsistency(measurementProfiles);
 
   const merged = {
     ...mergedArtifactMetadata(payloads, new Date().toISOString()),
@@ -212,8 +361,10 @@ function main() {
       hyperfine_exit_codes_required: hyperfineExitCodesRequired,
       project_compatibility_required_fields: hasProjectCompatibilityRows(results),
       runner_environment_warnings: runnerEnvironmentWarnings,
+      measurement_profile_warnings: measurementProfileWarnings,
     },
     ...(runnerEnvironment ? { runner_environment: runnerEnvironment } : {}),
+    ...(measurementProfile ? { measurement_profile: measurementProfile } : {}),
     quick_mode: payloads.every(({ payload }) => payload.quick_mode === true),
     filter: null,
     binaries: payloads.find(({ payload }) => payload.binaries)?.payload.binaries || {},

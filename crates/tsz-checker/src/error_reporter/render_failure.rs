@@ -1035,13 +1035,25 @@ impl<'a> CheckerState<'a> {
             ),
 
             _ => {
-                let source_str = self.format_type_for_diagnostic_role(
-                    source,
-                    DiagnosticTypeDisplayRole::AssignmentSource {
-                        target,
-                        anchor_idx: idx,
-                    },
-                );
+                // At depth > 0 we are rendering a nested property/element
+                // failure. The outer anchor index no longer points at the
+                // sub-expression whose type is `source`; using the
+                // AssignmentSource role would look up the outer RHS expression
+                // and return the wrong type (e.g. the enclosing class instance
+                // instead of the mismatched property type).  Use the plain
+                // structural formatter instead so the rendered type matches the
+                // solver's `source` TypeId.
+                let source_str = if depth > 0 {
+                    self.format_type_for_assignability_message(source)
+                } else {
+                    self.format_type_for_diagnostic_role(
+                        source,
+                        DiagnosticTypeDisplayRole::AssignmentSource {
+                            target,
+                            anchor_idx: idx,
+                        },
+                    )
+                };
                 let mut target_str = self.format_assignability_type_for_message(target, source);
                 if let Some(display) = self
                     .object_literal_property_literal_union_alias_target_display(
