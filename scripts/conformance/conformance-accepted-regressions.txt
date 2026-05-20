@@ -2,7 +2,6 @@
 # Add a test path here (one per line) to allow it to fail in CI without
 # blocking the aggregate gate. Remove the entry once the regression is fixed.
 # Format: TypeScript/tests/cases/<subpath>.ts (one path per line, comments with #)
-TypeScript/tests/cases/compiler/callsOnComplexSignatures.tsx
 TypeScript/tests/cases/compiler/contextualTypeFunctionObjectPropertyIntersection.ts
 TypeScript/tests/cases/compiler/contextuallyTypedJsxAttribute2.tsx
 TypeScript/tests/cases/compiler/declarationEmitMappedPrivateTypeTypeParameter.ts
@@ -23,6 +22,7 @@ TypeScript/tests/cases/compiler/reorderProperties.ts
 TypeScript/tests/cases/compiler/reverseMappedTypeIntersectionConstraint.ts
 TypeScript/tests/cases/compiler/reverseMappedTypeContextualTypesPerElementOfTupleConstraint.ts
 TypeScript/tests/cases/compiler/spyComparisonChecking.ts
+TypeScript/tests/cases/compiler/styledComponentsInstantiaionLimitNotReached.ts
 TypeScript/tests/cases/compiler/temporal.ts
 TypeScript/tests/cases/compiler/thislessFunctionsNotContextSensitive3.ts
 TypeScript/tests/cases/compiler/unionPropertyOfProtectedAndIntersectionProperty.ts
