@@ -230,7 +230,7 @@ fn get_diagnostics_strict(source: &str) -> Vec<(u32, String)> {
     let mut binder = tsz_binder::BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let options = tsz_checker::context::CheckerOptions {
         strict_null_checks: true,
         ..Default::default()

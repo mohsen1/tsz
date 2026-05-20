@@ -10,7 +10,7 @@
 //! downstream — so we lock every variant -> kind row here.
 
 use super::*;
-use crate::TypeInterner;
+use crate::construction::TypeInterner;
 use crate::def::DefId;
 use crate::type_queries::iterable::{
     AsyncIterableTypeKind, ForOfElementKind, FullIterableTypeKind, classify_async_iterable_type,

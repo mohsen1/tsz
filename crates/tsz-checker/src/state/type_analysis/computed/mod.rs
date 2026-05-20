@@ -1764,11 +1764,13 @@ impl<'a> CheckerState<'a> {
                 };
                 let value_resolver =
                     |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
+                let arena_ptr =
+                    self.ctx.arena as *const tsz_parser::parser::node::NodeArena as usize;
                 let computed_name_resolver = |expr_idx: NodeIndex| -> Option<tsz_common::Atom> {
-                    computed_names.get(&expr_idx).copied()
+                    computed_names.get(&(expr_idx, arena_ptr)).copied()
                 };
                 let computed_symbol_name_resolver =
-                    |expr_idx: NodeIndex| computed_symbol_names.contains(&expr_idx);
+                    |expr_idx: NodeIndex| computed_symbol_names.contains(&(expr_idx, arena_ptr));
                 let lazy_type_params_resolver = |def_id: tsz_solver::def::DefId| {
                     prewarmed_type_params
                         .get(&def_id)

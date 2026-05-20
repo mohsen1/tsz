@@ -3,7 +3,9 @@
 //! Verifies correct behavior for interface extension compatibility,
 //! including scope-aware type resolution in ambient modules.
 
-use crate::test_utils::check_source_code_messages as get_diagnostics;
+use tsz_checker::test_utils::{
+    check_source_code_messages as get_diagnostics, diagnostics_with_code,
+};
 
 fn has_error_with_code(source: &str, code: u32) -> bool {
     get_diagnostics(source).iter().any(|d| d.0 == code)
@@ -552,6 +554,108 @@ interface Derived<T> extends Base {
 }
 
 // =========================================================================
+// Generic overloaded method trailing signature: derived return narrows base
+// =========================================================================
+
+#[test]
+fn test_overloaded_generic_method_derived_return_subtype_no_false_ts2430() {
+    // When a base interface has overloaded generic methods, the overload coverage
+    // pass compares the trailing (non-specialized) signatures. The locally-scoped
+    // type param `C` in the derived and base functions gets different TypeIds, so
+    // the no-erase-generics comparison fails. Standard assignability (with fresh
+    // instantiation) must be used as a fallback to accept valid subtype returns.
+    //
+    // Specialized overload: second parameter is a literal type (string), making
+    // it the specialized overload. Non-specialized is the trailing one.
+    let source = r#"
+interface Base<K, V> {
+    concat<C>(collections: { key: string; value: C }): Base<K | string, V | C>;
+    concat<C>(collections: Base<K, C>): Base<K, V | C>;
+}
+interface Derived<K, V> extends Base<K, V> {
+    concat<C>(collections: { key: string; value: C }): Derived<K | string, V | C>;
+    concat<C>(collections: Derived<K, C>): Derived<K, V | C>;
+}
+"#;
+    let diags = get_diagnostics(source);
+    let ts2430 = diags.iter().filter(|d| d.0 == 2430).collect::<Vec<_>>();
+    assert!(
+        ts2430.is_empty(),
+        "Should NOT emit TS2430 when derived overloaded generic method's trailing \
+         signature returns a subtype of the base trailing signature return. Got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_overloaded_non_generic_method_incompatible_return_still_errors() {
+    // Non-generic overloads with a return type mismatch in the trailing
+    // (non-specialized) signature must still produce TS2430. The fallback
+    // `is_assignable_to` call does not affect non-generic signatures, so
+    // genuine incompatibilities are preserved.
+    let source = r#"
+interface Base {
+    concat(x: "literal"): number;
+    concat(x: string): number;
+}
+interface Derived extends Base {
+    concat(x: "literal"): number;
+    concat(x: string): string;
+}
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().any(|d| d.0 == 2430),
+        "Should emit TS2430 when non-generic overloaded method trailing signature has \
+         incompatible return type. Got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_overloaded_generic_method_incompatible_return_still_errors() {
+    // The fresh-instantiation fallback is only for structurally matching
+    // generic trailing overloads. A real generic return mismatch must still
+    // report TS2430.
+    let source = r#"
+interface Base {
+    merge<T>(x: "literal"): { value: T };
+    merge<T>(x: T): { value: T };
+}
+interface Derived extends Base {
+    merge<T>(x: "literal"): { value: T };
+    merge<T>(x: T): { other: T };
+}
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().any(|d| d.0 == 2430),
+        "Should emit TS2430 when generic overloaded method trailing signature has \
+         an incompatible return shape. Got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_overloaded_generic_method_alternative_names_no_false_ts2430() {
+    // The fix must not be name-dependent: use different type param names
+    // (X, Y, Z instead of K, V, C) to prove the rule is structural.
+    let source = r#"
+interface Base<X, Y> {
+    merge<Z>(src: { key: string; val: Z }): Base<X | string, Y | Z>;
+    merge<Z>(src: Base<X, Z>): Base<X, Y | Z>;
+}
+interface Derived<X, Y> extends Base<X, Y> {
+    merge<Z>(src: { key: string; val: Z }): Derived<X | string, Y | Z>;
+    merge<Z>(src: Derived<X, Z>): Derived<X, Y | Z>;
+}
+"#;
+    let diags = get_diagnostics(source);
+    let ts2430 = diags.iter().filter(|d| d.0 == 2430).collect::<Vec<_>>();
+    assert!(
+        ts2430.is_empty(),
+        "Should NOT emit TS2430 regardless of type parameter names used. Got: {diags:?}"
+    );
+}
+
+// =========================================================================
 // Regression: `this` type substitution in whole-type assignability check
 // =========================================================================
 
@@ -678,5 +782,93 @@ interface Derived extends Base {
     assert!(
         !ts2430.is_empty(),
         "Should emit TS2430 when an ancestor member returns an unrelated primitive but the derived method narrows to the current interface. Got: {diags:?}"
+    );
+}
+
+// =========================================================================
+// Issue #9316: structurally identical generic method signatures must not
+// fire TS2430 when their constraints reference the outer type parameter.
+// The pre-fix `TypeSubstitution::is_identity` returned true whenever each
+// map entry mapped a name to *any* unconstrained TypeParameter with that
+// name, but fresh declaration-scoped TypeParameters with identical content
+// have distinct TypeIds, so substituting one for the other was wrongly
+// short-circuited. Cases below vary the user-chosen names to prove the
+// fix is structural.
+// =========================================================================
+
+#[test]
+fn test_generic_method_with_conditional_constraint_renamed_axis_no_false_ts2430() {
+    // Renamed-identifier axis of the test above (T→K, R→X, ThenArg→DeepUnwrap,
+    // InterfaceA→Foo, InterfaceB→Bar) — protects against name-keyed fixes.
+    let source = r#"
+type DeepUnwrap<K> = K extends any ? any : K extends PromiseLike<infer U> ? U : K;
+
+interface Foo<K> {
+    filter(callback: (newValue: K, oldValue: K) => boolean): Foo<K>;
+    map<D>(callback: (value: K) => D): Foo<D>;
+    awaitNext<X extends DeepUnwrap<K>>(): Foo<X>;
+}
+
+interface Bar<K> extends Foo<K> {
+    map<D>(callback: (value: K) => D): Bar<D>;
+    awaitNext<X extends DeepUnwrap<K>>(): Bar<X>;
+}
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        diagnostics_with_code(&diags, 2430).is_empty(),
+        "Got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_class_implements_generic_interface_returning_subclass_no_false_diagnostic() {
+    // End-to-end conformance shape — exercises the implements-check (TS2416)
+    // alongside the interface-extends check (TS2430).
+    let source = r#"
+type ThenArg<T> = T extends any ? any : T extends PromiseLike<infer U> ? U : T;
+
+interface InterfaceA<T> {
+    filter(callback: (newValue: T, oldValue: T) => boolean): InterfaceA<T>;
+    map<D>(callback: (value: T) => D): InterfaceA<D>;
+    await<R extends ThenArg<T>>(): InterfaceA<R>;
+}
+
+interface InterfaceB<T> extends InterfaceA<T> {
+    map<D>(callback: (value: T) => D): InterfaceB<D>;
+    await<R extends ThenArg<T>>(): InterfaceB<R>;
+}
+
+class A<T> implements InterfaceB<T> {
+    public filter(callback: (newValue: T, oldValue: T) => boolean): B<T> { return undefined as any; }
+    public map<D>(callback: (value: T) => D): B<D> { return undefined as any; }
+    public await<R extends ThenArg<T>>(): B<R> { return undefined as any; }
+}
+
+class B<T> extends A<T> {}
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        diagnostics_with_code(&diags, 2430).is_empty()
+            && diagnostics_with_code(&diags, 2416).is_empty(),
+        "Got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_real_return_type_mismatch_still_emits_ts2430() {
+    // Negative: an actually-incompatible derived return must still fire TS2430.
+    let source = r#"
+interface Base<T> {
+    map<D>(callback: (value: T) => D): D[];
+}
+interface Derived<T> extends Base<T> {
+    map<D>(callback: (value: T) => D): string;
+}
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        !diagnostics_with_code(&diags, 2430).is_empty(),
+        "Got: {diags:?}"
     );
 }

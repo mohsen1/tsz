@@ -3,7 +3,8 @@
 //! Classification enums and functions for iterable types, used for spread handling,
 //! `for-of` element type computation, and async iterable checking.
 
-use crate::{TypeData, TypeDatabase, TypeId};
+use crate::construction::TypeDatabase;
+use crate::{TypeData, TypeId};
 
 // =============================================================================
 // Full Iterable Type Classification (For is_iterable_type checks)

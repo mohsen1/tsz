@@ -9,7 +9,8 @@ use tsz_binder::{FlowNodeId, SymbolId, symbol_flags};
 use tsz_parser::parser::node::BinaryExprData;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{GuardSense, NarrowingContext, TypeGuard, TypeId, TypeofKind};
+use tsz_solver::TypeId;
+use tsz_solver::narrowing::{GuardSense, NarrowingContext, TypeGuard, TypeofKind};
 
 impl<'a> FlowAnalyzer<'a> {
     fn union_logical_condition_branches(&self, types: Vec<TypeId>) -> TypeId {
@@ -935,7 +936,7 @@ impl<'a> FlowAnalyzer<'a> {
                     return narrowed;
                 }
 
-                if let Some((base, prop_name)) = self.binding_element_property_alias(condition_ref)
+                if let Some((base, prop_names)) = self.binding_element_property_alias(condition_ref)
                     && self.is_matching_reference(base, target)
                     && let Some(alias_sym_id) =
                         self.binder.resolve_identifier(self.arena, condition_ref)
@@ -943,7 +944,7 @@ impl<'a> FlowAnalyzer<'a> {
                 {
                     let narrowed = narrowing.narrow_by_property_truthiness(
                         type_id,
-                        &[prop_name],
+                        &prop_names,
                         is_true_branch,
                     );
                     if narrowed != TypeId::NEVER || is_union_type(self.interner, type_id) {

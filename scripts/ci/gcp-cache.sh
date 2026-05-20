@@ -531,6 +531,7 @@ restore_caches() {
       printf '%s\n' "$commit" > .ci-cache/dist-fast-cache-hit
       touch -c \
         .target/dist-fast/tsz \
+        .target/dist-fast/tsz-lsp \
         .target/dist-fast/tsz-server \
         .target/dist-fast/tsz-conformance \
         .target/dist-fast/generate-tsc-cache
@@ -625,6 +626,7 @@ save_caches() {
       "$(cache_uri "dist-fast/${commit}.tar.gz")" \
       ".target" \
       dist-fast/tsz \
+      dist-fast/tsz-lsp \
       dist-fast/tsz-server \
       dist-fast/tsz-conformance \
       dist-fast/generate-tsc-cache

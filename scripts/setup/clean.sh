@@ -23,6 +23,7 @@
 #
 # Protected (never deleted):
 #   .env, .env.local, .env.* — environment config files
+#   TypeScript symlink — shared TypeScript checkout in sibling worktrees
 #
 # Examples:
 #   ./scripts/setup/clean.sh --dry-run    # Preview what would be removed
@@ -39,6 +40,34 @@ DRY_RUN=false
 QUIET=false
 FULL=false
 
+usage() {
+  cat <<'USAGE'
+Clean git-ignored artifacts from the current tsz repository.
+
+Usage:
+  scripts/setup/clean.sh [OPTIONS]
+
+Options:
+  --dry-run    Show what would be cleaned without deleting anything
+  --full       Also remove Rust build caches (.target/, .target-bench/)
+  --quiet      Suppress output (for use in git hooks)
+  -h, --help   Show this help
+
+Protected (never deleted without --full):
+  .target/, .target-bench/ — Rust incremental build caches
+
+Protected (never deleted):
+  .env, .env.local, .env.* — environment config files
+  TypeScript symlink — shared TypeScript checkout in sibling worktrees
+
+Examples:
+  scripts/setup/clean.sh --dry-run    # Preview what would be removed
+  scripts/setup/clean.sh              # Clean debris, keep build caches
+  scripts/setup/clean.sh --full       # Nuke everything including build caches
+  scripts/setup/clean.sh --quiet      # Silent mode (git hooks)
+USAGE
+}
+
 # ── Argument parsing ────────────────────────────────────────────────────────
 
 while [[ $# -gt 0 ]]; do
@@ -46,8 +75,8 @@ while [[ $# -gt 0 ]]; do
     --dry-run) DRY_RUN=true; shift ;;
     --full)    FULL=true; shift ;;
     --quiet)   QUIET=true; shift ;;
-    -h|--help) sed -n '2,/^[^#]/{ /^#/s/^# \?//p; }' "$0"; exit 0 ;;
-    *)         echo "Unknown option: $1 (try --help)"; exit 1 ;;
+    -h|--help) usage; exit 0 ;;
+    *)         echo "Unknown option: $1 (try --help)" >&2; exit 1 ;;
   esac
 done
 
@@ -97,6 +126,9 @@ filter_candidates() {
     # git clean -n outputs "Would remove <path>"
     local path="${line#Would remove }"
     if [[ "$path" =~ $PROTECTED_RE ]]; then
+      continue
+    fi
+    if [[ "$path" == "TypeScript" && -L "$REPO_ROOT/TypeScript" ]]; then
       continue
     fi
     echo "$line"
@@ -178,10 +210,17 @@ find "$REPO_ROOT" -name "package-lock.json" -not -path "*/TypeScript/*" -delete 
 # Phase 7: Remove bench/profiling leftovers
 # - typescript/ (lowercase) is a tsc build clone from bench scripts (not the TypeScript/ submodule)
 # - perf.data*, flamegraph.svg, *.actual from conformance/profiling
-if [[ -d "$REPO_ROOT/typescript" ]]; then
+LOWERCASE_TYPESCRIPT=""
+while IFS= read -r entry; do
+  if [[ "$(basename "$entry")" == "typescript" ]]; then
+    LOWERCASE_TYPESCRIPT="$entry"
+    break
+  fi
+done < <(find "$REPO_ROOT" -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null)
+if [[ -n "$LOWERCASE_TYPESCRIPT" ]]; then
   # May contain read-only files from node_modules/.git — force writable first
-  chmod -R u+w "$REPO_ROOT/typescript" 2>/dev/null || true
-  rm -rf "$REPO_ROOT/typescript"
+  chmod -R u+w "$LOWERCASE_TYPESCRIPT" 2>/dev/null || true
+  rm -rf "$LOWERCASE_TYPESCRIPT"
 fi
 rm -f "$REPO_ROOT"/perf.data* "$REPO_ROOT"/*.svg "$REPO_ROOT"/flamegraph* 2>/dev/null || true
 rm -f "$REPO_ROOT"/*.actual "$REPO_ROOT"/*v8.log 2>/dev/null || true
@@ -202,8 +241,8 @@ rm -f "$REPO_ROOT"/tsc-cache*.json 2>/dev/null || true
 git -C "$REPO_ROOT" checkout -- scripts/conformance/tsc-cache-full.json 2>/dev/null || true
 
 # Phase 11: Reset TypeScript submodule to clean state.
-# Skip when TypeScript is a symlink — it points at the primary checkout's
-# submodule, which a worktree must not mutate (see link-ts-submodule.sh).
+# Skip when TypeScript is a symlink — it points at a shared checkout that this
+# worktree must not mutate (see link-ts-submodule.sh).
 if [ ! -L "$REPO_ROOT/TypeScript" ]; then
   git -C "$REPO_ROOT" submodule update --force 2>/dev/null || true
 fi

@@ -652,6 +652,7 @@ build_test_binaries() {
   ci_section "Build dist-fast test binaries"
   local binaries=(
     .target/dist-fast/tsz
+    .target/dist-fast/tsz-lsp
     .target/dist-fast/tsz-server
     .target/dist-fast/tsz-conformance
     .target/dist-fast/generate-tsc-cache
@@ -683,6 +684,7 @@ build_test_binaries() {
     echo "Using cached dist-fast binaries"
     ls -lh "${binaries[@]}"
     mkdir -p .target/release
+    ln -sf "$ROOT_DIR/.target/dist-fast/tsz-lsp" .target/release/tsz-lsp
     ln -sf "$ROOT_DIR/.target/dist-fast/tsz-server" .target/release/tsz-server
     return 0
   fi
@@ -697,15 +699,21 @@ build_test_binaries() {
   ) &
   heartbeat_pid="$!"
 
+  ci_report_memory "pre-dist-build"
+
+  # Wrap with safe-run.sh so cargo is killed gracefully before the kernel
+  # OOM-killer fires and silently kills the GitHub Actions runner process.
   set +e
-  cargo build --profile dist-fast \
-    --jobs "$CARGO_BUILD_JOBS" \
-    -p tsz-cli \
-    -p tsz-conformance \
-    --bin tsz \
-    --bin tsz-server \
-    --bin tsz-conformance \
-    --bin generate-tsc-cache
+  "$ROOT_DIR/scripts/safe-run.sh" --limit "${TSZ_CI_DIST_BUILD_MEMORY_LIMIT_PCT:-88}%" -- \
+    cargo build --profile dist-fast \
+      --jobs "$CARGO_BUILD_JOBS" \
+      -p tsz-cli \
+      -p tsz-conformance \
+      --bin tsz \
+      --bin tsz-lsp \
+      --bin tsz-server \
+      --bin tsz-conformance \
+      --bin generate-tsc-cache
   cargo_rc="$?"
   set -e
   kill "$heartbeat_pid" >/dev/null 2>&1 || true
@@ -714,6 +722,7 @@ build_test_binaries() {
     return "$cargo_rc"
   fi
   mkdir -p .target/release
+  ln -sf "$ROOT_DIR/.target/dist-fast/tsz-lsp" .target/release/tsz-lsp
   ln -sf "$ROOT_DIR/.target/dist-fast/tsz-server" .target/release/tsz-server
   ls -lh "${binaries[@]}"
 }
@@ -823,10 +832,12 @@ run_with_heartbeat() {
   "$@" &
   pid="$!"
 
+  local heartbeat_interval="${TSZ_CI_HEARTBEAT_SECONDS:-60}" mem_avail
   while kill -0 "$pid" 2>/dev/null; do
-    sleep 120
+    sleep "$heartbeat_interval"
     if kill -0 "$pid" 2>/dev/null; then
-      echo "still running: ${label} $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      mem_avail="$(ci_available_memory_mb)"
+      echo "still running: ${label} $(date -u +%Y-%m-%dT%H:%M:%SZ)${mem_avail:+ [mem_avail=${mem_avail}MB]}"
     fi
   done
 
@@ -993,6 +1004,7 @@ PY
 run_conformance() {
   ci_section "Conformance"
   mkdir -p "$LOG_DIR/conformance"
+  ci_report_memory "conformance-${CONFORMANCE_SHARD_INDEX:-0}"
   local log_file="$LOG_DIR/conformance/full.log"
   local last_run="scripts/conformance/conformance-last-run.txt"
   rm -f "$last_run"
@@ -1590,6 +1602,7 @@ run_fourslash_shard() {
   shard_count="$(num_or_zero "${_TSZ_CI_FOURSLASH_SHARD_COUNT:-8}")"
 
   mkdir -p "$LOG_DIR/fourslash"
+  ci_report_memory "fourslash-${shard_index}"
   echo "Fourslash shard ${shard_index}/${shard_count}: workers=${FOURSLASH_WORKERS}"
 
   local detail_json="$METRICS_DIR/fourslash-shard-${shard_index}.json"
@@ -1910,6 +1923,7 @@ aggregate_fourslash() {
 
 run_dist_binaries() {
   ci_section "Build dist-fast binaries"
+  ci_report_memory "dist-binaries"
   timed build_test_binaries build_test_binaries
   show_sccache_stats
 }
@@ -1929,6 +1943,16 @@ run_unit_archive_only() {
 run_node_harness_prep() {
   ci_section "Prep node harnesses (emit + fourslash)"
   timed prep_node_artifacts prep_node_artifacts
+}
+
+run_lsp_e2e_smoke() {
+  ci_section "LSP protocol smoke"
+  local bin="$ROOT_DIR/.target/dist-fast/tsz-lsp"
+  if [[ ! -x "$bin" ]]; then
+    echo "error: expected executable dist-fast LSP binary at $bin" >&2
+    return 1
+  fi
+  node scripts/lsp/e2e-smoke.mjs "$bin"
 }
 
 run_build() {
@@ -2029,6 +2053,9 @@ main() {
       ;;
     unit-shard)
       timed run_unit_shard run_unit_shard
+      ;;
+    lsp-e2e)
+      timed run_lsp_e2e_smoke run_lsp_e2e_smoke
       ;;
     wasm)
       timed build_wasm build_wasm

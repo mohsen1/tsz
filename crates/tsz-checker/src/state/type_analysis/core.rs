@@ -3,7 +3,7 @@
 
 use crate::context::TypingRequest;
 use crate::query_boundaries::checkers::generic as generic_query;
-use crate::query_boundaries::common::lazy_def_id;
+use crate::query_boundaries::common::{lazy_def_id, type_param_info};
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
@@ -1852,14 +1852,7 @@ impl<'a> CheckerState<'a> {
                 shadowed_class_param = true;
             }
 
-            let type_id = self.ctx.types.fresh_type_param(info);
-            if let Some(&sym_id) = self.ctx.binder.node_symbols.get(&data.name.0)
-                && let Some(def_id) = self.ctx.definition_store.find_def_by_symbol(sym_id.0)
-            {
-                self.ctx
-                    .definition_store
-                    .register_type_to_def(type_id, def_id);
-            }
+            let type_id = self.intern_type_param_for_decl(data.name, info);
             let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
             updates.push((name, previous, shadowed_class_param));
             param_indices.push(param_idx);
@@ -1961,14 +1954,7 @@ impl<'a> CheckerState<'a> {
                     is_const,
                 };
 
-                let constrained_type_id = self.ctx.types.fresh_type_param(info);
-                if let Some(&sym_id) = self.ctx.binder.node_symbols.get(&data.name.0)
-                    && let Some(def_id) = self.ctx.definition_store.find_def_by_symbol(sym_id.0)
-                {
-                    self.ctx
-                        .definition_store
-                        .register_type_to_def(constrained_type_id, def_id);
-                }
+                let constrained_type_id = self.intern_type_param_for_decl(data.name, info);
                 if self.ctx.type_parameter_scope.get(&name).copied() != Some(constrained_type_id) {
                     self.ctx
                         .type_parameter_scope
@@ -2082,6 +2068,53 @@ impl<'a> CheckerState<'a> {
 
         self.ctx.leave_recursion();
         (params, updates)
+    }
+
+    /// Allocate (or reuse) the canonical `TypeId` for one type-parameter
+    /// declaration's `TypeParamInfo`.
+    ///
+    /// Two processings of the same declaration (e.g. `function f<T>` whose
+    /// signature is computed once for parameter resolution and once for an
+    /// annotation context) must converge on a single `TypeId`. Without
+    /// this, `fresh_type_param` mints distinct non-deduped ids each time
+    /// and every downstream interner table for types closing over `T`
+    /// hashes to a different entry, defeating identity-based fast paths
+    /// in the relation engine and producing spurious `TS2859`s on
+    /// recursive aliases (`Recur<T>` vs `Recur<T> | undefined`).
+    ///
+    /// The reuse is guarded on full `TypeParamInfo` equality so the
+    /// refinement pass can install a constrained variant when the user
+    /// wrote `T extends C`.
+    fn intern_type_param_for_decl(
+        &mut self,
+        name_node: tsz_parser::parser::NodeIndex,
+        info: tsz_solver::TypeParamInfo,
+    ) -> tsz_solver::TypeId {
+        let registered_def = self
+            .ctx
+            .binder
+            .node_symbols
+            .get(&name_node.0)
+            .and_then(|&sym_id| self.ctx.definition_store.find_def_by_symbol(sym_id.0));
+
+        let cached = registered_def.and_then(|def_id| {
+            let cached_id = self.ctx.definition_store.find_type_param_for_def(def_id)?;
+            if type_param_info(self.ctx.types, cached_id) == Some(info) {
+                Some(cached_id)
+            } else {
+                None
+            }
+        });
+        let type_id = cached.unwrap_or_else(|| self.ctx.types.fresh_type_param(info));
+        if let Some(def_id) = registered_def {
+            self.ctx
+                .definition_store
+                .register_type_to_def(type_id, def_id);
+            self.ctx
+                .definition_store
+                .register_type_param_for_def(def_id, type_id);
+        }
+        type_id
     }
 
     fn empty_type_literal_satisfies_optional_mapped_constraint(

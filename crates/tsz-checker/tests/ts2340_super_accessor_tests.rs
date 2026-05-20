@@ -14,8 +14,8 @@
 //! Note: tsc does NOT emit TS2340 for public/protected super accessor access in
 //! any ES target. TS2340 is exclusively a private-member visibility diagnostic.
 //!
-//! `super.<field>` reads still emit TS2855 via the separate field path,
-//! which is exercised below.
+//! `super.<field>` reads are a separate target-sensitive path: ES5 emits
+//! TS2340, while ES2015+ emits TS2855. Those cases are exercised below.
 
 use tsz_checker::test_utils::{
     check_source, check_source_code_messages, diagnostic_code_messages, has_diagnostic_code,
@@ -203,6 +203,132 @@ class Derived extends Base {
 }
 
 #[test]
+fn super_public_members_in_nested_arrows_no_ts2340() {
+    let source = r#"
+class User {
+    sayHello(): void {}
+    get label(): string {
+        return "user";
+    }
+}
+
+class RegisteredUser extends User {
+    constructor() {
+        super();
+        var direct = () => super.sayHello();
+        var nested = () => () => () => super.sayHello();
+        var superLabel = () => () => () => super.label;
+    }
+    sayHello(): void {
+        var direct = () => super.sayHello();
+        var nested = () => () => () => super.sayHello();
+        var superLabel = () => () => () => super.label;
+    }
+}
+"#;
+
+    for diagnostics in [check_es5(source), check_es2015(source)] {
+        assert!(
+            !has_diagnostic_code(&diagnostics, TS2340),
+            "public super method/accessor access in nested arrows must not emit TS2340, got: {diagnostics:?}",
+        );
+        assert!(
+            !has_diagnostic_code(&diagnostics, TS2855),
+            "public super method/accessor access in nested arrows must not emit TS2855, got: {diagnostics:?}",
+        );
+    }
+}
+
+#[test]
+fn super_field_in_nested_arrows_reports_target_specific_primary_diagnostic() {
+    let source = r#"
+class User {
+    name: string = "Bob";
+}
+
+class RegisteredUser extends User {
+    name: string = "Frank";
+    constructor() {
+        super();
+        var superName = () => () => () => super.name;
+    }
+    readName(): string {
+        var superName = () => () => () => super.name;
+        return superName()()();
+    }
+}
+"#;
+
+    let es5 = check_es5(source);
+    assert!(
+        has_diagnostic_code(&es5, TS2340),
+        "ES5 super field access should emit TS2340, got: {es5:?}",
+    );
+    assert!(
+        !has_diagnostic_code(&es5, TS2855),
+        "ES5 super field access should not also emit TS2855, got: {es5:?}",
+    );
+
+    let es2015 = check_es2015(source);
+    assert!(
+        !has_diagnostic_code(&es2015, TS2340),
+        "ES2015 super field access should not emit TS2340, got: {es2015:?}",
+    );
+    assert!(
+        has_diagnostic_code(&es2015, TS2855),
+        "ES2015 super field access should emit TS2855, got: {es2015:?}",
+    );
+}
+
+#[test]
+fn super_in_lambdas_parse_error_does_not_cascade_to_ts2340() {
+    let source = r#"
+class User {
+    sayHello(): void {}
+}
+
+class RegisteredUser extends User {
+    constructor() {
+        super();
+        super.sayHello();
+        var x = () => super.sayHello();
+    }
+    sayHello(): void {
+        super.sayHello();
+        var x = () => super.sayHello();
+    }
+}
+
+class RegisteredUser2 extends User {
+    constructor() {
+        super();
+        var x = () => () => () => super.sayHello();
+    }
+    sayHello(): void {
+        var x = () => () => () => super.sayHello();
+    }
+}
+
+class RegisteredUser4 extends User {
+    constructor() {
+        super();
+        var x = () => () => super;
+    }
+    sayHello(): void {
+        var x = () => () => super;
+    }
+}
+"#;
+
+    for diagnostics in [check_es5(source), check_es2015(source)] {
+        assert!(
+            !has_diagnostic_code(&diagnostics, TS2340),
+            "superInLambdas should not cascade to TS2340, got: {diagnostics:?}",
+        );
+    }
+}
+
+#[test]
 fn super_static_get_accessor_read_no_ts2340() {
     assert_no_ts2340(
         r#"
@@ -314,7 +440,7 @@ class Derived extends Base {
 }
 
 #[test]
-fn es5_super_field_read_no_ts2340() {
+fn es5_super_field_read_emits_ts2340() {
     let d = check_es5(
         r#"
 class Base {
@@ -328,8 +454,12 @@ class Derived extends Base {
 "#,
     );
     assert!(
-        !has_diagnostic_code(&d, TS2340),
-        "ES5 public super field read must not emit TS2340, got: {d:?}",
+        has_diagnostic_code(&d, TS2340),
+        "ES5 public super field read should emit TS2340, got: {d:?}",
+    );
+    assert!(
+        !has_diagnostic_code(&d, TS2855),
+        "ES5 public super field read should not also emit TS2855, got: {d:?}",
     );
 }
 

@@ -1,6 +1,7 @@
 use crate::state::CheckerState;
 use tsz_common::interner::Atom;
-use tsz_solver::{MappedTypeId, QueryDatabase, TypeDatabase, TypeId};
+use tsz_solver::construction::{QueryDatabase, TypeDatabase};
+use tsz_solver::{MappedTypeId, TypeId};
 
 pub(crate) use super::super::common::{
     is_generic_type, lazy_def_id, object_shape_for_type as object_shape,
@@ -9,17 +10,17 @@ pub(crate) use tsz_solver::type_queries::{
     MappedConstraintKind, PropertyAccessResolutionKind, TypeResolutionKind,
 };
 
-/// Thin wrapper around `tsz_solver::TypeEvaluator`.
+/// Thin wrapper around `tsz_solver::computation::TypeEvaluator`.
 ///
 /// Evaluates a complex type (conditional, mapped, index access, etc.) using
 /// the provided `TypeResolver` to resolve lazy references. This delegates to
 /// `TypeEvaluator::with_resolver` + `evaluate` in a single call.
-pub(crate) fn evaluate_type_with_resolver<R: tsz_solver::TypeResolver>(
+pub(crate) fn evaluate_type_with_resolver<R: tsz_solver::relations::subtype::TypeResolver>(
     db: &dyn TypeDatabase,
     resolver: &R,
     type_id: TypeId,
 ) -> TypeId {
-    let mut evaluator = tsz_solver::TypeEvaluator::with_resolver(db, resolver);
+    let mut evaluator = tsz_solver::computation::TypeEvaluator::with_resolver(db, resolver);
     evaluator.evaluate(type_id)
 }
 
@@ -296,7 +297,12 @@ pub(crate) fn substitute_this_type(
     type_id: TypeId,
     this_type: TypeId,
 ) -> TypeId {
-    tsz_solver::substitute_this_type_cached(db.as_type_database(), Some(db), type_id, this_type)
+    tsz_solver::computation::substitute_this_type_cached(
+        db.as_type_database(),
+        Some(db),
+        type_id,
+        this_type,
+    )
 }
 
 /// Get the intersection members of a type (if it is an intersection).
@@ -363,7 +369,7 @@ pub(crate) struct EvalWithCacheResult {
 /// Returns the result plus side-effects (depth exceeded, cache drain).
 /// This is the canonical boundary for TypeEvaluator construction with cache
 /// management — checker code must not construct TypeEvaluator directly.
-pub(crate) fn evaluate_type_with_cache<R: tsz_solver::TypeResolver>(
+pub(crate) fn evaluate_type_with_cache<R: tsz_solver::relations::subtype::TypeResolver>(
     db: &dyn TypeDatabase,
     resolver: &R,
     type_id: TypeId,
@@ -371,7 +377,7 @@ pub(crate) fn evaluate_type_with_cache<R: tsz_solver::TypeResolver>(
     has_seed: bool,
     expand_application_display_alias_args: bool,
 ) -> EvalWithCacheResult {
-    let mut evaluator = tsz_solver::TypeEvaluator::with_resolver(db, resolver);
+    let mut evaluator = tsz_solver::computation::TypeEvaluator::with_resolver(db, resolver);
     if expand_application_display_alias_args {
         evaluator = evaluator.with_expanded_application_display_alias_args();
     }
@@ -393,13 +399,13 @@ pub(crate) fn evaluate_type_with_cache<R: tsz_solver::TypeResolver>(
 /// detection fires on an Application type. This catches self-referential
 /// conditional types that produce the same Application TypeId on each
 /// expansion (e.g., `type Foo<T> = T extends unknown ? Foo<T> : unknown`).
-pub(crate) fn evaluate_type_for_ts2589<R: tsz_solver::TypeResolver>(
+pub(crate) fn evaluate_type_for_ts2589<R: tsz_solver::relations::subtype::TypeResolver>(
     db: &dyn TypeDatabase,
     resolver: &R,
     type_id: TypeId,
 ) -> EvalWithCacheResult {
-    let mut evaluator =
-        tsz_solver::TypeEvaluator::with_resolver(db, resolver).with_flag_depth_on_app_cycle();
+    let mut evaluator = tsz_solver::computation::TypeEvaluator::with_resolver(db, resolver)
+        .with_flag_depth_on_app_cycle();
     let result = evaluator.evaluate(type_id);
     EvalWithCacheResult {
         result,
@@ -413,13 +419,13 @@ pub(crate) fn evaluate_type_for_ts2589<R: tsz_solver::TypeResolver>(
 ///
 /// Used during heritage merging where `this` must remain unbound until the
 /// final derived interface is constructed.
-pub(crate) fn evaluate_type_suppressing_this<R: tsz_solver::TypeResolver>(
+pub(crate) fn evaluate_type_suppressing_this<R: tsz_solver::relations::subtype::TypeResolver>(
     db: &dyn TypeDatabase,
     resolver: &R,
     type_id: TypeId,
 ) -> TypeId {
-    let mut evaluator =
-        tsz_solver::TypeEvaluator::with_resolver(db, resolver).with_suppress_this_binding();
+    let mut evaluator = tsz_solver::computation::TypeEvaluator::with_resolver(db, resolver)
+        .with_suppress_this_binding();
     evaluator.evaluate(type_id)
 }
 
@@ -439,7 +445,7 @@ struct CheckerDeclarationCycleHost<'a, 'b> {
     state: &'a mut CheckerState<'b>,
 }
 
-impl tsz_solver::TypeResolver for CheckerDeclarationCycleHost<'_, '_> {
+impl tsz_solver::relations::subtype::TypeResolver for CheckerDeclarationCycleHost<'_, '_> {
     fn resolve_ref(
         &self,
         symbol: tsz_solver::SymbolRef,

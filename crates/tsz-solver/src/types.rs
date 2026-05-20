@@ -1081,7 +1081,7 @@ pub fn normalize_display_property_order(props: &mut [PropertyInfo]) {
 /// Merge display-only properties from multiple intersection members while
 /// preserving first-seen source order.
 pub fn merge_display_properties_for_intersection(
-    db: &dyn crate::TypeDatabase,
+    db: &dyn crate::construction::TypeDatabase,
     members: &[TypeId],
 ) -> Vec<PropertyInfo> {
     let mut merged: Vec<PropertyInfo> = Vec::new();

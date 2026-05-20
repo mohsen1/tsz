@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 
+use crate::type_queries::type_includes_undefined;
 use crate::types::{ConditionalType, IntrinsicKind, TypeData, TypeId};
 use crate::visitor::{
     conditional_type_id, contains_type_parameter_named, intrinsic_kind, type_param_info,
@@ -28,6 +29,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ///   `MutableKeys` built on top of it) able to distinguish properties
     ///   by mutability.
     fn conditional_extends_types_equivalent(&mut self, left: TypeId, right: TypeId) -> bool {
+        if !self.identity_fallback_property_modifiers_match(left, right) {
+            return false;
+        }
+
         if self.with_extends_clause_identity_mode(|sub| {
             sub.check_subtype(left, right).is_true() && sub.check_subtype(right, left).is_true()
         }) {
@@ -86,9 +91,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         .properties
                         .iter()
                         .find(|prop| prop.name == left_prop.name)
-                        && (left_prop.optional != right_prop.optional
-                            || left_prop.readonly != right_prop.readonly
-                            || left_prop.is_symbol_named != right_prop.is_symbol_named)
+                        && !self.property_identity_shapes_match(left_prop, right_prop)
                     {
                         return false;
                     }
@@ -97,6 +100,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         true
+    }
+
+    fn property_identity_shapes_match(
+        &self,
+        left: &crate::types::PropertyInfo,
+        right: &crate::types::PropertyInfo,
+    ) -> bool {
+        left.optional == right.optional
+            && left.readonly == right.readonly
+            && left.is_symbol_named == right.is_symbol_named
+            && type_includes_undefined(self.interner, left.type_id)
+                == type_includes_undefined(self.interner, right.type_id)
     }
 
     /// Run `f` with the stricter property-modifier identity rules used by

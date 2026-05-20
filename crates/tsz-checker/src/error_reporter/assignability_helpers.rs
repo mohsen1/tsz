@@ -1001,7 +1001,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         let evaluated = self.evaluate_concrete_remapped_mapped_type_with_resolution(resolved);
-        if evaluated == resolved || self.is_assignable_to(evaluated, target) {
+        if evaluated == resolved || self.diagnostic_relation_boolean_guard(evaluated, target) {
             return false;
         }
         let analysis = self.analyze_assignability_failure(evaluated, target);

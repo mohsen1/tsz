@@ -9,7 +9,7 @@ use tsz_checker::test_utils::{
 };
 use tsz_common::common::ModuleKind;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 #[test]
 fn primitive_type_reference_properties_keep_intrinsic_types() {

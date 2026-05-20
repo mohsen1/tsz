@@ -21,7 +21,7 @@ impl<'a> CheckerState<'a> {
 
         declarations.iter().any(|(_, flags, is_local, _, origin)| {
             !*is_local
-                && *origin == DuplicateDeclarationOrigin::TargetedModuleAugmentation
+                && origin.is_targeted_module_augmentation()
                 && (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0
                 && (!has_block_scoped || (flags & symbol_flags::PROPERTY) != 0)
         })
