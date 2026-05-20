@@ -696,8 +696,7 @@ impl<'a> CheckerContext<'a> {
             ctx.implicit_any_checked_closures = parent.implicit_any_checked_closures.clone();
         }
         if !parent.implicit_any_contextual_closures.is_empty() {
-            ctx.implicit_any_contextual_closures =
-                parent.implicit_any_contextual_closures.clone();
+            ctx.implicit_any_contextual_closures = parent.implicit_any_contextual_closures.clone();
         }
 
         // Propagate depth from parent to prevent infinite recursion across arena boundaries.
