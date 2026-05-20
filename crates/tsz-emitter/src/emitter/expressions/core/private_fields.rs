@@ -65,15 +65,37 @@ impl<'a> Printer<'a> {
         })
     }
 
-    /// Check if a receiver expression is simple (this keyword or an identifier)
-    /// and doesn't need to be cached in a temp variable to avoid double-evaluation.
+    /// If `node` is an identifier that names the current static-class alias,
+    /// return the alias string (`_a`). Otherwise return `None`.
+    fn static_class_alias_for_node<'n>(&self, node: &'n Node) -> Option<&str>
+    where
+        'n: 'a,
+    {
+        if !node.is_identifier() {
+            return None;
+        }
+        let (cls_name, alias) = self.private_static_class_alias.as_ref()?;
+        let ident = self.arena.get_identifier(node)?;
+        (ident.escaped_text == *cls_name).then_some(alias.as_str())
+    }
+
+    /// Check if a receiver expression is simple enough that it doesn't need
+    /// a temp variable to avoid double-evaluation.
+    ///
+    /// Class-name identifiers that map to a static alias are NOT simple: both
+    /// the outer SET receiver and the inner GET receiver must share the same
+    /// single alias evaluation, so `receiver_is_simple` must return `false` to
+    /// force a receiver temp.
     fn receiver_is_simple(&self, idx: NodeIndex) -> bool {
         let Some(node) = self.arena.get(idx) else {
             return true;
         };
-        node.kind == SyntaxKind::ThisKeyword as u16
-            || node.is_identifier()
+        if node.kind == SyntaxKind::ThisKeyword as u16
             || node.kind == SyntaxKind::SuperKeyword as u16
+        {
+            return true;
+        }
+        node.is_identifier() && self.static_class_alias_for_node(node).is_none()
     }
 
     fn emit_private_field_set_close(&mut self, clean_name: &str) {
@@ -208,29 +230,14 @@ impl<'a> Printer<'a> {
     }
 
     pub(crate) fn emit_private_receiver(&mut self, expression: NodeIndex, _clean_name: &str) {
-        let alias_replacement =
-            self.private_static_class_alias
-                .as_ref()
-                .and_then(|(cls_name, alias)| {
-                    let expr_node = self.arena.get(expression)?;
-                    if !expr_node.is_identifier() {
-                        return None;
-                    }
-                    let ident = self.arena.get_identifier(expr_node)?;
-                    if ident.escaped_text == *cls_name {
-                        Some(alias.clone())
-                    } else {
-                        None
-                    }
-                });
-        if let Some(alias) = alias_replacement {
+        let alias = self
+            .arena
+            .get(expression)
+            .and_then(|node| self.static_class_alias_for_node(node))
+            .map(ToOwned::to_owned);
+        if let Some(alias) = alias {
             self.write(&alias);
         } else {
-            // Preserve the source-level receiver. For `this.#staticField`,
-            // tsc keeps `this` rather than substituting the class alias —
-            // even though that's a type error, the emitted JS mirrors the
-            // source. The class-name → alias substitution above only fires
-            // when the source explicitly names the class (e.g. `A.#x`).
             self.emit(expression);
         }
     }

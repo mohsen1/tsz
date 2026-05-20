@@ -1146,6 +1146,84 @@ fn anonymous_class_expr_with_static_private_field_sets_function_name() {
     );
 }
 
+/// When `++ClassName.#field` or `ClassName.#field++` appears in a static method
+/// body, tsc allocates a receiver temp even though the class-name identifier is
+/// syntactically simple, because the alias (`_a`) must be captured once and
+/// reused for both the outer SET receiver and the inner GET receiver.
+///
+/// Verify two name choices (`Counter` and `Score`) to prove the fix is
+/// structural and not keyed to a specific identifier spelling.
+#[test]
+fn static_private_field_unary_mutation_allocates_receiver_temp() {
+    let source_counter = r#"class Counter {
+    static #val = 0;
+    static inc() { ++Counter.#val; }
+    static dec() { Counter.#val--; }
+}
+"#;
+    let out = parse_and_print_for_target(source_counter, ScriptTarget::ES2015);
+    assert!(
+        out.contains("__classPrivateFieldSet(_b = _a, _a,"),
+        "`++Counter.#val` must allocate a receiver temp so outer SET and inner GET share the same alias.\nOutput:\n{out}"
+    );
+    assert!(
+        out.contains("__classPrivateFieldGet(_b, _a,"),
+        "inner GET after prefix-increment must reference the captured receiver temp.\nOutput:\n{out}"
+    );
+    assert!(
+        out.lines()
+            .filter(|l| l.contains("__classPrivateFieldSet(_b = _a,"))
+            .count()
+            >= 2,
+        "both `inc` and `dec` bodies must allocate the receiver temp.\nOutput:\n{out}"
+    );
+    assert!(
+        !out.contains("__classPrivateFieldSet(Counter,"),
+        "class name must not appear literally as a SET argument — it must be replaced by the alias temp.\nOutput:\n{out}"
+    );
+
+    let source_score = r#"class Score {
+    static #pts = 0;
+    static add() { ++Score.#pts; }
+    static pop() { Score.#pts--; }
+}
+"#;
+    let out2 = parse_and_print_for_target(source_score, ScriptTarget::ES2015);
+    assert!(
+        out2.contains("__classPrivateFieldSet(_b = _a, _a,"),
+        "`++Score.#pts` must also allocate a receiver temp (different class name).\nOutput:\n{out2}"
+    );
+    assert!(
+        !out2.contains("__classPrivateFieldSet(Score,"),
+        "class name `Score` must not appear literally as a SET argument.\nOutput:\n{out2}"
+    );
+}
+
+/// Same receiver-temp requirement for compound assignment (`+=`, `-=`) on static
+/// private fields.  Two operator variants prove the rule isn't operator-specific.
+#[test]
+fn static_private_field_compound_assignment_allocates_receiver_temp() {
+    let source = r#"class Score {
+    static #pts = 0;
+    static add(n: number) { Score.#pts += n; }
+    static sub(n: number) { Score.#pts -= n; }
+}
+"#;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
+    assert!(
+        output.contains("__classPrivateFieldSet(_b = _a, _a,"),
+        "`Score.#pts += n` must allocate a receiver temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__classPrivateFieldGet(_b, _a,"),
+        "inner GET for compound assignment must reference the captured receiver temp.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("__classPrivateFieldSet(Score,"),
+        "class name must not appear literally as a SET argument for compound assignment.\nOutput:\n{output}"
+    );
+}
+
 /// Counter-regression for `__setFunctionName` over-emission: a class
 /// expression with *only instance-private* members (no static fields, no
 /// static blocks, no static private fields, no decorators) keeps the
