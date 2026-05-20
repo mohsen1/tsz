@@ -103,7 +103,7 @@ fn instantiate_tuple_double_spread_over_limit_marks_flag_and_returns_error() {
 
 /// The CRITICAL missing case: `T` has `MAX_TUPLE_SPREAD_FLATTEN_ELEMENTS + 1`
 /// (= 8193) elements. Each spread stays as one physical rest slot (soft gate),
-/// but the represented cardinality is 8193 + 8193 = 16386 > 10_000.
+/// but the represented cardinality is 8193 + 8193 = 16386 > `10_000`.
 ///
 /// The soft gate alone would not catch this — only the hard gate does.
 ///
@@ -180,7 +180,7 @@ fn instantiate_tuple_cardinality_gate_is_name_independent() {
     }
 }
 
-/// A tuple at exactly the limit (MAX_REPRESENTABLE_TUPLE_LENGTH elements total)
+/// A tuple at exactly the limit (`MAX_REPRESENTABLE_TUPLE_LENGTH` elements total)
 /// must NOT trigger the gate — the condition is strictly-greater-than.
 #[test]
 fn instantiate_tuple_at_exact_limit_does_not_trigger_gate() {
@@ -291,6 +291,20 @@ fn concrete_tuple_has_expected_length_after_instantiation() {
     }
 }
 
+/// Verify gate arithmetic: 0 + 10001 = 10001 > 10000 fires the hard gate.
+/// This is a pure arithmetic check of the gate condition, not a test of
+/// the instantiation path, used to verify the test harness is correct.
+#[test]
+fn gate_arithmetic_fires_for_10001_elements() {
+    let represented_len: usize = 0;
+    let inner_len: usize = MAX_REPRESENTABLE_TUPLE_LENGTH + 1; // 10001
+    let represented_after = represented_len.saturating_add(inner_len);
+    assert!(
+        represented_after > MAX_REPRESENTABLE_TUPLE_LENGTH,
+        "{represented_after} must be > {MAX_REPRESENTABLE_TUPLE_LENGTH}"
+    );
+}
+
 /// A direct (non-spread) tuple construction must not trigger the spread gate,
 /// even when it has many elements.
 #[test]
@@ -315,7 +329,7 @@ fn direct_tuple_construction_does_not_trigger_spread_gate() {
     );
 }
 
-/// `MAX_REPRESENTABLE_TUPLE_LENGTH` must equal 10_000 to match tsc's limit.
+/// `MAX_REPRESENTABLE_TUPLE_LENGTH` must equal `10_000` to match tsc's limit.
 /// This test pins the documented constant so accidental changes are caught.
 #[test]
 fn max_tuple_length_matches_documented_constant() {
