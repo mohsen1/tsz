@@ -509,6 +509,19 @@ pub struct BinderState {
     /// single file's binding before the bound state is shared).
     pub lib_symbol_reverse_remap: Arc<FxHashMap<SymbolId, (usize, SymbolId)>>,
 
+    /// Lib TYPE symbols that were blocked from `file_locals` by a local VALUE-only declaration.
+    ///
+    /// TypeScript's value and type namespaces are separate: a `declare const Foo: unique symbol`
+    /// lives only in the value namespace and must not shadow `Foo<T>` in type position.
+    /// During lib merge (Phase 3), when a lib symbol with TYPE flags (e.g., `TYPE_ALIAS Readonly`)
+    /// would be blocked from `file_locals` because a local VALUE-only symbol (e.g.,
+    /// `BLOCK_SCOPED_VARIABLE Readonly`) already occupies the slot, the lib TYPE symbol
+    /// is recorded here so the checker's type-position resolver can find it as a fallback.
+    ///
+    /// Keyed by name; value is the remapped lib `SymbolId`. Only populated when the local
+    /// symbol has VALUE flags but no TYPE flags (pure value declaration).
+    pub lib_type_namespace: Arc<FxHashMap<String, SymbolId>>,
+
     /// Module exports: maps file names to their exported symbols for cross-file module resolution
     /// This enables resolving imports like `import { X } from './file'` where './file' is another file
     pub module_exports: Arc<FxHashMap<String, SymbolTable>>,
