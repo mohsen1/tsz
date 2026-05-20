@@ -577,7 +577,7 @@ pub(crate) fn are_types_overlapping_with_env(
 
 pub(crate) fn is_assignable_with_overrides<R: tsz_solver::TypeResolver>(
     inputs: &AssignabilityQueryInputs<'_, R>,
-    overrides: &dyn tsz_solver::AssignabilityOverrideProvider,
+    overrides: &dyn tsz_solver::relations::compat::AssignabilityOverrideProvider,
 ) -> tsz_solver::RelationResult {
     let _span = tracing::debug_span!(
         "is_assignable",
@@ -621,7 +621,7 @@ pub(crate) fn is_assignable_with_overrides<R: tsz_solver::TypeResolver>(
 /// include the weak type check. Used by the flow narrowing guard.
 pub(crate) fn is_assignable_no_weak_checks<R: tsz_solver::TypeResolver>(
     inputs: &AssignabilityQueryInputs<'_, R>,
-    overrides: &dyn tsz_solver::AssignabilityOverrideProvider,
+    overrides: &dyn tsz_solver::relations::compat::AssignabilityOverrideProvider,
 ) -> bool {
     let AssignabilityQueryInputs {
         db,
@@ -760,7 +760,7 @@ pub(crate) struct AssignabilityGateResult {
 
 pub(crate) fn check_assignable_gate_with_overrides<R: tsz_solver::TypeResolver>(
     inputs: &AssignabilityQueryInputs<'_, R>,
-    overrides: &dyn tsz_solver::AssignabilityOverrideProvider,
+    overrides: &dyn tsz_solver::relations::compat::AssignabilityOverrideProvider,
     ctx: Option<&crate::context::CheckerContext<'_>>,
     collect_failure_analysis: bool,
 ) -> AssignabilityGateResult {
@@ -839,7 +839,7 @@ pub(crate) fn execute_relation<R: tsz_solver::TypeResolver>(
     resolver: &R,
     flags: u16,
     inheritance_graph: &InheritanceGraph,
-    overrides: &dyn tsz_solver::AssignabilityOverrideProvider,
+    overrides: &dyn tsz_solver::relations::compat::AssignabilityOverrideProvider,
     ctx: Option<&crate::context::CheckerContext<'_>>,
     sound_mode: bool,
 ) -> RelationOutcome {

@@ -1927,9 +1927,9 @@ pub fn compute_contextual_types_with_compat_checker<'a, R, F>(
 ) -> TypeSubstitution
 where
     R: crate::TypeResolver,
-    F: FnOnce(&mut crate::CompatChecker<'a, R>),
+    F: FnOnce(&mut crate::relations::compat::CompatChecker<'a, R>),
 {
-    let mut checker = crate::CompatChecker::with_resolver(interner, resolver);
+    let mut checker = crate::relations::compat::CompatChecker::with_resolver(interner, resolver);
     configure_checker(&mut checker);
 
     let mut evaluator = CallEvaluator::new(interner, &mut checker);
@@ -1941,14 +1941,16 @@ pub fn get_contextual_signature_with_compat_checker(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<FunctionShape> {
-    CallEvaluator::<crate::CompatChecker>::get_contextual_signature(db, type_id)
+    CallEvaluator::<crate::relations::compat::CompatChecker>::get_contextual_signature(db, type_id)
 }
 
 pub fn get_contextual_signature_cached_with_compat_checker(
     db: &dyn QueryDatabase,
     type_id: TypeId,
 ) -> Option<FunctionShape> {
-    CallEvaluator::<crate::CompatChecker>::get_contextual_signature_cached(db, type_id)
+    CallEvaluator::<crate::relations::compat::CompatChecker>::get_contextual_signature_cached(
+        db, type_id,
+    )
 }
 
 pub fn get_contextual_signature_for_arity_with_compat_checker(
@@ -1956,7 +1958,7 @@ pub fn get_contextual_signature_for_arity_with_compat_checker(
     type_id: TypeId,
     arg_count: usize,
 ) -> Option<FunctionShape> {
-    CallEvaluator::<crate::CompatChecker>::get_contextual_signature_for_arity(
+    CallEvaluator::<crate::relations::compat::CompatChecker>::get_contextual_signature_for_arity(
         db,
         type_id,
         Some(arg_count),
@@ -1968,7 +1970,7 @@ pub fn get_contextual_signature_for_arity_cached_with_compat_checker(
     type_id: TypeId,
     arg_count: usize,
 ) -> Option<FunctionShape> {
-    CallEvaluator::<crate::CompatChecker>::get_contextual_signature_for_arity_cached(
+    CallEvaluator::<crate::relations::compat::CompatChecker>::get_contextual_signature_for_arity_cached(
         db,
         type_id,
         Some(arg_count),
