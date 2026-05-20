@@ -1407,7 +1407,7 @@ impl<'a> InferenceContext<'a> {
     pub fn get_contra_candidate_types(&mut self, var: InferenceVar) -> Vec<TypeId> {
         let root = self.table.find(var);
         let info = self.table.probe_value(root);
-        let mut out = Vec::new();
+        let mut out = Vec::with_capacity(info.contra_candidates.len());
         for candidate in &info.contra_candidates {
             if !out.contains(&candidate.type_id) {
                 out.push(candidate.type_id);
