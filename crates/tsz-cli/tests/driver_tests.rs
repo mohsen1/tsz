@@ -3538,6 +3538,151 @@ fn compile_with_tsconfig_emits_outputs() {
 }
 
 #[test]
+fn compile_import_equals_const_enum_only_elides_require() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es5",
+            "module": "commonjs",
+            "outDir": "dist",
+            "noCheck": true,
+            "noLib": true,
+            "ignoreDeprecations": "6.0"
+          },
+          "files": ["m.d.ts", "main.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("m.d.ts"),
+        "export const enum E { A = 1, B = 2 }\n",
+    );
+    write_file(
+        &base.join("main.ts"),
+        "import X = require(\"./m\");\nconst v = X.E.A;\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.iter().all(|diag| diag.code
+            != diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS),
+        "expected import-equals module to resolve, got: {:?}",
+        result.diagnostics
+    );
+    let js = std::fs::read_to_string(base.join("dist/main.js")).expect("read emitted JS");
+    assert!(
+        js.contains("1 /* X.E.A */"),
+        "const enum member through import-equals alias should inline.\nOutput:\n{js}"
+    );
+    assert!(
+        !js.contains("require(\"./m\")"),
+        "require should be elided when the import-equals alias is only used for const enum access.\nOutput:\n{js}"
+    );
+}
+
+#[test]
+fn compile_namespace_import_const_enum_only_elides_require() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es5",
+            "module": "commonjs",
+            "outDir": "dist",
+            "noCheck": true,
+            "noLib": true,
+            "ignoreDeprecations": "6.0"
+          },
+          "files": ["m.d.ts", "main.ts"]
+        }"#,
+    );
+    write_file(&base.join("m.d.ts"), "export const enum E { A = 1 }\n");
+    write_file(
+        &base.join("main.ts"),
+        "import * as X from \"./m\";\nconst v = X.E.A;\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.iter().all(|diag| diag.code
+            != diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS),
+        "expected namespace import module to resolve, got: {:?}",
+        result.diagnostics
+    );
+    let js = std::fs::read_to_string(base.join("dist/main.js")).expect("read emitted JS");
+    assert!(
+        js.contains("1 /* X.E.A */"),
+        "const enum member through namespace import should inline.\nOutput:\n{js}"
+    );
+    assert!(
+        !js.contains("require(\"./m\")"),
+        "namespace import should be elided when only used for const enum access.\nOutput:\n{js}"
+    );
+}
+
+#[test]
+fn compile_import_equals_const_enum_keeps_require_for_runtime_member() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es5",
+            "module": "commonjs",
+            "outDir": "dist",
+            "noCheck": true,
+            "noLib": true,
+            "ignoreDeprecations": "6.0"
+          },
+          "files": ["m.d.ts", "main.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("m.d.ts"),
+        "export const enum E { A = 1 }\nexport const value: number;\n",
+    );
+    write_file(
+        &base.join("main.ts"),
+        "import X = require(\"./m\");\nconst v = X.E.A;\nconst runtime = X.value;\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.iter().all(|diag| diag.code
+            != diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS),
+        "expected import-equals module to resolve, got: {:?}",
+        result.diagnostics
+    );
+    let js = std::fs::read_to_string(base.join("dist/main.js")).expect("read emitted JS");
+    assert!(
+        js.contains("1 /* X.E.A */"),
+        "const enum member through import-equals alias should inline.\nOutput:\n{js}"
+    );
+    assert!(
+        js.contains("require(\"./m\")"),
+        "runtime use through the same alias should keep the require.\nOutput:\n{js}"
+    );
+    assert!(
+        js.contains("X.value"),
+        "runtime member access should be preserved.\nOutput:\n{js}"
+    );
+}
+
+#[test]
 fn compile_allow_js_passthrough_emits_skipped_node_modules_js() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;

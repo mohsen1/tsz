@@ -463,6 +463,10 @@ impl<'a> Printer<'a> {
         };
         let haystack = Self::source_after_import(source_text, node, import_data, self.arena);
         let value_haystack = crate::import_usage::strip_type_only_content(haystack);
+        let value_haystack = crate::import_usage::strip_qualified_accesses_for_names(
+            &value_haystack,
+            &self.ctx.options.external_const_enum_bindings,
+        );
         crate::import_usage::contains_identifier_occurrence(&value_haystack, &name)
     }
 
