@@ -321,6 +321,64 @@ fn direct_value_merged_builtin_dom_interface_symbol_type_returns_type_position_l
 }
 
 #[test]
+fn direct_actual_lib_symbol_type_lowers_plain_variable_annotation() {
+    let lib_files = load_lib_files(&["es5.d.ts", "dom.d.ts"]);
+    let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+    let arena = Arc::new(parser.get_arena().clone());
+    let binder = Arc::new(binder);
+    let types = TypeInterner::new();
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "fixture.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    let lib_contexts: Vec<LibContext> = lib_files
+        .iter()
+        .map(|lib| LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    state.ctx.set_lib_contexts(lib_contexts);
+    state.ctx.set_actual_lib_file_count(lib_files.len());
+
+    let document_sym_id = state
+        .ctx
+        .binder
+        .file_locals
+        .get("document")
+        .expect("document should resolve to a dom lib variable");
+    let document_arena = state
+        .ctx
+        .binder
+        .symbol_arenas
+        .get(&document_sym_id)
+        .map(std::convert::AsRef::as_ref)
+        .expect("document should have a delegate arena");
+    let expected_document_type = state
+        .resolve_lib_type_by_name("Document")
+        .expect("Document lib type should resolve");
+
+    let (document_type, document_params) = state
+        .direct_actual_lib_symbol_type(
+            document_sym_id,
+            CrossArenaSymbolMissSource::SymbolArena,
+            Some(document_arena),
+            false,
+        )
+        .expect("builtin lib variable with plain type annotation should lower directly");
+
+    assert!(document_params.is_empty());
+    assert_eq!(document_type, expected_document_type);
+}
+
+#[test]
 fn value_merged_builtin_dom_interface_type_argument_keeps_inherited_members() {
     let lib_files = load_compiled_lib_files(&[
         "lib.es5.d.ts",

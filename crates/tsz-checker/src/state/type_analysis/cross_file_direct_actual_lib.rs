@@ -82,6 +82,77 @@ pub(super) fn iterator_object_has_global_augmentations(
 }
 
 impl<'a> CheckerState<'a> {
+    pub(super) fn direct_builtin_lib_variable_annotation_symbol_type(
+        &mut self,
+        sym_id: SymbolId,
+        delegate_arena_source: CrossArenaSymbolMissSource,
+        delegate_arena: Option<&NodeArena>,
+        needs_cross_file_delegation: bool,
+    ) -> Option<(TypeId, Vec<TypeParamInfo>)> {
+        if needs_cross_file_delegation
+            || delegate_arena_source != CrossArenaSymbolMissSource::SymbolArena
+            || !delegate_arena.is_some_and(is_builtin_lib_declaration_arena)
+            || !self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+        {
+            return None;
+        }
+
+        let delegate_arena = delegate_arena?;
+        let symbol = self.get_cross_file_symbol(sym_id)?.clone();
+        if symbol.flags & symbol_flags::VARIABLE == 0
+            || symbol.flags
+                & (symbol_flags::FUNCTION
+                    | symbol_flags::CLASS
+                    | symbol_flags::INTERFACE
+                    | symbol_flags::TYPE_ALIAS
+                    | symbol_flags::VALUE_MODULE
+                    | symbol_flags::NAMESPACE_MODULE
+                    | symbol_flags::ALIAS)
+                != 0
+            || symbol.declarations.len() != 1
+            || self.lib_name_locally_augmented(&symbol.escaped_name)
+        {
+            return None;
+        }
+
+        let decl_idx = symbol.declarations[0];
+        let decl_node = delegate_arena.get(decl_idx)?;
+        let variable = delegate_arena.get_variable_declaration(decl_node)?;
+        let annotation = variable.type_annotation.into_option()?;
+        let annotation_node = delegate_arena.get(annotation)?;
+        if annotation_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return None;
+        }
+        let type_ref = delegate_arena.get_type_ref(annotation_node)?;
+        if type_ref
+            .type_arguments
+            .as_ref()
+            .is_some_and(|args| !args.nodes.is_empty())
+        {
+            return None;
+        }
+        let target_name = delegate_arena
+            .get(type_ref.type_name)
+            .and_then(|name_node| delegate_arena.get_identifier(name_node))
+            .map(|ident| ident.escaped_text.as_str())?;
+        if self.lib_name_locally_augmented(target_name)
+            || self.ctx.file_local_type_shadow_for_lib_name(target_name)
+        {
+            return None;
+        }
+
+        let direct_type = self.resolve_lib_type_by_name(target_name)?;
+        if matches!(direct_type, TypeId::UNKNOWN | TypeId::ERROR) {
+            return None;
+        }
+
+        self.ctx.symbol_types.insert(sym_id, direct_type);
+        self.ctx
+            .lib_delegation_cache
+            .insert_symbol_type(sym_id, (direct_type, Vec::new()));
+        Some((direct_type, Vec::new()))
+    }
+
     pub(super) fn direct_builtin_lib_interface_symbol_type(
         &mut self,
         sym_id: SymbolId,
