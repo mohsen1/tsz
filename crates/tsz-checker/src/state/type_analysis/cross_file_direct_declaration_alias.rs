@@ -132,7 +132,25 @@ impl<'a> CheckerState<'a> {
                 syntax_kind_ext::LITERAL_TYPE,
             );
             if alias_contains_literal {
-                return None;
+                if alias_has_type_params {
+                    return None;
+                }
+                let alias_type = self.resolve_lib_type_by_name(&name)?;
+                if matches!(alias_type, TypeId::UNKNOWN | TypeId::ERROR) {
+                    return None;
+                }
+                let def_id = crate::query_boundaries::state::type_resolution::get_lazy_def_id(
+                    self.ctx.types,
+                    alias_type,
+                )?;
+                let body = self.ctx.definition_store.get_body(def_id)?;
+                if matches!(body, TypeId::UNKNOWN | TypeId::ERROR) {
+                    return None;
+                }
+                self.ctx
+                    .lib_delegation_cache
+                    .insert_symbol_type(sym_id, (alias_type, Vec::new()));
+                return Some((alias_type, Vec::new()));
             }
 
             let (alias_type, mut params) = self.resolve_lib_type_with_params(&name);
