@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::def::DefId;
 use crate::def::core::DefinitionStore;
 use crate::types::{IntrinsicKind, SymbolRef, TypeId, TypeParamInfo, Variance};

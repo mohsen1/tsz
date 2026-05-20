@@ -31,7 +31,8 @@
 //! - **`ForOfDestructuredElement`**: a for-of loop combined with destructuring;
 //!   the element type is extracted and optionally has `undefined` stripped.
 
-use tsz_solver::{TypeDatabase, TypeId};
+use tsz_solver::TypeId;
+use tsz_solver::construction::TypeDatabase;
 
 /// Syntactic observation the checker extracts from flow analysis.
 ///

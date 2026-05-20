@@ -543,7 +543,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn get_keyof_type_keys(
         &mut self,
         type_id: TypeId,
-        db: &dyn tsz_solver::TypeDatabase,
+        db: &dyn tsz_solver::construction::TypeDatabase,
     ) -> FxHashSet<Atom> {
         if let Some(keyof_type) = get_keyof_type(db, type_id)
             && let Some(key_type) = keyof_object_properties(db, keyof_type)
@@ -1246,7 +1246,10 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if a type contains an error application (recursively).
-    fn type_contains_error_application(db: &dyn tsz_solver::TypeDatabase, type_id: TypeId) -> bool {
+    fn type_contains_error_application(
+        db: &dyn tsz_solver::construction::TypeDatabase,
+        type_id: TypeId,
+    ) -> bool {
         // Check if it's a direct error application
         if let Some(app) = crate::query_boundaries::common::type_application(db, type_id)
             && app.base == TypeId::ERROR

@@ -1,4 +1,5 @@
-use tsz_solver::{TupleListId, TypeDatabase, TypeId};
+use tsz_solver::construction::TypeDatabase;
+use tsz_solver::{TupleListId, TypeId};
 
 pub(crate) use tsz_solver::type_queries::UnionMembersKind;
 pub(crate) use tsz_solver::type_queries::{

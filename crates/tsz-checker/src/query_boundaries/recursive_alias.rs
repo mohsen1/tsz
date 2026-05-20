@@ -8,8 +8,8 @@
 
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
-use tsz_solver::TypeDatabase;
 use tsz_solver::TypeId;
+use tsz_solver::construction::TypeDatabase;
 use tsz_solver::def::{DefId, DefKind, DefinitionStore};
 
 /// Returns the non-generic recursive type alias whose registered body is

@@ -1143,7 +1143,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     fn is_displayable_conditional_branch_result(
-        interner: &dyn crate::TypeDatabase,
+        interner: &dyn crate::construction::TypeDatabase,
         type_id: TypeId,
     ) -> bool {
         matches!(
@@ -1283,7 +1283,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// This fast-path prevents false positives like `string extends Function`
     /// evaluating to true in conditional types.
     fn is_primitive_vs_function(
-        interner: &dyn crate::TypeDatabase,
+        interner: &dyn crate::construction::TypeDatabase,
         check_type: TypeId,
         extends_type: TypeId,
     ) -> bool {
@@ -2670,7 +2670,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// candidate types can be usefully reduced. Avoids the per-conditional
     /// hot-path cost of entering the reducer just to bail on the first
     /// step for intrinsics, type parameters, etc.
-    fn is_alias_reducible_candidate(interner: &dyn crate::TypeDatabase, ty: TypeId) -> bool {
+    fn is_alias_reducible_candidate(
+        interner: &dyn crate::construction::TypeDatabase,
+        ty: TypeId,
+    ) -> bool {
         if crate::type_queries::is_generic_type(interner, ty) {
             return true;
         }
@@ -2831,7 +2834,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         })
     }
 
-    fn is_generic_ref(db: &dyn crate::TypeDatabase, type_id: TypeId) -> bool {
+    fn is_generic_ref(db: &dyn crate::construction::TypeDatabase, type_id: TypeId) -> bool {
         if type_id.is_intrinsic() {
             return false;
         }

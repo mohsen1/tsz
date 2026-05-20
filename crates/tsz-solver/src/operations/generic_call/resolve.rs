@@ -41,7 +41,7 @@ fn with_resolve_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R {
 }
 
 fn is_bare_foreign_type_param(
-    interner: &dyn crate::TypeDatabase,
+    interner: &dyn crate::construction::TypeDatabase,
     ty: TypeId,
     local_type_params: &FxHashSet<tsz_common::Atom>,
     local_placeholders: &[tsz_common::Atom],
@@ -58,7 +58,7 @@ fn is_bare_foreign_type_param(
 }
 
 fn is_substantive_inference_candidate(
-    interner: &dyn crate::TypeDatabase,
+    interner: &dyn crate::construction::TypeDatabase,
     ty: TypeId,
     local_type_params: &FxHashSet<tsz_common::Atom>,
     local_placeholders: &[tsz_common::Atom],

@@ -2,7 +2,7 @@
 //!
 //! Handles TypeScript's keyof operator: `keyof T`
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::instantiation::instantiate::instantiate_generic;
 use crate::objects::apparent::literal_value_intrinsic_kind;
 use crate::objects::{PropertyCollectionResult, collect_properties};

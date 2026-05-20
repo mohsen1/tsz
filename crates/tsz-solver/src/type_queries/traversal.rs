@@ -6,7 +6,7 @@
 //! and diagnostic property name collection — without directly matching on
 //! `TypeData` variants.
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::def::DefId;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::relations::subtype::TypeResolver;

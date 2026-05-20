@@ -1,5 +1,6 @@
 use tsz_common::Atom;
-use tsz_solver::{FunctionShape, QueryDatabase, TypeDatabase, TypeId};
+use tsz_solver::construction::{QueryDatabase, TypeDatabase};
+use tsz_solver::{FunctionShape, TypeId};
 
 pub(crate) use super::common::PropertyAccessResult;
 pub(crate) use super::common::intersection_members;
