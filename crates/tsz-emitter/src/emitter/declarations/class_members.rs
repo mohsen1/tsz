@@ -47,6 +47,15 @@ impl<'a> Printer<'a> {
             }
         }
 
+        if self.is_emitting_object_literal_accessor()
+            && let Some(name_node) = self.arena.get(name)
+            && name_node.kind == SyntaxKind::NumericLiteral as u16
+            && let Some(literal) = self.arena.get_literal(name_node)
+        {
+            self.write(&literal.text);
+            return;
+        }
+
         let prev_alias = self.scoped_class_expression_self_alias.take();
         if let Some(name_node) = self.arena.get(name)
             && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
@@ -1920,6 +1929,26 @@ mod tests {
         assert!(
             !output.contains("set setter(v) { },"),
             "JS input object-literal accessor should prefer compact braces.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn es5_object_literal_accessor_numeric_name_preserves_source_text() {
+        let output = emit_ts_with_options(
+            "var f = { 0: 0, get 0o0() { return 0; } };",
+            PrinterOptions {
+                target: ScriptTarget::ES5,
+                ..Default::default()
+            },
+        );
+
+        assert!(
+            output.contains("get 0o0()"),
+            "Object-literal accessor numeric names are property keys and should keep source token text.\nOutput: {output}"
+        );
+        assert!(
+            !output.contains("get 0()"),
+            "Object-literal accessor numeric names should not use numeric expression downleveling.\nOutput: {output}"
         );
     }
 
