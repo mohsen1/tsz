@@ -209,7 +209,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                         members.iter().map(|&m| self.canonicalize(m)).collect();
 
                     // 2. Separate callables (preserve order) from structural types (sort)
-                    let mut structural = Vec::new();
+                    let mut structural = Vec::with_capacity(c_members.len());
                     let mut callables = Vec::new();
                     for m in c_members {
                         if crate::type_queries::is_callable_type(self.interner, m) {
