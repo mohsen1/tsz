@@ -281,7 +281,7 @@ fn downlevel_assign_typed_only_field_emits_nothing() {
 }
 
 #[test]
-fn native_define_typed_only_public_field_emits_nothing() {
+fn native_define_typed_public_field_stays_runtime_field() {
     let output = print_with_printer_options(
         "class Test {\n    prop: number;\n    bare;\n    #privateProp: number;\n}\n",
         PrinterOptions {
@@ -292,8 +292,8 @@ fn native_define_typed_only_public_field_emits_nothing() {
     );
 
     assert!(
-        !output.contains("prop;"),
-        "Typed-only public field should be erased in native class-field emit.\nOutput:\n{output}"
+        output.contains("prop;"),
+        "Typed public field should remain a runtime class field in native class-field emit.\nOutput:\n{output}"
     );
     assert!(
         output.contains("bare;"),
