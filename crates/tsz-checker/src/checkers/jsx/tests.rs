@@ -783,7 +783,7 @@ fn jsx_empty_element_attributes_property_uses_instance_type() {
     assert!(
         ts2322.iter().any(|d| d
             .message_text
-            .contains("is not assignable to type '{ q?: number | undefined; }'")),
+            .contains("is not assignable to type '{ q?: number | undefined; }'") ),
         "expected TS2322 to compare against the instance type, got: {diagnostics:?}"
     );
     assert!(
@@ -1364,7 +1364,7 @@ fn jsx_intrinsic_excess_attrs_report_for_intersection_alias_props() {
     assert!(
         ts2322.iter().any(|diag| diag
             .message_text
-            .contains("and 'class' does not exist in type '{ className?: string | undefined; }'")),
+            .contains("and 'class' does not exist in type '{ className?: string | undefined; }'") ),
         "Expected plain intrinsic excess attr diagnostic, got: {diagnostics:?}"
     );
     assert_eq!(
@@ -3310,5 +3310,117 @@ let k = <Comp>hello<A /></Comp>;
         !ts2747.message_text.contains("Element;"),
         "TS2747 message must NOT include a trailing semicolon; got: {}",
         ts2747.message_text
+    );
+}
+
+/// `ComponentType<P>` is an Application type (not a direct union in the TypeData sense)
+/// that evaluates to `ComponentClass<P> | FunctionComponent<P>`. When used as a JSX tag,
+/// its expanded members are React alias applications whose recursive return types trigger
+/// cycle-detection false positives if we check them. The Application itself must be treated
+/// like a union context so the members are skipped.
+///
+/// Tests use two different type-parameter spellings (`T` and `K`) to prove the rule is
+/// structural and not tied to any specific identifier name.
+#[test]
+fn jsx_component_type_application_no_ts2786() {
+    // Minimal React namespace with complex (multi-construct) ComponentClass — these
+    // overloaded constructors are what the `callsOnComplexSignatures` pattern exercises.
+    let make_source = |tp: &str, jsx_tag: &str| {
+        format!(
+            r#"
+        declare namespace JSX {{
+            interface Element extends React.ReactElement<any> {{}}
+            interface ElementClass extends React.Component<any> {{ render(): any; }}
+            interface ElementAttributesProperty {{ props: {{}}; }}
+            interface IntrinsicElements {{}}
+        }}
+        declare namespace React {{
+            type ReactNode = ReactElement<any> | string | number | null | undefined;
+            interface ReactElement<{tp}> {{ props: {tp}; }}
+            interface Component<{tp}> {{
+                props: {tp};
+                render(): ReactNode;
+            }}
+            interface ComponentClass<{tp} = {{}}> {{
+                new(props: {tp}, context?: any): Component<{tp}>;
+                new(props: {tp}): Component<{tp}>;
+            }}
+            interface FunctionComponent<{tp} = {{}}> {{
+                (props: {tp}, context?: any): ReactElement<any> | null;
+            }}
+            type ComponentType<{tp} = {{}}> = ComponentClass<{tp}> | FunctionComponent<{tp}>;
+        }}
+        interface Props {{ x?: number; }}
+        declare var elem: React.ComponentType<Props>;
+        const _ = <{jsx_tag} />;
+        "#
+        )
+    };
+
+    // Shape 1: type-param spelled `T` — ComponentType<T> Application
+    let src1 = make_source("T", "elem");
+    let d1 = check_jsx_codes(&src1);
+    assert!(
+        !d1.contains(&2786),
+        "ComponentType<T> Application must not emit TS2786, got: {d1:?}"
+    );
+
+    // Shape 2: type-param spelled `K` — proves the rule is not tied to `T`
+    let src2 = make_source("K", "elem");
+    let d2 = check_jsx_codes(&src2);
+    assert!(
+        !d2.contains(&2786),
+        "ComponentType<K> Application must not emit TS2786, got: {d2:?}"
+    );
+}
+
+/// `FunctionComponent<P>` used directly as a JSX tag type (Application, not a union) must
+/// not emit TS2786. Its return types create the same cycle-detection risk as ComponentType<P>.
+///
+/// The non-React counterpart (a custom interface with invalid returns) must still emit TS2786
+/// to prove the skip is React-alias-specific, not universal.
+#[test]
+fn jsx_function_component_application_no_ts2786() {
+    let base = r#"
+        declare namespace JSX {
+            interface Element extends React.ReactElement<any> {}
+            interface ElementClass extends React.Component<any> { render(): any; }
+            interface ElementAttributesProperty { props: {}; }
+            interface IntrinsicElements {}
+        }
+        declare namespace React {
+            type ReactNode = ReactElement<any> | string | number | null | undefined;
+            interface ReactElement<P> { props: P; }
+            interface Component<P> { props: P; render(): ReactNode; }
+            interface FunctionComponent<P = {}> {
+                (props: P, context?: any): ReactElement<any> | null;
+            }
+        }
+        interface Props { x?: number; }
+    "#;
+
+    // FunctionComponent<Props> as JSX tag — must not emit TS2786
+    let src_good =
+        format!("{base} declare var fc: React.FunctionComponent<Props>; const _ = <fc />;");
+    let d_good = check_jsx_codes(&src_good);
+    assert!(
+        !d_good.contains(&2786),
+        "FunctionComponent<Props> Application must not emit TS2786, got: {d_good:?}"
+    );
+
+    // Custom non-React callable that returns a wrong type — must still emit TS2786
+    let src_bad = format!(
+        r#"{base}
+        interface NonReactSfc {{
+            (props: Props): {{ notAnElement: true }};
+        }}
+        declare var bad: NonReactSfc;
+        const _ = <bad />;
+        "#
+    );
+    let d_bad = check_jsx_codes(&src_bad);
+    assert!(
+        d_bad.contains(&2786),
+        "Non-React callable with invalid return type must still emit TS2786, got: {d_bad:?}"
     );
 }

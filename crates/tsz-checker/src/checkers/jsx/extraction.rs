@@ -819,6 +819,14 @@ impl<'a> CheckerState<'a> {
         let is_union =
             crate::query_boundaries::common::union_members(self.ctx.types, component_type)
                 .is_some();
+        // A React alias application (ComponentType<P>, FunctionComponent<P>, etc.) is
+        // not a union in the TypeData sense, but it evaluates to one and its expanded
+        // members are themselves React alias applications whose recursive return types
+        // (ReactElement<P> ↔ ComponentClass<P>/SFC<P>) trigger cycle-detection false
+        // positives. Treat them the same as direct unions for skip purposes.
+        let is_react_alias_application =
+            self.is_react_jsx_component_alias_application(component_type);
+        let is_union_like = is_union || is_react_alias_application;
         let types_to_check = self.jsx_component_return_check_types(component_type);
 
         let mut any_checked = false;
@@ -840,11 +848,12 @@ impl<'a> CheckerState<'a> {
             ) {
                 continue;
             }
-            // In a union, React component alias Applications (ComponentType<P>,
-            // ReactType<P>, ComponentClass<P>, StatelessComponent<P>, etc.) are
-            // valid JSX component shapes. Skip the return-type check: their
-            // recursive return types (ReactElement<P> ↔ ComponentClass<P>/SFC<P>)
-            // trigger cycle-detection false positives in the assignability checker.
+            // In a union or React alias application context, React component alias
+            // Applications (ComponentType<P>, ReactType<P>, ComponentClass<P>,
+            // StatelessComponent<P>, etc.) are valid JSX component shapes. Skip the
+            // return-type check: their recursive return types
+            // (ReactElement<P> ↔ ComponentClass<P>/SFC<P>) trigger cycle-detection
+            // false positives in the assignability checker.
             // The alias-application skip does not require props to be extractable
             // because the skip reason is cycle avoidance, not props availability.
             // The second clause (branch display) still requires props as an
@@ -856,7 +865,9 @@ impl<'a> CheckerState<'a> {
                 && self
                     .get_jsx_props_type_for_component_member(member_type, None)
                     .is_some();
-            if is_union && (is_alias_app || (is_react_component_alias_union && branch_has_props)) {
+            if is_union_like
+                && (is_alias_app || (is_react_component_alias_union && branch_has_props))
+            {
                 continue;
             }
             let is_unresolved = |t: TypeId| -> bool {
@@ -986,6 +997,7 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+
         }
 
         if any_checked && !all_valid {
