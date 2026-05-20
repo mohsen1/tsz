@@ -22,8 +22,19 @@ type DuplicateDeclList = Vec<(NodeIndex, u32, bool, bool, DuplicateDeclarationOr
 pub(super) enum DuplicateDeclarationOrigin {
     SymbolDeclaration,
     TargetedModuleAugmentation,
+    CurrentFileAugmentationTargetExport(usize),
     /// Remote declaration from a cross-file UMD global / `declare global` conflict.
     GlobalScopeConflict,
+}
+
+impl DuplicateDeclarationOrigin {
+    pub(super) const fn is_targeted_module_augmentation(self) -> bool {
+        matches!(
+            self,
+            DuplicateDeclarationOrigin::TargetedModuleAugmentation
+                | DuplicateDeclarationOrigin::CurrentFileAugmentationTargetExport(_)
+        )
+    }
 }
 
 impl<'a> CheckerState<'a> {
@@ -1232,8 +1243,8 @@ impl<'a> CheckerState<'a> {
                     // conflict with an augmentation of that same source module).
                     // Property-vs-method mismatches are handled by the dedicated cross-file
                     // interface-member conflict pass above.
-                    if (decl_origin == DuplicateDeclarationOrigin::TargetedModuleAugmentation
-                        || other_origin == DuplicateDeclarationOrigin::TargetedModuleAugmentation)
+                    if (decl_origin.is_targeted_module_augmentation()
+                        || other_origin.is_targeted_module_augmentation())
                         && (((decl_flags & symbol_flags::INTERFACE) != 0
                             && (other_flags & symbol_flags::INTERFACE) != 0)
                             || ((decl_flags & symbol_flags::FUNCTION) != 0
