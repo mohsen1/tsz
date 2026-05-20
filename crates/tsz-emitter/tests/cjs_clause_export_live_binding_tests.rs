@@ -311,9 +311,9 @@ fn exported_function_body_updates_later_clause_export() {
     );
 }
 
-/// Non-exported function body: same live-binding rules apply (regression guard).
+/// Non-exported function body: postfix, prefix, and decrement all update clause export.
 #[test]
-fn non_exported_function_body_updates_clause_export() {
+fn non_exported_function_body_postfix_prefix_decrement_updates_clause_export() {
     let source = "let x = 1;\nfunction bar() {\n    x++;\n    ++x;\n    x--;\n}\nexport { x };\n";
     let output = parse_lower_emit(source, cjs_es2015());
     assert!(
@@ -330,9 +330,9 @@ fn non_exported_function_body_updates_clause_export() {
     );
 }
 
-/// Multiple clause-exported variables: each mutation updates only its own export.
+/// Multiple clause-exported variables mutated (all postfix): each updates its own export slot.
 #[test]
-fn exported_function_body_updates_multiple_clause_exports() {
+fn exported_function_body_updates_multiple_clause_exports_all_postfix() {
     let source = "let a = 1;\nlet b = 2;\nexport function mutate() {\n    a++;\n    b++;\n}\nexport { a, b };\n";
     let output = parse_lower_emit(source, cjs_es2015());
     assert!(
