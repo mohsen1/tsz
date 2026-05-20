@@ -4888,3 +4888,106 @@ const probe: number[] = v;
         "Object.values on an explicitly-typed primitive object stays primitive. Got: {diags:#?}"
     );
 }
+
+// -----------------------------------------------------------------------------
+// Co/contra-variant inference: covariant result must be widened before the
+// contra-candidate assignability check.
+//
+// When T appears in a return-type position (`() => T`) its candidate carries
+// ReturnType priority and skip_literal_widening is true, so the fresh object
+// literal `{a:1, b:2}` is NOT widened inside resolve_from_candidates.
+// tsc calls getWidenedType(covariantInference) BEFORE testing assignability
+// to the contra-candidate – tsz must do the same so that fresh object literals
+// like `{a:1,b:2}` pass structural checking against `{a:number}`.
+// -----------------------------------------------------------------------------
+
+#[test]
+fn co_contra_fresh_object_widened_before_assignability_check() {
+    // T appears in: produce: () => T  (covariant, ReturnType priority)
+    //               consume: (t: T) => void  (contra)
+    // produce() returns a fresh object literal {a:1, b:2}.
+    // After widening: {a:number, b:number} IS assignable to {a:number}.
+    // Covariant result should win; r.b should be valid.
+    let source = r#"
+declare function bar<T>(produce: () => T, consume: (t: T) => void): T;
+const r = bar(() => ({ a: 1, b: 2 }), (t: { a: number }) => {});
+const _b: number = r.b;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "fresh object literal covariant result should win after widening; r.b must be valid. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn co_contra_fresh_object_widened_different_type_param_names() {
+    // Same structural rule with renamed type param (U instead of T).
+    let source = r#"
+declare function bar<U>(produce: () => U, consume: (u: U) => void): U;
+const r = bar(() => ({ x: 1, y: 2 }), (u: { x: number }) => {});
+const _y: number = r.y;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "type param name change should not affect widening behavior. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn co_contra_contra_wins_when_covariant_not_assignable() {
+    // When covariant result (string) is NOT assignable to contra (number),
+    // the contra-candidate should win and produce an error at the use site.
+    let source = r#"
+declare function bar<T>(produce: () => T, consume: (t: T) => void): T;
+bar(() => "hello", (t: number) => {});
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        has_any_diagnostic_code(&diags, &[2345, 2322]),
+        "string is not assignable to number; contra should win and a TS2345/TS2322 error should appear. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn co_contra_multiple_contra_resolved_via_intersection() {
+    // Two contra-candidates → intersection.
+    // produce returns {x:1, y:2}; consume1 expects {x:number}, consume2 expects {y:number}.
+    // Widened covariant {x:number,y:number} IS assignable to both, so it wins.
+    let source = r#"
+declare function combine<T>(
+    produce: () => T,
+    consume1: (t: T) => void,
+    consume2: (t: T) => void,
+): T;
+const r = combine(
+    () => ({ x: 1, y: 2 }),
+    (t: { x: number }) => {},
+    (t: { y: number }) => {},
+);
+const _x: number = r.x;
+const _y: number = r.y;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "widened covariant {{x:number,y:number}} should win against both contra-candidates. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn co_contra_aliased_shape_covariant_wins_after_widen() {
+    // T via an alias; structural rule should be the same.
+    let source = r#"
+type HasA = { a: number };
+declare function bar<T>(produce: () => T, consume: (t: T) => void): T;
+const r = bar(() => ({ a: 1, b: 2 }), (t: HasA) => {});
+const _b: number = r.b;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "aliased contra shape should not prevent covariant win after widening. Got: {diags:#?}"
+    );
+}
