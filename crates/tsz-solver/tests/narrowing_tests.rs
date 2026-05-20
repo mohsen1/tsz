@@ -2157,19 +2157,24 @@ fn test_enum_narrowing_two_names_same_fix() {
 // This covers issue #8782.
 // =============================================================================
 
-/// Build a minimal ReadonlyArray<T> application type by registering a dummy
-/// base with `set_readonly_array_base_type` and creating `Application(base, [elem])`.
-fn make_readonly_array_application(interner: &TypeInterner, elem: TypeId) -> TypeId {
+/// Register a dummy `ReadonlyArray` base in the interner and return its TypeId.
+///
+/// All tests that need `ReadonlyArray<T>` applications must call this once per
+/// interner and use the returned base for every `interner.application(base, ..)` call.
+/// Calling it multiple times on the same interner would clobber the registered
+/// base TypeId, making previously-built applications point to a stale TypeId.
+fn register_readonly_array_base(interner: &TypeInterner) -> TypeId {
     let base = interner.object(vec![]);
     interner.set_readonly_array_base_type(base);
-    interner.application(base, vec![elem])
+    base
 }
 
 #[test]
 fn array_isarray_narrows_readonly_array_application_truthy() {
     // ReadonlyArray<number> | number → Array.isArray truthy → ReadonlyArray<number>
     let interner = TypeInterner::new();
-    let ra_num = make_readonly_array_application(&interner, TypeId::NUMBER);
+    let base = register_readonly_array_base(&interner);
+    let ra_num = interner.application(base, vec![TypeId::NUMBER]);
     let union = interner.union2(ra_num, TypeId::NUMBER);
     let ctx = NarrowingContext::new(&interner);
 
@@ -2183,18 +2188,20 @@ fn array_isarray_narrows_readonly_array_application_truthy() {
 #[test]
 fn array_isarray_narrows_readonly_array_application_different_element_type() {
     // Structural rule is not tied to `number`. Verify with `string` and `boolean`.
+    // Uses a single registered base so all applications share the same TypeId.
     let interner = TypeInterner::new();
-
-    let ra_str = make_readonly_array_application(&interner, TypeId::STRING);
-    let union_str = interner.union2(ra_str, TypeId::STRING);
+    let base = register_readonly_array_base(&interner);
     let ctx = NarrowingContext::new(&interner);
+
+    let ra_str = interner.application(base, vec![TypeId::STRING]);
+    let union_str = interner.union2(ra_str, TypeId::STRING);
     let narrowed_str = ctx.narrow_type(union_str, &TypeGuard::Array, GuardSense::Positive);
     assert_eq!(
         narrowed_str, ra_str,
         "Array.isArray truthy on ReadonlyArray<string> | string must yield ReadonlyArray<string>"
     );
 
-    let ra_bool = make_readonly_array_application(&interner, TypeId::BOOLEAN);
+    let ra_bool = interner.application(base, vec![TypeId::BOOLEAN]);
     let union_bool = interner.union2(ra_bool, TypeId::BOOLEAN);
     let narrowed_bool = ctx.narrow_type(union_bool, &TypeGuard::Array, GuardSense::Positive);
     assert_eq!(
@@ -2207,7 +2214,8 @@ fn array_isarray_narrows_readonly_array_application_different_element_type() {
 fn array_isarray_narrows_readonly_array_application_falsy() {
     // ReadonlyArray<number> | number → !Array.isArray → number
     let interner = TypeInterner::new();
-    let ra_num = make_readonly_array_application(&interner, TypeId::NUMBER);
+    let base = register_readonly_array_base(&interner);
+    let ra_num = interner.application(base, vec![TypeId::NUMBER]);
     let union = interner.union2(ra_num, TypeId::NUMBER);
     let ctx = NarrowingContext::new(&interner);
 
@@ -2223,7 +2231,8 @@ fn array_isarray_narrows_readonly_array_application_falsy() {
 fn array_isarray_narrows_readonly_array_alone_truthy() {
     // ReadonlyArray<number> alone → Array.isArray truthy → ReadonlyArray<number>
     let interner = TypeInterner::new();
-    let ra_num = make_readonly_array_application(&interner, TypeId::NUMBER);
+    let base = register_readonly_array_base(&interner);
+    let ra_num = interner.application(base, vec![TypeId::NUMBER]);
     let ctx = NarrowingContext::new(&interner);
 
     let narrowed = ctx.narrow_type(ra_num, &TypeGuard::Array, GuardSense::Positive);
@@ -2237,7 +2246,8 @@ fn array_isarray_narrows_readonly_array_alone_truthy() {
 fn array_isarray_narrows_readonly_array_alone_falsy() {
     // ReadonlyArray<number> alone → !Array.isArray → never
     let interner = TypeInterner::new();
-    let ra_num = make_readonly_array_application(&interner, TypeId::NUMBER);
+    let base = register_readonly_array_base(&interner);
+    let ra_num = interner.application(base, vec![TypeId::NUMBER]);
     let ctx = NarrowingContext::new(&interner);
 
     let narrowed = ctx.narrow_type(ra_num, &TypeGuard::Array, GuardSense::Negative);
@@ -2269,7 +2279,8 @@ fn array_isarray_mutable_and_readonly_union() {
     // number[] | ReadonlyArray<string> | boolean → Array.isArray → number[] | ReadonlyArray<string>
     let interner = TypeInterner::new();
     let arr_num = interner.array(TypeId::NUMBER);
-    let ra_str = make_readonly_array_application(&interner, TypeId::STRING);
+    let base = register_readonly_array_base(&interner);
+    let ra_str = interner.application(base, vec![TypeId::STRING]);
     let union = interner.union(vec![arr_num, ra_str, TypeId::BOOLEAN]);
     let ctx = NarrowingContext::new(&interner);
 

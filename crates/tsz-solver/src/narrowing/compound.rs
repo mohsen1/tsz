@@ -943,36 +943,41 @@ impl<'a> NarrowingContext<'a> {
         }
     }
 
-    fn application_base_name_is(&self, base: TypeId, expected: &str) -> bool {
-        // Fast path: compare against the registered canonical base TypeId so
-        // this works even when no resolver is attached (e.g. unit tests that
-        // build only a TypeInterner without a full TypeEnvironment).
-        if expected == "ReadonlyArray"
-            && self
-                .db
-                .as_type_resolver()
-                .get_readonly_array_base_type()
-                .is_some_and(|ra_base| ra_base == base)
+    /// True iff `base` is the canonical `ReadonlyArray` generic definition.
+    ///
+    /// Checks by registered TypeId first (works without a resolver), then by
+    /// the builtin-def predicate when a resolver is present.
+    fn application_base_is_readonly_array(&self, base: TypeId) -> bool {
+        // TypeId equality against the registered canonical base — O(1) atomic
+        // read, no resolver needed.
+        if self
+            .db
+            .as_type_resolver()
+            .get_readonly_array_base_type()
+            .is_some_and(|ra_base| ra_base == base)
         {
             return true;
         }
+        // For Lazy(DefId) bases: use the reliable builtin-def predicate that
+        // checks both name and lib-origin. Name-only lookup can return None for
+        // stdlib defs when the resolver does not index that def.
+        if let Some(TypeData::Lazy(def_id)) = self.db.lookup(base) {
+            return self
+                .resolver
+                .is_some_and(|r| r.is_builtin_readonly_array_def(def_id));
+        }
+        false
+    }
 
+    fn application_base_name_is(&self, base: TypeId, expected: &str) -> bool {
+        if expected == "ReadonlyArray" && self.application_base_is_readonly_array(base) {
+            return true;
+        }
         match self.db.lookup(base) {
-            Some(TypeData::Lazy(def_id)) => {
-                // For ReadonlyArray, prefer the reliable builtin-def predicate
-                // over name lookup. Name lookup can return None for stdlib defs
-                // when the resolver is absent or does not index that def.
-                if expected == "ReadonlyArray"
-                    && self
-                        .resolver
-                        .is_some_and(|r| r.is_builtin_readonly_array_def(def_id))
-                {
-                    return true;
-                }
-                self.resolver
-                    .and_then(|resolver| resolver.get_def_name(def_id))
-                    .is_some_and(|name| self.db.resolve_atom_ref(name).as_ref() == expected)
-            }
+            Some(TypeData::Lazy(def_id)) => self
+                .resolver
+                .and_then(|resolver| resolver.get_def_name(def_id))
+                .is_some_and(|name| self.db.resolve_atom_ref(name).as_ref() == expected),
             Some(TypeData::UnresolvedTypeName(name)) => {
                 self.db.resolve_atom_ref(name).as_ref() == expected
             }
