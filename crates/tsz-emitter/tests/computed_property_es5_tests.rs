@@ -21,6 +21,40 @@ fn emit_es5(source: &str) -> String {
     parse_and_lower_print(source, opts)
 }
 
+fn assert_comment_forced_comma_is_outdented(output: &str, assignment_fragment: &str) {
+    let lines: Vec<&str> = output.lines().collect();
+    let assignment_line = lines
+        .iter()
+        .position(|line| line.contains(assignment_fragment))
+        .expect("lowered computed assignment line should be present");
+    let comma_line = lines
+        .get(assignment_line + 1)
+        .expect("separator comma should follow the trailing comment line");
+    let temp_line = lines
+        .get(assignment_line + 2)
+        .expect("temp return should follow the separator comma line");
+
+    let leading_spaces = |line: &str| line.bytes().take_while(|&byte| byte == b' ').count();
+    let assignment_indent = leading_spaces(lines[assignment_line]);
+    let comma_indent = leading_spaces(comma_line);
+
+    assert_eq!(
+        comma_line.trim(),
+        ",",
+        "Trailing line comments on lowered computed members should put the separator comma on its own line.\nOutput:\n{output}"
+    );
+    assert_eq!(
+        comma_indent + 4,
+        assignment_indent,
+        "Separator comma should be one indent level shallower than the computed assignment after a trailing line comment.\nOutput:\n{output}"
+    );
+    assert_eq!(
+        leading_spaces(temp_line),
+        assignment_indent,
+        "Temp return should keep the computed-assignment continuation indent.\nOutput:\n{output}"
+    );
+}
+
 /// Multiple computed properties should be emitted multi-line, one per line.
 #[test]
 fn computed_property_multiline_multiple_keys() {
@@ -152,6 +186,31 @@ class C extends Base {
     assert!(
         !output.contains("_super.prototype.bar.call(this)"),
         "Super method calls inside the arrow must not bind the nested function's this.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn computed_method_trailing_comment_aligns_comma_expression_separator() {
+    let source = r#"
+class Base {
+    bar() { return 0; }
+}
+class C extends Base {
+    foo() {
+        () => {
+            var obj = {
+                [super.bar()]() { } // needs capture
+            };
+        }
+        return 0;
+    }
+}
+"#;
+    let output = emit_es5(source);
+
+    assert_comment_forced_comma_is_outdented(
+        &output,
+        "_a[_super.prototype.bar.call(_this)] = function () { } // needs capture",
     );
 }
 
