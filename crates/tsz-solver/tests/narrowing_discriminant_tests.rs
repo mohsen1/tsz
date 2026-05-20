@@ -19,7 +19,7 @@ use crate::narrowing::{
     GuardSense, NarrowingContext, TypeGuard, TypeofKind, find_discriminants,
     narrow_by_discriminant, narrow_by_typeof,
 };
-use crate::types::{PropertyInfo, TypeId};
+use crate::types::{PropertyInfo, TypeId, TypeParamInfo};
 
 // =============================================================================
 // String Literal Discriminant Tests
@@ -1286,6 +1286,242 @@ fn discriminant_for_type_positive_and_negative() {
     // Test negative branch
     let narrowed_neg = ctx.narrow_by_discriminant_for_type(union, &[kind], kind_a, false);
     assert_eq!(narrowed_neg, member_b);
+}
+
+// =============================================================================
+// Undistributed Intersection-with-Union Narrowing (issue #8424)
+// =============================================================================
+//
+// When a type alias union is intersected with a concrete constraint and the
+// intersection is NOT distributed at construction time (e.g. because the union
+// was still Lazy), discriminant narrowing must distribute on-the-fly so the
+// union component can be excluded member-by-member.
+//
+// Structural rule: when `(A | B) & C` reaches the narrowing entry points as an
+// undistributed intersection, the narrowing distributes it to `(A & C) | (B & C)`
+// and then applies the discriminant filter per-member. After an exhaustive
+// switch all union members are excluded and the result is `never`.
+
+/// Build an undistributed intersection `union & rhs` by bypassing the interner's
+/// normalization (simulating the case where the union was Lazy at construction time).
+fn make_undistributed_intersection(interner: &TypeInterner, union: TypeId, rhs: TypeId) -> TypeId {
+    // intersect_types_raw2 creates the intersection without normalization / distribution.
+    interner.intersect_types_raw2(union, rhs)
+}
+
+/// Construct a constrained type parameter `name extends constraint`.
+fn make_constrained_type_param(interner: &TypeInterner, name: &str, constraint: TypeId) -> TypeId {
+    interner.intern(crate::TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string(name),
+        constraint: Some(constraint),
+        default: None,
+        is_const: false,
+    }))
+}
+
+/// Core case: `(A | B) & { kind: K }` with K = type-param constrained to "a"|"b".
+/// Excluding all discriminant values should yield `never`.
+#[test]
+fn undistributed_intersection_exhaustive_switch_default_is_never() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let kind = interner.intern_string("kind");
+    let value = interner.intern_string("value");
+
+    let kind_a = interner.literal_string("a");
+    let kind_b = interner.literal_string("b");
+
+    // Options = { kind: "a"; value: number } | { kind: "b"; value: string }
+    let opt_one = interner.object(vec![
+        PropertyInfo::new(kind, kind_a),
+        PropertyInfo::new(value, TypeId::NUMBER),
+    ]);
+    let opt_two = interner.object(vec![
+        PropertyInfo::new(kind, kind_b),
+        PropertyInfo::new(value, TypeId::STRING),
+    ]);
+    let options_union = interner.union(vec![opt_one, opt_two]);
+
+    let k_constraint = interner.union(vec![kind_a, kind_b]);
+    let k_param = make_constrained_type_param(&interner, "K", k_constraint);
+    let kind_k_obj = interner.object(vec![PropertyInfo::new(kind, k_param)]);
+    let undistributed = make_undistributed_intersection(&interner, options_union, kind_k_obj);
+
+    // After exhaustive switch covering "a" and "b", default branch should be `never`.
+    let result =
+        ctx.narrow_by_excluding_discriminant_values(undistributed, &[kind], &[kind_a, kind_b]);
+    assert_eq!(
+        result,
+        TypeId::NEVER,
+        "exhaustive switch default must narrow to never"
+    );
+}
+
+/// Same test but with renamed type parameter (T instead of K) and renamed
+/// discriminant property (tag instead of kind) — the fix must be structural,
+/// not keyed on specific identifier names.
+#[test]
+fn undistributed_intersection_exhaustive_switch_default_is_never_renamed() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let tag = interner.intern_string("tag");
+
+    let tag_x = interner.literal_string("x");
+    let tag_y = interner.literal_string("y");
+
+    let member_x = interner.object(vec![PropertyInfo::new(tag, tag_x)]);
+    let member_y = interner.object(vec![PropertyInfo::new(tag, tag_y)]);
+    let tags_union = interner.union(vec![member_x, member_y]);
+
+    let t_constraint = interner.union(vec![tag_x, tag_y]);
+    let t_param = make_constrained_type_param(&interner, "T", t_constraint);
+    let tag_t_obj = interner.object(vec![PropertyInfo::new(tag, t_param)]);
+    let undistributed = make_undistributed_intersection(&interner, tags_union, tag_t_obj);
+
+    let result =
+        ctx.narrow_by_excluding_discriminant_values(undistributed, &[tag], &[tag_x, tag_y]);
+    assert_eq!(
+        result,
+        TypeId::NEVER,
+        "renamed discriminant: exhaustive switch must narrow to never"
+    );
+}
+
+/// Non-exhaustive switch: excluding only "a" from `(A | B) & { kind: K }` leaves
+/// the B-component (`OptionTwo & { kind: K }`) because B's `kind: "b"` is not "a".
+#[test]
+fn undistributed_intersection_non_exhaustive_switch_keeps_remaining() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let kind = interner.intern_string("kind");
+    let kind_a = interner.literal_string("a");
+    let kind_b = interner.literal_string("b");
+
+    let opt_one = interner.object(vec![PropertyInfo::new(kind, kind_a)]);
+    let opt_two = interner.object(vec![PropertyInfo::new(kind, kind_b)]);
+    let options_union = interner.union(vec![opt_one, opt_two]);
+
+    let k_constraint = interner.union(vec![kind_a, kind_b]);
+    let k_param = make_constrained_type_param(&interner, "K", k_constraint);
+    let kind_k_obj = interner.object(vec![PropertyInfo::new(kind, k_param)]);
+    let undistributed = make_undistributed_intersection(&interner, options_union, kind_k_obj);
+
+    // Exclude only "a" — opt_two-component must survive
+    let result = ctx.narrow_by_excluding_discriminant_values(undistributed, &[kind], &[kind_a]);
+    let expected = interner.intersection(vec![kind_k_obj, opt_two]);
+    assert_eq!(
+        result, expected,
+        "non-exhaustive: narrowing must remove only the excluded OptionOne component"
+    );
+}
+
+/// True-branch narrowing via `narrow_by_discriminant_for_type`:
+/// `(A | B) & { kind: K }` narrowed to `kind === "a"` must keep only the A-component.
+#[test]
+fn undistributed_intersection_true_branch_narrows_to_matching_member() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let kind = interner.intern_string("kind");
+    let kind_a = interner.literal_string("a");
+    let kind_b = interner.literal_string("b");
+
+    let opt_one = interner.object(vec![PropertyInfo::new(kind, kind_a)]);
+    let opt_two = interner.object(vec![PropertyInfo::new(kind, kind_b)]);
+    let options_union = interner.union(vec![opt_one, opt_two]);
+
+    let k_constraint = interner.union(vec![kind_a, kind_b]);
+    let k_param = make_constrained_type_param(&interner, "K", k_constraint);
+    let kind_k_obj = interner.object(vec![PropertyInfo::new(kind, k_param)]);
+    let undistributed = make_undistributed_intersection(&interner, options_union, kind_k_obj);
+
+    // True branch: kind === "a" must keep only the component where kind: "a" is satisfied
+    let narrowed = ctx.narrow_by_discriminant_for_type(undistributed, &[kind], kind_a, true);
+    let expected = interner.intersection(vec![kind_k_obj, opt_one]);
+    assert_eq!(
+        narrowed, expected,
+        "true branch must keep only the OptionOne component"
+    );
+}
+
+/// Declared intersections that already pin the discriminant to a literal must not
+/// be distributed on the narrowing path. They rely on the top-level-intersection
+/// no-op behavior to preserve the receiver surface in unreachable branches.
+#[test]
+fn undistributed_intersection_literal_discriminant_constraint_is_not_distributed() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let kind = interner.intern_string("kind");
+    let value = interner.intern_string("value");
+    let kind_a = interner.literal_string("a");
+    let kind_b = interner.literal_string("b");
+
+    let member_a = interner.object(vec![
+        PropertyInfo::new(kind, kind_a),
+        PropertyInfo::new(value, TypeId::NUMBER),
+    ]);
+    let member_b = interner.object(vec![
+        PropertyInfo::new(kind, kind_b),
+        PropertyInfo::new(value, TypeId::STRING),
+    ]);
+    let union = interner.union(vec![member_a, member_b]);
+    let literal_constraint = interner.object(vec![PropertyInfo::new(kind, kind_a)]);
+    let undistributed = make_undistributed_intersection(&interner, union, literal_constraint);
+
+    let true_result = ctx.narrow_by_discriminant_for_type(undistributed, &[kind], kind_a, true);
+    assert_eq!(
+        true_result, undistributed,
+        "literal-constrained declared intersections stay unchanged in true branches"
+    );
+
+    let false_result = ctx.narrow_by_discriminant_for_type(undistributed, &[kind], kind_a, false);
+    assert_eq!(
+        false_result, undistributed,
+        "literal-constrained declared intersections stay unchanged in false branches"
+    );
+
+    let exhaustive_default =
+        ctx.narrow_by_excluding_discriminant_values(undistributed, &[kind], &[kind_a, kind_b]);
+    assert_eq!(
+        exhaustive_default, undistributed,
+        "literal-constrained declared intersections must not distribute to never in switch defaults"
+    );
+}
+
+/// Plain intersections (no union member) must NOT be narrowed through the
+/// `narrow_by_discriminant_for_type` path — mirrors the tsc gate on the
+/// `Union` flag in `getDiscriminantPropertyAccess`.
+/// Guards against regression of the spurious-TS2339 issue where
+/// `RuntimeValue & { type: 'number' }` was collapsed to `never`.
+#[test]
+fn plain_intersection_without_union_is_not_narrowed() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let kind = interner.intern_string("kind");
+    let kind_a = interner.literal_string("a");
+
+    // Two plain object shapes — no union involved
+    let obj1 = interner.object(vec![PropertyInfo::new(kind, kind_a)]);
+    let extra = interner.object(vec![PropertyInfo::new(kind, TypeId::STRING)]);
+    let intersection = make_undistributed_intersection(&interner, obj1, extra);
+
+    // narrow_by_discriminant_for_type must bail out: the intersection has no union
+    // component, so on-the-fly distribution returns None and the type is unchanged.
+    let result = ctx.narrow_by_discriminant_for_type(intersection, &[kind], kind_a, false);
+    assert_eq!(
+        result, intersection,
+        "narrow_by_discriminant_for_type must leave plain intersections unchanged"
+    );
+    let result_true = ctx.narrow_by_discriminant_for_type(intersection, &[kind], kind_a, true);
+    assert_eq!(
+        result_true, intersection,
+        "narrow_by_discriminant_for_type (true branch) must leave plain intersections unchanged"
+    );
 }
 
 /// Regression: a top-level intersection that has not been distributed to a

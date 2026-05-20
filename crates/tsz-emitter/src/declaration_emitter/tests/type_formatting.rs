@@ -35,6 +35,46 @@ fn test_type_printer_preserves_union_display_origin() {
 }
 
 #[test]
+fn test_type_printer_deduplicates_identical_rendered_union_members() {
+    let interner = TypeInterner::new();
+    let x = interner.intern_string("x");
+    let number_callback = interner.function(FunctionShape::new(
+        vec![ParamInfo::required(x, TypeId::NUMBER)],
+        TypeId::NUMBER,
+    ));
+    let string_callback = interner.function(FunctionShape::new(
+        vec![ParamInfo::required(x, TypeId::STRING)],
+        TypeId::STRING,
+    ));
+    let union = interner.union_preserve_members(vec![number_callback, string_callback]);
+    interner.replace_union_origin_for_display(union, vec![number_callback, number_callback]);
+
+    let printed = crate::emitter::type_printer::TypePrinter::new(&interner).print_type(union);
+
+    assert_eq!(printed, "(x: number) => number");
+}
+
+#[test]
+fn test_type_printer_keeps_distinct_rendered_union_members() {
+    let interner = TypeInterner::new();
+    let x = interner.intern_string("x");
+    let number_callback = interner.function(FunctionShape::new(
+        vec![ParamInfo::required(x, TypeId::NUMBER)],
+        TypeId::NUMBER,
+    ));
+    let string_callback = interner.function(FunctionShape::new(
+        vec![ParamInfo::required(x, TypeId::STRING)],
+        TypeId::STRING,
+    ));
+    let union = interner.union_preserve_members(vec![number_callback, string_callback]);
+    interner.replace_union_origin_for_display(union, vec![number_callback, string_callback]);
+
+    let printed = crate::emitter::type_printer::TypePrinter::new(&interner).print_type(union);
+
+    assert_eq!(printed, "((x: number) => number) | ((x: string) => string)");
+}
+
+#[test]
 fn test_type_printer_prints_named_unique_symbol_as_typeof() {
     let source = "export const x = Symbol();\nexport const y = Symbol();\n";
     let (parser, root) = parse_test_source(source);
@@ -53,6 +93,115 @@ fn test_type_printer_prints_named_unique_symbol_as_typeof() {
         .print_type(union);
 
     assert_eq!(printed, "typeof x | typeof y");
+}
+
+#[test]
+fn test_inferred_declarations_widen_unique_symbol_references() {
+    let source = "const key = Symbol();\nconst copied = key;\n";
+    let (parser, root) = parse_test_source(source);
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let root_node = parser.arena.get(root).expect("missing root node");
+    let source_file = parser
+        .arena
+        .get_source_file(root_node)
+        .expect("missing source file");
+    let copied_decl = parser
+        .arena
+        .get(source_file.statements.nodes[1])
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|stmt| parser.arena.get(stmt.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|decl_list| parser.arena.get(decl_list.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable_declaration(node))
+        .expect("missing copied declaration");
+
+    let interner = TypeInterner::new();
+    let unique = interner.unique_symbol(SymbolRef(1));
+    let array = interner.array(unique);
+    let object = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("key"),
+        unique,
+    )]);
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+
+    assert_eq!(
+        emitter.declaration_emittable_type_text(copied_decl.initializer, unique, "typeof key"),
+        "symbol"
+    );
+    assert_eq!(
+        emitter.declaration_emittable_type_text(copied_decl.initializer, array, "typeof key[]"),
+        "symbol[]"
+    );
+    assert_eq!(
+        emitter.declaration_emittable_type_text(
+            copied_decl.initializer,
+            object,
+            "{ key: typeof key }"
+        ),
+        "{\n    key: symbol;\n}"
+    );
+}
+
+#[test]
+fn test_async_method_return_wrapper_uses_lib_promise_identity() {
+    let source = r#"
+interface Promise<T> {}
+class C {
+    async m() {
+        return 1;
+    }
+}
+"#;
+    let (parser, root) = parse_test_source(source);
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let root_node = parser.arena.get(root).expect("missing root node");
+    let source_file = parser
+        .arena
+        .get_source_file(root_node)
+        .expect("missing source file");
+    let class_idx = source_file.statements.nodes[1];
+    let method_idx = parser
+        .arena
+        .get(class_idx)
+        .and_then(|node| parser.arena.get_class(node))
+        .and_then(|class| class.members.nodes.first().copied())
+        .expect("missing class method");
+    let method = parser
+        .arena
+        .get(method_idx)
+        .and_then(|node| parser.arena.get_method_decl(node))
+        .expect("missing method data");
+    let promise_sym = binder.file_locals.get("Promise").expect("missing Promise");
+
+    let interner = TypeInterner::new();
+    let promise_def = DefId(9121);
+    let promise_type = interner.application(interner.lazy(promise_def), vec![TypeId::NUMBER]);
+    let mut type_cache = TypeCacheView::default();
+    type_cache.def_to_symbol.insert(promise_def, promise_sym);
+
+    {
+        let emitter = DeclarationEmitter::with_type_info(
+            &parser.arena,
+            type_cache.clone(),
+            &interner,
+            &binder,
+        );
+        assert_eq!(
+            emitter.inferred_method_return_type_text(method, promise_type),
+            "Promise<Promise<number>>"
+        );
+    }
+
+    Arc::make_mut(&mut binder.lib_symbol_ids).insert(promise_sym);
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    assert_eq!(
+        emitter.inferred_method_return_type_text(method, promise_type),
+        "Promise<number>"
+    );
 }
 
 #[test]
@@ -1199,6 +1348,53 @@ var y = [() => new c()];
     assert!(
         !output.contains("(() => any)[]"),
         "Did not expect arrow return type to fall back to any: {output}"
+    );
+}
+
+#[test]
+fn test_short_circuit_decl_type_uses_truthy_left_expression() {
+    let output = emit_dts_with_binding(
+        r#"
+class C {
+    private value: string;
+}
+namespace Box {
+    export class C {
+        private other: string;
+    }
+    export class G<T> {
+        private item: T;
+    }
+}
+class G<T> {
+    private item: T;
+}
+
+var f = (() => new C()) || "";
+var g = new C() || new Box.C();
+var h = new G<string>() || new Box.G<number>() || (() => new C());
+"#,
+    );
+
+    assert!(
+        output.contains("declare var f: () => C;"),
+        "Expected function expression left operand to determine || declaration type: {output}"
+    );
+    assert!(
+        output.contains("declare var g: C;"),
+        "Expected new-expression left operand to determine || declaration type: {output}"
+    );
+    assert!(
+        output.contains("declare var h: G<string>;"),
+        "Expected left-associative truthy || chain to keep the first new-expression type: {output}"
+    );
+    assert!(
+        !output.contains("declare var g: C | Box.C;"),
+        "Did not expect unreachable || right operand in inferred declaration type: {output}"
+    );
+    assert!(
+        !output.contains("declare var h: G<string> | Box.G<number>"),
+        "Did not expect nested unreachable || right operands in inferred declaration type: {output}"
     );
 }
 

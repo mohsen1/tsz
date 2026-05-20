@@ -2,12 +2,23 @@
 //! utilities, and node containment checks.
 
 use crate::state::{CheckerState, ComputedKey, MAX_TREE_WALK_ITERATIONS, PropertyKey};
+use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
-/// Name, optional constraint, and optional default for one type parameter in a declaration.
-type TypeParamProfile = (String, Option<TypeId>, Option<TypeId>);
+/// Per-position record for a declaration's type parameter list.
+///
+/// The interner guarantees `Atom`-equality iff string-equality, so a single
+/// `name` atom serves both cross-declaration name comparison and the
+/// positional canonicalization scope used to align self-referential
+/// constraints across declarations.
+#[derive(Clone, Debug)]
+struct TypeParamProfileEntry {
+    name: Atom,
+    constraint: Option<TypeId>,
+    default: Option<TypeId>,
+}
 
 impl<'a> CheckerState<'a> {
     /// Compare interface type parameters across declarations for declaration-merge compatibility.
@@ -16,6 +27,10 @@ impl<'a> CheckerState<'a> {
     /// - Parameter constraints must be identical (TypeId equality) when both are present.
     ///   TSC uses `isTypeIdenticalTo`, not assignability — this matters for `any` constraints.
     /// - Missing constraints are compatible with any constraint (e.g. `T` vs `T extends number`).
+    /// - Self-referential constraints (e.g. `T extends Foo<T>`) are canonicalized in a
+    ///   shared positional type-parameter scope before comparison, so `<T extends Foo<T>>`
+    ///   declared in declaration A and `<T extends Foo<T>>` declared in declaration B compare
+    ///   equal even though each declaration's `T` resolves to a distinct underlying `TypeId`.
     pub(crate) fn interface_type_parameters_are_merge_compatible(
         &mut self,
         first: NodeIndex,
@@ -32,32 +47,17 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        for i in 0..first_profile.len() {
-            let (first_name, first_constraint, first_default) = &first_profile[i];
-            let (second_name, second_constraint, second_default) = &second_profile[i];
-
-            if first_name != second_name {
-                return false;
-            }
-
-            // TSC uses isTypeIdenticalTo for constraint comparison (not assignability).
-            // Only mismatch when BOTH have constraints and they differ.
-            // If one has a constraint and the other doesn't, tsc considers them compatible.
-            if let (Some(fc), Some(sc)) = (first_constraint, second_constraint)
-                && fc != sc
-            {
-                return false;
-            }
-
-            // Defaults: only mismatch when BOTH have defaults and they differ.
-            if let (Some(fd), Some(sd)) = (first_default, second_default)
-                && fd != sd
-            {
+        // Names must match positionally before any constraint canonicalization is
+        // meaningful: a `<T>` vs `<S>` pair is structurally distinct under tsc's
+        // declaration-merge rule regardless of the constraint content.
+        for (a, b) in first_profile.iter().zip(second_profile.iter()) {
+            if a.name != b.name {
                 return false;
             }
         }
 
-        true
+        let scope = Self::profile_param_scope(&first_profile);
+        self.constraints_and_defaults_match_in_scope(&first_profile, &second_profile, &scope)
     }
 
     /// Check if ALL interface declarations in a merge group have compatible
@@ -72,7 +72,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         decls: &[NodeIndex],
     ) -> bool {
-        let profiles: Vec<Vec<TypeParamProfile>> = decls
+        let profiles: Vec<Vec<TypeParamProfileEntry>> = decls
             .iter()
             .filter_map(|&d| self.interface_type_parameter_profile(d))
             .collect();
@@ -87,33 +87,35 @@ impl<'a> CheckerState<'a> {
             if !all_have_pos {
                 let has_default = profiles
                     .iter()
-                    .any(|p| p.get(pos).is_some_and(|(_, _, default)| default.is_some()));
+                    .any(|p| p.get(pos).is_some_and(|entry| entry.default.is_some()));
                 if !has_default {
                     return false;
                 }
             }
         }
 
+        // Build the positional canonicalization scope from the longest profile so
+        // every name reachable from any declaration in the group has an anchor.
+        // Names agree at overlapping positions (rechecked pairwise below), and
+        // since the scope is keyed by name+position, picking any profile of the
+        // maximum length produces the same scope content — the comparison is
+        // symmetric regardless of which longest-tied profile is chosen.
+        let longest = profiles
+            .iter()
+            .max_by_key(|p| p.len())
+            .expect("profiles non-empty");
+        let scope = Self::profile_param_scope(longest);
+
         for i in 0..profiles.len() {
             for j in (i + 1)..profiles.len() {
-                for ((name_i, constraint_i, default_i), (name_j, constraint_j, default_j)) in
-                    profiles[i].iter().zip(profiles[j].iter())
+                for (entry_i, entry_j) in profiles[i].iter().zip(profiles[j].iter()) {
+                    if entry_i.name != entry_j.name {
+                        return false;
+                    }
+                }
+                if !self.constraints_and_defaults_match_in_scope(&profiles[i], &profiles[j], &scope)
                 {
-                    if name_i != name_j {
-                        return false;
-                    }
-
-                    if let (Some(ci), Some(cj)) = (constraint_i, constraint_j)
-                        && ci != cj
-                    {
-                        return false;
-                    }
-
-                    if let (Some(di), Some(dj)) = (default_i, default_j)
-                        && di != dj
-                    {
-                        return false;
-                    }
+                    return false;
                 }
             }
         }
@@ -140,28 +142,28 @@ impl<'a> CheckerState<'a> {
 
         // Check the overlapping portion only
         let min_len = first_profile.len().min(second_profile.len());
+
+        // Names must match in overlapping positions before canonicalization.
         for i in 0..min_len {
-            let (first_name, first_constraint, first_default) = &first_profile[i];
-            let (second_name, second_constraint, second_default) = &second_profile[i];
-
-            if first_name != second_name {
-                return false;
-            }
-
-            if let (Some(fc), Some(sc)) = (first_constraint, second_constraint)
-                && fc != sc
-            {
-                return false;
-            }
-
-            if let (Some(fd), Some(sd)) = (first_default, second_default)
-                && fd != sd
-            {
+            if first_profile[i].name != second_profile[i].name {
                 return false;
             }
         }
 
-        true
+        // Build the canonicalization scope from the longer profile so positions
+        // present only on one side (e.g. defaulted extras on the interface side
+        // of a class+interface merge) still have an anchor for the shorter
+        // side's constraints to reference symmetrically.
+        let longest = if first_profile.len() >= second_profile.len() {
+            &first_profile
+        } else {
+            &second_profile
+        };
+        let scope = Self::profile_param_scope(longest);
+
+        let overlap_first = &first_profile[..min_len];
+        let overlap_second = &second_profile[..min_len];
+        self.constraints_and_defaults_match_in_scope(overlap_first, overlap_second, &scope)
     }
 
     /// Collect type parameter names and constraint type ids from an interface
@@ -169,7 +171,7 @@ impl<'a> CheckerState<'a> {
     fn interface_type_parameter_profile(
         &mut self,
         decl_idx: NodeIndex,
-    ) -> Option<Vec<TypeParamProfile>> {
+    ) -> Option<Vec<TypeParamProfileEntry>> {
         let node = self.ctx.arena.get(decl_idx)?;
         // Handle both interface and class declarations
         let list = if let Some(interface) = self.ctx.arena.get_interface(node) {
@@ -205,17 +207,76 @@ impl<'a> CheckerState<'a> {
                 None
             };
 
-            profile.push((
-                self.ctx
-                    .arena
-                    .resolve_identifier_text(param_name)
-                    .to_string(),
+            let name_atom = self
+                .ctx
+                .types
+                .intern_string(self.ctx.arena.resolve_identifier_text(param_name));
+
+            profile.push(TypeParamProfileEntry {
+                name: name_atom,
                 constraint,
                 default,
-            ));
+            });
         }
 
         Some(profile)
+    }
+
+    /// Collect the parameter-name scope used to canonicalize constraints and
+    /// defaults across declarations in a merge group.
+    ///
+    /// Position 0 of the returned vector is the "innermost" parameter; the
+    /// canonicalizer maps each name to its `BoundParameter(index)` De Bruijn
+    /// index when it encounters the corresponding `TypeParameter(name)` in a
+    /// canonicalized expression. Two declarations whose constraints reference
+    /// positionally-equivalent parameters canonicalize to the same form.
+    fn profile_param_scope(profile: &[TypeParamProfileEntry]) -> Vec<Atom> {
+        profile.iter().map(|entry| entry.name).collect()
+    }
+
+    /// Apply the overlap-positional check that drives all three callers:
+    /// for each shared position with both-sides constraints, both-sides
+    /// defaults, the structural identity check must agree in `scope`.
+    fn constraints_and_defaults_match_in_scope(
+        &self,
+        first: &[TypeParamProfileEntry],
+        second: &[TypeParamProfileEntry],
+        scope: &[Atom],
+    ) -> bool {
+        for (a, b) in first.iter().zip(second.iter()) {
+            // TSC uses isTypeIdenticalTo for constraint comparison (not assignability).
+            // Only mismatch when BOTH have constraints and they differ. Missing
+            // constraints stay compatible with any constraint (`T` vs `T extends number`).
+            if let (Some(ac), Some(bc)) = (a.constraint, b.constraint)
+                && !self.types_identical_in_param_scope(ac, bc, scope)
+            {
+                return false;
+            }
+
+            // Defaults follow the same both-sides-or-skip policy.
+            if let (Some(ad), Some(bd)) = (a.default, b.default)
+                && !self.types_identical_in_param_scope(ad, bd, scope)
+            {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Structural identity for two `TypeId`s under a shared outer
+    /// type-parameter scope. Returns `true` when the two types canonicalize to
+    /// the same form once positionally-equivalent parameter references have
+    /// been collapsed to De Bruijn indices — the rule that makes `<T extends
+    /// Foo<T>>` declared twice compare equal even though each declaration's
+    /// own `T` is a distinct underlying `TypeId`.
+    fn types_identical_in_param_scope(&self, a: TypeId, b: TypeId, scope: &[Atom]) -> bool {
+        crate::query_boundaries::assignability::are_types_structurally_identical_in_param_scope(
+            self.ctx.types,
+            &self.ctx,
+            a,
+            b,
+            scope,
+        )
     }
 
     /// Verify that a declaration node actually has a name matching the expected symbol name.

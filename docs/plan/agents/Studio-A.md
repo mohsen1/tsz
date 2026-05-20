@@ -27,16 +27,20 @@ scripts/agents/list-owned-work.sh Studio-A
 - Related PRs to inspect: `#9277`, `#9253`, `#9251`, `#9249`, `#9237`,
   `#9235`, `#9223`, `#9215`, `#9063`, `#9034`, `#8980`, `#8912`, `#8901`.
 - Track: roadmap Track 1.
-- Next concrete step: consolidate active benchmark/dashboard PRs into a small
-  mergeable path and ensure fixture metadata cannot drift between
-  `bench-vs-tsgo.sh` and `project-compile-guard.sh`.
+- Next concrete step: with the fixture-metadata sync guard landed in #9538,
+  do not reclaim the type-fest reduction backlog while Studio-D owns draft
+  PR #9229 for #8774. Look next for unowned dashboard-truth gaps where a
+  project row can misreport correctness, phase, first blocker family, runner
+  identity, or fixture metadata.
 
 ## Existing Work To Inspect First
 
-- Recent bench artifacts and Cloud Build PRs may already solve parts of
-  `#8867`.
+- Recent bench artifacts and Cloud Build PRs have closed `#8867`; use them as
+  current assumptions instead of reopening the Cloud Build timing-shard work.
 - `#9223` surfaces project compatibility measurements.
 - `#9215`, `#9063`, `#9034`, and `#8980` touch project compile guard shape.
+- `#9229` owns the current type-fest reduction backlog for `#8774`; coordinate
+  with Studio-D instead of adding parallel fixtures.
 
 ## Non-Overlap Rules
 

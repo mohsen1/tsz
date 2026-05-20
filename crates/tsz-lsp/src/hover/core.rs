@@ -4,7 +4,7 @@
 //! building display strings, and extracting symbol metadata.
 
 use super::{HoverInfo, HoverProvider, format};
-use crate::jsdoc::{escape_markdown_label, format_inline_code, jsdoc_for_node, parse_jsdoc};
+use crate::jsdoc::{format_inline_code, inline_links, jsdoc_for_node, parse_jsdoc};
 use crate::resolver::{ScopeCache, ScopeCacheStats, ScopeWalker};
 use crate::utils::{
     find_symbol_query_node_at_or_before, is_comment_context, should_backtrack_to_previous_symbol,
@@ -1805,7 +1805,7 @@ impl<'a> HoverProvider<'a> {
         if let Some(summary) = parsed.summary.as_ref()
             && !summary.is_empty()
         {
-            parts.push(summary.clone());
+            parts.push(inline_links::expand_to_plain_text(summary));
         }
         // Include relevant tags in plain documentation
         for tag in &parsed.tags {
@@ -1814,27 +1814,39 @@ impl<'a> HoverProvider<'a> {
                     if tag.text.is_empty() {
                         parts.push("@example".to_string());
                     } else {
-                        parts.push(format!("@example {}", tag.text));
+                        parts.push(format!(
+                            "@example {}",
+                            inline_links::expand_to_plain_text(&tag.text)
+                        ));
                     }
                 }
                 "returns" | "return" if !tag.text.is_empty() => {
-                    parts.push(format!("@returns {}", tag.text));
+                    parts.push(format!(
+                        "@returns {}",
+                        inline_links::expand_to_plain_text(&tag.text)
+                    ));
                 }
                 "deprecated" => {
                     if tag.text.is_empty() {
                         parts.push("@deprecated".to_string());
                     } else {
-                        parts.push(format!("@deprecated {}", tag.text));
+                        parts.push(format!(
+                            "@deprecated {}",
+                            inline_links::expand_to_plain_text(&tag.text)
+                        ));
                     }
                 }
                 "see" if !tag.text.is_empty() => {
-                    parts.push(format!("@see {}", tag.text));
+                    parts.push(format!(
+                        "@see {}",
+                        inline_links::expand_to_plain_text(&tag.text)
+                    ));
                 }
                 _ => {}
             }
         }
         if parts.is_empty() {
-            doc.to_string()
+            inline_links::expand_to_plain_text(doc)
         } else {
             parts.join("\n\n")
         }
@@ -1847,14 +1859,14 @@ impl<'a> HoverProvider<'a> {
 
         let parsed = parse_jsdoc(doc);
         if parsed.is_empty() {
-            return Some(escape_markdown_label(doc));
+            return Some(inline_links::expand_to_markdown_escaped(doc));
         }
 
         let mut sections = Vec::new();
         if let Some(summary) = parsed.summary.as_ref()
             && !summary.is_empty()
         {
-            sections.push(escape_markdown_label(summary));
+            sections.push(inline_links::expand_to_markdown_escaped(summary));
         }
 
         if !parsed.params.is_empty() {
@@ -1868,7 +1880,10 @@ impl<'a> HoverProvider<'a> {
                 if desc.is_empty() {
                     lines.push(format!("- {name_code}"));
                 } else {
-                    lines.push(format!("- {name_code} {}", escape_markdown_label(desc)));
+                    lines.push(format!(
+                        "- {name_code} {}",
+                        inline_links::expand_to_markdown_escaped(desc)
+                    ));
                 }
             }
             sections.push(lines.join("\n"));
@@ -1878,7 +1893,10 @@ impl<'a> HoverProvider<'a> {
         for tag in &parsed.tags {
             match tag.name.as_str() {
                 "returns" if !tag.text.is_empty() => {
-                    sections.push(format!("Returns: {}", escape_markdown_label(&tag.text)));
+                    sections.push(format!(
+                        "Returns: {}",
+                        inline_links::expand_to_markdown_escaped(&tag.text)
+                    ));
                 }
                 "example" => {
                     // Fenced code blocks render `tag.text` verbatim, so they
@@ -1897,18 +1915,27 @@ impl<'a> HoverProvider<'a> {
                     } else {
                         sections.push(format!(
                             "**@deprecated** {}",
-                            escape_markdown_label(&tag.text)
+                            inline_links::expand_to_markdown_escaped(&tag.text)
                         ));
                     }
                 }
                 "see" if !tag.text.is_empty() => {
-                    sections.push(format!("See: {}", escape_markdown_label(&tag.text)));
+                    sections.push(format!(
+                        "See: {}",
+                        inline_links::expand_to_markdown_escaped(&tag.text)
+                    ));
                 }
                 "throws" | "exception" if !tag.text.is_empty() => {
-                    sections.push(format!("Throws: {}", escape_markdown_label(&tag.text)));
+                    sections.push(format!(
+                        "Throws: {}",
+                        inline_links::expand_to_markdown_escaped(&tag.text)
+                    ));
                 }
                 "since" if !tag.text.is_empty() => {
-                    sections.push(format!("Since: {}", escape_markdown_label(&tag.text)));
+                    sections.push(format!(
+                        "Since: {}",
+                        inline_links::expand_to_markdown_escaped(&tag.text)
+                    ));
                 }
                 _ => {}
             }
@@ -1916,7 +1943,7 @@ impl<'a> HoverProvider<'a> {
 
         let formatted = sections.join("\n\n");
         if formatted.is_empty() {
-            Some(escape_markdown_label(doc))
+            Some(inline_links::expand_to_markdown_escaped(doc))
         } else {
             Some(formatted)
         }

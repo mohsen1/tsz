@@ -286,7 +286,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// ```
     ///
     /// Rule #29: Function intrinsic accepts any callable type as a subtype.
-    #[allow(clippy::match_same_arms)]
     pub(crate) fn is_callable_type(&mut self, source: TypeId) -> bool {
         let allow_any = self.any_propagation.allows_any_at_depth(self.guard.depth());
         match source {

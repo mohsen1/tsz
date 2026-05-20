@@ -160,6 +160,78 @@ const out: Producer<string> = new Sink();
     );
 }
 
+/// TS2322 must preserve the alias name even when the alias body is a
+/// generic Application. tsc's alias-unfold rule is scoped to the
+/// missing-properties messages (TS2739/TS2741); for the generic
+/// "Type 'X' is not assignable to type 'Y'" diagnostic, tsc keeps the
+/// alias spelling. Regression cover for the prior bug where the
+/// `render_type_mismatch` path leaked the TS2739 unfold into TS2322.
+///
+/// See `compiler/typeVariableConstraintedToAliasNotAssignableToUnion.ts`
+/// line 35: `aBoolean = o;` (where `o: Table` and `type Table = TableClass`)
+/// expects `Type 'Table' is not assignable to type 'boolean'.`, NOT
+/// `Type 'TableClass<any>' is not assignable to type 'boolean'.`.
+#[test]
+fn ts2322_keeps_alias_when_body_is_generic_application_with_intrinsic_target() {
+    let diags = check_source_diagnostics(
+        r#"
+declare class TableClass<S = any> { _field: S; }
+type Table = TableClass;
+declare let aBoolean: boolean;
+declare const o: Table;
+aBoolean = o;
+"#,
+    );
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected exactly one TS2322. Got: {diags:?}"
+    );
+    let msg = &ts2322[0].message_text;
+    assert!(
+        msg.contains("Type 'Table'"),
+        "TS2322 must preserve the alias name 'Table' when the body unfolds \
+         to a generic Application. Got: {msg:?}"
+    );
+    assert!(
+        !msg.contains("Type 'TableClass<any>'"),
+        "TS2322 must not unfold 'Table' to 'TableClass<any>' for the \
+         primary mismatch message. Got: {msg:?}"
+    );
+}
+
+/// Anti-hardcoding cover: same structural rule with different identifier
+/// names. Renaming the wrapper alias and the wrapped class to anything
+/// else must still preserve the alias name in TS2322.
+#[test]
+fn ts2322_keeps_alias_when_body_is_generic_application_renamed() {
+    let diags = check_source_diagnostics(
+        r#"
+declare class Container<U = any> { _slot: U; }
+type Wrapped = Container;
+declare let target: number;
+declare const w: Wrapped;
+target = w;
+"#,
+    );
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected exactly one TS2322. Got: {diags:?}"
+    );
+    let msg = &ts2322[0].message_text;
+    assert!(
+        msg.contains("Type 'Wrapped'"),
+        "Renamed variant: TS2322 must preserve 'Wrapped'. Got: {msg:?}"
+    );
+    assert!(
+        !msg.contains("Type 'Container<any>'"),
+        "Renamed variant: TS2322 must not unfold to 'Container<any>'. Got: {msg:?}"
+    );
+}
+
 /// Constructor parameter properties share the constructor's class-member
 /// position, so they need their own stable sub-order before entering the
 /// class property map.

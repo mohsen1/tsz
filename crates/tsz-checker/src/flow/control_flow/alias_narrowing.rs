@@ -415,9 +415,11 @@ impl<'a> FlowAnalyzer<'a> {
                     .is_some_and(|(path, _)| !path.is_empty());
             }
         }
-        // Case 2: `const { prop: alias } = reference` (destructuring alias)
-        if let Some((base, _)) = self.binding_element_property_alias(expr) {
-            return self.is_matching_reference(base, reference);
+        // Case 2: `const { prop: alias } = reference` (top-level destructuring alias).
+        if let Some((base, _)) = self.binding_element_property_alias(expr)
+            && self.is_matching_reference(base, reference)
+        {
+            return true;
         }
         false
     }

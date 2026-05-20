@@ -382,9 +382,15 @@ impl<'a> CodeActionProvider<'a> {
                 || node.kind == syntax_kind_ext::GET_ACCESSOR
                 || node.kind == syntax_kind_ext::SET_ACCESSOR
                 || node.kind == syntax_kind_ext::PROPERTY_DECLARATION
-                || node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
             {
                 return false;
+            }
+
+            // Class static initialization blocks permit `await` per TC39 (like async contexts).
+            if node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
+                || node.kind == syntax_kind_ext::SOURCE_FILE
+            {
+                return true;
             }
 
             let Some(ext) = self.arena.get_extended(current) else {

@@ -13,9 +13,18 @@ const PROJECT_COMPATIBILITY_ROW_SET = new Set([
   ...REQUIRED_PROJECT_ROWS,
   ...COMPILE_CANARY_PROJECT_ROWS,
 ]);
+const BENCHMARK_RUNNER = "scripts/bench/bench-vs-tsgo.sh";
 
 function hasProjectCompatibilityRows(rows) {
   return rows.some((row) => PROJECT_COMPATIBILITY_ROW_SET.has(row?.name));
+}
+
+function isNonEmptyString(value) {
+  return typeof value === "string" && value.trim() !== "";
+}
+
+function isNonEmptyStringArray(value) {
+  return Array.isArray(value) && value.some(isNonEmptyString);
 }
 
 function parseArgs(argv) {
@@ -204,6 +213,15 @@ function collectRunnerSignatureFailures(payloads, runnerEnvironmentWarnings) {
       failures.push(`${basename}: missing ${field}`);
     }
 
+    const benchmarkRunner = String(payload.benchmark_runner ?? "").trim();
+    if (!benchmarkRunner) {
+      failures.push(`${basename}: missing benchmark_runner`);
+    } else if (benchmarkRunner !== BENCHMARK_RUNNER) {
+      failures.push(
+        `${basename}: benchmark_runner ${JSON.stringify(benchmarkRunner)} does not match ${JSON.stringify(BENCHMARK_RUNNER)}`,
+      );
+    }
+
     const shardLabel = payload.shard?.label;
     if (!isMissingSignatureValue(shardLabel)) {
       const previous = seenShardLabels.get(shardLabel);
@@ -329,6 +347,20 @@ function collectProjectCompatibilityFailures(rows) {
     for (const field of REQUIRED_COMPATIBILITY_FIELDS) {
       if (!Object.hasOwn(row.compatibility, field)) {
         failures.push(`${row.name}: missing compatibility.${field}`);
+      }
+    }
+    const state = String(row.compatibility.state || "").toLowerCase();
+    if (state === "red" || state === "yellow") {
+      if (!isNonEmptyString(row.compatibility.first_failure_class)) {
+        failures.push(`${row.name}: red/yellow compatibility.first_failure_class must name the first blocker`);
+      }
+      if (!isNonEmptyStringArray(row.compatibility.known_blockers)) {
+        failures.push(`${row.name}: red/yellow compatibility.known_blockers must name at least one blocker`);
+      } else if (
+        isNonEmptyString(row.compatibility.first_failure_class) &&
+        row.compatibility.first_failure_class.trim() !== row.compatibility.known_blockers.find(isNonEmptyString).trim()
+      ) {
+        failures.push(`${row.name}: red/yellow compatibility.first_failure_class must match the first known blocker`);
       }
     }
   }
@@ -462,7 +494,7 @@ function main() {
 
   const merged = {
     ...mergedArtifactMetadata(payloads, new Date().toISOString()),
-    benchmark_runner: "scripts/bench/bench-vs-tsgo.sh",
+    benchmark_runner: BENCHMARK_RUNNER,
     merged_from: payloads.map(({ file }) => path.basename(file)).sort(),
     validation: {
       hyperfine_exit_codes_required: hyperfineExitCodesRequired,
