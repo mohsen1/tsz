@@ -1212,7 +1212,7 @@ impl<'a> CheckerState<'a> {
                 ty == TypeId::ERROR
                     || crate::query_boundaries::common::is_conditional_type(self.ctx.types, ty)
                     || crate::query_boundaries::common::is_generic_application(self.ctx.types, ty)
-                    || crate::query_boundaries::common::is_keyof_type(self.ctx.types, ty)
+                    || crate::query_boundaries::type_predicates::is_keyof_type(self.ctx.types, ty)
             };
             let key_space_is_unresolved = |ty: TypeId| -> bool {
                 ty == TypeId::ERROR
@@ -1461,7 +1461,8 @@ impl<'a> CheckerState<'a> {
                 // contains a `keyof _` sub-type, prefer the evaluated form for
                 // the message.
                 let db = self.ctx.types.as_type_database();
-                let raw_is_keyof = crate::query_boundaries::common::is_keyof_type(db, index_type);
+                let raw_is_keyof =
+                    crate::query_boundaries::type_predicates::is_keyof_type(db, index_type);
                 let evaluated_has_keyof = raw_is_keyof
                     && index_type != evaluated_index_type
                     && crate::query_boundaries::type_predicates::type_contains_keyof_anywhere(

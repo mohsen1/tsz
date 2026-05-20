@@ -1,6 +1,16 @@
 use tsz_solver::TypeId;
 use tsz_solver::construction::TypeDatabase;
 
+/// True when `type_id` is structurally a `keyof` type.
+pub(crate) fn is_keyof_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    super::common::is_keyof_type(db, type_id)
+}
+
+/// True when `type_id` is structurally an intersection type.
+pub(crate) fn is_intersection_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    super::common::is_intersection_type(db, type_id)
+}
+
 /// True when some `TypeApplication` reachable from `type_id` (or from its
 /// preserved display alias) has `TypeId::UNKNOWN` as a direct type argument.
 pub(crate) fn type_application_args_contain_unknown(

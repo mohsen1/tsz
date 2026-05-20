@@ -1246,7 +1246,7 @@ impl<'a> CheckerState<'a> {
                             // the type argument carries an explicit constraint
                             // clause, tsc reports the mismatch against the
                             // declared `keyof T`.
-                            if crate::query_boundaries::common::is_keyof_type(
+                            if crate::query_boundaries::type_predicates::is_keyof_type(
                                 self.ctx.types,
                                 constraint_resolved,
                             ) {

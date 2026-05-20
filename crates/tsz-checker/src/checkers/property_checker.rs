@@ -589,9 +589,9 @@ impl<'a> CheckerState<'a> {
         // in the message.
         let db = self.ctx.types;
         let preserves_intersection_shape =
-            crate::query_boundaries::common::is_intersection_type(db, object_type)
+            crate::query_boundaries::type_predicates::is_intersection_type(db, object_type)
                 || db.get_display_alias(object_type).is_some_and(|alias| {
-                    crate::query_boundaries::common::is_intersection_type(db, alias)
+                    crate::query_boundaries::type_predicates::is_intersection_type(db, alias)
                 });
         if !preserves_intersection_shape {
             return None;
