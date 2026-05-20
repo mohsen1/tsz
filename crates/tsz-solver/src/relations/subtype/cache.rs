@@ -9,7 +9,7 @@
 //! - Pre-evaluation intrinsic checks (Object/Function interfaces)
 //! - Meta-type evaluation bridging
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::def::DefId;
 use crate::def::resolver::TypeResolver;
 use crate::relations::subtype::{SubtypeChecker, SubtypeResult, is_disjoint_unit_type};

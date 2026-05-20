@@ -1,10 +1,11 @@
 use super::*;
-use crate::TypeInterner;
-use crate::TypeResolver;
+use crate::Visibility;
 use crate::construction::QueryCache;
+use crate::construction::TypeInterner;
 use crate::def::DefId;
 use crate::diagnostics::SubtypeFailureReason;
-use crate::{TypeSubstitution, Visibility, instantiate_type};
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::relations::subtype::TypeResolver;
 use tsz_binder::SymbolId;
 
 #[test]
@@ -1506,7 +1507,7 @@ impl TypeResolver for ReadonlyArrayDefResolver {
     fn resolve_ref(
         &self,
         _symbol: SymbolRef,
-        _interner: &dyn crate::TypeDatabase,
+        _interner: &dyn crate::construction::TypeDatabase,
     ) -> Option<TypeId> {
         None
     }
@@ -26991,8 +26992,9 @@ fn test_explain_failure_resolves_typequery_to_structural_form() {
     //
     // Assignment `x5 = Outer` where `x5: typeof importInst` should produce
     // MissingProperty for 'C' (TS2741), not generic TypeMismatch (TS2322).
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
     use crate::types::TypeData;
-    use crate::{SymbolRef, TypeEnvironment};
 
     let interner = TypeInterner::new();
 

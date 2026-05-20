@@ -16,7 +16,7 @@ use tsz_checker::context::CheckerOptions;
 use tsz_checker::state::CheckerState;
 use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_common::diagnostics::diagnostic_codes;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
     let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -2919,7 +2919,7 @@ export const publicProcedure = trpc.procedure;
     .expect("batch-style args");
 
     tsz_solver::construction::clear_thread_local_cache();
-    tsz_solver::reset_subtype_thread_local_state();
+    tsz_solver::relations::subtype::reset_subtype_thread_local_state();
     tsz::checker::clear_all_thread_local_state();
 
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");

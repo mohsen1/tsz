@@ -4,7 +4,7 @@
 //! checker/CLI/LSP code paths. Keep names, docs, and behavior here scoped to
 //! experimentation so they do not imply shipped Sound Mode semantics.
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::judge::JudgeConfig;
 use crate::relations::subtype::{SubtypeChecker, TypeEnvironment};
 use crate::types::{TypeData, TypeId};

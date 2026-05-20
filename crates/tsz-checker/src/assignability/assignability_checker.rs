@@ -21,9 +21,9 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::NarrowingContext;
 use tsz_solver::TypeId;
 use tsz_solver::computation::TypeResolver;
+use tsz_solver::narrowing::NarrowingContext;
 
 impl<'a> CheckerState<'a> {
     /// Merge overflow flags into the checker context (sticky: only ever sets to `true`).
@@ -554,7 +554,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn get_keyof_type_keys(
         &mut self,
         type_id: TypeId,
-        db: &dyn tsz_solver::TypeDatabase,
+        db: &dyn tsz_solver::construction::TypeDatabase,
     ) -> FxHashSet<Atom> {
         if let Some(keyof_type) = get_keyof_type(db, type_id)
             && let Some(key_type) = keyof_object_properties(db, keyof_type)
@@ -1257,7 +1257,10 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if a type contains an error application (recursively).
-    fn type_contains_error_application(db: &dyn tsz_solver::TypeDatabase, type_id: TypeId) -> bool {
+    fn type_contains_error_application(
+        db: &dyn tsz_solver::construction::TypeDatabase,
+        type_id: TypeId,
+    ) -> bool {
         // Check if it's a direct error application
         if let Some(app) = crate::query_boundaries::common::type_application(db, type_id)
             && app.base == TypeId::ERROR

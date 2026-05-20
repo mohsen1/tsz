@@ -5,9 +5,10 @@
 //! over direct `TypeInterner` access. Test code may use the re-exported
 //! `TypeInterner` type for scaffolding.
 
+use tsz_solver::construction::TypeDatabase;
 #[cfg(test)]
-pub(crate) use tsz_solver::TypeInterner;
-use tsz_solver::{StringIntrinsicKind, TypeDatabase, TypeId};
+pub(crate) use tsz_solver::construction::TypeInterner;
+use tsz_solver::{StringIntrinsicKind, TypeId};
 
 /// Create a string intrinsic type from a validated lib intrinsic name.
 pub(crate) fn string_intrinsic_by_name(

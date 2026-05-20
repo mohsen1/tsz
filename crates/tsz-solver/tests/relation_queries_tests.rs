@@ -1,5 +1,6 @@
 use super::*;
-use crate::{FunctionShape, ParamInfo, PropertyInfo, TypeInterner};
+use crate::construction::TypeInterner;
+use crate::{FunctionShape, ParamInfo, PropertyInfo};
 
 fn make_animal_dog(interner: &TypeInterner) -> (TypeId, TypeId) {
     let name = interner.intern_string("name");

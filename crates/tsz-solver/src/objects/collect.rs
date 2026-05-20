@@ -286,11 +286,19 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
             return None;
         }
 
-        let substitution =
-            crate::TypeSubstitution::from_args(self.interner, &type_params, &app.args);
-        let mut instantiated = crate::instantiate_type(self.interner, body, &substitution);
+        let substitution = crate::instantiation::instantiate::TypeSubstitution::from_args(
+            self.interner,
+            &type_params,
+            &app.args,
+        );
+        let mut instantiated =
+            crate::instantiation::instantiate::instantiate_type(self.interner, body, &substitution);
         if crate::contains_this_type(self.interner, instantiated) {
-            instantiated = crate::substitute_this_type(self.interner, instantiated, type_id);
+            instantiated = crate::instantiation::instantiate::substitute_this_type(
+                self.interner,
+                instantiated,
+                type_id,
+            );
         }
         Some(instantiated)
     }

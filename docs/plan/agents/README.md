@@ -96,6 +96,8 @@ Rules:
 4. Initialize the real `TypeScript/` submodule once in the primary checkout.
    In sibling worktrees, prefer `scripts/setup/link-ts-submodule.sh` so
    `TypeScript/` is a symlink to the primary checkout's populated submodule.
+   If another worktree has the populated corpus instead, pass
+   `--source <repo-or-TypeScript-dir>`.
 5. Do not mutate the `TypeScript/` submodule. It is read-only test data.
 
 Recommended new-worktree path:

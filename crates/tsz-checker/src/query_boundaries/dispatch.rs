@@ -1,4 +1,6 @@
-use tsz_solver::{TypeDatabase, TypeId, TypeResolver};
+use tsz_solver::TypeId;
+use tsz_solver::construction::TypeDatabase;
+use tsz_solver::relations::subtype::TypeResolver;
 
 pub(crate) use super::common::{intersection_members, is_type_parameter_like, union_members};
 
@@ -18,6 +20,6 @@ pub(crate) fn evaluate_type_with_resolver<R: TypeResolver>(
     resolver: &R,
     type_id: TypeId,
 ) -> TypeId {
-    let mut evaluator = tsz_solver::TypeEvaluator::with_resolver(db, resolver);
+    let mut evaluator = tsz_solver::computation::TypeEvaluator::with_resolver(db, resolver);
     evaluator.evaluate(type_id)
 }
