@@ -1,7 +1,7 @@
 //! Property access resolution (`PropertyAccessEvaluator`) for resolving
 //! property access on types (obj.prop, obj["key"], etc.).
 
-use crate::caches::db::QueryDatabase;
+use crate::caches::db::{QueryDatabase, TypeCompilerOptions};
 use crate::relations::subtype::TypeResolver;
 use crate::types::{IntrinsicKind, LiteralValue, ObjectShapeId, TypeData, TypeId};
 use crate::{ApparentMemberKind, TypeDatabase, apparent_object_member_kind};
@@ -187,8 +187,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             db,
             resolver: None,
             no_unchecked_indexed_access: false,
-            exact_optional_property_types:
-                crate::caches::db::QueryDatabase::exact_optional_property_types(db),
+            exact_optional_property_types: TypeCompilerOptions::exact_optional_property_types(db),
             guard: RefCell::new(crate::recursion::RecursionGuard::with_profile(
                 crate::recursion::RecursionProfile::PropertyAccess,
             )),

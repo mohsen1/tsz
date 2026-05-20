@@ -1,3 +1,4 @@
+use crate::caches::db::TypeCompilerOptions;
 use crate::def::DefId;
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::type_queries::{UnionMembersKind, classify_for_union_members};
@@ -616,10 +617,10 @@ impl<'a> NarrowingContext<'a> {
 
     fn cache_compiler_flags(&self) -> u8 {
         let mut flags = 0;
-        if QueryDatabase::no_unchecked_indexed_access(self.db) {
+        if TypeCompilerOptions::no_unchecked_indexed_access(self.db) {
             flags |= 1 << 0;
         }
-        if QueryDatabase::exact_optional_property_types(self.db) {
+        if TypeCompilerOptions::exact_optional_property_types(self.db) {
             flags |= 1 << 1;
         }
         flags
