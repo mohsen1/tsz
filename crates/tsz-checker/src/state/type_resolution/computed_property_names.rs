@@ -174,7 +174,9 @@ impl<'a> CheckerState<'a> {
                 };
                 if self
                     .resolve_computed_property_name_in_arena(decl_arena, name_idx)
-                    .is_some_and(|name| name.starts_with("__unique_"))
+                    .is_some_and(|name| {
+                        name.starts_with("__unique_") || name.starts_with("__symbol_")
+                    })
                 {
                     set.insert((computed.expression, arena_key));
                 }
@@ -255,6 +257,10 @@ impl<'a> CheckerState<'a> {
             expr_type,
         ) {
             Some(self.ctx.types.resolve_atom_ref(name).to_string())
+        } else if let Some(name) =
+            self.symbol_valued_binding_property_name(computed.expression, expr_type)
+        {
+            Some(name)
         } else {
             crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, expr_type)
                 .map(|sym_ref| format!("__unique_{}", sym_ref.0))

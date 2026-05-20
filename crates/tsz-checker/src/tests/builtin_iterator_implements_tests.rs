@@ -181,6 +181,35 @@ function processSet(s: Set<number>) {
 }
 
 // ---------------------------------------------------------------------------
+// Plain `const k = Symbol()` computed property — `symbol_valued_binding`
+// path: the key is `__symbol_<file>_<sym>`, not `__unique_*`.  Both the name
+// map and the symbol-named prepass must include this case so that a class
+// implementing an interface with `[k]` can find a matching signature.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn no_false_positive_ts2416_const_symbol_computed_property_name() {
+    assert_no_2416(
+        "
+const sym = Symbol();
+interface IBase { [sym](): number; }
+class ConcreteA implements IBase { [sym](): number { return 0; } }
+",
+    );
+}
+
+#[test]
+fn no_false_positive_ts2416_const_symbol_computed_property_name_renamed_var() {
+    assert_no_2416(
+        "
+const myKey = Symbol();
+interface IBase2 { [myKey](): string; }
+class ConcreteB implements IBase2 { [myKey](): string { return ''; } }
+",
+    );
+}
+
+// ---------------------------------------------------------------------------
 // WeakMap — another multi-lib built-in (spans lib.es2015.collection.d.ts
 // and lib.es2015.weakref-adjacent declarations)
 // ---------------------------------------------------------------------------
