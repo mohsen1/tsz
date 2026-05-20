@@ -2572,7 +2572,17 @@ impl<'a> ES5ClassTransformer<'a> {
                     &instance_props,
                 );
             }
-            if self.constructor_contains_new_target(ctor.body, &ctor.parameters, &instance_props) {
+            let constructor_scope_contains_new_target =
+                self.constructor_body_or_params_contain_new_target(ctor.body, &ctor.parameters);
+            let moved_initializers_contain_new_target =
+                self.moved_instance_initializers_contain_new_target(&instance_props);
+            if constructor_scope_contains_new_target {
+                ctor_body.insert(0, Self::class_constructor_new_target_capture_ir());
+            }
+            if moved_initializers_contain_new_target
+                && (!constructor_scope_contains_new_target
+                    || (self.has_extends && !self.extends_null))
+            {
                 self.insert_class_new_target_capture(&mut ctor_body);
             }
         } else {
@@ -3923,11 +3933,10 @@ impl<'a> ES5ClassTransformer<'a> {
         false
     }
 
-    fn constructor_contains_new_target(
+    fn constructor_body_or_params_contain_new_target(
         &self,
         body_idx: NodeIndex,
         params: &NodeList,
-        instance_props: &[NodeIndex],
     ) -> bool {
         (body_idx.is_some() && contains_new_target_reference(self.arena, body_idx))
             || params.nodes.iter().any(|&param_idx| {
@@ -3939,7 +3948,6 @@ impl<'a> ES5ClassTransformer<'a> {
                             && contains_new_target_reference(self.arena, param.initializer)
                     })
             })
-            || self.moved_instance_initializers_contain_new_target(instance_props)
     }
 
     fn class_constructor_new_target_capture_ir() -> IRNode {
