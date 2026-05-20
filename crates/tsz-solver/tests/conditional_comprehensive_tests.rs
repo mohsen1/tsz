@@ -1991,6 +1991,39 @@ fn test_t_extends_any_distribution_over_never_preserved() {
 }
 
 #[test]
+fn test_t_extends_any_never_false_target_accepts_true_branch_source() {
+    // In target position, `T extends any|unknown ? X : never` accepts a source
+    // that already fits `X`; the distributive `never` case contributes no
+    // values, so the source does not also have to be assignable to `never`.
+    let interner = TypeInterner::new();
+
+    for (param_name, extends_type) in [
+        ("T", TypeId::ANY),
+        ("P", TypeId::UNKNOWN),
+        ("Item", TypeId::ANY),
+    ] {
+        let check = make_unconstrained_param(&interner, param_name);
+        let target = interner.conditional(ConditionalType {
+            check_type: check,
+            extends_type,
+            true_type: TypeId::STRING,
+            false_type: TypeId::NEVER,
+            is_distributive: true,
+        });
+
+        let mut checker = SubtypeChecker::new(&interner);
+        assert!(
+            checker.is_subtype_of(TypeId::STRING, target),
+            "`{param_name} extends any|unknown ? string : never` should accept string"
+        );
+        assert!(
+            !checker.is_subtype_of(TypeId::NUMBER, target),
+            "`{param_name} extends any|unknown ? string : never` should still reject number"
+        );
+    }
+}
+
+#[test]
 fn test_equal_any_x_rejects_non_any_extends_identity() {
     // Structural simulation of the type-challenges `Equal<X, Y>` trick:
     //   type Equal<X, Y> = (<T>() => T extends X ? 1 : 2) extends

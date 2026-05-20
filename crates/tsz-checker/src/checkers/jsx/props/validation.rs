@@ -16,8 +16,8 @@ use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeId;
 use tsz_solver::computation::TypeSubstitution;
+use tsz_solver::{ObjectShape, TypeId};
 
 impl<'a> CheckerState<'a> {
     /// Walk every `{...expr}` spread attribute on a JSX element and emit
@@ -209,37 +209,18 @@ impl<'a> CheckerState<'a> {
 
         let props_for_access = self.normalize_jsx_required_props_target(props_type);
         let has_explicit_mismatch = explicit_attrs.iter().any(|(name, attr_type)| {
-            use crate::query_boundaries::common::PropertyAccessResult;
             if matches!(*attr_type, TypeId::ANY | TypeId::ERROR) {
                 return false;
             }
-            let expected_type = match self.resolve_property_access_with_env(props_for_access, name)
-            {
-                PropertyAccessResult::Success { type_id, .. }
-                | PropertyAccessResult::PossiblyNullOrUndefined {
-                    property_type: Some(type_id),
-                    ..
-                } => Some(type_id),
-                _ => crate::query_boundaries::common::object_shape_for_type(
-                    self.ctx.types,
-                    props_for_access,
-                )
-                .and_then(|shape| {
-                    shape.properties.iter().find_map(|prop| {
-                        (self.ctx.types.resolve_atom(prop.name) == name.as_str())
-                            .then_some(prop.type_id)
-                    })
-                }),
-            };
-            let expected_type = expected_type.or_else(|| {
-                self.jsx_concrete_prop_expected_type(props_for_access, name, &mut Vec::new())
-            });
+            let expected_type = self
+                .jsx_expected_attribute_write_type(props_for_access, name)
+                .or_else(|| {
+                    self.jsx_concrete_prop_expected_type(props_for_access, name, &mut Vec::new())
+                });
             let Some(expected_type) = expected_type else {
                 return false;
             };
-            let expected =
-                crate::query_boundaries::common::remove_undefined(self.ctx.types, expected_type);
-            !self.is_assignable_to(*attr_type, expected)
+            !self.is_assignable_to(*attr_type, expected_type)
         });
         let explicit_type = self.build_jsx_provided_attrs_object_type(&explicit_attrs);
         generic_spreads.push(explicit_type);
@@ -267,6 +248,55 @@ impl<'a> CheckerState<'a> {
             display_target,
             tag_name_idx,
         );
+    }
+
+    /// Return the target-side write surface for an authored JSX attribute.
+    ///
+    /// Optional props have a read surface (`T | undefined`) and a write surface
+    /// controlled by `exactOptionalPropertyTypes`. JSX attribute compatibility is
+    /// checking whether the authored value can be written to the target prop, so
+    /// callers must prefer `PropertyInfo::write_type` over ad-hoc
+    /// `undefined` stripping from the read type.
+    pub(in crate::checkers_domain::jsx) fn jsx_expected_attribute_write_type(
+        &mut self,
+        props_type: TypeId,
+        attr_name: &str,
+    ) -> Option<TypeId> {
+        let shape =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, props_type);
+        self.jsx_expected_attribute_write_type_from_shape(props_type, shape.as_deref(), attr_name)
+    }
+
+    pub(in crate::checkers_domain::jsx) fn jsx_expected_attribute_write_type_from_shape(
+        &mut self,
+        props_type: TypeId,
+        shape: Option<&ObjectShape>,
+        attr_name: &str,
+    ) -> Option<TypeId> {
+        let attr_atom = self.ctx.types.intern_string(attr_name);
+        if let Some(prop) =
+            shape.and_then(|shape| shape.properties.iter().find(|prop| prop.name == attr_atom))
+        {
+            return Some(if prop.write_type == TypeId::NONE {
+                prop.type_id
+            } else {
+                prop.write_type
+            });
+        }
+
+        use crate::query_boundaries::common::PropertyAccessResult;
+        match self.resolve_property_access_with_env(props_type, attr_name) {
+            PropertyAccessResult::Success {
+                type_id,
+                write_type,
+                ..
+            } => Some(write_type.unwrap_or(type_id)),
+            PropertyAccessResult::PossiblyNullOrUndefined {
+                property_type: Some(type_id),
+                ..
+            } => Some(type_id),
+            _ => None,
+        }
     }
 
     pub(in crate::checkers_domain::jsx) fn jsx_concrete_prop_expected_type(
