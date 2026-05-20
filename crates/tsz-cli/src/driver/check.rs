@@ -7551,9 +7551,12 @@ interface Node {
 
     #[test]
     fn real_syntax_errors_preserve_checker_grammar_diagnostics() {
+        // Without `declare`, the parser falls through to expression-statement
+        // parsing and never produces a TypeAliasDeclaration, so TS2457 would
+        // not be emitted and this test would vacuously pass.
         let diagnostics = collect_test_diagnostics(&[
             ("/a.ts", "const x =\n"),
-            ("/b.ts", "type void = string;\n"),
+            ("/b.ts", "declare type void = string;\n"),
         ]);
 
         assert!(

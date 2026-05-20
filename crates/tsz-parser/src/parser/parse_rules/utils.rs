@@ -113,8 +113,9 @@ pub fn look_ahead_is_type_alias_declaration(
     current_token: SyntaxKind,
 ) -> bool {
     look_ahead_is_on_same_line(scanner, current_token, |token| {
-        is_identifier_or_contextual_keyword(token)
-            || matches!(token, SyntaxKind::NumericLiteral | SyntaxKind::VoidKeyword)
+        // Mirrors tsc's isIdentifier(): contextual keywords yes, reserved words no.
+        // NumericLiteral retained from prior error-recovery path.
+        is_identifier_or_contextual_keyword(token) || token == SyntaxKind::NumericLiteral
     })
 }
 
@@ -445,10 +446,12 @@ mod tests {
     }
 
     #[test]
-    fn look_ahead_is_type_alias_declaration_accepts_void_keyword_for_recovery() {
+    fn look_ahead_is_type_alias_declaration_rejects_void_keyword() {
+        // `void` was previously accepted (it was in the VoidKeyword special-case
+        // alongside NumericLiteral), but tsc's isIdentifier() does not accept it.
         let (mut scanner, current) = scanner_after_first("type void = T");
         assert_eq!(current, SyntaxKind::TypeKeyword);
-        assert!(look_ahead_is_type_alias_declaration(&mut scanner, current));
+        assert!(!look_ahead_is_type_alias_declaration(&mut scanner, current));
     }
 
     #[test]

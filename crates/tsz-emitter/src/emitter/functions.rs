@@ -510,17 +510,20 @@ impl<'a> Printer<'a> {
                     continue;
                 }
                 // Skip parameters where the name is an empty/missing identifier
-                // (parser error recovery for invalid characters like ¬).
-                // But preserve rest parameters with empty names - tsc emits
-                // the `...` even when the parameter name is missing.
+                // (parser error recovery for reserved-word names like `enum`,
+                // `class`, `while`, etc. or invalid characters like ¬).
+                // When a type annotation is present (e.g. `enum: string`),
+                // use the type source as a proxy name.  Do NOT fall back to
+                // the parameter's own source range — that range contains the
+                // reserved keyword, which must not be emitted as a parameter
+                // name in JS output.
                 if !param.dot_dot_dot_token
                     && let Some(name_node) = self.arena.get(param.name)
                     && name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
                     && let Some(ident) = self.arena.get_identifier(name_node)
                     && ident.escaped_text.is_empty()
                 {
-                    let Some(recovered_name) =
-                        self.recovered_parameter_name_from_type_or_range(param_idx, param)
+                    let Some(recovered_name) = self.recovered_parameter_name_from_type_only(param)
                     else {
                         continue;
                     };
@@ -1049,10 +1052,21 @@ impl<'a> Printer<'a> {
                 })
             })?;
 
-        raw.trim_matches(|ch: char| ch == ':' || ch.is_whitespace())
-            .split(|ch: char| !matches!(ch, '_' | '$') && !ch.is_ascii_alphanumeric())
-            .find(|part| !part.is_empty())
-            .map(str::to_string)
+        identifier_from_raw(raw)
+    }
+
+    /// Only consults the type annotation — never the parameter's own source range.
+    /// Required when the name is a synthesized empty node from reserved-keyword error
+    /// recovery: the parameter range contains the keyword and must not be emitted.
+    fn recovered_parameter_name_from_type_only(
+        &self,
+        param: &tsz_parser::parser::node::ParameterData,
+    ) -> Option<String> {
+        let source = self.source_text?;
+        let type_node = self.arena.get(param.type_annotation)?;
+        let raw = crate::safe_slice::slice(source, type_node.pos as usize, type_node.end as usize)
+            .ok()?;
+        identifier_from_raw(raw)
     }
 
     pub(in crate::emitter) fn recovered_empty_parameter_name_from_header(
@@ -1154,12 +1168,18 @@ impl<'a> Printer<'a> {
     }
 }
 
-fn recovered_parameter_name_from_colon_header(raw: &str) -> Option<String> {
-    let after_colon = raw.trim().strip_prefix(':')?;
-    after_colon
-        .split(|ch: char| !matches!(ch, '_' | '$') && !ch.is_ascii_alphanumeric())
+fn first_identifier_token(s: &str) -> Option<String> {
+    s.split(|ch: char| !matches!(ch, '_' | '$') && !ch.is_ascii_alphanumeric())
         .find(|part| !part.is_empty())
         .map(str::to_string)
+}
+
+fn identifier_from_raw(raw: &str) -> Option<String> {
+    first_identifier_token(raw.trim_matches(|ch: char| ch == ':' || ch.is_whitespace()))
+}
+
+fn recovered_parameter_name_from_colon_header(raw: &str) -> Option<String> {
+    first_identifier_token(raw.trim().strip_prefix(':')?)
 }
 
 #[cfg(test)]
