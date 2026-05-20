@@ -70,7 +70,10 @@ git fetch origin main
 scripts/agents/show-goal.sh M1-A
 ```
 
-The session then follows `docs/plan/agents/<AgentName>.md`.
+The session then runs the rest of that goal file's `Start Every Cycle`
+commands before starting work. Today every session checks disk and owned work
+with `disk-preflight` and `list-owned-work` after refreshing the repo-owned
+goal file.
 
 ## Worktree And TypeScript Submodule Policy
 

@@ -86,10 +86,6 @@ pub const CONTEXT_FLAG_TEMPLATE_SPAN_EXPRESSION: u32 = 262144;
 pub const CONTEXT_FLAG_PARAMETER_BINDING_PATTERN: u32 = 524288;
 /// Context flag: parsing a function-like body.
 pub const CONTEXT_FLAG_FUNCTION_BODY: u32 = 1048576;
-/// Context flag: parsing an enum member initializer.
-/// Missing-comma recovery should keep a following bracketed line as the next
-/// enum member rather than an element-access continuation.
-pub const CONTEXT_FLAG_ENUM_MEMBER_INITIALIZER: u32 = 2097152;
 
 // =============================================================================
 // Parse Diagnostic

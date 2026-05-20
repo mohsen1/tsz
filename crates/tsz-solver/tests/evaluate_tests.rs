@@ -9667,6 +9667,57 @@ fn test_correlated_union_index_access_cross_product() {
 }
 
 #[test]
+fn test_mapped_index_union_of_generic_key_intersections_preserves_key() {
+    let interner = TypeInterner::new();
+
+    let mapped_key_name = interner.intern_string("P");
+    let generic_key_name = interner.intern_string("K");
+    let one = interner.literal_string("one");
+    let two = interner.literal_string("two");
+    let key_space = interner.union(vec![one, two]);
+
+    let mapped_key = interner.type_param(TypeParamInfo {
+        name: mapped_key_name,
+        constraint: Some(key_space),
+        default: None,
+        is_const: false,
+    });
+    let generic_key = interner.type_param(TypeParamInfo {
+        name: generic_key_name,
+        constraint: Some(key_space),
+        default: None,
+        is_const: false,
+    });
+
+    let mapped = interner.mapped(MappedType {
+        type_param: TypeParamInfo {
+            name: mapped_key_name,
+            constraint: Some(key_space),
+            default: None,
+            is_const: false,
+        },
+        constraint: key_space,
+        template: mapped_key,
+        name_type: None,
+        optional_modifier: None,
+        readonly_modifier: None,
+    });
+
+    let index_type = interner.union(vec![
+        interner.intersection2(generic_key, one),
+        interner.intersection2(generic_key, two),
+    ]);
+
+    let result = evaluate_index_access(&interner, mapped, index_type);
+    assert_eq!(
+        result,
+        generic_key,
+        "a union covering every constrained `K & key` member should index mapped templates as K, got {:?}",
+        interner.lookup(result)
+    );
+}
+
+#[test]
 fn test_index_access_union_object_union_key_no_unchecked() {
     let interner = TypeInterner::new();
 

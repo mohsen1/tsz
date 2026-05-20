@@ -115,6 +115,40 @@ if ('name' in r) {
 }
 
 #[test]
+fn nested_in_check_preserves_outer_mapped_union_member_narrowing() {
+    let diagnostics = tsz_checker::test_utils::check_source_code_messages(
+        r#"
+type ReplaceKeys<U, T, Y> = {
+  [K in keyof U]: K extends T
+    ? K extends keyof Y
+      ? Y[K]
+      : never
+    : U[K]
+};
+
+type Named = { kind: 'named'; name: string };
+type Counted = { kind: 'counted'; count: number };
+
+type Replaced = ReplaceKeys<Named | Counted, 'name', { name: boolean }>;
+
+declare const r: Replaced;
+
+if ('name' in r) {
+  if ('count' in r) {
+    r.count;
+  }
+  const name: boolean = r.name;
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "Expected outer mapped-union `in` narrowing to survive nested `in` check, got {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn in_operator_narrows_literal_key_mapped_type_union_member() {
     let diagnostics = tsz_checker::test_utils::check_source_code_messages(
         r#"

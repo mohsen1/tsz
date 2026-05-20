@@ -38,6 +38,29 @@ fn emit_es5_with_module(source: &str, module: ModuleKind) -> String {
     lower_and_print(&parser.arena, root, opts).code
 }
 
+#[test]
+fn accessor_return_type_asserted_object_spread_uses_assign() {
+    let output = emit_es5_with_module(
+        "declare const props: WizardStepProps;\n\
+         export class Wizard {\n\
+             get steps() {\n\
+                 return { wizard: this, ...props } as WizardStepProps;\n\
+             }\n\
+         }\n\
+         export interface WizardStepProps { wizard?: Wizard; }\n",
+        ModuleKind::CommonJS,
+    );
+
+    assert!(
+        output.contains("return __assign({ wizard: this }, props);"),
+        "ES5 class accessor object spread should delegate to object-spread lowering.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return (_a = { wizard: this },"),
+        "Object spread must not be treated as computed-property comma lowering.\nOutput:\n{output}"
+    );
+}
+
 fn emit_es5_with_comments(source: &str) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -144,6 +167,112 @@ fn new_target_es5_class_constructor_and_invalid_method_use_tsc_recovery() {
     assert!(
         !output.contains("new.target"),
         "Class ES5 output must not retain raw `new.target` syntax.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn new_target_es5_object_literal_methods_and_accessors_get_invalid_capture() {
+    let output = emit_es5(
+        "const O = {\n\
+             [new.target]: undefined,\n\
+             k() { return new.target; },\n\
+             get l() { return new.target; },\n\
+             set m(_) { _ = new.target; },\n\
+             n: new.target,\n\
+         };\n",
+    );
+
+    assert!(
+        output.contains(
+            "_a.k = function () {\n        var _newTarget = void 0;\n        return _newTarget;\n    }"
+        ),
+        "Object-literal methods own invalid `new.target` and should not close over the outer computed-name binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "get: function () {\n        var _newTarget = void 0;\n        return _newTarget;\n    }"
+        ),
+        "Object-literal getters own invalid `new.target` through the accessor descriptor function.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "set: function (_) {\n        var _newTarget = void 0;\n        _ = _newTarget;\n    }"
+        ),
+        "Object-literal setters own invalid `new.target` through the accessor descriptor function.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn new_target_es5_derived_constructor_body_capture_precedes_super_capture() {
+    let output = emit_es5(
+        "class A {}\n\
+         class B extends A {\n\
+             constructor() {\n\
+                 super();\n\
+                 const e = new.target;\n\
+                 const f = () => new.target;\n\
+             }\n\
+         }\n",
+    );
+
+    let new_target_capture = output
+        .find("var _newTarget = this.constructor;")
+        .unwrap_or_else(|| {
+            panic!("Derived constructor body should capture `new.target`.\nOutput:\n{output}")
+        });
+    let super_capture = output.find("var _this = _super.call(this) || this;").unwrap_or_else(|| {
+        panic!("Derived constructor should still capture the super return value.\nOutput:\n{output}")
+    });
+
+    assert!(
+        new_target_capture < super_capture,
+        "Constructor-body `new.target` capture should precede the super return capture, matching tsc.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn new_target_es5_derived_constructor_keeps_body_and_field_captures() {
+    let output = emit_es5(
+        "class B {}\n\
+         class D extends B {\n\
+             x = new.target;\n\
+             constructor(value = new.target) {\n\
+                 super();\n\
+                 const body = new.target;\n\
+             }\n\
+         }\n",
+    );
+
+    let captures: Vec<_> = output
+        .match_indices("var _newTarget = this.constructor;")
+        .map(|(idx, _)| idx)
+        .collect();
+    assert_eq!(
+        captures.len(),
+        2,
+        "Derived constructor should emit separate `new.target` captures for constructor scope and moved field initializers.\nOutput:\n{output}"
+    );
+
+    let super_capture = output.find("var _this = _super.call(this) || this;").unwrap_or_else(|| {
+        panic!("Derived constructor should still capture the super return value.\nOutput:\n{output}")
+    });
+    let field_initializer = output.find("_this.x = _newTarget;").unwrap_or_else(|| {
+        panic!("Moved field initializer should read the post-super capture.\nOutput:\n{output}")
+    });
+    let body_read = output.find("var body = _newTarget;").unwrap_or_else(|| {
+        panic!("Constructor body should still read a `new.target` capture.\nOutput:\n{output}")
+    });
+
+    assert!(
+        captures[0] < super_capture
+            && super_capture < captures[1]
+            && captures[1] < field_initializer
+            && field_initializer < body_read,
+        "Constructor-scope capture should precede super(), and moved field initializer capture should follow super() before field/body reads.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("new.target"),
+        "ES5 output must not retain raw `new.target` syntax.\nOutput:\n{output}"
     );
 }
 
@@ -594,6 +723,35 @@ fn class_accessors_capture_arrow_this_with_default_alias_when_available() {
     assert!(
         output.contains("return cb(_this);"),
         "Nested arrows should read the standard accessor this alias.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn static_members_capture_arrow_this_with_member_local_alias() {
+    let output = emit_es5(
+        "class C {\n\
+             static field = this;\n\
+             static get value() { () => this.field; return null; }\n\
+             static set value(next) { () => { this.field = next; }; }\n\
+             static method() { () => this.value; }\n\
+         }\n",
+    );
+
+    assert!(
+        output.contains("var _this = this;"),
+        "Static accessor/method arrows should capture the member-local this value.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return _this.field;"),
+        "Static getter arrow should read through the member-local this alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_this.field = next;"),
+        "Static setter arrow should assign through the member-local this alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return _this.value;"),
+        "Static method arrow should read through the member-local this alias.\nOutput:\n{output}"
     );
 }
 
@@ -1616,6 +1774,38 @@ fn test_async_function_awaiter() {
 }
 
 #[test]
+fn async_function_directive_prologue_stays_in_awaiter_wrapper() {
+    let output = emit_es5(
+        "declare var a: boolean;\n\
+         declare var p: Promise<boolean>;\n\
+         async function func(): Promise<void> {\n\
+             \"use strict\";\n\
+             var b = await p || a;\n\
+         }\n",
+    );
+
+    let wrapper_directive = output
+        .find("function () {\n        \"use strict\";\n        var b;")
+        .unwrap_or_else(|| {
+            panic!(
+                "Async directive prologue should be emitted before hoisted vars in the __awaiter wrapper.\nOutput:\n{output}"
+            )
+        });
+    let generator_return = output
+        .find("return __generator(this, function (_a) {")
+        .unwrap_or_else(|| panic!("Expected __generator body.\nOutput:\n{output}"));
+
+    assert!(
+        wrapper_directive < generator_return,
+        "Async directive prologue should precede the generator body.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("case 0:\n                        \"use strict\";"),
+        "Async directive prologue should not remain inside the generator switch case.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn async_arrow_hoisted_locals_share_var_statement() {
     let output = emit_es5(
         "(async () => {\n\
@@ -1849,5 +2039,125 @@ fn test_type_alias_stripped() {
     assert!(
         !output.contains("type ID"),
         "Type alias should be stripped from JS output.\nOutput:\n{output}"
+    );
+}
+
+// Structural rule: when an async function targeting ES5 contains a dynamic
+// import call and the module system is CommonJS, the IR transformer must lower
+// `import("mod")` to `Promise.resolve().then(function () { return
+// __importStar(require("mod")); })` — the same form the regular printer emits.
+// The name of the specifier and the presence/absence of other awaits are
+// irrelevant to the lowering rule; any string-literal specifier must produce
+// the same pattern.
+
+#[test]
+fn async_es5_cjs_dynamic_import_lowered_to_promise_resolve_require() {
+    let output = emit_es5_with_module(
+        "async function load() { return await import(\"./mod\"); }",
+        ModuleKind::CommonJS,
+    );
+    assert!(
+        output.contains("Promise.resolve().then("),
+        "CJS async ES5: import() must become Promise.resolve().then(...).\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("require(\"./mod\")"),
+        "CJS async ES5: require() with the original specifier must appear.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("import("),
+        "CJS async ES5: raw import() call must not remain in output.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_es5_cjs_dynamic_import_different_specifier_also_lowered() {
+    // Prove the rule operates on the specifier value, not just "mod".
+    let output = emit_es5_with_module(
+        "async function load() { return await import(\"@scope/package\"); }",
+        ModuleKind::CommonJS,
+    );
+    assert!(
+        output.contains("require(\"@scope/package\")"),
+        "CJS async ES5: specifier must be preserved verbatim in require().\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("import("),
+        "CJS async ES5: raw import() call must not remain.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_es5_amd_dynamic_import_lowered_to_new_promise_require() {
+    let output = emit_es5_with_module(
+        "async function load() { return await import(\"./amd-mod\"); }",
+        ModuleKind::AMD,
+    );
+    assert!(
+        output.contains("new Promise("),
+        "AMD async ES5: import() must be wrapped in new Promise(...).\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("require([\"./amd-mod\"]"),
+        "AMD async ES5: AMD-style require([specifier]) must appear.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("import("),
+        "AMD async ES5: raw import() must not remain in output.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_es5_umd_dynamic_import_lowered_same_as_amd() {
+    // UMD and AMD share the same promise-based require wrapper.
+    let output = emit_es5_with_module(
+        "async function load() { return await import(\"./umd-lib\"); }",
+        ModuleKind::UMD,
+    );
+    assert!(
+        output.contains("new Promise("),
+        "UMD async ES5: import() must be wrapped in new Promise(...).\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("require([\"./umd-lib\"]"),
+        "UMD async ES5: AMD-style require() must appear.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("import("),
+        "UMD async ES5: raw import() must not remain.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_es5_no_dynamic_import_lowering_for_esnext() {
+    // ESNext does not lower dynamic imports — import() must pass through.
+    let output = emit_es5_with_module(
+        "async function load() { return await import(\"./esm\"); }",
+        ModuleKind::ESNext,
+    );
+    assert!(
+        output.contains("import("),
+        "ESNext async ES5: import() must pass through unchanged.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_es5_system_dynamic_import_lowered_to_context_import() {
+    // System module: import() → context_1.import(specifier)
+    let output = emit_es5_with_module(
+        "async function load() { return await import(\"./sys-mod\"); }",
+        ModuleKind::System,
+    );
+    assert!(
+        output.contains("context_1.import(\"./sys-mod\")"),
+        "System async ES5: import() must become context_1.import(...).\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("require("),
+        "System async ES5: require() must not appear.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("Promise.resolve()"),
+        "System async ES5: Promise.resolve() CJS form must not appear.\nOutput:\n{output}"
     );
 }

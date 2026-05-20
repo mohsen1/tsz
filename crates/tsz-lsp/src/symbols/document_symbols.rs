@@ -2952,18 +2952,19 @@ fn propagate_ambient_modifier(symbols: &mut [DocumentSymbol]) {
 /// combine both declarations). Recurses so nested namespaces
 /// (`namespace A.B {} / namespace A {}`) also merge at every level.
 fn merge_same_name_modules(symbols: &mut Vec<DocumentSymbol>) {
-    // First recurse into each symbol's children so we merge deepest
-    // first (avoids seeing pre-merged children on subsequent passes).
-    for sym in symbols.iter_mut() {
-        merge_same_name_modules(&mut sym.children);
-    }
-    // Now merge at this level. Walk children left to right; for each
-    // Module entry, look ahead for another Module with the same name
-    // and fold its children in, dropping the duplicate.
+    // Walk left-to-right; for each mergeable entry, fold same-name
+    // siblings into it (collecting their children), then recurse into
+    // the now-complete children list.  This single-pass approach avoids
+    // the O(2^depth) blowup that arises when merging and recursing are
+    // interleaved: doing an initial "recurse first" pass followed by a
+    // post-merge re-recurse doubles the work at every level of a deeply
+    // nested chain.
     let mut i = 0;
     while i < symbols.len() {
         let mergeable = is_mergeable_kind(symbols[i].kind);
         if mergeable.is_none() {
+            // Non-mergeable: just recurse into children and move on.
+            merge_same_name_modules(&mut symbols[i].children);
             i += 1;
             continue;
         }
@@ -2980,10 +2981,11 @@ fn merge_same_name_modules(symbols: &mut Vec<DocumentSymbol>) {
                 j += 1;
             }
         }
-        // After merging this slot's siblings, its children may now
-        // contain duplicates from the folded-in entries (e.g.
-        // `namespace A { interface I {} } + namespace A { interface I {} }`
-        // → merged A has two `I` children). Recurse once more to resolve.
+        // After all same-name siblings have been folded in, recurse into
+        // the merged children list once.  Any duplicates introduced by
+        // the fold (e.g. `namespace A { interface I {} } + namespace A {
+        // interface I {} }` → merged A with two `I` children) are handled
+        // by this single recursive call.
         merge_same_name_modules(&mut symbols[i].children);
         i += 1;
     }

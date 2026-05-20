@@ -33,6 +33,15 @@ jobs:
           node scripts/ci/check-wip-state-comments.mjs --advisory --window-hours 24 --max-prs 60 \
             | tee -a "${GITHUB_STEP_SUMMARY}"
 
+      - name: Report stale queued/running CI runs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          node scripts/ci/check-stale-ci-runs.mjs --advisory --stale-minutes 45 --max-runs 100 \
+            | tee -a "${GITHUB_STEP_SUMMARY}"
+
   health:
     name: runner-health
     runs-on: ubuntu-latest

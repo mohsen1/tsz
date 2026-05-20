@@ -445,6 +445,9 @@ impl<'a> DeclarationEmitter<'a> {
                 .arena
                 .get_module(node)
                 .is_some_and(|module| self.has_export_modifier(&module.modifiers)),
+            // EXPORT_DECLARATION is the export statement itself — it always introduces
+            // exported bindings, so it counts as having an effective export.
+            k if k == syntax_kind_ext::EXPORT_DECLARATION => true,
             _ => false,
         }
     }

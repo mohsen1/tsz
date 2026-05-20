@@ -86,10 +86,26 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             .set(self.constraint_recursion_depth.get() - 1);
     }
 
-    /// Propagate a top-like type (any/unknown) to all inference placeholders
-    /// nested inside a target type. This matches tsc's propagationType mechanism
-    /// where `inferFromTypes(target, target)` is called with propagationType set
-    /// to the source type, so all type parameter positions receive the source.
+    /// Propagate `any` to inference placeholders that appear as **naked** type
+    /// variables in `target`.
+    ///
+    /// tsc's `propagationType` mechanism calls `inferFromTypes(target, target)`
+    /// with the source as the propagation type, but it only reaches placeholders
+    /// that are directly visible as type-variable positions — i.e. the target is
+    /// itself a type parameter, or it is a union/intersection whose members are
+    /// walked recursively.  It does NOT walk into arrays, tuples, objects, index
+    /// signatures, function shapes, or generic application arguments.
+    ///
+    /// Concretely:
+    /// - `f<T>(x: T)` with `any` → T = `any`               (direct naked T)
+    /// - `f<T>(x: T | string)` with `any` → T = `any`      (union member)
+    /// - `f<T>(x: T[])` with `any` → T = `unknown`         (array, not propagated)
+    /// - `f<T>(x: { v: T })` with `any` → T = `unknown`    (object, not propagated)
+    /// - `f<T>(x: { [s: string]: T })` with `any` → T = `unknown` (index sig, not propagated)
+    /// - `f<T>(x: Promise<T>)` with `any` → T = `unknown`  (object application, not propagated)
+    /// - `f<T>(x: Awaited<T>)` with `any` → T = `any`     (conditional alias, true/false branch)
+    /// - `f<T>(x: A extends B ? T : C)` with `any` → T = `any` (naked T in true/false branch)
+    /// - `f<T>(x: T extends B ? C : D)` with `any` → T = `unknown` (T only in check, not propagated)
     pub(super) fn propagate_type_to_placeholders(
         &mut self,
         ctx: &mut InferenceContext,
@@ -98,30 +114,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         target: TypeId,
         priority: crate::types::InferencePriority,
     ) {
-        // If target is directly a placeholder, add the propagation type as candidate
+        // Direct placeholder: add the propagation type as a candidate.
         if let Some(&var) = var_map.get(&target) {
             ctx.add_candidate(var, propagation_type, priority);
             return;
         }
 
-        // Recurse into the target structure to find nested placeholders
-        let target_key = self.interner.lookup(target);
-        match target_key {
-            Some(TypeData::Array(elem)) => {
-                self.propagate_type_to_placeholders(ctx, var_map, propagation_type, elem, priority);
-            }
-            Some(TypeData::Tuple(elems_id)) => {
-                let elems = self.interner.tuple_list(elems_id);
-                for elem in elems.iter() {
-                    self.propagate_type_to_placeholders(
-                        ctx,
-                        var_map,
-                        propagation_type,
-                        elem.type_id,
-                        priority,
-                    );
-                }
-            }
+        match self.interner.lookup(target) {
+            // Walk union/intersection members — naked T inside `T | string` must still
+            // receive `any` as a candidate.
             Some(TypeData::Union(members_id) | TypeData::Intersection(members_id)) => {
                 let members = self.interner.type_list(members_id);
                 for &member in members.iter() {
@@ -134,179 +135,53 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     );
                 }
             }
-            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
-                let shape = self.interner.object_shape(shape_id);
-                for prop in &shape.properties {
+            // Resolve lazy aliases and evaluate generic type applications so that:
+            // - `type MaybeT<T> = T | null` → expanded union, T is a reachable naked member
+            // - `Awaited<T>` (Application wrapping a conditional) → expanded conditional,
+            //   true/false branches are then walked to find naked T positions
+            // Non-conditional applications (e.g. `Promise<T>`, `Array<T>`) expand to
+            // object/array shapes which fall to `_ => {}`, preserving T = `unknown`.
+            Some(TypeData::Lazy(_)) | Some(TypeData::Application(_)) => {
+                let resolved = self.checker.evaluate_type(target);
+                if resolved != target {
                     self.propagate_type_to_placeholders(
                         ctx,
                         var_map,
                         propagation_type,
-                        prop.type_id,
-                        priority,
-                    );
-                }
-                // Walk index signatures — e.g., { [x: string]: T } needs T to get `any`
-                if let Some(ref idx) = shape.string_index {
-                    self.propagate_type_to_placeholders(
-                        ctx,
-                        var_map,
-                        propagation_type,
-                        idx.value_type,
-                        priority,
-                    );
-                }
-                if let Some(ref idx) = shape.number_index {
-                    self.propagate_type_to_placeholders(
-                        ctx,
-                        var_map,
-                        propagation_type,
-                        idx.value_type,
+                        resolved,
                         priority,
                     );
                 }
             }
-            Some(TypeData::Function(shape_id)) => {
-                let shape = self.interner.function_shape(shape_id);
-                for param in &shape.params {
-                    self.propagate_type_to_placeholders(
-                        ctx,
-                        var_map,
-                        propagation_type,
-                        param.type_id,
-                        priority,
-                    );
-                }
-                self.propagate_type_to_placeholders(
-                    ctx,
-                    var_map,
-                    propagation_type,
-                    shape.return_type,
-                    priority,
-                );
-                // Walk type predicate — e.g., `(a: any) => a is T` has T in predicate
-                if let Some(ref pred) = shape.type_predicate
-                    && let Some(pred_type) = pred.type_id
-                {
-                    self.propagate_type_to_placeholders(
-                        ctx,
-                        var_map,
-                        propagation_type,
-                        pred_type,
-                        priority,
-                    );
-                }
-            }
-            Some(TypeData::Callable(shape_id)) => {
-                let shape = self.interner.callable_shape(shape_id);
-                // Walk both call and construct signatures
-                for sig in shape
-                    .call_signatures
-                    .iter()
-                    .chain(shape.construct_signatures.iter())
-                {
-                    for param in &sig.params {
-                        self.propagate_type_to_placeholders(
-                            ctx,
-                            var_map,
-                            propagation_type,
-                            param.type_id,
-                            priority,
-                        );
-                    }
-                    self.propagate_type_to_placeholders(
-                        ctx,
-                        var_map,
-                        propagation_type,
-                        sig.return_type,
-                        priority,
-                    );
-                }
-                for prop in &shape.properties {
-                    self.propagate_type_to_placeholders(
-                        ctx,
-                        var_map,
-                        propagation_type,
-                        prop.type_id,
-                        priority,
-                    );
-                }
-            }
-            Some(TypeData::Application(app_id)) => {
-                let app = self.interner.type_application(app_id);
-                for arg in app.args.iter().copied() {
-                    self.propagate_type_to_placeholders(
-                        ctx,
-                        var_map,
-                        propagation_type,
-                        arg,
-                        priority,
-                    );
-                }
-            }
-            Some(TypeData::Mapped(mapped_id)) => {
-                let mapped = self.interner.mapped_type(mapped_id);
-                self.propagate_type_to_placeholders(
-                    ctx,
-                    var_map,
-                    propagation_type,
-                    mapped.constraint,
-                    priority,
-                );
-                self.propagate_type_to_placeholders(
-                    ctx,
-                    var_map,
-                    propagation_type,
-                    mapped.template,
-                    priority,
-                );
-            }
+            // Walk the true and false branches of a conditional type.
+            // tsc propagates `any` into naked T positions in true/false branches
+            // (e.g. `Awaited<T>` has `T` as its false branch so `f<T>(x: Awaited<T>)`
+            // with `any` correctly infers T = `any`).
+            // The check type and extends type are NOT walked: `T extends U ? ...`
+            // gives T = `unknown` when T is only in check position.
             Some(TypeData::Conditional(cond_id)) => {
                 let cond = self.interner.get_conditional(cond_id);
+                let true_type = cond.true_type;
+                let false_type = cond.false_type;
                 self.propagate_type_to_placeholders(
                     ctx,
                     var_map,
                     propagation_type,
-                    cond.check_type,
+                    true_type,
                     priority,
                 );
                 self.propagate_type_to_placeholders(
                     ctx,
                     var_map,
                     propagation_type,
-                    cond.extends_type,
-                    priority,
-                );
-                self.propagate_type_to_placeholders(
-                    ctx,
-                    var_map,
-                    propagation_type,
-                    cond.true_type,
-                    priority,
-                );
-                self.propagate_type_to_placeholders(
-                    ctx,
-                    var_map,
-                    propagation_type,
-                    cond.false_type,
+                    false_type,
                     priority,
                 );
             }
-            Some(TypeData::ReadonlyType(inner)) | Some(TypeData::KeyOf(inner)) => {
-                self.propagate_type_to_placeholders(
-                    ctx,
-                    var_map,
-                    propagation_type,
-                    inner,
-                    priority,
-                );
-            }
-            Some(TypeData::IndexAccess(obj, idx)) => {
-                self.propagate_type_to_placeholders(ctx, var_map, propagation_type, obj, priority);
-                self.propagate_type_to_placeholders(ctx, var_map, propagation_type, idx, priority);
-            }
-            _ => {
-                // No structural match — stop propagation
-            }
+            // Arrays, tuples, objects, index signatures, functions, callables,
+            // mapped types, and all other structural positions are NOT walked.
+            // tsc does not propagate `any` through nested structural shapes.
+            _ => {}
         }
     }
 
@@ -405,15 +280,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return;
         }
 
-        // When source is `any`, propagate it to all inference placeholders
-        // nested inside the target. This matches tsc's propagationType
-        // mechanism: `inferFromTypes(target, target)` with propagationType =
-        // source, which ensures that e.g. `f<T>(x: T[]): T` called with
-        // `any` infers T = any (not unknown).
-        //
-        // Note: we only propagate `any`, not `unknown`. While tsc propagates
-        // both, `unknown` can appear as an intermediate source type in tsz
-        // for non-user-facing reasons, and propagating it causes regressions.
+        // When source is `any`, propagate it to naked type-variable positions
+        // in the target via tsc's propagationType mechanism.  Only direct
+        // placeholders and union/intersection members receive `any`; structural
+        // shapes (arrays, objects, index signatures, applications, …) do not.
+        // See `propagate_type_to_placeholders` for the full rule.
         if source == TypeId::ANY {
             self.propagate_type_to_placeholders(ctx, var_map, source, target, priority);
             return;
