@@ -168,7 +168,8 @@ pub mod computation {
     pub use crate::operations::infer_generic_function;
     pub use crate::operations::{
         AssignabilityChecker, BinaryOpEvaluator, BinaryOpResult, CallEvaluator, CallResult,
-        MAX_CONSTRAINT_RECURSION_DEPTH, get_contextual_signature_cached_with_compat_checker,
+        GenericCallRequest, GenericCallResult, MAX_CONSTRAINT_RECURSION_DEPTH,
+        get_contextual_signature_cached_with_compat_checker,
         get_contextual_signature_for_arity_cached_with_compat_checker,
         get_contextual_signature_for_arity_with_compat_checker,
         get_contextual_signature_with_compat_checker,

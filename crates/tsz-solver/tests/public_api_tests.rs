@@ -1,9 +1,9 @@
+use tsz_solver::TypeId;
 use tsz_solver::computation::{
     InstantiationOptions, InstantiationRequest, InstantiationResult, TypeSubstitution,
     instantiate_type_with_request,
 };
 use tsz_solver::construction::TypeInterner;
-use tsz_solver::type_handles::TypeId;
 
 #[test]
 fn computation_exports_staged_instantiation_api() {
