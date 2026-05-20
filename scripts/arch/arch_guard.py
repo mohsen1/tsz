@@ -510,7 +510,7 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         "Checker query boundary: direct common quarantine references outside query_boundaries (#8225)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         ("crates/tsz-checker/src/query_boundaries/",),
-        3398,
+        3397,
     ),
 ]
 
@@ -622,7 +622,7 @@ REGEX_LINE_COUNT_CHECKS = [
             r"diagnostic\.message_text|raw|evaluated)"
             r"\.(?:contains|starts_with|ends_with|as_str)\s*\("
         ),
-        15,
+        14,
     ),
     (
         "Emitter boundary: source_text.contains recovery decisions (Track 9/10)",
