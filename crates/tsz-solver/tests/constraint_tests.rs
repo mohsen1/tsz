@@ -9,8 +9,8 @@ use crate::inference::infer::{InferenceContext, InferenceError, InferenceVar};
 use crate::intern::TypeInterner;
 use crate::relations::compat::CompatChecker;
 use crate::types::{
-    FunctionShape, InferencePriority, ParamInfo, PropertyInfo, TupleElement, TypeData,
-    TypeParamInfo,
+    FunctionShape, IndexSignature, InferencePriority, ObjectFlags, ObjectShape, ParamInfo,
+    PropertyInfo, TupleElement, TypeData, TypeParamInfo,
 };
 
 // =============================================================================
@@ -1303,4 +1303,312 @@ fn test_no_eopt_preserves_explicit_undefined_in_index_signature_inference() {
          must be preserved in the inferred index-signature value type. \
          Expected `string | number | undefined`, got TypeId({ret:?})"
     );
+}
+
+// =============================================================================
+// `any` propagation: naked type variable vs nested structural positions
+//
+// Rule: when a generic function is called with an `any` argument, T is inferred
+// as `any` ONLY when T appears directly as a naked type variable or as a
+// direct union/intersection member.  For nested structural positions (arrays,
+// objects, index signatures, application type args) T defaults to `unknown`.
+//
+// tsc 6.x verification (each comment states the tsc-observed result):
+//   f<T>(x: T) called with any          → T = any
+//   f<T>(x: T | string) called with any → T = any
+//   f<T>(x: T[]) called with any        → T = unknown
+//   f<T>(x: { v: T }) called with any   → T = unknown
+//   f<T>(x: { [s: string]: T }) …any   → T = unknown
+// =============================================================================
+
+/// `f<T>(x: T): T` called with `any` → T = `any`.
+/// T is a direct naked type variable; `any` must propagate.
+#[test]
+fn test_any_arg_naked_t_infers_any() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+
+    let t_name = interner.intern_string("T");
+    let t_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let func = interner.function(FunctionShape {
+        type_params: vec![TypeParamInfo {
+            name: t_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        }],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: t_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let result = evaluator.resolve_call(func, &[TypeId::ANY]);
+    match result {
+        CallResult::Success(ret) => {
+            assert_eq!(
+                ret,
+                TypeId::ANY,
+                "naked T with any arg: expected T=any, got {ret:?}"
+            );
+        }
+        other => panic!("Expected success, got {other:?}"),
+    }
+}
+
+/// `f<T>(x: T | string): T` called with `any` → T = `any`.
+/// T is a direct union member; `any` must still propagate.
+#[test]
+fn test_any_arg_union_member_t_infers_any() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+
+    let t_name = interner.intern_string("T");
+    let t_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let t_or_string = interner.union(vec![t_type, TypeId::STRING]);
+
+    let func = interner.function(FunctionShape {
+        type_params: vec![TypeParamInfo {
+            name: t_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        }],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: t_or_string,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Use K name variant to prove the rule isn't name-dependent.
+    let k_name = interner.intern_string("K");
+    let k_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let k_or_string = interner.union(vec![k_type, TypeId::STRING]);
+    let func_k = interner.function(FunctionShape {
+        type_params: vec![TypeParamInfo {
+            name: k_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        }],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: k_or_string,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: k_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    for (f, tparam_name) in [(func, "T"), (func_k, "K")] {
+        let result = evaluator.resolve_call(f, &[TypeId::ANY]);
+        match result {
+            CallResult::Success(ret) => {
+                assert_eq!(
+                    ret,
+                    TypeId::ANY,
+                    "{tparam_name} | string with any arg: expected {tparam_name}=any, got {ret:?}"
+                );
+            }
+            other => panic!("Expected success, got {other:?}"),
+        }
+    }
+}
+
+/// `f<T>(x: T[]): T` called with `any` → T = `unknown`.
+/// T is inside an array element position, not naked; `any` must NOT propagate.
+#[test]
+fn test_any_arg_array_elem_t_infers_unknown() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+
+    let t_name = interner.intern_string("T");
+    let t_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let t_array = interner.array(t_type);
+
+    let func = interner.function(FunctionShape {
+        type_params: vec![TypeParamInfo {
+            name: t_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        }],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: t_array,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let result = evaluator.resolve_call(func, &[TypeId::ANY]);
+    match result {
+        CallResult::Success(ret) => {
+            assert_eq!(
+                ret,
+                TypeId::UNKNOWN,
+                "T[] with any arg: expected T=unknown (not any), got {ret:?}"
+            );
+        }
+        other => panic!("Expected success, got {other:?}"),
+    }
+}
+
+/// `f<T>(x: { v: T }): T` called with `any` → T = `unknown`.
+/// T is an object property type, not naked; `any` must NOT propagate.
+#[test]
+fn test_any_arg_object_prop_t_infers_unknown() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+
+    let t_name = interner.intern_string("T");
+    let t_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let v_name = interner.intern_string("v");
+    let param_obj = interner.object(vec![PropertyInfo::new(v_name, t_type)]);
+
+    let func = interner.function(FunctionShape {
+        type_params: vec![TypeParamInfo {
+            name: t_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        }],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: param_obj,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let result = evaluator.resolve_call(func, &[TypeId::ANY]);
+    match result {
+        CallResult::Success(ret) => {
+            assert_eq!(
+                ret,
+                TypeId::UNKNOWN,
+                "{{ v: T }} with any arg: expected T=unknown (not any), got {ret:?}"
+            );
+        }
+        other => panic!("Expected success, got {other:?}"),
+    }
+}
+
+/// `f<T>(x: { [s: string]: T }): T` called with `any` → T = `unknown`.
+/// T is an index-signature value type, not naked; `any` must NOT propagate.
+#[test]
+fn test_any_arg_index_sig_t_infers_unknown() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+
+    let t_name = interner.intern_string("T");
+    let t_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let param_obj = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: t_type,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+    });
+
+    let func = interner.function(FunctionShape {
+        type_params: vec![TypeParamInfo {
+            name: t_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        }],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: param_obj,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let result = evaluator.resolve_call(func, &[TypeId::ANY]);
+    match result {
+        CallResult::Success(ret) => {
+            assert_eq!(
+                ret,
+                TypeId::UNKNOWN,
+                "{{ [s: string]: T }} with any arg: expected T=unknown (not any), got {ret:?}"
+            );
+        }
+        other => panic!("Expected success, got {other:?}"),
+    }
 }
