@@ -1046,7 +1046,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             // For unconstrained type parameters (no `extends`), skip —
                             // T could be anything.
                             let (should_check, effective_asserted) = if should_check {
-                                if crate::query_boundaries::common::is_this_type(
+                                if crate::query_boundaries::type_predicates::is_this_type(
                                     self.checker.ctx.types,
                                     asserted_type,
                                 ) {
