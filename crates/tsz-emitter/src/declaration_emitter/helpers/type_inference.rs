@@ -720,6 +720,23 @@ impl<'a> DeclarationEmitter<'a> {
             return self.rewrite_exported_import_equals_type_text(typeof_text);
         }
 
+        if self
+            .arena
+            .get(initializer)
+            .is_some_and(|node| node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+            && let Some(type_text) = self.infer_object_literal_type_text_at(initializer, 0)
+        {
+            return self.rewrite_exported_import_equals_type_text(type_text);
+        }
+
+        let widened = self.widen_unique_symbol_value_type_for_dts(type_id, 0);
+        if widened != type_id
+            && !self.inferred_declaration_preserves_initializer_type_arguments(initializer, type_id)
+        {
+            let type_text = self.print_type_id_for_inferred_declaration(widened);
+            return self.rewrite_exported_import_equals_type_text(type_text);
+        }
+
         if (type_id == tsz_solver::types::TypeId::ANY
             || type_id == tsz_solver::types::TypeId::ERROR)
             && self
@@ -788,6 +805,49 @@ impl<'a> DeclarationEmitter<'a> {
             .enum_value_index_access_alias_type_text(&type_text)
             .unwrap_or(type_text);
         self.rewrite_exported_import_equals_type_text(type_text)
+    }
+
+    fn inferred_declaration_preserves_initializer_type_arguments(
+        &self,
+        initializer: NodeIndex,
+        type_id: tsz_solver::types::TypeId,
+    ) -> bool {
+        let Some(interner) = self.type_interner else {
+            return false;
+        };
+        self.arena
+            .get(initializer)
+            .is_some_and(|node| node.kind == syntax_kind_ext::CALL_EXPRESSION)
+            && tsz_solver::visitor::application_id(interner, type_id).is_some()
+    }
+
+    pub(in crate::declaration_emitter) fn widened_inferred_expression_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_idx = self.skip_parenthesized_expression(expr_idx)?;
+        if let Some(sym_id) = self.value_reference_symbol(expr_idx)
+            && self.symbol_has_unique_symbol_type(sym_id)
+        {
+            return Some("symbol".to_string());
+        }
+        let type_id = self
+            .get_node_type_or_names(&[expr_idx])
+            .or_else(|| self.get_type_via_symbol(expr_idx))?;
+        self.type_interner?;
+        let widened = self.widen_unique_symbol_value_type_for_dts(type_id, 0);
+        (widened != type_id).then(|| self.print_type_id_for_inferred_declaration(widened))
+    }
+
+    pub(in crate::declaration_emitter) fn widen_unique_symbol_value_type_for_dts(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+        _depth: usize,
+    ) -> tsz_solver::types::TypeId {
+        let Some(interner) = self.type_interner else {
+            return type_id;
+        };
+        tsz_solver::visitor::widen_unique_symbol_value_type_for_dts(interner, type_id)
     }
 
     pub(in crate::declaration_emitter) fn rewrite_exported_import_equals_type_text(

@@ -181,13 +181,30 @@ impl<'a> Printer<'a> {
             && name_node.kind == SyntaxKind::PrivateIdentifier as u16
             && let Some(field_name) = get_private_field_name(self.arena, access.name_or_argument)
         {
-            let clean_name = field_name.strip_prefix('#').unwrap_or(&field_name);
-            if let Some(weakmap_name) = self.private_field_weakmaps.get(clean_name).cloned() {
+            let clean_name = field_name
+                .strip_prefix('#')
+                .unwrap_or(&field_name)
+                .to_string();
+            if let Some(weakmap_name) = self.private_field_weakmaps.get(&clean_name).cloned() {
+                let expression = access.expression;
+                // Side-effecting receivers must be captured once; `this` in `.call()` must
+                // match the receiver used in `__classPrivateFieldGet`.
+                let receiver_temp = if !self.private_call_receiver_is_simple(expression) {
+                    Some(self.make_unique_name_hoisted())
+                } else {
+                    None
+                };
+
+                let receiver_temp_str = receiver_temp.as_deref();
                 self.write_helper("__classPrivateFieldGet");
                 self.write("(");
-                self.emit_private_receiver(access.expression, clean_name);
+                if let Some(temp) = receiver_temp_str {
+                    self.write(temp);
+                    self.write(" = ");
+                }
+                self.emit_private_receiver(expression, &clean_name);
                 self.write(", ");
-                if let Some(info) = self.private_member_info.get(clean_name).cloned() {
+                if let Some(info) = self.private_member_info.get(&clean_name).cloned() {
                     if let Some(ref state_var) = info.state_var {
                         self.write(state_var);
                     } else {
@@ -205,11 +222,17 @@ impl<'a> Printer<'a> {
                     self.write(", \"f\"");
                 }
                 self.write(").call(");
-                self.emit_private_receiver(access.expression, clean_name);
+                if let Some(temp) = receiver_temp_str {
+                    self.write(temp);
+                } else {
+                    self.emit_private_receiver(expression, &clean_name);
+                }
                 if let Some(ref args) = call.arguments {
                     for &arg_idx in &args.nodes {
-                        self.write(", ");
-                        self.emit(arg_idx);
+                        if arg_idx.is_some() {
+                            self.write(", ");
+                            self.emit(arg_idx);
+                        }
                     }
                 }
                 self.write(")");

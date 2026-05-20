@@ -33,6 +33,7 @@ impl<'a> Printer<'a> {
         if let Some(text) = self.source_text {
             transformer.set_source_text(text);
         }
+        transformer.set_module_kind(self.ctx.outer_module_kind());
         let blocked_disposable_names = self.blocked_disposable_names_for_transform();
         transformer
             .set_disposable_env_context(self.next_disposable_env_id, blocked_disposable_names);

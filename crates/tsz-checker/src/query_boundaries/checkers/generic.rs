@@ -81,7 +81,7 @@ pub(crate) fn conditional_type_components(
 ///
 /// Returns `Some((check_type, extends_type, true_type, false_type))` if the
 /// type is a `Conditional`. Used for distinguishing true Extract patterns
-/// (`T extends C ? T : never` where true_type == check_type) from general
+/// (`T extends C ? T : never` where `true_type` == `check_type`) from general
 /// conditional types with custom true branches.
 pub(crate) fn full_conditional_type_components(
     db: &dyn TypeDatabase,
@@ -201,7 +201,7 @@ pub(crate) fn overload_type_param_counts(
 // Index-key classification
 // =========================================================================
 
-/// Re-export `IndexKeyKind` so generic_checker doesn't import solver directly.
+/// Re-export `IndexKeyKind` so `generic_checker` doesn't import solver directly.
 pub(crate) use tsz_solver::type_queries::IndexKeyKind;
 
 /// Classify a type for index-key matching (string, number, literal, union, etc.).
@@ -288,7 +288,7 @@ pub(crate) fn application_base_def_and_args(
 // Array-like structural surface helpers
 // =========================================================================
 
-/// Re-export `ArrayLikeKind` so generic_checker doesn't import solver directly.
+/// Re-export `ArrayLikeKind` so `generic_checker` doesn't import solver directly.
 pub(crate) use tsz_solver::type_queries::ArrayLikeKind;
 
 /// Classify whether a type is an array, tuple, or readonly array.

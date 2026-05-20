@@ -959,6 +959,7 @@ jobs:
           path: |
             .ci-metrics/conformance.json
             .ci-metrics/conformance-failures-*.txt
+          include-hidden-files: true
           if-no-files-found: warn
           retention-days: 1
 

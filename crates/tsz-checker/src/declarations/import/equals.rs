@@ -1163,9 +1163,9 @@ impl<'a> CheckerState<'a> {
                     if !left_has_value && emits_export_import_ts2708 && !member_resolves {
                         self.error_namespace_used_as_value_at(&name, qn.left);
                     }
-                    // If left is resolved, check if right member exists (TS2694)
-                    // Use the existing report_type_query_missing_member which handles this correctly
-                    self.report_type_query_missing_member(module_ref);
+                    // Right member exists check (TS2694). Alias-flavored
+                    // helper keeps TS2339 scoped to typeof queries only.
+                    self.report_qualified_alias_missing_member(module_ref);
                 }
 
                 // TS1380/TS1379: Check if any symbol in the qualified name chain

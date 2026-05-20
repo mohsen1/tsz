@@ -24,7 +24,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     // (Number/Bigint/Boolean) document distinct rationales (see in-arm
     // comments). Merging them collapses two semantically-different cases
     // into one, hurting readability of a tricky tsc-parity branch.
-    #[allow(clippy::match_same_arms)]
     pub(crate) fn evaluate_string_intrinsic(
         &mut self,
         kind: StringIntrinsicKind,

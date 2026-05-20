@@ -35,6 +35,13 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         let mut left_parts = self.short_circuit_operand_type_parts(binary.left, depth + 1)?;
+        if operator == SyntaxKind::BarBarToken as u16
+            && self.short_circuit_operand_is_syntactically_truthy(binary.left, depth + 1)
+        {
+            Self::dedupe_and_sort_short_circuit_type_parts(&mut left_parts);
+            return Some(left_parts);
+        }
+
         let right_parts = self.short_circuit_operand_type_parts(binary.right, depth + 1)?;
 
         if operator == SyntaxKind::BarBarToken as u16 {
@@ -50,6 +57,42 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
         Some(parts)
+    }
+
+    fn short_circuit_operand_is_syntactically_truthy(
+        &self,
+        expr_idx: NodeIndex,
+        depth: u32,
+    ) -> bool {
+        if depth > 8 {
+            return false;
+        }
+        let Some(expr_idx) = self.skip_parenthesized_expression_via_parent_node(expr_idx) else {
+            return false;
+        };
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+
+        match expr_node.kind {
+            k if k == syntax_kind_ext::NEW_EXPRESSION
+                || k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                || k == syntax_kind_ext::CLASS_EXPRESSION
+                || k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION =>
+            {
+                true
+            }
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                self.arena.get_binary_expr(expr_node).is_some_and(|binary| {
+                    binary.operator_token == SyntaxKind::BarBarToken as u16
+                        && self
+                            .short_circuit_operand_is_syntactically_truthy(binary.left, depth + 1)
+                })
+            }
+            _ => false,
+        }
     }
 
     fn short_circuit_operand_type_parts(
