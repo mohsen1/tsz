@@ -102,7 +102,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// - `f<T>(x: T[])` with `any` → T = `unknown`         (array, not propagated)
     /// - `f<T>(x: { v: T })` with `any` → T = `unknown`    (object, not propagated)
     /// - `f<T>(x: { [s: string]: T })` with `any` → T = `unknown` (index sig, not propagated)
-    /// - `f<T>(x: Promise<T>)` with `any` → T = `unknown`  (application, not propagated)
+    /// - `f<T>(x: Promise<T>)` with `any` → T = `unknown`  (object application, not propagated)
+    /// - `f<T>(x: Awaited<T>)` with `any` → T = `any`     (conditional alias, true/false branch)
+    /// - `f<T>(x: A extends B ? T : C)` with `any` → T = `any` (naked T in true/false branch)
+    /// - `f<T>(x: T extends B ? C : D)` with `any` → T = `unknown` (T only in check, not propagated)
     pub(super) fn propagate_type_to_placeholders(
         &mut self,
         ctx: &mut InferenceContext,
@@ -132,9 +135,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     );
                 }
             }
-            // Resolve lazy aliases (e.g. `type MaybeT<T> = T | null`) so that T
-            // inside the expanded union is still reachable as a naked member.
-            Some(TypeData::Lazy(_)) => {
+            // Resolve lazy aliases and evaluate generic type applications so that:
+            // - `type MaybeT<T> = T | null` → expanded union, T is a reachable naked member
+            // - `Awaited<T>` (Application wrapping a conditional) → expanded conditional,
+            //   true/false branches are then walked to find naked T positions
+            // Non-conditional applications (e.g. `Promise<T>`, `Array<T>`) expand to
+            // object/array shapes which fall to `_ => {}`, preserving T = `unknown`.
+            Some(TypeData::Lazy(_)) | Some(TypeData::Application(_)) => {
                 let resolved = self.checker.evaluate_type(target);
                 if resolved != target {
                     self.propagate_type_to_placeholders(
@@ -146,9 +153,34 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     );
                 }
             }
-            // Arrays, tuples, objects, index signatures, functions, applications,
-            // mapped types, conditionals, and all other structural positions are NOT
-            // walked.  tsc does not propagate `any` into nested structural shapes.
+            // Walk the true and false branches of a conditional type.
+            // tsc propagates `any` into naked T positions in true/false branches
+            // (e.g. `Awaited<T>` has `T` as its false branch so `f<T>(x: Awaited<T>)`
+            // with `any` correctly infers T = `any`).
+            // The check type and extends type are NOT walked: `T extends U ? ...`
+            // gives T = `unknown` when T is only in check position.
+            Some(TypeData::Conditional(cond_id)) => {
+                let cond = self.interner.get_conditional(cond_id);
+                let true_type = cond.true_type;
+                let false_type = cond.false_type;
+                self.propagate_type_to_placeholders(
+                    ctx,
+                    var_map,
+                    propagation_type,
+                    true_type,
+                    priority,
+                );
+                self.propagate_type_to_placeholders(
+                    ctx,
+                    var_map,
+                    propagation_type,
+                    false_type,
+                    priority,
+                );
+            }
+            // Arrays, tuples, objects, index signatures, functions, callables,
+            // mapped types, and all other structural positions are NOT walked.
+            // tsc does not propagate `any` through nested structural shapes.
             _ => {}
         }
     }
