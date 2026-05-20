@@ -55,6 +55,44 @@ fn transform_generator_and_print(source: &str) -> String {
     }
 }
 
+fn label_assignment_before(output: &str, needle: &str) -> String {
+    let needle_pos = output
+        .find(needle)
+        .unwrap_or_else(|| panic!("Missing needle `{needle}`.\nOutput:\n{output}"));
+    let prefix = &output[..needle_pos];
+    let marker = "_a.label = ";
+    let label_pos = prefix.rfind(marker).unwrap_or_else(|| {
+        panic!("Missing label assignment before `{needle}`.\nOutput:\n{output}")
+    });
+    prefix[label_pos + marker.len()..]
+        .split(';')
+        .next()
+        .expect("split always returns one segment")
+        .trim()
+        .to_string()
+}
+
+fn if_break_target_after(output: &str, needle: &str) -> String {
+    let needle_pos = output
+        .find(needle)
+        .unwrap_or_else(|| panic!("Missing needle `{needle}`.\nOutput:\n{output}"));
+    let suffix = &output[needle_pos..];
+    let marker = "return [3 /*break*/, ";
+    let target_pos = suffix
+        .find(marker)
+        .unwrap_or_else(|| panic!("Missing generator break after `{needle}`.\nOutput:\n{output}"));
+    suffix[target_pos + marker.len()..]
+        .split(']')
+        .next()
+        .expect("split always returns one segment")
+        .trim()
+        .to_string()
+}
+
+fn count_substring(haystack: &str, needle: &str) -> usize {
+    haystack.matches(needle).count()
+}
+
 #[test]
 fn test_simple_async_function() {
     let output = transform_and_print("async function foo() { }");
@@ -151,6 +189,165 @@ fn test_async_while_with_await_lowers_to_generator_cases() {
     assert!(
         output.contains("case 2: return [2 /*return*/];"),
         "Loop exit should have a final generator return case.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_while_body_await_parenthesizes_binary_condition() {
+    let output = transform_and_print(
+        "async function f(i, limit) { while (i < limit) { await tick(i++); } }",
+    );
+
+    assert!(
+        output.contains("if (!(i < limit)) return [3 /*break*/, 2];"),
+        "Binary while condition should be negated with parentheses.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, tick(i++)];"),
+        "Await in the while body should still lower to a generator yield.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_do_while_body_await_lowers_to_generator_cases() {
+    let output = transform_and_print(
+        "async function f(xs) { do { await g(xs.pop()); } while (xs.length); }",
+    );
+
+    assert!(
+        !output.contains("do "),
+        "Raw do-while statement must not remain around suspended body.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("await "),
+        "Raw await syntax must not remain in ES5 generator output.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, g(xs.pop())];"),
+        "Await in the do-while body should become the first generator yield.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (!xs.length) return [3 /*break*/, 2];"),
+        "Do-while condition should be checked after the body resumes.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [3 /*break*/, 0];"),
+        "Truthy do-while condition should jump back to the body case.\nOutput:\n{output}"
+    );
+    let yield_pos = output.find("return [4 /*yield*/, g(xs.pop())];");
+    let condition_pos = output.find("if (!xs.length) return [3 /*break*/, 2];");
+    assert!(
+        yield_pos.is_some()
+            && condition_pos.is_some()
+            && yield_pos.expect("yield_pos is Some, checked above")
+                < condition_pos.expect("condition_pos is Some, checked above"),
+        "Do-while lowering must preserve body-first semantics.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 2: return [2 /*return*/];"),
+        "Do-while exit should have a final generator return case.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_do_while_single_statement_await_uses_post_body_binary_condition() {
+    let output = transform_and_print(
+        "async function f(i, limit) { do await tick(i++); while (i < limit); }",
+    );
+
+    assert!(
+        !output.contains("do "),
+        "Raw do-while statement must not remain around suspended single-statement body.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("await "),
+        "Raw await syntax must not remain in ES5 generator output.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, tick(i++)];"),
+        "Single-statement do-while body await should become a generator yield.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (!(i < limit)) return [3 /*break*/, 2];"),
+        "Binary do-while condition should be negated with parentheses after the body resumes.\nOutput:\n{output}"
+    );
+    let yield_pos = output.find("return [4 /*yield*/, tick(i++)];");
+    let condition_pos = output.find("if (!(i < limit)) return [3 /*break*/, 2];");
+    assert!(
+        yield_pos.is_some()
+            && condition_pos.is_some()
+            && yield_pos.expect("yield_pos is Some, checked above")
+                < condition_pos.expect("condition_pos is Some, checked above"),
+        "Do-while single-statement lowering must preserve body-first semantics.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_do_while_continue_jumps_to_post_body_condition() {
+    let output = transform_and_print(
+        "async function f(skip, keepGoing) { do { if (skip) continue; await tick(); } while (keepGoing()); }",
+    );
+
+    assert!(
+        !output.contains("continue;"),
+        "Loop-local continue must become a generator jump, not raw JS inside a switch case.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("await "),
+        "Raw await syntax must not remain in ES5 generator output.\nOutput:\n{output}"
+    );
+    let condition_label = label_assignment_before(&output, "if (!keepGoing())");
+    let continue_jump = format!("return [3 /*break*/, {condition_label}];");
+    let condition_pos = output.find("if (!keepGoing())");
+    let continue_jump_pos = output.find(&continue_jump);
+    assert!(
+        continue_jump_pos.is_some()
+            && condition_pos.is_some()
+            && continue_jump_pos.expect("continue jump is present")
+                < condition_pos.expect("condition check is present"),
+        "Continue should jump forward to the post-body condition check before the loop can repeat.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_do_while_break_jumps_to_loop_exit() {
+    let output = transform_and_print(
+        "async function f(done, keepGoing) { do { if (done) break; await tick(); } while (keepGoing()); }",
+    );
+
+    assert!(
+        !output.contains("break;"),
+        "Loop-local break must become a generator jump, not raw JS inside a switch case.\nOutput:\n{output}"
+    );
+    assert!(
+        {
+            let exit_label = if_break_target_after(&output, "if (!keepGoing())");
+            count_substring(&output, &format!("return [3 /*break*/, {exit_label}];")) >= 2
+        },
+        "Break and falsy condition should both target the generated loop-exit case.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_do_while_single_if_body_continue_jumps_to_condition() {
+    let output = transform_and_print(
+        "async function f(skip, keepGoing) { do if (skip) { continue; } else { await tick(); } while (keepGoing()); }",
+    );
+
+    assert!(
+        !output.contains("continue;"),
+        "Loop-local continue in a single-statement do body must become a generator jump.\nOutput:\n{output}"
+    );
+    let condition_label = label_assignment_before(&output, "if (!keepGoing())");
+    let continue_jump = format!("return [3 /*break*/, {condition_label}];");
+    let condition_pos = output.find("if (!keepGoing())");
+    let continue_jump_pos = output.find(&continue_jump);
+    assert!(
+        continue_jump_pos.is_some()
+            && condition_pos.is_some()
+            && continue_jump_pos.expect("continue jump is present")
+                < condition_pos.expect("condition check is present"),
+        "Single-statement do body continue should target the post-body condition check.\nOutput:\n{output}"
     );
 }
 
@@ -463,4 +660,208 @@ fn test_async_tagged_template_no_substitutions_unchanged() {
         output.contains("__makeTemplateObject([\"hello\"], [\"hello\"])"),
         "No-substitution tagged template should still lower to __makeTemplateObject.\nOutput:\n{output}"
     );
+}
+
+/// Drive the full async-ES5 emit pipeline for the first top-level function
+/// in `source`. The surrounding indent is set to 3 levels so embedded `ASTRef`
+/// statements appear inside a typical `__awaiter`/`__generator` wrapper depth,
+/// mirroring the indent at which the original regression surfaced.
+fn emit_async_function_from_source(source: &str) -> String {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let Some(root_node) = parser.arena.get(root) else {
+        return String::new();
+    };
+    let Some(source_file) = parser.arena.get_source_file(root_node) else {
+        return String::new();
+    };
+    let Some(&func_idx) = source_file.statements.nodes.first() else {
+        return String::new();
+    };
+    let mut emitter = crate::transforms::async_es5::AsyncES5Emitter::new(&parser.arena);
+    emitter.set_source_map_context(source, 0);
+    emitter.set_indent_level(3);
+    emitter.emit_async_function(func_idx)
+}
+
+// Regression: ASTRef inside async-ES5 IR must go through AstPrinter (not the
+// raw source-text fallback) so a `do { ... } while (...);` body is re-formatted
+// to the canonical tsc shape at the surrounding indent. Pre-fix, the AstPrinter
+// path was gated on `transforms non-empty || base_printer_options`, and async
+// function bodies (which attach neither) fell through to a `text[pos..end]`
+// slice. That slice inherits any imprecision in `node.end` — notably for
+// statements whose terminating `;` is consumed via `parse_optional`, leaving
+// the captured `token_end()` at the *next* token — and spills source from the
+// enclosing block's closing `}` into the emitted output.
+#[test]
+fn test_async_do_while_no_await_uses_formatted_emission() {
+    let output = emit_async_function_from_source("async function f() { do { x; } while (y); }");
+    assert!(
+        output.contains("do {\n                        x;\n                    } while (y);"),
+        "Do-while inside async-ES5 body should be re-formatted to tsc's multi-line shape at the surrounding indent.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("do { x; } while (y);"),
+        "Do-while must not be emitted as a single-line raw source slice.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("} while (y);\n}"),
+        "ASTRef fallback must not spill an extra `}}` from the enclosing block.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_labeled_do_while_no_await_uses_formatted_emission() {
+    let output =
+        emit_async_function_from_source("async function f() { L: do { break L; } while (y); }");
+    assert!(
+        output.contains(
+            "L: do {\n                        break L;\n                    } while (y);"
+        ),
+        "Labeled do-while inside async-ES5 body should re-format at the surrounding indent.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_inline_if_no_await_uses_formatted_emission() {
+    let output =
+        emit_async_function_from_source("async function f() { if (x) { y; } else { z; } }");
+    // Branch bodies should sit at the surrounding indent.
+    assert!(
+        output.contains("if (x) {\n                        y;\n                    }\n                    else {\n                        z;\n                    }"),
+        "Inline if/else inside async-ES5 body should re-format at the surrounding indent.\nOutput:\n{output}"
+    );
+}
+
+// ---------------------------------------------------------------------
+// Discovery-phase boundary tests
+//
+// `body_contains_await` is the entry point of the read-only discovery
+// pass that lowering decisions key on. These tests exercise the
+// discovery module (`async_es5_ir_discovery.rs`) without going through
+// the full IR-print path, so they fail fast when the predicate boundary
+// drifts.
+
+fn first_function_body(parser: &mut ParserState) -> NodeIndex {
+    let root = parser.parse_source_file();
+    let root_node = parser.arena.get(root).expect("root");
+    let source_file = parser
+        .arena
+        .get_source_file(root_node)
+        .expect("source file");
+    let func_idx = *source_file.statements.nodes.first().expect("function");
+    let func_node = parser.arena.get(func_idx).expect("function node");
+    let func = parser.arena.get_function(func_node).expect("function decl");
+    func.body
+}
+
+fn body_suspends(source: &str, generator_mode: bool) -> bool {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let body_idx = first_function_body(&mut parser);
+    let mut transformer = AsyncES5Transformer::new(&parser.arena);
+    transformer.generator_mode = generator_mode;
+    transformer.body_contains_await(body_idx)
+}
+
+fn body_contains_await(source: &str) -> bool {
+    body_suspends(source, false)
+}
+
+fn body_contains_yield_in_generator(source: &str) -> bool {
+    body_suspends(source, true)
+}
+
+#[test]
+fn discovery_body_contains_await_returns_true_for_direct_await() {
+    assert!(body_contains_await("async function f() { await bar(); }"));
+}
+
+#[test]
+fn discovery_body_contains_await_ignores_nested_async_function() {
+    // Discovery must not climb into a nested function body; the inner
+    // `await` belongs to the nested async function's own state machine.
+    assert!(!body_contains_await(
+        "async function f() { async function g() { await bar(); } }"
+    ));
+}
+
+#[test]
+fn discovery_body_contains_await_ignores_nested_arrow_function() {
+    assert!(!body_contains_await(
+        "async function f() { const g = async () => { await bar(); }; }"
+    ));
+}
+
+#[test]
+fn discovery_body_contains_await_sees_through_type_assertion() {
+    // `(await foo()) as T` is stripped by `expression_to_ir`, so the
+    // discovery pass must look through the type wrapper.
+    assert!(body_contains_await(
+        "async function f() { var x = (await foo()) as T; }"
+    ));
+}
+
+#[test]
+fn discovery_body_contains_await_sees_through_non_null_assertion() {
+    assert!(body_contains_await(
+        "async function f() { var x = (await foo())!; }"
+    ));
+}
+
+#[test]
+fn discovery_body_contains_await_sees_class_heritage() {
+    // Class bodies are function-like, but heritage clauses run in the
+    // surrounding async scope.
+    assert!(body_contains_await(
+        "async function f() { class C extends (await base()) {} }"
+    ));
+}
+
+#[test]
+fn discovery_body_contains_await_skips_class_member_bodies() {
+    assert!(!body_contains_await(
+        "async function f() { class C { m() { await bar(); } } }"
+    ));
+}
+
+#[test]
+fn discovery_body_contains_await_sees_using_declarations() {
+    // `using` and `await using` introduce disposable regions that the
+    // generator state machine must own, so the predicate must flag them
+    // even when there is no syntactic `await` in the body.
+    assert!(body_contains_await(
+        "async function f() { using d = acquire(); }"
+    ));
+}
+
+#[test]
+fn discovery_body_contains_await_sees_for_await_of() {
+    assert!(body_contains_await(
+        "async function f() { for await (const x of stream()) {} }"
+    ));
+}
+
+#[test]
+fn discovery_body_contains_await_sees_computed_property_await() {
+    assert!(body_contains_await(
+        "async function f() { var o = { [await key()]: 1 }; }"
+    ));
+}
+
+#[test]
+fn discovery_generator_mode_classifies_yield_as_suspension() {
+    // In generator mode, `yield` is the suspension point, not `await`.
+    assert!(body_contains_yield_in_generator(
+        "function* f() { yield 1; }"
+    ));
+}
+
+#[test]
+fn discovery_generator_mode_ignores_body_without_yield() {
+    assert!(!body_contains_yield_in_generator("function* f() { x(); }"));
+}
+
+#[test]
+fn discovery_body_contains_await_returns_false_for_pure_body() {
+    assert!(!body_contains_await("async function f() { var x = 1; }"));
 }

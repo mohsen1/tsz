@@ -9,6 +9,38 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::type_queries;
 
 impl<'a> DeclarationEmitter<'a> {
+    pub(in crate::declaration_emitter) fn construct_return_new_expression_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::NEW_EXPRESSION {
+            return None;
+        }
+
+        let new_expr = self.arena.get_call_expr(expr_node)?;
+        let constructor_type = self
+            .get_node_type_or_names(&[new_expr.expression])
+            .or_else(|| self.get_type_via_symbol(new_expr.expression))?;
+        let return_type =
+            type_queries::construct_return_type_for_type(self.type_interner?, constructor_type)?;
+        if matches!(
+            return_type,
+            tsz_solver::types::TypeId::ANY
+                | tsz_solver::types::TypeId::UNKNOWN
+                | tsz_solver::types::TypeId::ERROR
+        ) {
+            return None;
+        }
+
+        let type_text = self.print_type_id_for_inferred_declaration(return_type);
+        if type_text.is_empty() || matches!(type_text.as_str(), "any" | "unknown") {
+            return None;
+        }
+
+        Some(self.rewrite_exported_import_equals_type_text(type_text))
+    }
+
     pub(in crate::declaration_emitter) fn call_expression_source_return_type_text(
         &self,
         expr_idx: NodeIndex,
@@ -73,6 +105,14 @@ impl<'a> DeclarationEmitter<'a> {
                             )
                         {
                             return Some(evaluated);
+                        }
+                        if let Some(substituted) = self.substitute_source_call_type_parameters(
+                            source_arena,
+                            func,
+                            call,
+                            type_text,
+                        ) {
+                            return Some(substituted);
                         }
                         continue;
                     }

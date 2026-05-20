@@ -228,3 +228,58 @@ const k = schema[Readonly];
          got: {codes:?}"
     );
 }
+
+#[test]
+fn declare_const_unique_symbol_readonly_does_not_shadow_lib_type_readonly() {
+    // tsc: 0 TS2749 errors. `declare const Readonly: unique symbol` only occupies
+    // the VALUE namespace; lib's `type Readonly<T>` must remain visible in type position.
+    let codes = diagnostic_codes(
+        r#"
+export {};
+declare const Readonly: unique symbol;
+type X = Readonly<{ a: number }>;
+"#,
+    );
+    assert!(
+        !codes.contains(&2749),
+        "TS2749 must not fire when declare const Readonly: unique symbol shadows only VALUE; \
+         lib type Readonly<T> must remain visible in type position; got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2304),
+        "TS2304 must not fire — lib type Readonly<T> is still visible; got: {codes:?}"
+    );
+}
+
+#[test]
+fn declare_const_unique_symbol_partial_does_not_shadow_lib_type_partial() {
+    // Same rule with Partial<T>.
+    let codes = diagnostic_codes(
+        r#"
+export {};
+declare const Partial: unique symbol;
+type X = Partial<{ a: number }>;
+"#,
+    );
+    assert!(
+        !codes.contains(&2749),
+        "TS2749 must not fire when declare const Partial: unique symbol shadows only VALUE; got: {codes:?}"
+    );
+}
+
+#[test]
+fn declare_const_unique_symbol_nested_lib_types_accessible() {
+    // Regression for deeplyNestedMappedTypes.ts: nested lib types like
+    // Readonly<Partial<T>> must work even when local unique-symbol consts shadow the names.
+    let codes = diagnostic_codes(
+        r#"
+export {};
+declare const Readonly: unique symbol;
+type X = Readonly<Partial<{ a: number }>>;
+"#,
+    );
+    assert!(
+        !codes.contains(&2749),
+        "TS2749 must not fire for nested lib types Readonly<Partial<T>> with local unique-symbol shadow; got: {codes:?}"
+    );
+}

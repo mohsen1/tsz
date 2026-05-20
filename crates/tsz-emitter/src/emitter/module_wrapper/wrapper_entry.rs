@@ -262,6 +262,12 @@ impl<'a> Printer<'a> {
             self.register_system_import_substitutions(source, &dep_vars, &empty_system_plan);
         }
 
+        if let Some((_, tslib_var)) = value_deps.iter().find(|(dep, _)| dep == "tslib")
+            && !tslib_var.is_empty()
+        {
+            self.commonjs_tslib_import_binding = tslib_var.clone();
+        }
+
         self.emit_module_wrapper_body(source_node, source_idx);
         self.ctx.options.suppress_use_strict = false;
 
@@ -420,8 +426,34 @@ impl<'a> Printer<'a> {
 
         let mut system_plan = self.collect_system_dependency_plan(dependencies, source);
         self.add_system_jsx_runtime_dependency(dependencies, &mut system_plan);
-        let system_dependencies =
+        let mut system_dependencies =
             self.collect_active_system_dependencies(dependencies, source, &system_plan);
+        // Must run after collect_active_system_dependencies so collect_system_dependency_vars
+        // sees the injected "tslib" entry.
+        let needs_tslib_dependency = self.transforms.helpers_populated()
+            && self.transforms.helpers().any_needed()
+            || self.import_helpers_need_tslib_binding_for_class_emit(&source.statements);
+        if self.ctx.options.import_helpers && needs_tslib_dependency {
+            if !system_dependencies.iter().any(|d| d == "tslib") {
+                system_dependencies.insert(0, "tslib".to_string());
+            }
+            // When the source already supplies an `Assign` for "tslib" (e.g.
+            // `import * as TSLib from "tslib"` registers `Assign("TSLib")`),
+            // helper calls resolve through that binding via the later
+            // `commonjs_tslib_import_binding = dep_vars["tslib"]` update — no
+            // helper-specific setter line is needed. Only inject the helper
+            // `Assign("tslib_1")` when no user `Assign` exists (side-effect
+            // `import "tslib"` or no source import at all). Without it,
+            // `tslib_1.__decorate` references a hoisted-but-never-assigned
+            // binding when the wrapper provides tslib instead of CJS.
+            let actions = system_plan.actions.entry("tslib".to_string()).or_default();
+            let has_assign_action = actions
+                .iter()
+                .any(|action| matches!(action, SystemDependencyAction::Assign(_)));
+            if !has_assign_action {
+                actions.push(SystemDependencyAction::Assign("tslib_1".to_string()));
+            }
+        }
 
         self.write("System.register(");
         if let Some(name) = self.ctx.options.bundled_module_name.clone() {
@@ -472,6 +504,7 @@ impl<'a> Printer<'a> {
         // function declarations are syntactically hoisted, so they (and their
         // corresponding `exports_1` calls) live outside `execute`.
         let hoisted_func_stmts = self.emit_system_hoisted_functions(source);
+        self.emit_system_export_star_helpers_if_needed(source, &system_plan);
 
         self.write("return {");
         self.write_line();
@@ -502,6 +535,10 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
 
+        if let Some(tslib_var) = dep_vars.get("tslib") {
+            self.commonjs_tslib_import_binding = tslib_var.clone();
+        }
+
         self.emit_system_execute_body(source_node, &dep_vars, &hoisted_func_stmts, &system_plan);
 
         self.decrease_indent();
@@ -512,6 +549,7 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.decrease_indent();
         self.write("});");
+        self.write_line();
     }
 
     fn collect_system_hoisted_function_names(
@@ -918,6 +956,13 @@ impl<'a> Printer<'a> {
             if !dependency_set.contains(module_spec.as_str()) {
                 continue;
             }
+            if export_decl.export_clause.is_none() {
+                plan.actions
+                    .entry(module_spec)
+                    .or_default()
+                    .push(SystemDependencyAction::ExportStar);
+                continue;
+            }
             let Some(clause_node) = self.arena.get(export_decl.export_clause) else {
                 continue;
             };
@@ -1082,6 +1127,52 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// In AMD bundled output (`--outFile`), relative specifiers like `"./m1"`
+    /// must be resolved to their AMD module ID (e.g. `"m1"`), because the
+    /// `define()` dep array uses module IDs, not file-relative paths.
+    /// When not in bundled mode, or for non-relative specifiers, returns the
+    /// input unchanged.
+    fn resolve_amd_bundled_spec(&self, raw: &str) -> String {
+        let Some(module_name) = &self.ctx.options.bundled_module_name else {
+            return raw.to_owned();
+        };
+        if !raw.starts_with('.') {
+            return raw.to_owned();
+        }
+        let base_dir = module_name
+            .rsplit_once('/')
+            .map(|(dir, _)| dir)
+            .unwrap_or("");
+        let mut parts: Vec<&str> = if base_dir.is_empty() {
+            Vec::new()
+        } else {
+            base_dir.split('/').collect()
+        };
+        for part in raw.split('/') {
+            match part {
+                "" | "." => {}
+                ".." => {
+                    if parts.pop().is_none() {
+                        return raw.to_owned();
+                    }
+                }
+                p => parts.push(p),
+            }
+        }
+        if let Some(last) = parts.last_mut() {
+            *last = last
+                .strip_suffix(".ts")
+                .or_else(|| last.strip_suffix(".tsx"))
+                .or_else(|| last.strip_suffix(".js"))
+                .or_else(|| last.strip_suffix(".jsx"))
+                .unwrap_or(last);
+        }
+        if parts.is_empty() {
+            return raw.to_owned();
+        }
+        parts.join("/")
+    }
+
     fn collect_amd_dependency_groups(
         &mut self,
         dependencies: &[String],
@@ -1129,15 +1220,16 @@ impl<'a> Printer<'a> {
                     if let Some(spec) =
                         self.system_module_specifier_text(import_decl.module_specifier)
                     {
-                        rejected_deps.insert(spec);
+                        rejected_deps.insert(self.resolve_amd_bundled_spec(&spec));
                     }
                     continue;
                 }
-                let Some(module_spec) =
+                let Some(raw_spec) =
                     self.system_module_specifier_text(import_decl.module_specifier)
                 else {
                     continue;
                 };
+                let module_spec = self.resolve_amd_bundled_spec(&raw_spec);
                 let local_name = self.get_identifier_text_idx(import_decl.import_clause);
                 if local_name.is_empty() {
                     continue;
@@ -1162,9 +1254,10 @@ impl<'a> Printer<'a> {
                 if !self.export_decl_has_runtime_value(export_decl) {
                     continue;
                 }
-                if let Some(module_spec) =
+                if let Some(raw_spec) =
                     self.system_module_specifier_text(export_decl.module_specifier)
                 {
+                    let module_spec = self.resolve_amd_bundled_spec(&raw_spec);
                     seen_value.insert(module_spec.clone());
                     if collect_for_amd {
                         let dep_var = self.next_commonjs_module_var(&module_spec);
@@ -1187,10 +1280,11 @@ impl<'a> Printer<'a> {
             if !self.import_decl_has_runtime_value(import_decl) {
                 continue;
             }
-            let Some(module_spec) = self.system_module_specifier_text(import_decl.module_specifier)
+            let Some(raw_spec) = self.system_module_specifier_text(import_decl.module_specifier)
             else {
                 continue;
             };
+            let module_spec = self.resolve_amd_bundled_spec(&raw_spec);
             let Some(clause_node) = self.arena.get(import_decl.import_clause) else {
                 if seen_side_effect.insert(module_spec.clone()) {
                     side_effect_deps.push(module_spec);
@@ -1272,15 +1366,34 @@ impl<'a> Printer<'a> {
         }
 
         for dep in dependencies {
-            if seen_value.contains(dep)
-                || seen_side_effect.contains(dep)
-                || rejected_deps.contains(dep)
+            let resolved = self.resolve_amd_bundled_spec(dep);
+            if seen_value.contains(&resolved)
+                || seen_side_effect.contains(&resolved)
+                || rejected_deps.contains(&resolved)
             {
                 continue;
             }
-            if seen_side_effect.insert(dep.clone()) {
-                side_effect_deps.push(dep.clone());
+            if seen_side_effect.insert(resolved.clone()) {
+                side_effect_deps.push(resolved);
             }
+        }
+
+        // Must run after the main loops so the seen_value guard prevents double-insertion
+        // when "tslib" was already present as a source import.
+        let needs_tslib_dependency = self.transforms.helpers_populated()
+            && self.transforms.helpers().any_needed()
+            || self.import_helpers_need_tslib_binding_for_class_emit(&source.statements);
+        if (collect_for_amd || collect_for_umd)
+            && self.ctx.options.import_helpers
+            && needs_tslib_dependency
+            && !seen_value.contains("tslib")
+        {
+            let tslib_var = if collect_for_amd {
+                self.next_commonjs_module_var("tslib")
+            } else {
+                String::new()
+            };
+            value_deps.insert(0, ("tslib".to_string(), tslib_var));
         }
 
         (value_deps, side_effect_deps, dep_vars)

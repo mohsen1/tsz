@@ -1699,7 +1699,7 @@ impl ParserState {
                 self.parse_error_at_current_token("')' expected.", diagnostic_codes::EXPECTED);
             }
             self.parse_semicolon();
-            let end_pos = self.token_end();
+            let end_pos = self.token_full_start();
             return self.arena.add_import_decl(
                 syntax_kind_ext::IMPORT_EQUALS_DECLARATION,
                 start_pos,
@@ -1724,7 +1724,7 @@ impl ParserState {
         };
 
         self.parse_semicolon();
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         // Use ImportDeclData with import_clause as the name and module_specifier as reference
         // This is a simplified representation
@@ -1956,7 +1956,7 @@ impl ParserState {
         let start_pos = override_start_pos.unwrap_or_else(|| self.token_pos());
         let declaration_list = self.parse_variable_declaration_list();
         self.parse_semicolon();
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         self.arena.add_variable(
             syntax_kind_ext::VARIABLE_STATEMENT,

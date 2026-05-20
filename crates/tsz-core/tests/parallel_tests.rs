@@ -1,6 +1,7 @@
 use super::*;
 use crate::parallel::residency::{MemoryPressure, ResidencyBudget};
 use crate::parallel::skeleton::diff_skeletons;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::fs;
 use std::path::Path;
 use tsz_common::common::ModuleKind;
@@ -131,6 +132,38 @@ fn test_normalize_lib_reference_name_handles_legacy_and_nested_lib_names() {
     );
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn test_rayon_worker_count_for_work_items_caps_only_small_implicit_workloads() {
+    assert_eq!(rayon_worker_count_for_work_items(4, 16, false), Some(4));
+    assert_eq!(rayon_worker_count_for_work_items(4, 2, false), Some(2));
+    assert_eq!(rayon_worker_count_for_work_items(0, 16, false), None);
+    assert_eq!(rayon_worker_count_for_work_items(33, 16, false), None);
+    assert_eq!(rayon_worker_count_for_work_items(4, 16, true), None);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn test_small_workload_rayon_pool_does_not_cap_global_pool() {
+    if std::env::var_os("RAYON_NUM_THREADS").is_some() {
+        return;
+    }
+    let available = std::thread::available_parallelism()
+        .map(std::num::NonZeroUsize::get)
+        .unwrap_or(1);
+    let small_threads = run_with_rayon_pool_for_work_items(4, rayon::current_num_threads);
+    assert_eq!(small_threads, available.clamp(1, 4));
+
+    ensure_rayon_global_pool();
+    let global_threads = rayon::current_num_threads();
+    if available > 4 {
+        assert!(
+            global_threads > small_threads,
+            "small workload runner must use a scoped pool, not permanently cap the global pool"
+        );
+    }
+}
+
 #[test]
 fn test_resolve_lib_reference_path_prefers_available_candidate_names() {
     let temp_dir = tempfile::tempdir().expect("temp dir");
@@ -150,6 +183,95 @@ fn test_resolve_lib_reference_path_prefers_available_candidate_names() {
     assert_eq!(wrapped_path, lib_dir.join("lib.custom.d.ts"));
 
     assert!(resolve_lib_reference_path(base_path, "nonexistent").is_none());
+}
+
+#[test]
+fn test_resolve_lib_reference_path_uses_embedded_virtual_root_without_disk_probe_shape() {
+    let base_path = Path::new("/embedded-lib/es2020.d.ts");
+
+    let es5 = resolve_lib_reference_path(base_path, "lib.es5.d.ts").expect("resolve es5");
+    assert_eq!(es5, Path::new("/embedded-lib/es5.d.ts"));
+
+    let dom = resolve_lib_reference_path(base_path, "dom.generated").expect("resolve dom");
+    assert_eq!(dom, Path::new("/embedded-lib/dom.d.ts"));
+
+    assert!(resolve_lib_reference_path(base_path, "definitely-not-a-lib").is_none());
+}
+
+#[test]
+fn test_resolve_generated_embedded_lib_reference_path_uses_normalized_refs() {
+    let dom = resolve_generated_embedded_lib_reference_path("dom");
+    assert_eq!(dom, Path::new("/embedded-lib/dom.d.ts"));
+
+    let es5 = resolve_generated_embedded_lib_reference_path("lib.d.ts");
+    assert_eq!(es5, Path::new("/embedded-lib/es5.d.ts"));
+}
+
+#[test]
+fn test_collect_lib_files_recursive_cached_reads_embedded_virtual_root_as_static() {
+    let mut loaded = FxHashSet::default();
+    let mut file_contents = Vec::new();
+    let file_cache = FxHashMap::default();
+
+    collect_lib_files_recursive_cached(
+        Path::new("/embedded-lib/es2020.d.ts"),
+        &mut loaded,
+        &mut file_contents,
+        &file_cache,
+    )
+    .expect("collect embedded lib files");
+
+    let (_, source_text) = file_contents
+        .iter()
+        .find(|(name, _)| name == "/embedded-lib/es2020.d.ts")
+        .expect("es2020 entry");
+    assert!(matches!(
+        source_text,
+        LibSourceText::Static {
+            text: _,
+            content_hash: _
+        }
+    ));
+    assert!(loaded.iter().all(|path| path.starts_with("/embedded-lib")));
+}
+
+#[test]
+fn test_collect_lib_files_recursive_cached_uses_owned_references_for_physical_libs() {
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let es2020_path = temp_dir.path().join("lib.es2020.d.ts");
+    let custom_path = temp_dir.path().join("lib.custom.d.ts");
+    fs::write(&es2020_path, "").expect("write es2020 lib");
+    fs::write(&custom_path, "").expect("write custom lib");
+
+    let es2020_path = es2020_path.canonicalize().expect("canonical es2020");
+    let custom_path = custom_path.canonicalize().expect("canonical custom");
+    let mut file_cache = FxHashMap::default();
+    file_cache.insert(
+        es2020_path.clone(),
+        "/// <reference lib=\"custom\" />\ninterface PhysicalEs2020 {}\n".to_string(),
+    );
+    file_cache.insert(
+        custom_path.clone(),
+        "interface PhysicalCustom {}\n".to_string(),
+    );
+
+    let mut loaded = FxHashSet::default();
+    let mut file_contents = Vec::new();
+    collect_lib_files_recursive_cached(&es2020_path, &mut loaded, &mut file_contents, &file_cache)
+        .expect("collect physical lib files");
+
+    assert!(
+        file_contents
+            .iter()
+            .any(|(name, _)| name == custom_path.to_string_lossy().as_ref()),
+        "physical lib references should be parsed from owned source text"
+    );
+    assert!(
+        file_contents
+            .iter()
+            .all(|(name, _)| !name.starts_with("/embedded-lib")),
+        "physical libs must not use embedded reference metadata"
+    );
 }
 
 #[test]
@@ -502,6 +624,32 @@ fn test_load_lib_files_for_binding_strict_recurses_reference_libs() {
         "Expected at least 3 loaded lib files, got {}",
         names.len()
     );
+}
+
+#[test]
+fn clone_lib_files_for_checker_creates_distinct_parsed_bound_copies() {
+    let lib = std::sync::Arc::new(tsz_binder::lib_loader::LibFile::from_source(
+        "lib.test.d.ts".to_string(),
+        "interface Array<T> { length: number; }\ninterface Promise<T> { then(): Promise<T>; }\n"
+            .to_string(),
+    ));
+
+    let cloned = clone_lib_files_for_checker(&[std::sync::Arc::clone(&lib)], false);
+
+    assert_eq!(cloned.len(), 1);
+    let cloned_lib = &cloned[0];
+    assert_eq!(cloned_lib.file_name, lib.file_name);
+    assert_eq!(cloned_lib.root_index, lib.root_index);
+    assert!(
+        !std::sync::Arc::ptr_eq(&cloned_lib.arena, &lib.arena),
+        "checker lib clone must have independent arena identity",
+    );
+    assert!(
+        !std::sync::Arc::ptr_eq(&cloned_lib.binder, &lib.binder),
+        "checker lib clone must have independent binder identity",
+    );
+    assert_eq!(cloned_lib.arena.len(), lib.arena.len());
+    assert_eq!(cloned_lib.binder.symbols.len(), lib.binder.symbols.len());
 }
 
 #[test]
@@ -1504,7 +1652,7 @@ namespace N1 {
         .find(|file| file.file_name == "test.ts")
         .expect("expected merged test.ts file");
     let rebuilt_binder = create_binder_from_bound_file(file, &program, 0);
-    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let query_cache = tsz_solver::construction::QueryCache::new(&program.type_interner);
     let mut recreated_checker = crate::checker::state::CheckerState::with_options(
         &file.arena,
         &rebuilt_binder,
@@ -1559,7 +1707,7 @@ namespace N1 {
         .find(|file| file.file_name == "test.ts")
         .expect("expected merged test.ts file");
     let rebuilt_binder = create_binder_from_bound_file(file, &program, 0);
-    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let query_cache = tsz_solver::construction::QueryCache::new(&program.type_interner);
     let mut checker = crate::checker::state::CheckerState::with_options(
         &file.arena,
         &rebuilt_binder,
@@ -1681,7 +1829,7 @@ namespace N1 {
         .find(|file| file.file_name == "test.ts")
         .expect("expected merged test.ts file");
     let rebuilt_binder = create_binder_from_bound_file(file, &program, 0);
-    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let query_cache = tsz_solver::construction::QueryCache::new(&program.type_interner);
     let mut checker = crate::checker::state::CheckerState::with_options(
         &file.arena,
         &rebuilt_binder,
@@ -1870,7 +2018,7 @@ c = d;
         .find(|file| file.file_name == "test.ts")
         .expect("expected merged test.ts file");
     let rebuilt_binder = create_binder_from_bound_file(program_file, &program, 0);
-    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let query_cache = tsz_solver::construction::QueryCache::new(&program.type_interner);
     let mut checker = crate::checker::state::CheckerState::with_options(
         &program_file.arena,
         &rebuilt_binder,
@@ -2044,7 +2192,7 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
         .find(|file| file.file_name == "test.ts")
         .expect("expected merged test.ts file");
     let rebuilt_binder = create_binder_from_bound_file(program_file, &program, 0);
-    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let query_cache = tsz_solver::construction::QueryCache::new(&program.type_interner);
     let mut checker = crate::checker::state::CheckerState::with_options(
         &program_file.arena,
         &rebuilt_binder,
@@ -9312,7 +9460,7 @@ var e: Date = c.b();
         },
     );
 
-    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let query_cache = tsz_solver::construction::QueryCache::new(&program.type_interner);
     let mut checker = crate::checker::state::CheckerState::with_options(
         &file1_bound.arena,
         &binder,

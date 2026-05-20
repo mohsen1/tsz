@@ -51,7 +51,8 @@ pub(crate) fn homomorphic_mapped_projection_target<R: TypeResolver>(
     let type_db = db.as_type_database();
     let candidate = if tsz_solver::type_queries::get_mapped_type(type_db, target).is_some() {
         target
-    } else if let Some(app) = tsz_solver::type_queries::get_type_application(type_db, target) {
+    } else {
+        let app = tsz_solver::type_queries::get_type_application(type_db, target)?;
         let def_id = tsz_solver::type_queries::get_lazy_def_id(type_db, app.base)?;
         let type_params = resolver.get_lazy_type_params(def_id)?;
         if type_params.is_empty() {
@@ -60,8 +61,6 @@ pub(crate) fn homomorphic_mapped_projection_target<R: TypeResolver>(
         let body = resolver.resolve_lazy(def_id, type_db)?;
         let substitution = TypeSubstitution::from_args(type_db, &type_params, &app.args);
         tsz_solver::instantiate_type_cached(type_db, Some(db), body, &substitution)
-    } else {
-        return None;
     };
 
     let mapped = tsz_solver::type_queries::get_mapped_type(type_db, candidate)?;
@@ -79,6 +78,127 @@ pub(crate) fn homomorphic_mapped_projection_target<R: TypeResolver>(
     } else {
         None
     }
+}
+
+/// Returns callable union members that a contextually typed function expression
+/// may be checked against directly.
+///
+/// This models tsc's applicability path for shapes such as
+/// `ComponentClass<P> | StatelessComponent<P>`: the returned function is allowed
+/// to satisfy the callable member even when generic mapped props expand to a
+/// different but equivalent structural form during contextual typing.
+pub(crate) fn contextual_function_callable_union_members(
+    db: &dyn TypeDatabase,
+    source: TypeId,
+    target: TypeId,
+) -> Vec<TypeId> {
+    if !tsz_solver::contains_type_parameters(db, source)
+        || !tsz_solver::contains_type_parameters(db, target)
+    {
+        return Vec::new();
+    }
+
+    let source_is_callable =
+        tsz_solver::type_queries::get_callable_shape_for_type(db, source).is_some_and(|shape| {
+            !shape.call_signatures.is_empty() && shape.construct_signatures.is_empty()
+        }) || tsz_solver::type_queries::get_function_shape(db, source)
+            .is_some_and(|shape| !shape.is_constructor);
+    if !source_is_callable {
+        return Vec::new();
+    }
+
+    let mut callable_members = Vec::new();
+    let evaluated_target = tsz_solver::evaluate_type(db, target);
+    for candidate in [target, evaluated_target] {
+        if let Some(members) = tsz_solver::type_queries::get_union_members(db, candidate) {
+            for &member in members.iter() {
+                let evaluated_member = tsz_solver::evaluate_type(db, member);
+                let callable_member =
+                    tsz_solver::type_queries::get_callable_shape_for_type(db, member)
+                        .map(|shape| (member, shape))
+                        .or_else(|| {
+                            (evaluated_member != member)
+                                .then(|| {
+                                    tsz_solver::type_queries::get_callable_shape_for_type(
+                                        db,
+                                        evaluated_member,
+                                    )
+                                    .map(|shape| (evaluated_member, shape))
+                                })
+                                .flatten()
+                        });
+                if let Some((callable_member, shape)) = callable_member
+                    && !shape.call_signatures.is_empty()
+                    && !callable_members.contains(&callable_member)
+                {
+                    callable_members.push(callable_member);
+                }
+            }
+        }
+    }
+    callable_members
+}
+
+pub(crate) fn contextual_callable_member_failure_is_generic_parameter_drift(
+    db: &dyn TypeDatabase,
+    failure: Option<&super::relation_types::RelationFailure>,
+) -> bool {
+    let Some(super::relation_types::RelationFailure::ParameterTypeMismatch {
+        param_index: 0,
+        source_param,
+        target_param,
+        inner: Some(inner),
+    }) = failure
+    else {
+        return false;
+    };
+
+    if !tsz_solver::contains_type_parameters(db, *source_param)
+        || !tsz_solver::contains_type_parameters(db, *target_param)
+    {
+        return false;
+    }
+
+    matches!(
+        inner.as_ref(),
+        super::relation_types::RelationFailure::TypeMismatch {
+            source_type,
+            target_type,
+        } if *source_type == *target_param && *target_type == *source_param
+    )
+}
+
+pub(crate) fn contextual_callable_member_has_unclassified_generic_parameter_drift(
+    db: &dyn TypeDatabase,
+    source: TypeId,
+    member: TypeId,
+) -> bool {
+    let source_params = tsz_solver::type_queries::get_callable_shape_for_type(db, source)
+        .and_then(|shape| shape.call_signatures.first().map(|sig| sig.params.clone()))
+        .or_else(|| {
+            tsz_solver::type_queries::get_function_shape(db, source)
+                .map(|shape| shape.params.clone())
+        });
+    let Some(member_shape) = tsz_solver::type_queries::get_callable_shape_for_type(db, member)
+    else {
+        return false;
+    };
+    let Some(source_params) = source_params else {
+        return false;
+    };
+    let Some(member_sig) = member_shape.call_signatures.first() else {
+        return false;
+    };
+    let Some(source_param) = source_params.first() else {
+        return false;
+    };
+    let Some(member_param) = member_sig.params.first() else {
+        return false;
+    };
+
+    source_params.len() <= member_sig.params.len()
+        && tsz_solver::contains_type_parameters(db, source_param.type_id)
+        && tsz_solver::contains_type_parameters(db, member_param.type_id)
 }
 
 // ---------------------------------------------------------------------------
@@ -551,7 +671,7 @@ pub(crate) fn is_assignable_bivariant_with_resolver<R: tsz_solver::TypeResolver>
     flags: u16,
     inheritance_graph: &tsz_solver::InheritanceGraph,
     sound_mode: bool,
-) -> bool {
+) -> tsz_solver::RelationResult {
     let policy = tsz_solver::RelationPolicy::from_flags(flags)
         .with_strict_subtype_checking(sound_mode)
         .with_strict_any_propagation(sound_mode);
@@ -569,7 +689,6 @@ pub(crate) fn is_assignable_bivariant_with_resolver<R: tsz_solver::TypeResolver>
         policy,
         context,
     )
-    .is_related()
 }
 
 pub(crate) fn is_subtype_with_resolver<R: tsz_solver::TypeResolver>(
@@ -680,10 +799,10 @@ pub(crate) fn check_assignable_gate_with_overrides<R: tsz_solver::TypeResolver>(
 pub(crate) struct RelationOutcome {
     /// Whether the relation holds (source is assignable to target).
     pub related: bool,
-    /// Whether the solver's recursion depth limit was exceeded during
-    /// the relation check. When true, the caller should emit TS2859
-    /// ("Excessive complexity comparing types").
+    /// Stack-depth limit (nesting) was exceeded → TS2321 "Excessive stack depth".
     pub depth_exceeded: bool,
+    /// Iteration-count budget was exhausted → TS2859 "Excessive complexity".
+    pub iteration_exceeded: bool,
     /// Structured failure classification when `related` is false.
     /// Converted from the solver's `SubtypeFailureReason`.
     pub failure: Option<super::relation_types::RelationFailure>,
@@ -737,36 +856,42 @@ pub(crate) fn execute_relation<R: tsz_solver::TypeResolver>(
 
     // BivariantCallbacks uses a different solver entry point that treats
     // callback parameter types bivariantly (strips strict-function-types).
-    let (related, depth_exceeded) = if request.kind == RelationKind::BivariantCallbacks {
-        let bivariant_flags = relation_flags & !RelationFlags::STRICT_FUNCTION_TYPES;
-        let r = is_assignable_bivariant_with_resolver(
-            db,
-            resolver,
-            request.source,
-            request.target,
-            bivariant_flags,
-            inheritance_graph,
-            sound_mode,
-        );
-        (r, false)
-    } else {
-        let inputs = AssignabilityQueryInputs {
-            db,
-            resolver,
-            source: request.source,
-            target: request.target,
-            flags: relation_flags,
-            inheritance_graph,
-            sound_mode,
+    let (related, depth_exceeded, iteration_exceeded) =
+        if request.kind == RelationKind::BivariantCallbacks {
+            let bivariant_flags = relation_flags & !RelationFlags::STRICT_FUNCTION_TYPES;
+            let r = is_assignable_bivariant_with_resolver(
+                db,
+                resolver,
+                request.source,
+                request.target,
+                bivariant_flags,
+                inheritance_graph,
+                sound_mode,
+            );
+            (r.is_related(), r.depth_exceeded, r.iteration_exceeded)
+        } else {
+            let inputs = AssignabilityQueryInputs {
+                db,
+                resolver,
+                source: request.source,
+                target: request.target,
+                flags: relation_flags,
+                inheritance_graph,
+                sound_mode,
+            };
+            let relation_result = is_assignable_with_overrides(&inputs, overrides);
+            (
+                relation_result.is_related(),
+                relation_result.depth_exceeded,
+                relation_result.iteration_exceeded,
+            )
         };
-        let relation_result = is_assignable_with_overrides(&inputs, overrides);
-        (relation_result.is_related(), relation_result.depth_exceeded)
-    };
 
     if related {
         return RelationOutcome {
             related: true,
             depth_exceeded,
+            iteration_exceeded,
             failure: None,
             weak_union_violation: false,
             property_classification: None,
@@ -807,6 +932,7 @@ pub(crate) fn execute_relation<R: tsz_solver::TypeResolver>(
     RelationOutcome {
         related: false,
         depth_exceeded,
+        iteration_exceeded,
         failure,
         weak_union_violation,
         property_classification,

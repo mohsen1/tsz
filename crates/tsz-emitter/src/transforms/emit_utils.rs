@@ -170,6 +170,136 @@ pub(crate) fn identifier_text_or_empty(arena: &NodeArena, idx: NodeIndex) -> Str
     identifier_text(arena, idx).unwrap_or_default()
 }
 
+/// Returns true when an expression evaluated from a function parameter can
+/// allocate a downlevel optional-chain/nullish temp in the function body.
+pub(crate) fn parameter_expression_generates_downlevel_temp(
+    arena: &NodeArena,
+    needs_es2020_lowering: bool,
+    idx: NodeIndex,
+) -> bool {
+    needs_es2020_lowering && expression_generates_downlevel_temp_inner(arena, idx)
+}
+
+fn expression_generates_downlevel_temp_inner(arena: &NodeArena, idx: NodeIndex) -> bool {
+    let Some(node) = arena.get(idx) else {
+        return false;
+    };
+
+    if let Some(computed) = arena.get_computed_property(node) {
+        return expression_generates_downlevel_temp_inner(arena, computed.expression);
+    }
+
+    if let Some(paren) = arena.get_parenthesized(node) {
+        return expression_generates_downlevel_temp_inner(arena, paren.expression);
+    }
+
+    if let Some(assertion) = arena.get_type_assertion(node) {
+        return expression_generates_downlevel_temp_inner(arena, assertion.expression);
+    }
+
+    if let Some(binary) = arena.get_binary_expr(node) {
+        if binary.operator_token == SyntaxKind::QuestionQuestionToken as u16
+            && !is_simple_copiable_expression(arena, binary.left)
+        {
+            return true;
+        }
+        return expression_generates_downlevel_temp_inner(arena, binary.left)
+            || expression_generates_downlevel_temp_inner(arena, binary.right);
+    }
+
+    if let Some(access) = arena.get_access_expr(node) {
+        if access.question_dot_token && !is_simple_copiable_expression(arena, access.expression) {
+            return true;
+        }
+        return expression_generates_downlevel_temp_inner(arena, access.expression)
+            || expression_generates_downlevel_temp_inner(arena, access.name_or_argument);
+    }
+
+    if let Some(call) = arena.get_call_expr(node) {
+        if node.is_optional_chain()
+            && !optional_chain_call_uses_simple_receiver(arena, call.expression)
+            && !is_simple_copiable_expression(arena, call.expression)
+        {
+            return true;
+        }
+        if expression_generates_downlevel_temp_inner(arena, call.expression) {
+            return true;
+        }
+        return call.arguments.as_ref().is_some_and(|args| {
+            args.nodes
+                .iter()
+                .copied()
+                .any(|arg| expression_generates_downlevel_temp_inner(arena, arg))
+        });
+    }
+
+    if let Some(cond) = arena.get_conditional_expr(node) {
+        return expression_generates_downlevel_temp_inner(arena, cond.condition)
+            || expression_generates_downlevel_temp_inner(arena, cond.when_true)
+            || expression_generates_downlevel_temp_inner(arena, cond.when_false);
+    }
+
+    if let Some(unary) = arena.get_unary_expr(node) {
+        return expression_generates_downlevel_temp_inner(arena, unary.operand);
+    }
+
+    if let Some(unary) = arena.get_unary_expr_ex(node) {
+        return expression_generates_downlevel_temp_inner(arena, unary.expression);
+    }
+
+    if let Some(literal) = arena.get_literal_expr(node) {
+        return literal
+            .elements
+            .nodes
+            .iter()
+            .copied()
+            .any(|element| expression_generates_downlevel_temp_inner(arena, element));
+    }
+
+    if let Some(prop) = arena.get_property_assignment(node) {
+        return expression_generates_downlevel_temp_inner(arena, prop.name)
+            || expression_generates_downlevel_temp_inner(arena, prop.initializer);
+    }
+
+    if let Some(shorthand) = arena.get_shorthand_property(node) {
+        return expression_generates_downlevel_temp_inner(arena, shorthand.name)
+            || expression_generates_downlevel_temp_inner(
+                arena,
+                shorthand.object_assignment_initializer,
+            );
+    }
+
+    if let Some(spread) = arena.get_spread(node) {
+        return expression_generates_downlevel_temp_inner(arena, spread.expression);
+    }
+
+    false
+}
+
+fn is_simple_copiable_expression(arena: &NodeArena, idx: NodeIndex) -> bool {
+    let Some(node) = arena.get(idx) else {
+        return false;
+    };
+
+    node.is_identifier()
+        || (node.kind >= SyntaxKind::BreakKeyword as u16
+            && node.kind <= SyntaxKind::DeferKeyword as u16)
+        || node.is_numeric_literal()
+        || node.is_string_literal()
+        || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+}
+
+fn optional_chain_call_uses_simple_receiver(arena: &NodeArena, callee: NodeIndex) -> bool {
+    let Some(callee_node) = arena.get(callee) else {
+        return false;
+    };
+    let Some(access) = arena.get_access_expr(callee_node) else {
+        return false;
+    };
+
+    access.question_dot_token && is_simple_copiable_expression(arena, access.expression)
+}
+
 /// Returns true when a namespace/module block contains declarations that
 /// produce runtime output.
 pub(crate) fn module_body_has_runtime_value_declarations(

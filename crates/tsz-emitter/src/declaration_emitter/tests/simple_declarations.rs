@@ -1473,6 +1473,36 @@ function p() { return Promise.resolve(); }
 }
 
 #[test]
+fn test_jsdoc_nested_object_binding_params_and_promise_star() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+class Y {
+    /**
+     * @param {Object} error
+     * @param {string?} error.reason
+     * @param {Object} error.suberr
+     * @param {string?} error.suberr.reason
+     * @param {string?} error.suberr.code
+     * @returns {Promise.<*>}
+     */
+    async cancel({reason, suberr}) {}
+}
+"#,
+    );
+
+    for expected in [
+        "reason: string | null;",
+        "suberr: {\n            reason: string | null;\n            code: string | null;\n        };",
+        "): Promise<any>;",
+    ] {
+        assert!(
+            output.contains(expected),
+            "Expected nested JSDoc parameter output `{expected}`: {output}"
+        );
+    }
+}
+
+#[test]
 fn test_js_trailing_jsdoc_type_aliases_are_emitted() {
     let source = r#"
 export {};
@@ -1820,9 +1850,11 @@ const p = {};
 "#,
     );
 
+    // tsc joins single-line @type comments to the following declaration even when
+    // they appear on a separate source line, so check for the joined form.
     assert!(
         output.starts_with(
-            "/**\n * @template T\n * @typedef {{\n  value: {\n    [K in keyof T]?: Box<T[K]>[]\n  }\n}} Box<T> */\n/** @type {Box<{foo:string}>} */\ndeclare const p: Box<{"
+            "/**\n * @template T\n * @typedef {{\n  value: {\n    [K in keyof T]?: Box<T[K]>[]\n  }\n}} Box<T> */\n/** @type {Box<{foo:string}>} */ declare const p: Box<{"
         ),
         "Expected unstarred typedef lines and following @type comment to preserve source text: {output}"
     );
@@ -2299,6 +2331,158 @@ export class Foo {
 }
 
 #[test]
+fn test_ts_function_declaration_preserves_jsdoc_overload_comments() {
+    let output = emit_dts(
+        r#"
+/**
+ * @overload
+ * @param {number} value
+ * @returns {'number'}
+ */
+/**
+ * @overload
+ * @param {string} value
+ * @returns {'string'}
+ */
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
+function kind(value: unknown): string {
+  return typeof value;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("@overload"),
+        "Expected TS @overload JSDoc comments to be preserved: {output}"
+    );
+    assert!(
+        output.contains("declare function kind(value: unknown): string;"),
+        "Expected TS implementation signature instead of JSDoc overload expansion: {output}"
+    );
+    assert!(
+        !output.contains("declare function kind(value: number): \"number\";")
+            && !output.contains("declare function kind(value: string): \"string\";"),
+        "TS @overload JSDoc should not emit overload signatures: {output}"
+    );
+}
+
+#[test]
+fn test_ts_function_declaration_jsdoc_overload_keeps_implementation_param_names() {
+    let output = emit_dts(
+        r#"
+/**
+ * @overload
+ * @param {number} x
+ * @returns {number}
+ */
+/**
+ * @overload
+ * @param {string} x
+ * @returns {string}
+ */
+/**
+ * @param {unknown} x
+ * @returns {unknown}
+ */
+function identity(x: unknown): unknown {
+  return x;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("@overload"),
+        "Expected TS @overload JSDoc comments to be preserved: {output}"
+    );
+    assert!(
+        output.contains("declare function identity(x: unknown): unknown;"),
+        "Expected TS implementation signature to be emitted: {output}"
+    );
+    assert!(
+        !output.contains("identity(x: number)") && !output.contains("identity(x: string)"),
+        "TS @overload JSDoc should not emit overload signatures: {output}"
+    );
+}
+
+#[test]
+fn test_ts_class_method_preserves_jsdoc_overload_comments() {
+    let output = emit_dts(
+        r#"
+class Converter {
+  /**
+   * @overload
+   * @param {number} x
+   * @returns {string}
+   */
+  /**
+   * @overload
+   * @param {string} x
+   * @returns {number}
+   */
+  /**
+   * @param {unknown} x
+   * @returns {unknown}
+   */
+  convert(x: unknown): unknown {
+    return x;
+  }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("@overload"),
+        "Expected TS method @overload JSDoc comments to be preserved: {output}"
+    );
+    assert!(
+        output.contains("convert(x: unknown): unknown;"),
+        "Expected TS implementation method signature to be emitted: {output}"
+    );
+    assert!(
+        !output.contains("convert(x: number): string;")
+            && !output.contains("convert(x: string): number;"),
+        "TS method @overload JSDoc should not emit overload signatures: {output}"
+    );
+}
+
+#[test]
+fn test_ts_class_constructor_preserves_jsdoc_overload_comments() {
+    let output = emit_dts(
+        r#"
+class Wrapper {
+  /**
+   * @overload
+   * @param {string} value
+   */
+  /**
+   * @overload
+   * @param {number} value
+   */
+  /** @param {unknown} value */
+  constructor(value: unknown) {}
+}
+"#,
+    );
+
+    assert!(
+        output.contains("@overload"),
+        "Expected TS constructor @overload JSDoc comments to be preserved: {output}"
+    );
+    assert!(
+        output.contains("constructor(value: unknown);"),
+        "Expected TS implementation constructor signature to be emitted: {output}"
+    );
+    assert!(
+        !output.contains("constructor(value: string);")
+            && !output.contains("constructor(value: number);"),
+        "TS constructor @overload JSDoc should not emit overload signatures: {output}"
+    );
+}
+
+#[test]
 fn test_js_object_namespace_emits_legacy_jsdoc_overload_member_comments() {
     let output = emit_js_dts(
         r#"
@@ -2437,6 +2621,44 @@ export function fn3(uuid) {}
 }
 
 #[test]
+fn test_jsdoc_typedef_same_file_typeof_export_stays_unqualified() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/** @satisfies {(uuid: string) => void} */
+export const fn1 = uuid => {};
+
+/** @typedef {Parameters<typeof fn1>} Foo */
+
+/** @type Foo */
+export const v1 = ["abc"];
+
+/** @satisfies {(label: string) => void} */
+export const renamed = label => {};
+
+/** @typedef {ReturnType<typeof renamed>} Bar */
+"#,
+    );
+
+    assert!(
+        output.contains("export function fn1(uuid: string): void;"),
+        "Expected @satisfies parameter fallback to keep exported const-function signature: {output}"
+    );
+    assert!(
+        output.contains("export type Foo = Parameters<typeof fn1>;"),
+        "Expected JSDoc typedef alias to keep same-file typeof reference unqualified: {output}"
+    );
+    assert!(
+        output.contains("export type Bar = ReturnType<typeof renamed>;"),
+        "Expected renamed same-file typeof reference to stay unqualified too: {output}"
+    );
+    assert!(
+        !output.contains("typeof import(\".\").fn1")
+            && !output.contains("typeof import(\".\").renamed"),
+        "Same-file JSDoc typedef aliases should not self-import exported values: {output}"
+    );
+}
+
+#[test]
 fn test_js_function_declaration_emits_constrained_jsdoc_template() {
     let output = emit_js_dts(
         r#"
@@ -2483,6 +2705,10 @@ export function inJs(l) {
     assert!(
         output.contains("export type IFn = <T>(m: T) => T;"),
         "Expected the JSDoc typedef alias to still be emitted: {output}"
+    );
+    assert!(
+        !output.contains("@typedef"),
+        "Did not expect source-only typedef comment to be duplicated before the function: {output}"
     );
     assert!(
         !output.contains("@type {IFn}"),
@@ -2541,6 +2767,39 @@ export function inJs(cb, value) {
     assert!(
         output.contains("export type IFn2 = (cb: (x: number) => string, value: number) => void;"),
         "Expected emitted typedef alias to preserve nested function parameter type: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_declaration_type_alias_signature_filters_renamed_typedef_comment() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @typedef {<Value>(input : Value) => Value} Mapper
+ */
+
+/** @type {Mapper} */
+export function mapValue(value) {
+  return value;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export function mapValue<Value>(input: Value): Value;"),
+        "Expected renamed JSDoc function alias to emit as a function signature: {output}"
+    );
+    assert!(
+        output.contains("export type Mapper = <Value>(input: Value) => Value;"),
+        "Expected renamed typedef alias to still be emitted: {output}"
+    );
+    assert!(
+        !output.contains("@typedef"),
+        "Did not expect renamed source-only typedef comment to be duplicated: {output}"
+    );
+    assert!(
+        !output.contains("@type {Mapper}"),
+        "Did not expect renamed implementation-only @type comment in declaration output: {output}"
     );
 }
 
@@ -3075,6 +3334,26 @@ export class Preferences {
 }
 
 #[test]
+fn test_js_function_like_class_zero_arg_constructor_is_omitted() {
+    let source = r#"
+function C1() {
+    this.prop = 1;
+}
+C1.prototype.method = function () {};
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("declare class C1"),
+        "Expected JS function-like class surface: {output}"
+    );
+    assert!(
+        !output.contains("constructor();"),
+        "Expected zero-arg synthetic JS function-like constructors to be omitted: {output}"
+    );
+}
+
+#[test]
 fn test_js_subclass_zero_arg_constructor_is_emitted() {
     let source = r#"
 export class Super {
@@ -3215,6 +3494,34 @@ module.exports = Timer;
         output.matches("export = Timer;").count(),
         1,
         "Did not expect duplicate JS export= statements: {output}"
+    );
+}
+
+#[test]
+fn test_js_export_equals_class_keeps_typedef_local_and_after_surface() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @typedef {string | number} Whatever
+ */
+class Conn {
+    constructor() {}
+}
+module.exports = Conn;
+"#,
+    );
+
+    assert!(
+        output.starts_with("export = Conn;\n/**"),
+        "Expected class export= to precede leading typedef JSDoc: {output}"
+    );
+    assert!(
+        output.contains("\ntype Whatever = string | number;"),
+        "Expected CommonJS typedef alias to remain local and trailing: {output}"
+    );
+    assert!(
+        !output.contains("export type Whatever"),
+        "Did not expect CommonJS typedef alias to emit as exported top-level type: {output}"
     );
 }
 
@@ -3448,6 +3755,46 @@ if (holder.guard.isLeader()) {
     assert!(
         output.contains("declare var holder: {\n    guard: RoyalGuard;\n};"),
         "Expected shorthand object member to use the declared annotation instead of a narrowed flow type: {output}"
+    );
+}
+
+#[test]
+fn test_object_shorthand_definite_assignment_uses_non_nullish_declared_type() {
+    let source = r#"
+const a: string | undefined = 'ff';
+const foo = { a! };
+
+const b: string | undefined = 'plain';
+const plain = { b };
+
+const c: number | null | undefined = 1;
+const numeric = { c! };
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+    let (parser, _) = parse_test_source(source);
+    let shorthand_exclamation_count = parser
+        .arena
+        .nodes
+        .iter()
+        .filter_map(|node| parser.arena.get_shorthand_property(node))
+        .filter(|data| data.exclamation_token_pos != 0)
+        .count();
+    assert_eq!(
+        shorthand_exclamation_count, 2,
+        "Expected parser recovery to preserve two shorthand definite-assignment markers"
+    );
+
+    assert!(
+        output.contains("declare const foo: {\n    a: string;\n};"),
+        "Expected recovered `{{a!}}` shorthand to use the non-nullish declared type: {output}"
+    );
+    assert!(
+        output.contains("declare const plain: {\n    b: string | undefined;\n};"),
+        "Expected plain shorthand to preserve the declared union type: {output}"
+    );
+    assert!(
+        output.contains("declare const numeric: {\n    c: number;\n};"),
+        "Expected recovered shorthand to remove both null and undefined from top-level unions: {output}"
     );
 }
 
@@ -6659,6 +7006,27 @@ function g<T>(x: T) {
 }
 
 #[test]
+fn test_generic_class_unrelated_methods_preserve_literal_return_unions() {
+    let output = emit_dts_with_binding(
+        r#"
+export class C<T> {
+    m(x: boolean) { return x ? 1 : 2; }
+    s(x: boolean) { return x ? "a" : "b"; }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("m(x: boolean): 1 | 2;"),
+        "Expected generic class method numeric literal union to use source-backed return text: {output}"
+    );
+    assert!(
+        output.contains(r#"s(x: boolean): "a" | "b";"#),
+        "Expected generic class method string literal union to use source-backed return text: {output}"
+    );
+}
+
+#[test]
 fn test_const_enum_member_access_const_variable_preserves_initializer() {
     let output = emit_dts_with_binding(
         r#"
@@ -7658,6 +8026,43 @@ export class Aleph {
 }
 
 #[test]
+fn test_js_constructor_assignment_single_line_type_comment_stays_compact() {
+    let source = r#"
+/**
+ * @typedef {string | number} Whatever
+ */
+class Conn {
+    constructor() {}
+    item = 3;
+    method() {}
+}
+
+class Wrap {
+    /**
+     * @param {Conn} c
+     */
+    constructor(c) {
+        this.connItem = c.item;
+        /** @type {Whatever} */
+        this.another = "";
+    }
+}
+
+export { Wrap };
+"#;
+    let output = emit_js_dts(source);
+
+    assert!(
+        output.contains("    /** @type {Whatever} */\n    another: Whatever;"),
+        "Expected single-line constructor assignment @type JSDoc to stay compact: {output}"
+    );
+    assert!(
+        output.contains("export type Whatever = string | number;"),
+        "Expected exported typedef alias used by compact @type comment to be emitted: {output}"
+    );
+}
+
+#[test]
 fn test_js_local_bare_require_alias_without_exports_is_elided() {
     let source = r#"
 const u = require("untyped");
@@ -7939,6 +8344,70 @@ module.exports = Root;
     assert!(
         output.contains("declare var x: number;"),
         "Expected non-alias expando property declaration to remain a value declaration: {output}"
+    );
+}
+
+#[test]
+fn test_jsdoc_bare_commonjs_import_preserves_import_when_static_surface_is_partial() {
+    let module_source = r#"
+function Root() {}
+class Supported {}
+const unsupported = 1;
+
+Root.Supported = Supported;
+Root.unsupported = unsupported;
+module.exports = Root;
+"#;
+    let mut module_parser = ParserState::new(
+        "/tmp/tsz-jsdoc-partial-surface/root.js".to_string(),
+        module_source.to_string(),
+    );
+    module_parser.parse_source_file();
+    let module_arena = Arc::new(module_parser.arena.clone());
+
+    let consumer_source = r#"
+/** @type {import("./root")} */
+let value;
+"#;
+    let mut consumer_parser = ParserState::new(
+        "/tmp/tsz-jsdoc-partial-surface/consumer.js".to_string(),
+        consumer_source.to_string(),
+    );
+    let consumer_root = consumer_parser.parse_source_file();
+    let consumer_arena = Arc::new(consumer_parser.arena.clone());
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&consumer_parser.arena, consumer_root);
+
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&consumer_parser.arena, type_cache, &interner, &binder);
+    emitter.set_current_arena(
+        consumer_arena,
+        "/tmp/tsz-jsdoc-partial-surface/consumer.js".to_string(),
+    );
+
+    let mut arena_to_path = FxHashMap::default();
+    arena_to_path.insert(
+        Arc::as_ptr(&module_arena) as usize,
+        "/tmp/tsz-jsdoc-partial-surface/root.js".to_string(),
+    );
+    emitter.set_arena_to_path(arena_to_path);
+
+    let mut global_symbol_arenas = FxHashMap::default();
+    global_symbol_arenas.insert(tsz_binder::SymbolId(1), module_arena);
+    emitter.set_global_symbol_arenas(global_symbol_arenas);
+
+    let output = emitter.emit(consumer_root);
+
+    assert!(
+        output.contains(r#"declare let value: import("./root");"#),
+        "Expected partial CommonJS static surface to keep original import type: {output}"
+    );
+    assert!(
+        !output.contains("Supported: {"),
+        "Did not expect a partial object surface that drops unsupported static members: {output}"
     );
 }
 

@@ -1359,7 +1359,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             type_id: getter_type,
                             write_type: getter_type,
                             optional: false,
-                            readonly: false,
+                            readonly: true,
                             is_method: false,
                             is_class_prototype: false,
                             visibility: Visibility::Public,

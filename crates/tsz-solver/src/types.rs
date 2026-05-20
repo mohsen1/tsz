@@ -282,7 +282,7 @@ bitflags::bitflags! {
     /// Bits `0..=8` are preserved from the original packed `u16` layout so
     /// legacy callers (e.g. checker boundary helpers that import the
     /// `FLAG_*` constants) continue to interoperate byte-for-byte. Bits
-    /// `9..=13` are new and encode previously-missing Lawyer-layer options
+    /// `9..=15` are new and encode previously-missing Lawyer-layer options
     /// that were silently missing from the cache key.
     #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
     pub struct RelationFlags: u32 {
@@ -1040,6 +1040,14 @@ impl PropertyInfo {
             readonly: true,
             ..Self::new(name, type_id)
         }
+    }
+
+    /// Returns true when getter and setter have distinct types (TypeScript 4.3+
+    /// split accessor). A non-NONE `write_type` that differs from the read type
+    /// is the canonical encoding: `write_type == NONE` means readonly (lowering
+    /// pass), and `write_type == type_id` means a uniform read/write property.
+    pub fn has_split_accessor(&self) -> bool {
+        self.write_type != TypeId::NONE && self.write_type != self.type_id
     }
 
     /// Find a property by name in a slice of properties.

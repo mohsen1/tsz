@@ -81,6 +81,16 @@ impl<'a> Printer<'a> {
             self.write("accessor ");
         }
 
+        let needs_new_target_capture =
+            self.ctx.target_es5 && self.function_body_contains_new_target(func);
+        let function_name = if func.name.is_some() {
+            Some(self.get_identifier_text_idx(func.name))
+        } else {
+            self.anonymous_default_export_name
+                .clone()
+                .or_else(|| needs_new_target_capture.then_some("_a".to_string()))
+        };
+
         self.write("function");
 
         if func.asterisk_token {
@@ -88,16 +98,12 @@ impl<'a> Printer<'a> {
         }
 
         // Name
-        if func.name.is_some() {
+        if let Some(name) = function_name.as_deref() {
             self.write_space();
             if let Some(name_node) = self.arena.get(func.name) {
                 self.skip_comments_in_range(node.pos, name_node.pos);
             }
-            self.emit_decl_name(func.name);
-        } else if let Some(override_name) = self.anonymous_default_export_name.clone() {
-            // Anonymous default export: use the override name (e.g. `default_1`)
-            self.write_space();
-            self.write(&override_name);
+            self.write(name);
         } else {
             // Space before ( for anonymous functions: `function ()` not `function()`
             self.write(" ");
@@ -215,6 +221,11 @@ impl<'a> Printer<'a> {
         let prev_async_generator_shadowed_parameter_names =
             std::mem::take(&mut self.ctx.async_generator_shadowed_parameter_names);
         let prev_namespace_exported_names = self.namespace_exported_names.clone();
+        let previous_new_target_capture = needs_new_target_capture.then(|| {
+            self.push_new_target_capture_for_initializer(
+                self.ordinary_function_new_target_initializer(function_name.as_deref()),
+            )
+        });
         self.push_commonjs_exported_var_parameter_shadow_names(&func.parameters.nodes);
         for &param_idx in &func.parameters.nodes {
             if let Some(param) = self.arena.get_parameter_at(param_idx) {
@@ -231,6 +242,9 @@ impl<'a> Printer<'a> {
         self.ctx.async_generator_shadowed_parameter_names =
             prev_async_generator_shadowed_parameter_names;
         self.ctx.flags.in_generator = prev_in_generator;
+        if let Some(previous) = previous_new_target_capture {
+            self.restore_new_target_capture(previous);
+        }
         if self.function_has_recovered_pre_body_token(node, func.body) {
             self.write_line();
             self.write("{ }");

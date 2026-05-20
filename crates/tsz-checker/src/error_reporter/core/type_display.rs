@@ -1685,23 +1685,14 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut parts = Vec::new();
-        if let Some(idx) = &shape.string_index {
+        for idx in shape.string_index.iter().chain(shape.number_index.iter()) {
             let key_name = idx
                 .param_name
                 .map(|a| self.ctx.types.resolve_atom_ref(a).to_string())
                 .unwrap_or_else(|| "x".to_string());
+            let key_kind = self.format_type(idx.key_type);
             parts.push(format!(
-                "[{key_name}: string]: {}",
-                self.format_type(idx.value_type)
-            ));
-        }
-        if let Some(idx) = &shape.number_index {
-            let key_name = idx
-                .param_name
-                .map(|a| self.ctx.types.resolve_atom_ref(a).to_string())
-                .unwrap_or_else(|| "x".to_string());
-            parts.push(format!(
-                "[{key_name}: number]: {}",
+                "[{key_name}: {key_kind}]: {}",
                 self.format_type(idx.value_type)
             ));
         }

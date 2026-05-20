@@ -1,6 +1,8 @@
 #!/usr/bin/env node
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { semanticFamiliesForText } from "./type-challenges-semantic-families.mjs";
 
 const [tsvPath, manifestPath] = process.argv.slice(2);
 
@@ -95,12 +97,12 @@ const {
 const lines = fs.readFileSync(tsvPath, "utf8").trimEnd().split(/\r?\n/);
 const header = lines.shift();
 
-if (header !== "output\tsource\tid\tlevel\ttitle") {
+if (header !== "output\tsource\tsourceSha256\tid\tlevel\ttitle") {
   console.error(`error: unexpected manifest TSV header: ${header ?? "<empty>"}`);
   process.exit(1);
 }
 
-function readDeclarationNames(outputPath) {
+function readOutputMetadata(outputPath) {
   const text = fs.readFileSync(outputPath, "utf8");
   const names = [];
   const seen = new Set();
@@ -115,7 +117,11 @@ function readDeclarationNames(outputPath) {
     }
   }
 
-  return names;
+  return {
+    declarations: names,
+    semanticFamilies: semanticFamiliesForText(text),
+    outputSha256: crypto.createHash("sha256").update(text).digest("hex"),
+  };
 }
 
 function parseRequiredChallengeId(id, source) {
@@ -166,6 +172,15 @@ function validateChallengeLevel(level, source) {
   }
 }
 
+function validateSha256Hex(value, label, source) {
+  if (!/^[0-9a-f]{64}$/.test(value)) {
+    console.error(
+      `error: Type Challenges solution ${label} must be a lowercase sha256 hex digest: ${source}`,
+    );
+    process.exit(1);
+  }
+}
+
 function validateManifestPath(value, label, requiredPrefix) {
   if (
     path.isAbsolute(value) ||
@@ -180,19 +195,31 @@ function validateManifestPath(value, label, requiredPrefix) {
   }
 }
 
+function parseSourceStem(source) {
+  if (!source.endsWith(".md")) {
+    console.error(
+      `error: Type Challenges solution source must be a Markdown file: ${source}`,
+    );
+    process.exit(1);
+  }
+
+  return path.posix.basename(source, ".md");
+}
+
 const entries = lines
   .filter((line) => line.length > 0)
   .map((line, index) => {
-    const [output, source, id, level, ...titleParts] = line.split("\t");
+    const [output, source, sourceSha256, id, level, ...titleParts] = line.split("\t");
     const title = titleParts.join("\t");
 
-    if (!output || !source || !id || !level || !title) {
+    if (!output || !source || !sourceSha256 || !id || !level || !title) {
       console.error(`error: incomplete manifest row ${index + 2}: ${line}`);
       process.exit(1);
     }
 
     validateManifestPath(output, "output", "solutions/");
     validateManifestPath(source, "source", "en/");
+    validateSha256Hex(sourceSha256, "sourceSha256", source);
     validateChallengeLevel(level, source);
 
     const outputPath = path.join(manifestRoot, output);
@@ -205,7 +232,11 @@ const entries = lines
       process.exit(1);
     }
 
-    const declarations = readDeclarationNames(outputPath);
+    const {
+      declarations,
+      semanticFamilies,
+      outputSha256,
+    } = readOutputMetadata(outputPath);
     if (declarations.length === 0) {
       console.error(`error: manifest output has no declarations: ${output}`);
       process.exit(1);
@@ -218,8 +249,12 @@ const entries = lines
         id: parseRequiredChallengeId(id, source),
         level,
         title,
+        sourceStem: parseSourceStem(source),
+        sourceSha256,
       },
       declarations,
+      semanticFamilies,
+      outputSha256,
     };
   });
 

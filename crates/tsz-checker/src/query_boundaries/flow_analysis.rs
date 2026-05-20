@@ -257,7 +257,11 @@ pub(crate) fn fallback_compound_assignment_result(
     operator_token: u16,
     rhs_literal_type: Option<TypeId>,
 ) -> Option<TypeId> {
-    tsz_solver::fallback_compound_assignment_result(db, operator_token, rhs_literal_type)
+    tsz_solver::operations::compound_assignment::fallback_compound_assignment_result(
+        db,
+        operator_token,
+        rhs_literal_type,
+    )
 }
 
 pub(crate) fn widen_literal_to_primitive(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
@@ -273,6 +277,18 @@ pub(crate) fn instance_type_from_constructor(
     type_id: TypeId,
 ) -> Option<TypeId> {
     tsz_solver::type_queries::instance_type_from_constructor(db, type_id)
+}
+
+/// Return the predicate type from `[Symbol.hasInstance](v: ...): v is T` if present.
+///
+/// Mirrors the solver's `instance_type_from_symbol_has_instance` so the checker
+/// can decide whether to use type-predicate narrowing semantics (which do not
+/// exclude primitives) instead of standard instanceof semantics (which do).
+pub(crate) fn instance_type_from_symbol_has_instance(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    tsz_solver::type_queries::instance_type_from_symbol_has_instance(db, type_id)
 }
 
 pub(crate) fn is_promise_like_type(db: &dyn QueryDatabase, type_id: TypeId) -> bool {

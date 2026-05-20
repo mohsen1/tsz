@@ -2,10 +2,10 @@
 
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use tsz_core::interner::Atom;
+use tsz_solver::computation::infer_generic_function;
 use tsz_solver::{
     CompatChecker, ConditionalType, FunctionShape, ObjectShapeId, ParamInfo, PropertyInfo,
-    TypeData, TypeId, TypeInterner, TypeParamInfo, Visibility, evaluate_type,
-    infer_generic_function, is_subtype_of,
+    TypeData, TypeId, TypeInterner, TypeParamInfo, Visibility, evaluate_type, is_subtype_of,
 };
 
 fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {

@@ -344,7 +344,7 @@ impl ParserState {
         }
         self.parse_semicolon();
 
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         self.arena.add_export_assignment(
             syntax_kind_ext::EXPORT_ASSIGNMENT,
@@ -368,7 +368,7 @@ impl ParserState {
         let name = self.parse_identifier();
         self.parse_semicolon();
 
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
         self.arena.add_export_decl(
             syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION,
             start_pos,
@@ -516,7 +516,7 @@ impl ParserState {
 
         self.parse_semicolon();
 
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
         self.arena.add_export_decl(
             syntax_kind_ext::EXPORT_DECLARATION,
             start_pos,
@@ -551,7 +551,7 @@ impl ParserState {
         };
 
         self.parse_semicolon();
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         self.arena.add_export_decl(
             syntax_kind_ext::EXPORT_DECLARATION,
@@ -1290,7 +1290,7 @@ impl ParserState {
         };
 
         self.parse_semicolon();
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         self.arena.add_return(
             syntax_kind_ext::RETURN_STATEMENT,
@@ -2031,7 +2031,7 @@ impl ParserState {
         };
 
         self.parse_semicolon();
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         self.arena.add_jump(
             syntax_kind_ext::BREAK_STATEMENT,
@@ -2065,7 +2065,7 @@ impl ParserState {
         };
 
         self.parse_semicolon();
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         self.arena.add_jump(
             syntax_kind_ext::CONTINUE_STATEMENT,
@@ -2119,7 +2119,7 @@ impl ParserState {
         };
 
         self.parse_semicolon();
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         // Use return statement node type for throw (same structure)
         self.arena.add_return(
@@ -2473,7 +2473,7 @@ impl ParserState {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::DebuggerKeyword);
         self.parse_semicolon();
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         self.arena
             .add_token(syntax_kind_ext::DEBUGGER_STATEMENT, start_pos, end_pos)
@@ -2730,7 +2730,8 @@ impl ParserState {
                 self.next_token();
             }
         }
-        let end_pos = self.token_end();
+        // token_full_start() (not token_end()) matches tsc's finishNode/getTokenFullStart() for ASI.
+        let end_pos = self.token_full_start();
         self.pending_jsx_missing_close_brace_in_expression_statement = 0;
         self.jsx_missing_brace_semicolon_window_start = None;
         self.suppress_next_jsx_missing_brace_at_semicolon = false;

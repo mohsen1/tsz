@@ -889,25 +889,6 @@ impl<'a> CheckerState<'a> {
             member_id
         };
 
-        let parent_is_umd_export = self
-            .get_cross_file_symbol(parent_sym_id)
-            .or_else(|| self.ctx.binder.get_symbol(parent_sym_id))
-            .is_some_and(|symbol| symbol.is_umd_export);
-        if parent_is_umd_export
-            && let Some(member_symbol) = self
-                .get_cross_file_symbol(resolved_member_id)
-                .or_else(|| self.ctx.binder.get_symbol(resolved_member_id))
-            && member_symbol.has_any_flags(symbol_flags::CLASS)
-            && member_symbol.value_declaration.is_some()
-        {
-            return Some(
-                self.type_of_value_declaration_for_symbol_without_module_augmentations(
-                    resolved_member_id,
-                    member_symbol.value_declaration,
-                ),
-            );
-        }
-
         self.get_validated_member_type(resolved_member_id, property_name)
             .or_else(|| {
                 let parent_name = parent_name.as_deref()?;
@@ -2264,7 +2245,6 @@ impl<'a> CheckerState<'a> {
             module_export_member_id,
             import_module,
             decl_file_idx,
-            is_umd_export,
         ) = {
             let symbol = self
                 .get_cross_file_symbol(sym_id)
@@ -2305,7 +2285,6 @@ impl<'a> CheckerState<'a> {
                 module_export_member_id,
                 symbol.import_module.clone(),
                 symbol.decl_file_idx as usize,
-                symbol.is_umd_export,
             )
         };
 
@@ -2335,12 +2314,7 @@ impl<'a> CheckerState<'a> {
             let member_type =
                 self.resolve_validated_namespace_member(sym_id, member_id, property_name)?;
             return if let Some(module_specifier) = import_module.as_deref() {
-                Some(self.maybe_apply_namespace_member_module_augmentations(
-                    is_umd_export,
-                    module_specifier,
-                    property_name,
-                    member_type,
-                ))
+                Some(self.apply_module_augmentations(module_specifier, property_name, member_type))
             } else {
                 Some(member_type)
             };
@@ -2356,12 +2330,7 @@ impl<'a> CheckerState<'a> {
             let member_type =
                 self.resolve_validated_namespace_member(sym_id, member_id, property_name)?;
             return if let Some(module_specifier) = import_module.as_deref() {
-                Some(self.maybe_apply_namespace_member_module_augmentations(
-                    is_umd_export,
-                    module_specifier,
-                    property_name,
-                    member_type,
-                ))
+                Some(self.apply_module_augmentations(module_specifier, property_name, member_type))
             } else {
                 Some(member_type)
             };
@@ -2379,8 +2348,7 @@ impl<'a> CheckerState<'a> {
             ) {
                 let member_type =
                     self.resolve_validated_namespace_member(sym_id, member_id, property_name)?;
-                return Some(self.maybe_apply_namespace_member_module_augmentations(
-                    is_umd_export,
+                return Some(self.apply_module_augmentations(
                     module_specifier,
                     property_name,
                     member_type,
@@ -2394,17 +2362,14 @@ impl<'a> CheckerState<'a> {
                 &mut visited_aliases,
             ) {
                 let member_type = self.get_validated_member_type(reexported_sym, property_name)?;
-                return Some(self.maybe_apply_namespace_member_module_augmentations(
-                    is_umd_export,
+                return Some(self.apply_module_augmentations(
                     module_specifier,
                     property_name,
                     member_type,
                 ));
             }
 
-            if !is_umd_export
-                && self.module_augmentation_introduces_member(module_specifier, property_name)
-            {
+            if self.module_augmentation_introduces_member(module_specifier, property_name) {
                 return Some(TypeId::ANY);
             }
 
@@ -2432,12 +2397,7 @@ impl<'a> CheckerState<'a> {
             let member_type =
                 self.resolve_validated_namespace_member(sym_id, member_id, property_name)?;
             return if let Some(module_specifier) = import_module.as_deref() {
-                Some(self.maybe_apply_namespace_member_module_augmentations(
-                    is_umd_export,
-                    module_specifier,
-                    property_name,
-                    member_type,
-                ))
+                Some(self.apply_module_augmentations(module_specifier, property_name, member_type))
             } else {
                 Some(member_type)
             };
@@ -2454,20 +2414,6 @@ impl<'a> CheckerState<'a> {
     ) -> Option<tsz_binder::SymbolId> {
         self.resolve_effective_module_exports_from_file(module_specifier, Some(source_file_idx))
             .and_then(|exports| exports.get(property_name))
-    }
-
-    fn maybe_apply_namespace_member_module_augmentations(
-        &mut self,
-        is_umd_export: bool,
-        module_specifier: &str,
-        property_name: &str,
-        member_type: TypeId,
-    ) -> TypeId {
-        if is_umd_export {
-            member_type
-        } else {
-            self.apply_module_augmentations(module_specifier, property_name, member_type)
-        }
     }
 
     fn module_augmentation_introduces_member(

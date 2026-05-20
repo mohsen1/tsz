@@ -4,6 +4,7 @@
 use crate::context::TypingRequest;
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 use crate::state::CheckerState;
+use crate::state_checking::readonly::ReadonlyAssignmentDiagnostic;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -945,18 +946,18 @@ impl<'a> CheckerState<'a> {
             self.check_rest_element_initializer(left_idx);
         }
 
-        // Check readonly — emit TS2540/TS2542 if the target is readonly.
-        // tsc suppresses TS2322 for readonly named properties (TS2540) but
-        // still emits TS2322 alongside readonly index signatures (TS2542).
-        let is_readonly_target = if !is_const {
+        // tsc suppresses TS2322 alongside TS2540 (readonly named property writes)
+        // and emits it alongside TS2542 (readonly index signature writes). The
+        // distinction is structural — a fixed readonly tuple element like
+        // `arr[0]` is a named property even though it uses element-access
+        // syntax — so we rely on the diagnostic kind returned by
+        // `check_readonly_assignment` rather than on the syntax of `left_idx`.
+        let readonly_diag = if !is_const {
             self.check_readonly_assignment(left_idx, expr_idx)
         } else {
-            false
+            ReadonlyAssignmentDiagnostic::None
         };
-        // Only suppress assignability for named property readonly (TS2540).
-        // For readonly index signatures (TS2542), tsc still checks type compatibility.
-        let suppress_for_readonly =
-            is_readonly_target && self.readonly_assignment_suppresses_type_mismatch(left_idx);
+        let suppress_for_readonly = readonly_diag.suppresses_type_mismatch();
 
         if !is_const && self.error_top_level_js_this_computed_element_assignment(left_idx) {
             return right_type;

@@ -36,6 +36,10 @@ withTempDir((dir) => {
     benchmark_runner: "scripts/bench/bench-vs-tsgo.sh",
     quick_mode: true,
     filter: "project|single",
+    measurement_profile: {
+      mode: "release-pgo",
+      generated_at: "2026-05-20T00:00:00.000Z",
+    },
     results: [
       {
         name: "ts-toolbelt-project",
@@ -48,9 +52,20 @@ withTempDir((dir) => {
         factor: 8.23,
         status: null,
         compatibility: {
+          state: "green",
           exit_class: "exit success",
+          phase: "check",
+          last_successful_phase: "check",
           diagnostic_status: "none",
+          files_reached: 242,
+          peak_memory_bytes: 734003200,
           semantic_owner_family: "recursive type evaluation pressure",
+        },
+        attribution_artifact: {
+          path: "artifacts/perf/ts-toolbelt-project-attribution.json",
+          generated_at: "2026-05-20T00:05:00.000Z",
+          mode: "attribution",
+          dominant_subsystem: "solver:recursive-evaluation",
         },
       },
       {
@@ -64,8 +79,13 @@ withTempDir((dir) => {
         factor: 3.03,
         status: null,
         compatibility: {
+          state: "green",
           exit_class: "exit success",
+          phase: "check",
+          last_successful_phase: "check",
           diagnostic_status: "none",
+          files_reached: 12,
+          peak_memory_bytes: 209715200,
           semantic_owner_family: "generated Vite dependency graph",
         },
       },
@@ -107,7 +127,10 @@ withTempDir((dir) => {
         factor: 2,
         status: null,
         compatibility: {
+          state: "yellow",
           exit_class: "exit success",
+          phase: "check",
+          last_successful_phase: "check",
           diagnostic_status: "diagnostic mismatch",
           semantic_owner_family: "not counted",
         },
@@ -126,11 +149,51 @@ withTempDir((dir) => {
   assert.equal(report.totals.rows, 6);
   assert.equal(report.totals.green_tsgo_winners, 3);
   assert.equal(report.totals.project_green_tsgo_winners, 2);
+  assert.equal(report.totals.green_tsgo_winners_with_closure, 2);
+  assert.deepEqual(report.totals.missing_loss_closure_rows, ["single-file-loss"]);
+  assert.equal(report.totals.green_tsgo_winners_with_attribution, 1);
+  assert.deepEqual(report.totals.missing_attribution_rows, ["single-file-loss", "vite-vanilla-ts-app"]);
+  assert.equal(report.totals.incomplete_compat_excluded, 0);
+  assert.deepEqual(report.measurement_profile, {
+    present: true,
+    mode: "release-pgo",
+    warning: null,
+  });
   assert.equal(report.worst.name, "ts-toolbelt-project");
+  assert.equal(report.worst.exit_class, "exit success");
+  assert.equal(report.worst.files_reached, 242);
+  assert.equal(report.worst.peak_memory_bytes, 734003200);
+  assert.deepEqual(report.worst.loss_closure, {
+    owner: "Track 1/2 recursive type evaluation",
+    operation: "recursive conditional, mapped/indexed access, repeated instantiation and relation cache pressure",
+    command: "scripts/safe-run.sh ./scripts/bench/perf-hotspots.sh --filter '^ts-toolbelt-project$' --json-file <artifact>.json",
+    issue: 8356,
+    url: "https://github.com/mohsen1/tsz/issues/8356",
+  });
+  assert.deepEqual(report.worst.attribution_status, {
+    present: true,
+    path: "artifacts/perf/ts-toolbelt-project-attribution.json",
+    url: null,
+    generated_at: "2026-05-20T00:05:00.000Z",
+    mode: "attribution",
+    dominant_subsystem: "solver:recursive-evaluation",
+    warning: null,
+  });
   assert.deepEqual(
     report.rows.map((row) => row.name),
     ["ts-toolbelt-project", "vite-vanilla-ts-app", "single-file-loss"],
   );
+  assert.equal(report.rows[1].loss_closure.issue, 7378);
+  assert.deepEqual(report.rows[1].attribution_status, {
+    present: false,
+    path: null,
+    url: null,
+    generated_at: null,
+    mode: null,
+    dominant_subsystem: null,
+    warning: "attribution artifact missing",
+  });
+  assert.equal(report.rows[2].loss_closure, null);
   assert.deepEqual(report.by_owner_family, [
     {
       family: "recursive type evaluation pressure",
@@ -149,6 +212,62 @@ withTempDir((dir) => {
   const importedReport = createTsgoWinnerReport(JSON.parse(fs.readFileSync(input, "utf8")), input);
   assert.equal(importedReport.totals.green_tsgo_winners, 3);
   assert.equal(importedReport.worst.name, "ts-toolbelt-project");
+});
+
+// Rows with missing required phase/exit metadata must not appear as speed wins.
+// Each sub-case below verifies that a row with one specific missing field is
+// excluded from the green winner list and counted in incomplete_compat_excluded.
+withTempDir((dir) => {
+  const baseCompatibility = {
+    state: "green",
+    exit_class: "exit success",
+    phase: "check",
+    last_successful_phase: "check",
+    diagnostic_status: "none",
+    semantic_owner_family: "test family",
+  };
+
+  function withoutField(field) {
+    const { [field]: _dropped, ...rest } = baseCompatibility;
+    return rest;
+  }
+
+  const input = path.join(dir, "bench.json");
+  writeJson(input, {
+    results: [
+      { name: "complete-project", winner: "tsgo", factor: 5, status: null, tsz_ms: 100, tsgo_ms: 20, compatibility: baseCompatibility },
+      { name: "missing-state", winner: "tsgo", factor: 4, status: null, tsz_ms: 100, tsgo_ms: 25, compatibility: withoutField("state") },
+      { name: "missing-phase", winner: "tsgo", factor: 3, status: null, tsz_ms: 100, tsgo_ms: 33, compatibility: withoutField("phase") },
+      { name: "missing-last-phase", winner: "tsgo", factor: 2, status: null, tsz_ms: 100, tsgo_ms: 50, compatibility: withoutField("last_successful_phase") },
+      { name: "missing-exit-class", winner: "tsgo", factor: 2, status: null, tsz_ms: 100, tsgo_ms: 50, compatibility: withoutField("exit_class") },
+      { name: "missing-diag-status", winner: "tsgo", factor: 2, status: null, tsz_ms: 100, tsgo_ms: 50, compatibility: withoutField("diagnostic_status") },
+      { name: "artifact-missing", winner: "tsgo", factor: 2, status: null, tsz_ms: 100, tsgo_ms: 50, artifact_missing: true },
+      // single-file rows without compatibility are always eligible — no metadata required
+      { name: "single-file-win", winner: "tsgo", factor: 1.5, status: null, tsz_ms: 15, tsgo_ms: 10 },
+    ],
+  });
+
+  const report = createTsgoWinnerReport(JSON.parse(fs.readFileSync(input, "utf8")), input);
+
+  assert.equal(report.totals.rows, 8);
+  // Only complete-project and single-file-win are green winners
+  assert.equal(report.totals.green_tsgo_winners, 2);
+  assert.equal(report.totals.project_green_tsgo_winners, 1);
+  assert.equal(report.totals.green_tsgo_winners_with_closure, 0);
+  assert.deepEqual(report.totals.missing_loss_closure_rows, ["complete-project", "single-file-win"]);
+  assert.equal(report.totals.green_tsgo_winners_with_attribution, 0);
+  assert.deepEqual(report.totals.missing_attribution_rows, ["complete-project", "single-file-win"]);
+  assert.deepEqual(report.measurement_profile, {
+    present: false,
+    mode: null,
+    warning: "measurement_profile missing",
+  });
+  // 6 rows excluded due to missing phase/exit metadata or artifact_missing
+  assert.equal(report.totals.incomplete_compat_excluded, 6);
+  assert.deepEqual(
+    report.rows.map((r) => r.name),
+    ["complete-project", "single-file-win"],
+  );
 });
 
 const benchWorkflow = fs.readFileSync(BENCH_WORKFLOW, "utf8");

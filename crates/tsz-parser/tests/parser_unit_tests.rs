@@ -2,6 +2,7 @@
 //! type syntax, declarations, class syntax, statements, and error recovery.
 
 use crate::parser::node::NodeArena;
+use crate::parser::node_flags;
 use crate::parser::node_view::NodeAccess;
 use crate::parser::syntax_kind_ext;
 use crate::parser::test_fixture::{parse_source, parse_source_named};
@@ -92,6 +93,17 @@ fn get_first_function_var_initializer(arena: &NodeArena, root: NodeIndex) -> Nod
         .get_variable_declaration(decl_node)
         .expect("variable declaration data");
     decl.initializer
+}
+
+/// For `<expr>;` at the top level, extract the expression of the first
+/// statement (which must be an expression statement).
+fn get_first_expression_statement_expr(arena: &NodeArena, root: NodeIndex) -> NodeIndex {
+    let stmt_idx = get_first_statement(arena, root);
+    let stmt_node = arena.get(stmt_idx).expect("stmt");
+    let expr_stmt = arena
+        .get_expression_statement(stmt_node)
+        .expect("expression statement");
+    expr_stmt.expression
 }
 
 fn get_var_type_annotation(arena: &NodeArena, root: NodeIndex) -> NodeIndex {
@@ -431,6 +443,58 @@ fn precedence_satisfies_expression() {
         syntax_kind_ext::SATISFIES_EXPRESSION,
         "should be satisfies expression"
     );
+}
+
+#[test]
+fn precedence_as_const_after_satisfies_wraps_satisfies_expression() {
+    for source in [
+        "const x = { a: 1 } satisfies Record<string, number> as const;",
+        "const x = value satisfies Foo | Bar as const;",
+        "const x = ((value) satisfies Alias) as const;",
+    ] {
+        let (parser, root) = parse_source(source);
+        assert_no_errors(&parser, source);
+
+        let arena = parser.get_arena();
+        let init = get_var_initializer(arena, root);
+        let outer = arena.get(init).expect("initializer");
+        assert_eq!(
+            outer.kind,
+            syntax_kind_ext::AS_EXPRESSION,
+            "`as const` should wrap the satisfies expression for {source}"
+        );
+
+        let outer_assertion = arena
+            .get_type_assertion(outer)
+            .expect("outer as expression data");
+        let outer_type = arena
+            .get(outer_assertion.type_node)
+            .expect("outer as expression type");
+        assert_eq!(
+            outer_type.kind,
+            SyntaxKind::ConstKeyword as u16,
+            "`as const` should keep `const` as the outer assertion type for {source}"
+        );
+
+        let mut inner_idx = outer_assertion.expression;
+        loop {
+            let inner = arena.get(inner_idx).expect("inner expression");
+            if inner.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                break;
+            }
+            inner_idx = arena
+                .get_parenthesized(inner)
+                .expect("parenthesized expression data")
+                .expression;
+        }
+
+        let inner = arena.get(inner_idx).expect("unwrapped inner expression");
+        assert_eq!(
+            inner.kind,
+            syntax_kind_ext::SATISFIES_EXPRESSION,
+            "outer `as const` should contain a satisfies expression for {source}"
+        );
+    }
 }
 
 #[test]
@@ -2495,6 +2559,45 @@ fn expr_tagged_template() {
 }
 
 #[test]
+fn expr_tagged_template_with_type_arguments() {
+    for (source, context) in [
+        (
+            "const value = tag<number>`hello`;",
+            "no-substitution tagged template type arguments",
+        ),
+        (
+            "const value = tag<number>`hello ${name}`;",
+            "substituted tagged template type arguments",
+        ),
+    ] {
+        let (parser, root) = parse_source(source);
+        assert_no_errors(&parser, context);
+
+        let arena = parser.get_arena();
+        let init = get_var_initializer(arena, root);
+        let node = arena.get(init).expect("initializer");
+        assert_eq!(
+            node.kind,
+            syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION,
+            "{context}: should parse as a tagged template expression"
+        );
+
+        let tagged = arena
+            .get_tagged_template(node)
+            .expect("tagged template data");
+        let type_arguments = tagged
+            .type_arguments
+            .as_ref()
+            .expect("tagged template should retain type arguments");
+        assert_eq!(
+            type_arguments.nodes.len(),
+            1,
+            "{context}: expected exactly one type argument"
+        );
+    }
+}
+
+#[test]
 fn expr_spread_element() {
     // `[1, ...arr, 2]`
     let (parser, root) = parse_source("const x = [1, ...arr, 2];");
@@ -2908,6 +3011,82 @@ fn expr_optional_call() {
     let init = get_var_initializer(arena, root);
     let node = arena.get(init).expect("init");
     assert_eq!(node.kind, syntax_kind_ext::CALL_EXPRESSION);
+}
+
+#[test]
+fn expr_call_type_arguments_allow_trailing_comma() {
+    // `id<number,>("x")` should parse as a call expression with one type
+    // argument and a trailing comma marker, not as a relational expression.
+    let (parser, root) = parse_source("const x = id<number,>(\"x\");");
+    assert_no_errors(&parser, "call type arguments with trailing comma");
+
+    let arena = parser.get_arena();
+    let init = get_var_initializer(arena, root);
+    let node = arena.get(init).expect("init");
+    assert_eq!(node.kind, syntax_kind_ext::CALL_EXPRESSION);
+
+    let call = arena.get_call_expr(node).expect("call data");
+    let type_args = call.type_arguments.as_ref().expect("type arguments");
+    assert_eq!(type_args.nodes.len(), 1, "expected one type argument");
+    assert!(type_args.has_trailing_comma, "expected trailing comma");
+}
+
+#[test]
+fn expr_call_type_arguments_recover_missing_leading_argument() {
+    // `id<,>("x")` is malformed, but recovery should keep the call expression
+    // intact so later stages can continue from the argument list.
+    let source = "const x = id<,>(\"x\");";
+    let (parser, root) = parse_source(source);
+
+    let diagnostics = parser.get_diagnostics();
+    let comma_pos = source.find(',').expect("comma position") as u32;
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::TYPE_EXPECTED && diag.start == comma_pos),
+        "expected TS1110 at the missing type argument comma, got {diagnostics:?}"
+    );
+
+    let arena = parser.get_arena();
+    let init = get_var_initializer(arena, root);
+    let node = arena.get(init).expect("init");
+    assert_eq!(node.kind, syntax_kind_ext::CALL_EXPRESSION);
+}
+
+#[test]
+fn expr_new_type_arguments_allow_trailing_comma() {
+    let (parser, root) = parse_source("const x = new Box<string,>();");
+    assert_no_errors(&parser, "new expression type arguments with trailing comma");
+
+    let arena = parser.get_arena();
+    let init = get_var_initializer(arena, root);
+    let node = arena.get(init).expect("init");
+    assert_eq!(node.kind, syntax_kind_ext::NEW_EXPRESSION);
+
+    let new_expr = arena.get_call_expr(node).expect("new expression data");
+    let type_args = new_expr.type_arguments.as_ref().expect("type arguments");
+    assert_eq!(type_args.nodes.len(), 1, "expected one type argument");
+    assert!(type_args.has_trailing_comma, "expected trailing comma");
+}
+
+#[test]
+fn expr_tagged_template_type_arguments_recover_missing_leading_argument() {
+    let source = "const x = tag<,>`value`;";
+    let (parser, root) = parse_source(source);
+
+    let diagnostics = parser.get_diagnostics();
+    let comma_pos = source.find(',').expect("comma position") as u32;
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::TYPE_EXPECTED && diag.start == comma_pos),
+        "expected TS1110 at the missing type argument comma, got {diagnostics:?}"
+    );
+
+    let arena = parser.get_arena();
+    let init = get_var_initializer(arena, root);
+    let node = arena.get(init).expect("init");
+    assert_eq!(node.kind, syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION);
 }
 
 // =============================================================================
@@ -3378,6 +3557,80 @@ fn template_empty_span_at_eof_anchors_expression_before_missing_brace() {
     );
 }
 
+/// Parser-supplied `LiteralData::raw_text` must carry the full template
+/// token slice — including delimiters — so the emitter never re-scans the
+/// source bytes to recover escape sequences. The contract holds for both
+/// terminated and unterminated literals and for invalid escape sequences.
+#[test]
+fn no_substitution_template_records_raw_token_text() {
+    let cases = [
+        // Terminated, ordinary contents.
+        ("`hello`;", "`hello`"),
+        // Terminated, invalid `\u` escape — raw bytes preserved verbatim.
+        ("`\\u`;", "`\\u`"),
+        // Unterminated — raw text has no trailing backtick.
+        ("`abc", "`abc"),
+        // Unterminated with escaped backtick (`\``) — the backtick is content.
+        ("`\\`", "`\\`"),
+    ];
+    for (source, expected_raw) in cases {
+        let (parser, root) = parse_source(source);
+        let arena = parser.get_arena();
+        let init = get_first_expression_statement_expr(arena, root);
+        let node = arena.get(init).expect("init");
+        assert_eq!(
+            node.kind,
+            SyntaxKind::NoSubstitutionTemplateLiteral as u16,
+            "source `{source}` should parse as a no-sub template",
+        );
+        let lit = arena.get_literal(node).expect("literal data");
+        assert_eq!(
+            lit.raw_text.as_deref(),
+            Some(expected_raw),
+            "raw_text for `{source}` should match the scanner token slice",
+        );
+    }
+}
+
+#[test]
+fn template_expression_parts_record_raw_token_text() {
+    // Two-span template with invalid `\u` in head and invalid `\x` in tail.
+    let source = "`\\u${0}mid${1}\\x`;";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+    let init = get_first_expression_statement_expr(arena, root);
+    let node = arena.get(init).expect("init");
+    assert_eq!(
+        node.kind,
+        syntax_kind_ext::TEMPLATE_EXPRESSION,
+        "should parse as template expression",
+    );
+    let tpl = arena.get_template_expr(node).expect("template expr");
+
+    let head = arena.get(tpl.head).expect("head node");
+    let head_lit = arena.get_literal(head).expect("head literal");
+    assert_eq!(head_lit.raw_text.as_deref(), Some("`\\u${"));
+
+    let span_nodes = &tpl.template_spans.nodes;
+    assert_eq!(span_nodes.len(), 2, "two substitution spans expected");
+
+    let middle_span = arena
+        .get_template_span(arena.get(span_nodes[0]).expect("span0"))
+        .expect("span0 data");
+    let middle = arena.get(middle_span.literal).expect("middle node");
+    let middle_lit = arena.get_literal(middle).expect("middle literal");
+    assert_eq!(middle.kind, SyntaxKind::TemplateMiddle as u16);
+    assert_eq!(middle_lit.raw_text.as_deref(), Some("}mid${"));
+
+    let tail_span = arena
+        .get_template_span(arena.get(span_nodes[1]).expect("span1"))
+        .expect("span1 data");
+    let tail = arena.get(tail_span.literal).expect("tail node");
+    let tail_lit = arena.get_literal(tail).expect("tail literal");
+    assert_eq!(tail.kind, SyntaxKind::TemplateTail as u16);
+    assert_eq!(tail_lit.raw_text.as_deref(), Some("}\\x`"));
+}
+
 // =============================================================================
 // 12. Using / Await Using Declarations
 // =============================================================================
@@ -3402,6 +3655,49 @@ fn decl_await_using() {
     // `await using x = getResource();`
     let (parser, _root) = parse_source("async function f() { await using x = getResource(); }");
     assert_no_errors(&parser, "await using declaration");
+}
+
+#[test]
+fn decl_using_and_await_using_in_blocks_are_variable_statements() {
+    for (source, expected_flags, context) in [
+        (
+            "function f() { using x = getResource(); }",
+            node_flags::USING,
+            "using declaration in function block",
+        ),
+        (
+            "async function f() { await using x = getResource(); }",
+            node_flags::AWAIT_USING,
+            "await using declaration in async function block",
+        ),
+    ] {
+        let (parser, root) = parse_source(source);
+        assert_no_errors(&parser, context);
+
+        let arena = parser.get_arena();
+        let function_node = arena
+            .get(get_first_statement(arena, root))
+            .expect("function declaration");
+        let function = arena.get_function(function_node).expect("function data");
+        let body_node = arena.get(function.body).expect("function body");
+        let body = arena.get_block(body_node).expect("block data");
+        let stmt = arena.get(body.statements.nodes[0]).expect("body statement");
+
+        assert_eq!(
+            stmt.kind,
+            syntax_kind_ext::VARIABLE_STATEMENT,
+            "{context} should parse as a variable statement"
+        );
+        let variable = arena.get_variable(stmt).expect("variable statement data");
+        let declaration_list = arena
+            .get(variable.declarations.nodes[0])
+            .expect("declaration list");
+        assert_eq!(
+            declaration_list.flags as u32 & node_flags::AWAIT_USING,
+            expected_flags,
+            "{context} should preserve declaration flags"
+        );
+    }
 }
 
 // =============================================================================

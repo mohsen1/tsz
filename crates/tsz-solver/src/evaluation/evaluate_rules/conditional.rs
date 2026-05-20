@@ -12,6 +12,7 @@ use crate::types::{
     ConditionalType, ObjectShape, ObjectShapeId, PropertyInfo, TupleElement, TypeData, TypeId,
     TypeParamInfo,
 };
+use crate::visitor::{callable_shape_id, function_shape_id};
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use tracing::trace;
@@ -34,34 +35,55 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         };
 
         let shape = self.interner().object_shape(shape_id);
+
+        // Pre-scan: evaluate every property to prime the evaluator cache and check
+        // whether any TypeId changed. Use |= (not .any()) so that every property is
+        // evaluated unconditionally — short-circuiting would leave later properties
+        // un-cached, defeating the guarantee that the update pass below is cache-only.
+        // Deferring the clone until we know a change is needed avoids an O(P) allocation
+        // on every conditional evaluation for the common no-change case.
+        let str_val = shape
+            .string_index
+            .as_ref()
+            .map(|idx| self.evaluate(idx.value_type));
+        let num_val = shape
+            .number_index
+            .as_ref()
+            .map(|idx| self.evaluate(idx.value_type));
+        let mut any_changed = str_val
+            .zip(shape.string_index.as_ref())
+            .is_some_and(|(v, idx)| v != idx.value_type)
+            || num_val
+                .zip(shape.number_index.as_ref())
+                .is_some_and(|(v, idx)| v != idx.value_type);
+        for prop in shape.properties.iter() {
+            let rt = self.evaluate(prop.type_id);
+            let wt = self.evaluate(prop.write_type);
+            any_changed |= rt != prop.type_id || wt != prop.write_type;
+        }
+
+        if !any_changed {
+            return type_id;
+        }
+
+        // At least one property changed: clone and apply. Every evaluate() call below
+        // is a guaranteed cache hit because the pre-scan above evaluated every property.
         let flags = shape.flags;
         let symbol = shape.symbol;
-        let mut changed = false;
         let mut properties = shape.properties.clone();
         for prop in &mut properties {
-            let read_type = self.evaluate(prop.type_id);
-            let write_type = self.evaluate(prop.write_type);
-            changed |= read_type != prop.type_id || write_type != prop.write_type;
-            prop.type_id = read_type;
-            prop.write_type = write_type;
+            prop.type_id = self.evaluate(prop.type_id);
+            prop.write_type = self.evaluate(prop.write_type);
         }
 
         let mut string_index = shape.string_index;
-        if let Some(index) = string_index.as_mut() {
-            let value_type = self.evaluate(index.value_type);
-            changed |= value_type != index.value_type;
-            index.value_type = value_type;
+        if let (Some(index), Some(v)) = (string_index.as_mut(), str_val) {
+            index.value_type = v;
         }
 
         let mut number_index = shape.number_index;
-        if let Some(index) = number_index.as_mut() {
-            let value_type = self.evaluate(index.value_type);
-            changed |= value_type != index.value_type;
-            index.value_type = value_type;
-        }
-
-        if !changed {
-            return type_id;
+        if let (Some(index), Some(v)) = (number_index.as_mut(), num_val) {
+            index.value_type = v;
         }
 
         if with_index {
@@ -670,13 +692,65 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // PERF: Only allocate SubtypeChecker when infer matching is needed.
                 let mut checker = self.conditional_subtype_checker();
                 checker.allow_bivariant_rest = true;
+                if cond.extends_type != extends_type
+                    && self.type_contains_infer(cond.extends_type)
+                    && self.match_infer_pattern(
+                        check_type,
+                        cond.extends_type,
+                        &mut loop_bindings,
+                        &mut loop_visited,
+                        &mut checker,
+                    )
+                    && !loop_bindings.is_empty()
+                {
+                    let substituted_true = self.substitute_infer(cond.true_type, &loop_bindings);
+                    return self.evaluate(substituted_true);
+                }
+                loop_bindings.clear();
+                loop_visited.clear();
+                if cond.extends_type != extends_type
+                    && self.type_contains_infer(cond.extends_type)
+                    && let Some(alias) = self.interner().get_display_alias(check_type)
+                    && alias != check_type
+                    && self.match_infer_pattern(
+                        alias,
+                        cond.extends_type,
+                        &mut loop_bindings,
+                        &mut loop_visited,
+                        &mut checker,
+                    )
+                    && !loop_bindings.is_empty()
+                {
+                    let substituted_true = self.substitute_infer(cond.true_type, &loop_bindings);
+                    return self.evaluate(substituted_true);
+                }
+                loop_bindings.clear();
+                loop_visited.clear();
+                if self.type_contains_infer(cond.extends_type)
+                    && let Some(alias) = self.interner().get_display_alias(check_type)
+                    && alias != check_type
+                    && self.match_infer_pattern(
+                        alias,
+                        cond.extends_type,
+                        &mut loop_bindings,
+                        &mut loop_visited,
+                        &mut checker,
+                    )
+                    && !loop_bindings.is_empty()
+                {
+                    let substituted_true = self.substitute_infer(cond.true_type, &loop_bindings);
+                    return self.evaluate(substituted_true);
+                }
+                loop_bindings.clear();
+                loop_visited.clear();
                 if self.match_infer_pattern(
                     check_type,
                     extends_type,
                     &mut loop_bindings,
                     &mut loop_visited,
                     &mut checker,
-                ) {
+                ) && !loop_bindings.is_empty()
+                {
                     let substituted_true = self.substitute_infer(cond.true_type, &loop_bindings);
                     // Check for tail-recursive true branch (e.g., Trim<T> recurses on match):
                     // type Trim<S> = S extends ` ${infer T}` ? Trim<T> : S;
@@ -725,6 +799,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         );
                     }
                     return self.evaluate(substituted_true);
+                }
+
+                let re_evaluated_check = self.evaluate(check_type);
+                if re_evaluated_check != check_type {
+                    loop_bindings.clear();
+                    loop_visited.clear();
+                    let mut checker = self.conditional_subtype_checker();
+                    checker.allow_bivariant_rest = true;
+                    if self.match_infer_pattern(
+                        re_evaluated_check,
+                        extends_type,
+                        &mut loop_bindings,
+                        &mut loop_visited,
+                        &mut checker,
+                    ) && !loop_bindings.is_empty()
+                    {
+                        let substituted_true =
+                            self.substitute_infer(cond.true_type, &loop_bindings);
+                        return self.evaluate(substituted_true);
+                    }
                 }
 
                 if self.infer_pattern_has_unresolved_application(cond.extends_type)
@@ -909,6 +1003,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     // Function.
                     CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
                     false
+                } else if Self::function_intrinsic_extends_callable_target(
+                    self.interner(),
+                    check_type,
+                    extends_type,
+                ) {
+                    // In conditional types, tsc treats the global `Function`
+                    // intrinsic as satisfying callable targets. Ordinary
+                    // assignment intentionally remains stricter.
+                    CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+                    true
                 } else {
                     let mut strict_checker = self.conditional_subtype_checker();
                     let r = strict_checker.is_subtype_of(check_type, extends_type);
@@ -1234,6 +1338,30 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
         }
         false
+    }
+
+    fn function_intrinsic_extends_callable_target(
+        interner: &dyn crate::TypeDatabase,
+        check_type: TypeId,
+        extends_type: TypeId,
+    ) -> bool {
+        use crate::types::IntrinsicKind;
+
+        let check_is_function_intrinsic = check_type == TypeId::FUNCTION
+            || matches!(
+                interner.lookup(check_type),
+                Some(TypeData::Intrinsic(IntrinsicKind::Function))
+            );
+        if !check_is_function_intrinsic {
+            return false;
+        }
+
+        if function_shape_id(interner, extends_type).is_some() {
+            return true;
+        }
+
+        callable_shape_id(interner, extends_type)
+            .is_some_and(|shape_id| !interner.callable_shape(shape_id).call_signatures.is_empty())
     }
 
     /// Distribute a conditional type over a union.
@@ -2523,6 +2651,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     let substituted_true = self.substitute_infer(cond.true_type, &bindings);
                     return Some(self.evaluate(substituted_true));
                 }
+            }
+        }
+
+        if let Some(alias) = self.try_recover_application_from_display_alias(check_type)
+            && alias != check_type
+        {
+            let mut checker = self.conditional_subtype_checker();
+            checker.allow_bivariant_rest = true;
+            let mut bindings = FxHashMap::default();
+            let mut visited = FxHashSet::default();
+            let matched = self.match_infer_pattern(
+                alias,
+                cond.extends_type,
+                &mut bindings,
+                &mut visited,
+                &mut checker,
+            );
+            if matched && !bindings.is_empty() {
+                let substituted_true = self.substitute_infer(cond.true_type, &bindings);
+                return Some(self.evaluate(substituted_true));
             }
         }
 

@@ -9,7 +9,10 @@ use crate::query_boundaries::assignability::{
     is_assignable_with_overrides, is_relation_cacheable, is_type_parameter_like,
     keyof_object_properties, map_compound_members,
 };
-use crate::query_boundaries::common::{collect_lazy_def_ids, collect_type_queries};
+use crate::query_boundaries::common::{
+    collect_lazy_def_ids, collect_type_queries, intersection_members, object_shape_id,
+    object_with_index_shape_id, union_members,
+};
 use crate::state::{CheckerOverrideProvider, CheckerState};
 use rustc_hash::FxHashSet;
 use tracing::trace;
@@ -23,6 +26,17 @@ use tsz_solver::TypeId;
 use tsz_solver::computation::TypeResolver;
 
 impl<'a> CheckerState<'a> {
+    /// Merge overflow flags into the checker context (sticky: only ever sets to `true`).
+    ///
+    /// Callers that need a fresh read must reset the context fields before
+    /// invoking the relation.
+    #[inline]
+    fn propagate_overflow_flags(&self, depth_exceeded: bool, iteration_exceeded: bool) {
+        let mut overflow = self.ctx.relation_overflow.get();
+        overflow.merge(depth_exceeded, iteration_exceeded);
+        self.ctx.relation_overflow.set(overflow);
+    }
+
     pub(crate) fn callable_has_own_generic_signatures(&self, type_id: TypeId) -> bool {
         if let Some(shape) =
             crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
@@ -1923,11 +1937,10 @@ impl<'a> CheckerState<'a> {
         );
         let result = relation_result.is_related();
 
-        // TS2859: propagate depth-exceeded flag so callers can emit
-        // "Excessive complexity comparing types" diagnostic.
-        if relation_result.depth_exceeded {
-            self.ctx.relation_depth_exceeded.set(true);
-        }
+        self.propagate_overflow_flags(
+            relation_result.depth_exceeded,
+            relation_result.iteration_exceeded,
+        );
 
         if is_cacheable {
             let cache_key = assignability_cache_key(source, target, flags);
@@ -2061,10 +2074,7 @@ impl<'a> CheckerState<'a> {
             self.ctx.sound_mode(),
         );
 
-        // Propagate relation depth exceeded to checker context for TS2859.
-        if outcome.depth_exceeded {
-            self.ctx.relation_depth_exceeded.set(true);
-        }
+        self.propagate_overflow_flags(outcome.depth_exceeded, outcome.iteration_exceeded);
 
         // Checker-only post-check: the solver may say "related" but the checker
         // can downgrade via deferred conditional types or other checker-specific
@@ -2121,6 +2131,19 @@ impl<'a> CheckerState<'a> {
             source, target,
         );
         self.execute_relation_request(&request)
+    }
+
+    /// Boolean relation guard for diagnostic code paths.
+    ///
+    /// Keep these calls grep-distinct from diagnostic decisions that need
+    /// `RelationOutcome` failure classification, weak-union handling, or depth
+    /// reporting.
+    pub(crate) fn diagnostic_relation_boolean_guard(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        self.is_assignable_to(source, target)
     }
 
     /// Check if source type is assignable to target type.
@@ -2659,6 +2682,17 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        // Structural fast path for `{}` source: avoids re-evaluating every
+        // candidate's generic application through the full relation, which
+        // can degrade to a false negative when evaluation fuel is exhausted
+        // on one candidate of a 100+-key intrinsic map.
+        if crate::query_boundaries::common::is_empty_object_type(self.ctx.types, source) {
+            let mut visited = FxHashSet::default();
+            return candidate_types
+                .iter()
+                .any(|&candidate| self.candidate_rejects_empty_object(candidate, &mut visited));
+        }
+
         // Use the checker's compat-aware `is_assignable_to`, not the solver's
         // strict subtype check. The Lawyer (CompatChecker) accepts permissive
         // cases that the Judge (SubtypeChecker) rejects — most importantly,
@@ -2670,6 +2704,75 @@ impl<'a> CheckerState<'a> {
         candidate_types
             .into_iter()
             .any(|candidate| !self.is_assignable_to(source, candidate))
+    }
+
+    /// `true` iff `{}` would be rejected against `candidate`. Falls back to
+    /// `false` when the shape cannot be inspected, so an inconclusive probe
+    /// here cannot manufacture a false positive against the caller.
+    fn candidate_rejects_empty_object(
+        &mut self,
+        candidate: TypeId,
+        visited: &mut FxHashSet<TypeId>,
+    ) -> bool {
+        if candidate == TypeId::ANY
+            || candidate == TypeId::UNKNOWN
+            || candidate == TypeId::NEVER
+            || candidate == TypeId::ERROR
+            || candidate == TypeId::NULL
+            || candidate == TypeId::UNDEFINED
+            || candidate == TypeId::VOID
+        {
+            return false;
+        }
+        if !visited.insert(candidate) {
+            return false;
+        }
+
+        let evaluated = self.evaluate_type_for_assignability(candidate);
+        let probe = if evaluated == TypeId::ERROR {
+            candidate
+        } else {
+            evaluated
+        };
+
+        if probe != candidate && !visited.insert(probe) {
+            return false;
+        }
+
+        if let Some(members) = union_members(self.ctx.types, probe) {
+            return members
+                .iter()
+                .all(|&m| self.candidate_rejects_empty_object(m, visited));
+        }
+
+        if let Some(members) = intersection_members(self.ctx.types, probe) {
+            return members
+                .iter()
+                .any(|&m| self.candidate_rejects_empty_object(m, visited));
+        }
+
+        let shape_id = object_shape_id(self.ctx.types, probe)
+            .or_else(|| object_with_index_shape_id(self.ctx.types, probe));
+
+        if let Some(shape_id) = shape_id
+            && self
+                .ctx
+                .types
+                .object_shape(shape_id)
+                .properties
+                .iter()
+                .any(|prop| !prop.optional)
+        {
+            return true;
+        }
+
+        if crate::query_boundaries::common::has_call_signatures(self.ctx.types, probe)
+            || crate::query_boundaries::common::has_construct_signatures(self.ctx.types, probe)
+        {
+            return true;
+        }
+
+        false
     }
 
     fn is_deferred_generic_index_for_object(
@@ -2950,9 +3053,10 @@ impl<'a> CheckerState<'a> {
                 },
                 &overrides,
             );
-            if relation_result.depth_exceeded {
-                self.ctx.relation_depth_exceeded.set(true);
-            }
+            self.propagate_overflow_flags(
+                relation_result.depth_exceeded,
+                relation_result.iteration_exceeded,
+            );
             relation_result.is_related()
         };
 
@@ -3021,7 +3125,7 @@ impl<'a> CheckerState<'a> {
 
         let env = self.ctx.type_env.borrow();
         // Preserve existing behavior: bivariant path does not use checker overrides.
-        let result = is_assignable_bivariant_with_resolver(
+        let relation_result = is_assignable_bivariant_with_resolver(
             self.ctx.types,
             &*env,
             source,
@@ -3030,6 +3134,11 @@ impl<'a> CheckerState<'a> {
             &self.ctx.inheritance_graph,
             self.ctx.sound_mode(),
         );
+        self.propagate_overflow_flags(
+            relation_result.depth_exceeded,
+            relation_result.iteration_exceeded,
+        );
+        let result = relation_result.is_related();
 
         // Cache the result for non-inference types
         // Use ORIGINAL types for cache key (not evaluated types)

@@ -122,6 +122,37 @@ pub(crate) fn get_literal_or_well_known_property_name(
 }
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn symbol_valued_binding_property_name(
+        &self,
+        expr_idx: NodeIndex,
+        expr_type: TypeId,
+    ) -> Option<String> {
+        if expr_type != TypeId::SYMBOL {
+            return None;
+        }
+
+        let expr_node = self.ctx.arena.get(expr_idx)?;
+        self.ctx.arena.get_identifier(expr_node)?;
+
+        let local_sym_id = self.resolve_identifier_symbol(expr_idx)?;
+        let sym_id = self
+            .ctx
+            .resolve_import_alias_and_register(local_sym_id)
+            .unwrap_or(local_sym_id);
+        let symbol = self.get_cross_file_symbol(sym_id)?;
+        let file_idx = self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .unwrap_or(symbol.decl_file_idx as usize);
+        let value_decl = symbol.value_declaration;
+        let decl_arena = self.ctx.get_arena_for_file(file_idx as u32);
+        if value_decl.is_none() || !decl_arena.is_const_variable_declaration(value_decl) {
+            return None;
+        }
+
+        Some(format!("__symbol_{}_{}", file_idx, sym_id.0))
+    }
+
     // =========================================================================
     // Section 27: Modifier and Member Access Utilities
     // =========================================================================
@@ -1162,6 +1193,11 @@ impl<'a> CheckerState<'a> {
                     self.register_well_known_symbol_name_mapping(&well_known, symbol_ref);
                 }
                 return Some(well_known);
+            }
+            if let Some(symbol_name) =
+                self.symbol_valued_binding_property_name(computed.expression, prop_name_type)
+            {
+                return Some(symbol_name);
             }
             // When the computed property type resolves to a unique symbol (e.g.
             // `typeof Symbol.obs`), map it to the canonical `[Symbol.xxx]` format

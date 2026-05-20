@@ -11,6 +11,10 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[features]
+default = ["dts"]
+dts = []
+
 [dependencies]
 tsz-common = { workspace = true }
 tsz-scanner = { workspace = true }
@@ -115,6 +119,10 @@ name = "cjs_destructuring_export_inline_tests"
 path = "tests/cjs_destructuring_export_inline_tests.rs"
 
 [[test]]
+name = "cjs_clause_export_live_binding_tests"
+path = "tests/cjs_clause_export_live_binding_tests.rs"
+
+[[test]]
 name = "destructuring_es5_array_nested_order_tests"
 path = "tests/destructuring_es5_array_nested_order_tests.rs"
 
@@ -177,6 +185,10 @@ path = "tests/async_arrow_default_param_3758_tests.rs"
 [[test]]
 name = "arrow_parameter_prologue_tests"
 path = "tests/arrow_parameter_prologue_tests.rs"
+
+[[test]]
+name = "while_loop_body_capture_tests"
+path = "tests/while_loop_body_capture_tests.rs"
 
 [lints]
 workspace = true

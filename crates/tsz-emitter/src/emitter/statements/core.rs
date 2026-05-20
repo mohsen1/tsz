@@ -35,6 +35,7 @@ impl<'a> Printer<'a> {
 
         if block.statements.nodes.is_empty()
             && !needs_this_capture
+            && !self.has_pending_new_target_capture()
             && is_function_body_block
             && !self.pending_object_rest_params.is_empty()
             && self.pending_object_rest_param_defaults.is_empty()
@@ -54,6 +55,7 @@ impl<'a> Printer<'a> {
         // Empty blocks: check for comments inside and preserve original format
         if block.statements.nodes.is_empty()
             && !needs_this_capture
+            && !self.has_pending_new_target_capture()
             && self.pending_object_rest_params.is_empty()
             && self.pending_object_rest_param_defaults.is_empty()
         {
@@ -165,6 +167,7 @@ impl<'a> Printer<'a> {
         let should_emit_single_line = !block.statements.nodes.is_empty()
             && self.is_single_line(node)
             && !needs_this_capture
+            && !self.has_pending_new_target_capture()
             && is_function_body_block
             && self.pending_lowered_async_arrow_super_capture.is_none()
             && self.hoisted_assignment_value_temps.is_empty()
@@ -268,6 +271,10 @@ impl<'a> Printer<'a> {
         let directive_prologue_count = self
             .emit_leading_directive_prologue_statements(&block.statements.nodes, block_close_pos);
 
+        if is_function_body_block {
+            self.emit_pending_new_target_capture();
+        }
+
         // Inject `var _this = this;` at the start of the block for arrow function _this capture
         if let Some(ref capture_name) = this_capture_name {
             self.write("var ");
@@ -334,6 +341,11 @@ impl<'a> Printer<'a> {
         let stmts: Vec<NodeIndex> = block.statements.nodes.to_vec();
         let prev_recovered_module_syntax_block_depth = self.recovered_module_syntax_block_depth;
         self.recovered_module_syntax_block_depth += 1;
+        let prev_lexical_block_missing_initializer_function_depth =
+            self.lexical_block_missing_initializer_function_depth;
+        if self.ctx.target_es5 && !is_function_body_block {
+            self.lexical_block_missing_initializer_function_depth = Some(self.function_scope_depth);
+        }
         for (stmt_i, &stmt_idx) in stmts.iter().enumerate().skip(directive_prologue_count) {
             // Save state before leading comments so we can undo them if the
             // statement produces no output (e.g., namespace alias import or
@@ -500,6 +512,8 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+        self.lexical_block_missing_initializer_function_depth =
+            prev_lexical_block_missing_initializer_function_depth;
         self.recovered_module_syntax_block_depth = prev_recovered_module_syntax_block_depth;
 
         if let Some((byte_offset, line_no)) = hoisted_var_byte_offset {

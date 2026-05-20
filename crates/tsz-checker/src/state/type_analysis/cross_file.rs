@@ -31,33 +31,6 @@ impl<'a> CheckerState<'a> {
         CROSS_ARENA_INTERFACE_DEPTH.with(|c| c.get() > 0)
     }
 
-    fn resolve_cross_file_global_type_symbol(&self, name: &str) -> Option<tsz_binder::SymbolId> {
-        let normalized = name.strip_prefix("globalThis.").unwrap_or(name);
-        let lib_binders = self.get_lib_binders();
-        self.ctx
-            .binder
-            .file_locals
-            .get(normalized)
-            .or_else(|| {
-                self.ctx
-                    .binder
-                    .get_global_type_with_libs(normalized, &lib_binders)
-            })
-            .or_else(|| {
-                normalized
-                    .rsplit('.')
-                    .next()
-                    .filter(|tail| *tail != normalized)
-                    .and_then(|tail| {
-                        self.ctx.binder.file_locals.get(tail).or_else(|| {
-                            self.ctx
-                                .binder
-                                .get_global_type_with_libs(tail, &lib_binders)
-                        })
-                    })
-            })
-    }
-
     fn resolve_cross_file_heritage_type_arg(
         &mut self,
         arena: &tsz_parser::NodeArena,
@@ -365,29 +338,75 @@ impl<'a> CheckerState<'a> {
         Some((result, params))
     }
 
+    fn cached_symbol_arena_or_cross_file_symbol_type(
+        &self,
+        sym_id: SymbolId,
+        file_idx: usize,
+        source_cache_scope: u64,
+        symbol_type_cache_from_symbol_arena: bool,
+    ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+        let file_idx = file_idx as u32;
+        if !symbol_type_cache_from_symbol_arena {
+            return self.ctx.cached_cross_file_symbol_type(sym_id, file_idx);
+        }
+
+        self.ctx
+            .cached_stable_source_file_symbol_arena_type(sym_id, file_idx, source_cache_scope)
+            .or_else(|| {
+                self.ctx.cached_source_file_symbol_arena_type(
+                    sym_id,
+                    file_idx,
+                    source_cache_scope,
+                    self.ctx.current_file_idx as u32,
+                )
+            })
+    }
+
+    pub(super) fn cache_symbol_arena_or_cross_file_symbol_type(
+        &self,
+        sym_id: SymbolId,
+        file_idx: usize,
+        source_cache_scope: u64,
+        symbol_type_cache_from_symbol_arena: bool,
+        type_id: TypeId,
+        type_params: Vec<tsz_solver::TypeParamInfo>,
+    ) {
+        let file_idx = file_idx as u32;
+        if !symbol_type_cache_from_symbol_arena {
+            self.ctx
+                .cache_cross_file_symbol_type(sym_id, file_idx, type_id, type_params);
+            return;
+        }
+
+        if type_params.is_empty() {
+            self.ctx.cache_stable_source_file_symbol_arena_type(
+                sym_id,
+                file_idx,
+                source_cache_scope,
+                type_id,
+                type_params,
+            );
+        } else {
+            self.ctx.cache_source_file_symbol_arena_type(
+                sym_id,
+                file_idx,
+                source_cache_scope,
+                self.ctx.current_file_idx as u32,
+                type_id,
+                type_params,
+            );
+        }
+    }
+
     /// Delegate symbol resolution to a checker using the correct arena.
     ///
     /// When a symbol's arena differs from the current arena (cross-file symbol),
     /// we create a child checker with the correct arena and delegate the resolution.
     /// This ensures symbols are resolved in their original context.
-    ///
-    /// ## Returns:
-    /// - `Some((type_id, params))`: Delegation occurred, use this result
-    /// - `None`: Symbol is in the local arena, proceed with local computation
-    ///
-    /// ## Critical Behavior:
-    /// - Removes the "in-progress" ERROR marker from cache before delegation
-    /// - Shares the parent's cache via `with_parent_cache` (fixes Cache Isolation Bug)
-    /// - Copies `lib_contexts` for global symbol resolution (Array, Promise, etc.)
-    /// - Copies resolution sets for cross-file cycle detection
     pub(crate) fn delegate_cross_arena_symbol_resolution(
         &mut self,
         sym_id: SymbolId,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
-        // Fast path: if this is a known cross-file symbol, skip the namespace guard
-        // (which would check the wrong symbol in the current binder) and go straight
-        // to cross-file delegation.
-        //
         // TYPE_ALIAS + value merge fix: When a user-defined type alias (e.g., `type Proxy<T>`)
         // has the same name as a global value (`declare var Proxy: ProxyConstructor`), the
         // merged symbol has both TYPE_ALIAS and value flags, and symbol_arenas may point to
@@ -532,17 +551,18 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // FUNCTION + cross-arena merge: when a user `declare function f(...)` in the
-        // current arena merges with an existing lib `declare function f(...)` from
-        // the lib arena, both decls live on the same symbol but delegation would
-        // run compute_type_of_symbol in lib-arena context — losing the user's
-        // overload signature. Handle locally so compute_type_of_symbol sees every
-        // in-arena declaration and (if needed) still pulls the lib-arena decls
-        // via `declaration_arenas`.
+        // Raw `SymbolId`s are file-local: `SymbolId(0)` may name `f` (FUNCTION) in
+        // the current file and `x: string` (ALIAS) in another. Inspect the *local*
+        // binder directly — `get_cross_file_symbol` would return the wrong symbol
+        // when a cross-file overlay maps the same raw id to a foreign declaration —
+        // so a current-file function declaration always pins resolution locally.
+        // This covers both the lib-merge case (`declare function f` in current arena
+        // overlapping a lib `declare function f`) and the multi-file collision case.
         let mut function_has_local_decl = false;
-        if delegate_arena.is_some_and(|arena| !std::ptr::eq(arena, self.ctx.arena))
-            && let Some(symbol) = self.get_cross_file_symbol(sym_id)
+        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
             && symbol.has_any_flags(symbol_flags::FUNCTION)
+            && !symbol
+                .has_any_flags(symbol_flags::CLASS | symbol_flags::INTERFACE | symbol_flags::ALIAS)
         {
             let has_local_function_decl = symbol.declarations.iter().any(|&d| {
                 self.ctx
@@ -592,14 +612,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Check cross-file symbol target mapping as fallback.
-        // When resolve_cross_file_export returns a SymbolId from another file's binder,
-        // it records the target file index. Use that to find the correct arena AND binder.
-        //
-        // IMPORTANT: Skip this fallback for INTERFACE symbols that have local interface
-        // declarations. These need local handling so that compute_type_of_symbol can
-        // merge members from both the local and cross-file declarations. Delegating
-        // to the other file would lose the local declaration's members and heritage.
+        // Use recorded cross-file targets only when local merge handling is not required.
         let mut cross_file_idx: Option<usize> = None;
         let needs_cross_file_delegation = !interface_has_local_decl
             && !function_has_local_decl
@@ -619,11 +632,8 @@ impl<'a> CheckerState<'a> {
             cross_file_idx = Some(file_idx);
         }
 
-        let should_delegate = if needs_cross_file_delegation {
-            true
-        } else {
-            delegate_arena.is_some_and(|arena| !std::ptr::eq(arena, self.ctx.arena))
-        };
+        let should_delegate = needs_cross_file_delegation
+            || delegate_arena.is_some_and(|arena| !std::ptr::eq(arena, self.ctx.arena));
 
         if should_delegate {
             let symbol_type_cache_file_idx = self.symbol_arena_symbol_type_cache_file_idx(
@@ -690,16 +700,13 @@ impl<'a> CheckerState<'a> {
             }
 
             if let Some(cache_file_idx) = symbol_type_cache_file_idx
-                && let Some((cached_type, cached_params)) = if symbol_type_cache_from_symbol_arena {
-                    self.ctx.cached_stable_source_file_symbol_arena_type(
+                && let Some((cached_type, cached_params)) = self
+                    .cached_symbol_arena_or_cross_file_symbol_type(
                         sym_id,
-                        cache_file_idx as u32,
+                        cache_file_idx,
                         source_cache_scope,
+                        symbol_type_cache_from_symbol_arena,
                     )
-                } else {
-                    self.ctx
-                        .cached_cross_file_symbol_type(sym_id, cache_file_idx as u32)
-                }
             {
                 if let Some(p) = perf {
                     p.delegate_cross_arena_cache_hits_cross_file
@@ -733,7 +740,6 @@ impl<'a> CheckerState<'a> {
             ) {
                 return Some(result);
             }
-
             let direct_target = if let Some(file_idx) = cross_file_idx {
                 let arena = self.ctx.get_arena_for_file(file_idx as u32);
                 let binder = self
@@ -770,22 +776,14 @@ impl<'a> CheckerState<'a> {
             {
                 self.ctx.symbol_types.insert(sym_id, direct_type);
                 if let Some(file_idx) = symbol_type_cache_file_idx {
-                    if symbol_type_cache_from_symbol_arena {
-                        self.ctx.cache_stable_source_file_symbol_arena_type(
-                            sym_id,
-                            file_idx as u32,
-                            source_cache_scope,
-                            direct_type,
-                            direct_params.clone(),
-                        );
-                    } else {
-                        self.ctx.cache_cross_file_symbol_type(
-                            sym_id,
-                            file_idx as u32,
-                            direct_type,
-                            direct_params.clone(),
-                        );
-                    }
+                    self.cache_symbol_arena_or_cross_file_symbol_type(
+                        sym_id,
+                        file_idx,
+                        source_cache_scope,
+                        symbol_type_cache_from_symbol_arena,
+                        direct_type,
+                        direct_params.clone(),
+                    );
                 }
                 if symbol_type_cache_file_idx.is_none() && !needs_cross_file_delegation {
                     self.ctx
@@ -813,6 +811,33 @@ impl<'a> CheckerState<'a> {
                 return Some((direct_type, Vec::new()));
             }
 
+            if let Some(direct_type) =
+                self.direct_source_file_function_declaration_result(sym_id, direct_target)
+            {
+                self.ctx.symbol_types.insert(sym_id, direct_type);
+                if let Some(file_idx) = symbol_type_cache_file_idx {
+                    self.cache_symbol_arena_or_cross_file_symbol_type(
+                        sym_id,
+                        file_idx,
+                        source_cache_scope,
+                        symbol_type_cache_from_symbol_arena,
+                        direct_type,
+                        Vec::new(),
+                    );
+                }
+                return Some((direct_type, Vec::new()));
+            }
+
+            if let Some(result) = self.direct_declaration_file_type_alias_delegation_result(
+                sym_id,
+                cross_file_idx,
+                symbol_type_cache_file_idx,
+                source_cache_scope,
+                symbol_type_cache_from_symbol_arena,
+            ) {
+                return Some(result);
+            }
+
             let direct_target_file_idx =
                 if symbol_type_cache_from_symbol_arena || needs_cross_file_delegation {
                     symbol_type_cache_file_idx
@@ -828,22 +853,14 @@ impl<'a> CheckerState<'a> {
             ) {
                 self.ctx.symbol_types.insert(sym_id, direct_type);
                 if let Some(file_idx) = symbol_type_cache_file_idx {
-                    if symbol_type_cache_from_symbol_arena {
-                        self.ctx.cache_stable_source_file_symbol_arena_type(
-                            sym_id,
-                            file_idx as u32,
-                            source_cache_scope,
-                            direct_type,
-                            direct_params.clone(),
-                        );
-                    } else {
-                        self.ctx.cache_cross_file_symbol_type(
-                            sym_id,
-                            file_idx as u32,
-                            direct_type,
-                            direct_params.clone(),
-                        );
-                    }
+                    self.cache_symbol_arena_or_cross_file_symbol_type(
+                        sym_id,
+                        file_idx,
+                        source_cache_scope,
+                        symbol_type_cache_from_symbol_arena,
+                        direct_type,
+                        direct_params.clone(),
+                    );
                 }
                 return Some((direct_type, direct_params));
             }
@@ -985,9 +1002,9 @@ impl<'a> CheckerState<'a> {
                 checker.ctx.class_constructor_resolution_set.insert(id);
             }
 
-            // Wire up the shared DefinitionStore in the child's TypeEnvironment so
-            // inner DefId→TypeId mappings survive child-checker teardown.
-            checker.ctx.ensure_type_env_has_definition_store();
+            // Wire up the shared DefinitionStore in both of the child's TypeEnvironments
+            // so inner DefId→TypeId mappings survive child-checker teardown.
+            checker.ctx.ensure_both_envs_have_definition_store();
 
             // Use get_type_of_symbol to ensure proper cycle detection.
             let result = checker.get_type_of_symbol(sym_id);
@@ -1121,22 +1138,14 @@ impl<'a> CheckerState<'a> {
             // other parallel checkers can reuse this result without rebuilding
             // a child checker.
             if let Some(target_file_idx) = symbol_type_cache_file_idx {
-                if symbol_type_cache_from_symbol_arena {
-                    self.ctx.cache_stable_source_file_symbol_arena_type(
-                        sym_id,
-                        target_file_idx as u32,
-                        source_cache_scope,
-                        result,
-                        result_params.clone(),
-                    );
-                } else {
-                    self.ctx.cache_cross_file_symbol_type(
-                        sym_id,
-                        target_file_idx as u32,
-                        result,
-                        result_params.clone(),
-                    );
-                }
+                self.cache_symbol_arena_or_cross_file_symbol_type(
+                    sym_id,
+                    target_file_idx,
+                    source_cache_scope,
+                    symbol_type_cache_from_symbol_arena,
+                    result,
+                    result_params.clone(),
+                );
             }
 
             self.ctx.leave_recursion();
@@ -1264,9 +1273,9 @@ impl<'a> CheckerState<'a> {
             checker.ctx.class_constructor_resolution_set.insert(id);
         }
 
-        // Wire up the shared DefinitionStore in the child's TypeEnvironment so
-        // inner DefId→TypeId mappings survive child-checker teardown.
-        checker.ctx.ensure_type_env_has_definition_store();
+        // Wire up the shared DefinitionStore in both of the child's TypeEnvironments
+        // so inner DefId→TypeId mappings survive child-checker teardown.
+        checker.ctx.ensure_both_envs_have_definition_store();
 
         let result = checker.class_instance_type_with_params_from_symbol(sym_id);
         if self.ctx.share_owner_symbol_type_results
@@ -1428,12 +1437,12 @@ impl<'a> CheckerState<'a> {
         // DefId ↔ SymbolId mappings are resolved via DefinitionStore fallback
         // on cache miss — no parent-to-child copy needed.
 
-        // Wire up the shared DefinitionStore in the child's TypeEnvironment so
-        // that DefId→TypeId mappings for inner types (e.g., IServer inside
+        // Wire up the shared DefinitionStore in both of the child's TypeEnvironments
+        // so that DefId→TypeId mappings for inner types (e.g., IServer inside
         // IConfig's properties) are written through to the shared store. Without
         // this, the parent checker cannot resolve Lazy(DefId) references for
         // types nested inside the cross-file interface after the child is dropped.
-        checker.ctx.ensure_type_env_has_definition_store();
+        checker.ctx.ensure_both_envs_have_definition_store();
 
         // Try compute_interface_type_from_declarations first (more direct),
         // fall back to get_type_of_symbol for non-pure-interface symbols.
@@ -1984,3 +1993,7 @@ impl<'a> CheckerState<'a> {
 #[cfg(test)]
 #[path = "cross_file_query_kind_tests.rs"]
 mod cross_file_query_kind_tests;
+
+#[cfg(test)]
+#[path = "cross_file_cache_tests.rs"]
+mod tests;

@@ -20,6 +20,7 @@ use crate::visitor::{
 };
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
+use super::intrinsic_object::{IntrinsicObjectKind, intrinsic_vs_object_super};
 
 /// Create a function type with no parameters and the given return type.
 ///
@@ -158,23 +159,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// ```
     ///
     /// This is used in subtype checking to determine when structural typing rules apply.
-    #[allow(clippy::match_same_arms)]
     pub(crate) fn is_object_keyword_type(&mut self, source: TypeId) -> bool {
-        let allow_any = self.any_propagation.allows_any_at_depth(self.guard.depth());
-        match source {
-            TypeId::ANY if allow_any => return true,
-            TypeId::NEVER | TypeId::ERROR | TypeId::OBJECT => return true,
-            TypeId::UNKNOWN
-            | TypeId::VOID
-            | TypeId::NULL
-            | TypeId::UNDEFINED
-            | TypeId::BOOLEAN
-            | TypeId::NUMBER
-            | TypeId::STRING
-            | TypeId::BIGINT
-            | TypeId::SYMBOL => return false,
-            // Fall through to structural check for ANY in strict mode and all other types
-            _ => {}
+        if source == TypeId::ERROR {
+            return true;
+        }
+        if let Some(kind) = intrinsic_kind(self.interner, source) {
+            let allow_any = self.any_propagation.allows_any_at_depth(self.guard.depth());
+            return match intrinsic_vs_object_super(kind, IntrinsicObjectKind::ObjectKeyword) {
+                Some(result) => result,
+                // `any` is mode-dependent for the `object` keyword.
+                None => allow_any,
+            };
         }
 
         if object_shape_id(self.interner, source).is_some()
@@ -225,10 +220,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// TypeScript's uppercase `Object` accepts all non-nullish values, including
     /// primitives (unlike lowercase `object` which rejects primitives).
     pub(crate) fn is_global_object_interface_type(&mut self, source: TypeId) -> bool {
-        match source {
-            TypeId::ANY | TypeId::NEVER | TypeId::ERROR => return true,
-            TypeId::NULL | TypeId::UNDEFINED | TypeId::VOID | TypeId::UNKNOWN => return false,
-            _ => {}
+        if source == TypeId::ERROR {
+            return true;
+        }
+        if let Some(kind) = intrinsic_kind(self.interner, source) {
+            // `any` (None) is always compatible with the global Object interface.
+            return intrinsic_vs_object_super(kind, IntrinsicObjectKind::GlobalObject)
+                .unwrap_or(true);
         }
 
         if let Some(members) = union_list_id(self.interner, source) {

@@ -1,4 +1,4 @@
-use tsz_solver::{NullishFilter, TypeDatabase, TypeId, TypeResolver};
+use tsz_solver::{NullishFilter, PropertyInfo, TypeDatabase, TypeId, TypeResolver};
 
 /// Re-export of the solver's binary operation result type.
 ///
@@ -88,8 +88,24 @@ pub(crate) fn compute_conditional_expression_type(
     true_type: TypeId,
     false_type: TypeId,
 ) -> TypeId {
-    tsz_solver::expression_ops::compute_conditional_expression_type(
+    tsz_solver::operations::expression_ops::compute_conditional_expression_type(
         db, condition, true_type, false_type,
+    )
+}
+
+/// Merge a single object-spread property contribution through the solver-owned
+/// AST-independent spread merge rule.
+pub(crate) fn merge_object_spread_property(
+    db: &dyn TypeDatabase,
+    exact_optional_property_types: bool,
+    earlier: Option<&PropertyInfo>,
+    spread: &PropertyInfo,
+) -> PropertyInfo {
+    tsz_solver::operations::expression_ops::merge_object_spread_property(
+        db,
+        exact_optional_property_types,
+        earlier,
+        spread,
     )
 }
 
@@ -99,7 +115,7 @@ pub(crate) fn compute_best_common_type<R: TypeResolver>(
     types: &[TypeId],
     resolver: Option<&R>,
 ) -> TypeId {
-    tsz_solver::expression_ops::compute_best_common_type(db, types, resolver)
+    tsz_solver::operations::expression_ops::compute_best_common_type(db, types, resolver)
 }
 
 /// Cache-aware variant: thread `&dyn QueryDatabase` so the cross-call
@@ -111,12 +127,14 @@ pub(crate) fn compute_best_common_type_cached<R: TypeResolver>(
     types: &[TypeId],
     resolver: Option<&R>,
 ) -> TypeId {
-    tsz_solver::expression_ops::compute_best_common_type_cached(db, query_db, types, resolver)
+    tsz_solver::operations::expression_ops::compute_best_common_type_cached(
+        db, query_db, types, resolver,
+    )
 }
 
 /// Check whether a contextual type is suitable for template literal narrowing.
 pub(crate) fn is_template_literal_contextual_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::expression_ops::is_template_literal_contextual_type(db, type_id)
+    tsz_solver::operations::expression_ops::is_template_literal_contextual_type(db, type_id)
 }
 
 /// Compute the type of a template literal expression with contextual typing.
@@ -125,7 +143,9 @@ pub(crate) fn compute_template_expression_type_contextual(
     texts: &[String],
     parts: &[TypeId],
 ) -> TypeId {
-    tsz_solver::expression_ops::compute_template_expression_type_contextual(db, texts, parts)
+    tsz_solver::operations::expression_ops::compute_template_expression_type_contextual(
+        db, texts, parts,
+    )
 }
 
 /// Compute the type of a template literal expression without contextual typing.
@@ -134,7 +154,7 @@ pub(crate) fn compute_template_expression_type(
     texts: &[String],
     parts: &[TypeId],
 ) -> TypeId {
-    tsz_solver::expression_ops::compute_template_expression_type(db, texts, parts)
+    tsz_solver::operations::expression_ops::compute_template_expression_type(db, texts, parts)
 }
 
 pub(crate) fn is_fresh_literal_indexed_object(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
@@ -166,6 +186,44 @@ pub(crate) fn union_context_prefers_tuple_array_literal(
     }
 
     saw_tuple
+}
+
+pub(crate) fn widen_mutable_object_literal_property_types(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
+    let Some(shape) = crate::query_boundaries::common::object_shape_for_type(db, type_id) else {
+        return type_id;
+    };
+
+    let mut widened_shape = shape.as_ref().clone();
+    let mut changed = false;
+    for prop in &mut widened_shape.properties {
+        let widened_read = crate::query_boundaries::common::widen_literal_type(db, prop.type_id);
+        let widened_write =
+            crate::query_boundaries::common::widen_literal_type(db, prop.write_type);
+        if widened_read != prop.type_id || widened_write != prop.write_type {
+            changed = true;
+        }
+        prop.type_id = widened_read;
+        prop.write_type = widened_write;
+    }
+
+    if changed {
+        db.object_with_index(widened_shape)
+    } else {
+        type_id
+    }
+}
+
+/// Whether a contextual type is literal-permissive for object-literal property
+/// widening.
+///
+/// `unknown`, `any`, and `never` do not constrain literal property types in
+/// tsc's contextual literal check, so they should not suppress the normal
+/// widening of property literals in non-fresh object contexts.
+pub(crate) fn is_literal_permissive_object_context(type_id: TypeId) -> bool {
+    matches!(type_id, TypeId::UNKNOWN | TypeId::ANY | TypeId::NEVER)
 }
 
 #[cfg(test)]
@@ -254,6 +312,20 @@ mod tests {
             &db,
             tuple(&db, TypeId::STRING)
         ));
+    }
+
+    #[test]
+    fn literal_permissive_object_context_accepts_top_like_contexts() {
+        assert!(is_literal_permissive_object_context(TypeId::UNKNOWN));
+        assert!(is_literal_permissive_object_context(TypeId::ANY));
+        assert!(is_literal_permissive_object_context(TypeId::NEVER));
+    }
+
+    #[test]
+    fn literal_permissive_object_context_rejects_constraining_contexts() {
+        assert!(!is_literal_permissive_object_context(TypeId::STRING));
+        assert!(!is_literal_permissive_object_context(TypeId::NUMBER));
+        assert!(!is_literal_permissive_object_context(TypeId::BOOLEAN));
     }
 
     #[test]

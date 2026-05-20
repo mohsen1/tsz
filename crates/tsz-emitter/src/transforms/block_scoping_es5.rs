@@ -516,6 +516,13 @@ fn visit_children<F: FnMut(NodeIndex)>(arena: &NodeArena, node: &Node, mut visit
                 visitor(bin.right);
             }
         }
+        k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
+            if let Some(cond) = arena.get_conditional_expr(node) {
+                visitor(cond.condition);
+                visitor(cond.when_true);
+                visitor(cond.when_false);
+            }
+        }
         k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
         {

@@ -1090,3 +1090,117 @@ fn string_keys() {
     guard.leave("bar");
     guard.leave("foo");
 }
+
+// ===================================================================
+// iteration_exceeded() flag tests
+// ===================================================================
+
+#[test]
+fn iteration_exceeded_flag_false_initially() {
+    let guard = RecursionGuard::<u32>::new(100, 10);
+    assert!(!guard.iteration_exceeded());
+}
+
+#[test]
+fn iteration_exceeded_flag_set_after_iteration_overflow() {
+    let mut guard = RecursionGuard::new(100, 2);
+    assert_eq!(guard.enter(1u32), RecursionResult::Entered);
+    guard.leave(1);
+    assert_eq!(guard.enter(2u32), RecursionResult::Entered);
+    guard.leave(2);
+    // 3rd attempt exceeds iteration limit
+    assert_eq!(guard.enter(3u32), RecursionResult::IterationExceeded);
+    assert!(guard.is_exceeded());
+    assert!(guard.iteration_exceeded());
+}
+
+#[test]
+fn iteration_exceeded_flag_not_set_after_depth_overflow() {
+    // Depth fires first when iterations are not exhausted.
+    let mut guard = RecursionGuard::new(1, 100);
+    assert_eq!(guard.enter(1u32), RecursionResult::Entered);
+    assert_eq!(guard.enter(2u32), RecursionResult::DepthExceeded);
+    assert!(guard.is_exceeded());
+    assert!(
+        !guard.iteration_exceeded(),
+        "depth overflow must not set iteration_exceeded"
+    );
+    guard.leave(1);
+}
+
+#[test]
+fn iteration_exceeded_flag_sticky_like_exceeded() {
+    // Once set, stays set until reset().
+    let mut guard = RecursionGuard::new(100, 1);
+    assert_eq!(guard.enter(1u32), RecursionResult::Entered);
+    guard.leave(1);
+    assert_eq!(guard.enter(2u32), RecursionResult::IterationExceeded);
+    assert!(guard.iteration_exceeded());
+    // Further enters don't change the flag (it's sticky).
+    let _ = guard.enter(3u32);
+    assert!(guard.iteration_exceeded());
+}
+
+#[test]
+fn clear_exceeded_does_not_clear_iteration_exceeded_flag() {
+    // clear_exceeded() is for non-fatal depth bailouts; it must not
+    // suppress an iteration budget exhaustion.
+    let mut guard = RecursionGuard::new(100, 2);
+    assert_eq!(guard.enter(1u32), RecursionResult::Entered);
+    guard.leave(1);
+    assert_eq!(guard.enter(2u32), RecursionResult::Entered);
+    guard.leave(2);
+    assert_eq!(guard.enter(3u32), RecursionResult::IterationExceeded);
+    assert!(guard.iteration_exceeded());
+
+    guard.clear_exceeded();
+    assert!(
+        !guard.is_exceeded(),
+        "clear_exceeded clears the main exceeded flag"
+    );
+    assert!(
+        guard.iteration_exceeded(),
+        "clear_exceeded must NOT clear iteration_exceeded"
+    );
+}
+
+#[test]
+fn clear_exceeded_clears_depth_exceeded_when_iteration_is_not_set() {
+    // When only depth was exceeded (iteration_exceeded is false),
+    // clear_exceeded() correctly clears the main flag.
+    let mut guard = RecursionGuard::new(1, 100);
+    assert_eq!(guard.enter(1u32), RecursionResult::Entered);
+    assert_eq!(guard.enter(2u32), RecursionResult::DepthExceeded);
+    assert!(guard.is_exceeded());
+    assert!(!guard.iteration_exceeded());
+
+    guard.clear_exceeded();
+    assert!(
+        !guard.is_exceeded(),
+        "clear_exceeded should clear depth-only exceedance"
+    );
+    assert!(
+        !guard.iteration_exceeded(),
+        "iteration_exceeded remains false"
+    );
+    guard.leave(1);
+}
+
+#[test]
+fn reset_clears_iteration_exceeded_flag() {
+    let mut guard = RecursionGuard::new(100, 1);
+    assert_eq!(guard.enter(1u32), RecursionResult::Entered);
+    guard.leave(1);
+    assert_eq!(guard.enter(2u32), RecursionResult::IterationExceeded);
+    assert!(guard.iteration_exceeded());
+
+    guard.reset();
+    assert!(!guard.is_exceeded());
+    assert!(
+        !guard.iteration_exceeded(),
+        "reset must clear iteration_exceeded"
+    );
+    // Guard is usable again.
+    assert_eq!(guard.enter(1u32), RecursionResult::Entered);
+    guard.leave(1);
+}

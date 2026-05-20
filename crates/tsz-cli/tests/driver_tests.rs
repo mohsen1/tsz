@@ -1656,6 +1656,95 @@ export function getStyles() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn declaration_emit_symlinked_import_type_package_ref_reports_when_dependency_is_resolution_only() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("Folder/monorepo/package-a/index.d.ts"),
+        r#"export declare const styles: import("styled-components").InterpolationValue[];
+"#,
+    );
+    write_file(
+        &base.join("Folder/node_modules/styled-components/package.json"),
+        r#"{
+  "name": "styled-components",
+  "version": "3.3.3",
+  "typings": "typings/styled-components.d.ts"
+}"#,
+    );
+    write_file(
+        &base.join("Folder/node_modules/styled-components/typings/styled-components.d.ts"),
+        r#"export interface InterpolationValue {}
+"#,
+    );
+    write_file(
+        &base.join("Folder/monorepo/core/index.ts"),
+        r#"import { styles } from "package-a";
+
+export function getStyles() {
+    return styles;
+}
+"#,
+    );
+    std::fs::create_dir_all(base.join("Folder/monorepo/package-a/node_modules"))
+        .expect("package-a node_modules");
+    std::fs::create_dir_all(base.join("Folder/monorepo/core/node_modules"))
+        .expect("core node_modules");
+    std::os::unix::fs::symlink(
+        base.join("Folder/node_modules/styled-components"),
+        base.join("Folder/monorepo/package-a/node_modules/styled-components"),
+    )
+    .expect("styled-components symlink");
+    std::os::unix::fs::symlink(
+        base.join("Folder/monorepo/package-a"),
+        base.join("Folder/monorepo/core/node_modules/package-a"),
+    )
+    .expect("package-a symlink");
+
+    let mut args = default_args();
+    args.project = Some(base.join("Folder/monorepo/core/tsconfig.json"));
+    write_file(
+        &base.join("Folder/monorepo/core/tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "module": "commonjs",
+    "strict": true,
+    "declaration": true
+  },
+  "files": ["index.ts"]
+}"#,
+    );
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts2883_messages: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2883)
+        .map(|d| d.message_text.clone())
+        .collect();
+
+    assert_eq!(
+        ts2883_messages.len(),
+        1,
+        "expected one TS2883 diagnostic for resolution-only symlinked import type, got: {ts2883_messages:#?}"
+    );
+    assert!(
+        ts2883_messages[0].contains("InterpolationValue"),
+        "expected TS2883 to name imported member, got: {}",
+        ts2883_messages[0]
+    );
+    assert!(
+        ts2883_messages[0]
+            .contains("../package-a/node_modules/styled-components/typings/styled-components"),
+        "expected TS2883 to preserve source-package node_modules path, got: {}",
+        ts2883_messages[0]
+    );
+}
+
 #[test]
 fn declaration_emit_commonjs_call_tuple_reports_nested_reference_ts2883() {
     let temp = TempDir::new().expect("temp dir");
@@ -2829,7 +2918,7 @@ export const publicProcedure = trpc.procedure;
     ])
     .expect("batch-style args");
 
-    tsz_solver::clear_thread_local_cache();
+    tsz_solver::construction::clear_thread_local_cache();
     tsz_solver::reset_subtype_thread_local_state();
     tsz::checker::clear_all_thread_local_state();
 
@@ -3645,6 +3734,160 @@ fn compile_single_source_amd_outfile_emits_bundle() {
 }
 
 #[test]
+fn compile_module_none_outfile_skips_dynamic_import_only_dependency() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2020",
+            "module": "none",
+            "outFile": "dist/bundle.js",
+            "allowJs": true,
+            "ignoreDeprecations": "6.0"
+          },
+          "files": ["main.ts"]
+        }"#,
+    );
+    write_file(&base.join("main.ts"), "const loaded = import(\"./dep\");\n");
+    write_file(&base.join("dep.js"), "export default 1;\n");
+
+    let args = default_args();
+    let result = with_types_versions_env(None, || {
+        compile(&args, base).expect("compile should succeed")
+    });
+
+    assert!(
+        result.diagnostics.iter().all(|diag| diag.code == 1323),
+        "{:?}",
+        result.diagnostics
+    );
+    let bundle = std::fs::read_to_string(base.join("dist/bundle.js")).expect("read bundle");
+    assert_eq!(bundle, "\"use strict\";\nconst loaded = import(\"./dep\");");
+    assert!(
+        !bundle.contains("exports.default"),
+        "dynamic-import-only dependency should not be concatenated into module:none outFile bundle:\n{bundle}"
+    );
+}
+
+#[test]
+fn compile_module_none_outfile_keeps_static_and_reference_dependencies() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2020",
+            "module": "none",
+            "outFile": "dist/bundle.js",
+            "allowJs": true,
+            "ignoreDeprecations": "6.0"
+          },
+          "files": ["main.ts", "root-script.js"]
+        }"#,
+    );
+    write_file(
+        &base.join("main.ts"),
+        "/// <reference path=\"./referenced.js\" />\nconst loaded = import(\"./dynamic\");\n",
+    );
+    write_file(&base.join("root-script.js"), "const rootScriptValue = 1;\n");
+    write_file(&base.join("referenced.js"), "const referencedValue = 2;\n");
+    write_file(&base.join("dynamic.js"), "export const dynamicValue = 3;\n");
+
+    let args = default_args();
+    let result = with_types_versions_env(None, || {
+        compile(&args, base).expect("compile should succeed")
+    });
+
+    assert!(
+        result.diagnostics.iter().all(|diag| diag.code == 1323),
+        "{:?}",
+        result.diagnostics
+    );
+    let bundle = std::fs::read_to_string(base.join("dist/bundle.js")).expect("read bundle");
+    assert!(
+        bundle.contains("const referencedValue = 2;"),
+        "triple-slash referenced dependency should remain in bundle:\n{bundle}"
+    );
+    assert!(
+        bundle.contains("const rootScriptValue = 1;"),
+        "explicit script root should remain in bundle:\n{bundle}"
+    );
+    assert!(
+        !bundle.contains("dynamicValue"),
+        "external module reached only through dynamic import should not be concatenated into bundle:\n{bundle}"
+    );
+}
+
+#[test]
+fn compile_module_none_outfile_keeps_cached_reference_dependencies() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2020",
+            "module": "none",
+            "outFile": "dist/bundle.js",
+            "allowJs": true,
+            "ignoreDeprecations": "6.0"
+          },
+          "files": ["main.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("main.ts"),
+        "/// <reference path=\"./referenced.js\" />\nconst loaded = import(\"./dynamic\");\n",
+    );
+    let referenced_path = base.join("referenced.js");
+    write_file(&referenced_path, "const referencedValue = 2;\n");
+    write_file(&base.join("dynamic.js"), "export const dynamicValue = 3;\n");
+
+    let args = default_args();
+    let mut cache = CompilationCache::default();
+    let result = with_types_versions_env(None, || {
+        compile_with_cache(&args, base, &mut cache).expect("compile should succeed")
+    });
+    assert!(
+        result.diagnostics.iter().all(|diag| diag.code == 1323),
+        "{:?}",
+        result.diagnostics
+    );
+
+    write_file(&referenced_path, "const referencedValue = 4;\n");
+    let result = with_types_versions_env(None, || {
+        compile_with_cache_and_changes(
+            &args,
+            base,
+            &mut cache,
+            std::slice::from_ref(&referenced_path),
+        )
+        .expect("compile should succeed")
+    });
+    assert!(
+        result.diagnostics.iter().all(|diag| diag.code == 1323),
+        "{:?}",
+        result.diagnostics
+    );
+
+    let bundle = std::fs::read_to_string(base.join("dist/bundle.js")).expect("read bundle");
+    assert!(
+        bundle.contains("const referencedValue = 4;"),
+        "cached triple-slash dependency should remain eligible for module:none outFile bundling:\n{bundle}"
+    );
+    assert!(
+        !bundle.contains("dynamicValue"),
+        "dynamic-import-only dependency should stay out of cached module:none outFile bundle:\n{bundle}"
+    );
+}
+
+#[test]
 fn compile_single_source_amd_declaration_outfile_wraps_module_name() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -4261,6 +4504,99 @@ fn compile_no_check_no_emit_is_parse_only() {
 }
 
 #[test]
+fn compile_no_check_no_emit_suppresses_unused_expect_error() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("main.ts"),
+        "// @ts-expect-error\nconst value = 1;\n",
+    );
+
+    let mut args = default_args();
+    args.ignore_config = true;
+    args.no_check = true;
+    args.no_emit = true;
+    args.files = vec![PathBuf::from("main.ts")];
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        !codes.contains(&diagnostic_codes::UNUSED_TS_EXPECT_ERROR_DIRECTIVE),
+        "expected --noCheck to skip unused @ts-expect-error diagnostics, got: {:?}",
+        result.diagnostics
+    );
+    assert!(result.emitted_files.is_empty());
+}
+
+#[test]
+fn compile_no_check_no_emit_expect_error_keeps_parse_error() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("main.ts"),
+        "// @ts-expect-error\nconst broken = ;\n",
+    );
+
+    let mut args = default_args();
+    args.ignore_config = true;
+    args.no_check = true;
+    args.no_emit = true;
+    args.files = vec![PathBuf::from("main.ts")];
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
+        "expected --noCheck to keep TS1109 parse diagnostics despite @ts-expect-error, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::UNUSED_TS_EXPECT_ERROR_DIRECTIVE),
+        "expected --noCheck to skip unused @ts-expect-error diagnostics, got: {:?}",
+        result.diagnostics
+    );
+    assert!(result.emitted_files.is_empty());
+}
+
+#[test]
+fn compile_no_check_no_emit_expect_error_keeps_js_grammar_error() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("main.js"),
+        "// @ts-expect-error\nlet x: number;\n",
+    );
+
+    let mut args = default_args();
+    args.allow_js = true;
+    args.check_js = true;
+    args.ignore_config = true;
+    args.no_check = true;
+    args.no_emit = true;
+    args.files = vec![PathBuf::from("main.js")];
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&diagnostic_codes::TYPE_ANNOTATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES),
+        "expected --noCheck to keep TS8010 JS grammar diagnostics despite @ts-expect-error, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::UNUSED_TS_EXPECT_ERROR_DIRECTIVE),
+        "expected --noCheck to skip unused @ts-expect-error diagnostics, got: {:?}",
+        result.diagnostics
+    );
+    assert!(result.emitted_files.is_empty());
+}
+
+#[test]
 fn compile_skip_lib_check_no_emit_declaration_project_is_parse_only() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -4536,6 +4872,75 @@ fn compile_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006() {
     assert!(
         ts7006.is_empty(),
         "Expected real react16 JSX fixture to avoid TS7006, got diagnostics: {:?}\nfiles_read: {:?}\nfile_infos: {:?}",
+        result.diagnostics,
+        result.files_read,
+        result.file_infos
+    );
+}
+
+#[test]
+fn compile_react16_automatic_jsx_intrinsics_keep_children_and_img_src() {
+    let Some(react16) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
+        return;
+    };
+
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(&base.join(".lib/react16.d.ts"), &react16);
+    write_file(
+        &base.join("one.tsx"),
+        r#"/// <reference path="./.lib/react16.d.ts" />
+/* @jsxRuntime classic */
+import * as React from "react";
+export const first = <img src="./image.png" />;
+"#,
+    );
+    write_file(
+        &base.join("two.tsx"),
+        r#"/// <reference path="./.lib/react16.d.ts" />
+/* @jsxRuntime automatic */
+const props = { answer: 42 };
+const a = <div key="foo" {...props}>text</div>;
+const b = <img src="./image.png" />;
+
+export { a, b };
+"#,
+    );
+    write_file(
+        &base.join("index.ts"),
+        r#"export * as one from "./one.js";
+export * as two from "./two.js";
+"#,
+    );
+
+    let mut args = default_args();
+    args.ignore_config = true;
+    args.strict = true;
+    args.target = Some(crate::args::Target::Es2015);
+    args.jsx = Some(crate::args::JsxEmit::ReactJsx);
+    args.module = Some(crate::args::Module::CommonJs);
+    args.no_emit = true;
+    args.files = vec![
+        PathBuf::from("one.tsx"),
+        PathBuf::from("two.tsx"),
+        PathBuf::from("index.ts"),
+    ];
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let relevant: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                || d.code
+                    == diagnostic_codes::COMPONENTS_DONT_ACCEPT_TEXT_AS_CHILD_ELEMENTS_TEXT_IN_JSX_HAS_THE_TYPE_STRING_BU
+        })
+        .collect();
+
+    assert!(
+        relevant.is_empty(),
+        "Expected real react16 automatic JSX intrinsics to accept text children and img src, got diagnostics: {:?}\nfiles_read: {:?}\nfile_infos: {:?}",
         result.diagnostics,
         result.files_read,
         result.file_infos
@@ -5370,7 +5775,7 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
     let program = tsz::parallel::compile_files_with_libs(files, &lib_paths);
     let file = &program.files[0];
     let binder = tsz::parallel::create_binder_from_bound_file(file, &program, 0);
-    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let query_cache = tsz_solver::construction::QueryCache::new(&program.type_interner);
     let mut checker = CheckerState::new(
         &file.arena,
         &binder,
@@ -6240,7 +6645,7 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
     let mut binder = BinderState::new();
     binder.bind_source_file_with_libs(&arena, root, &lib_files);
 
-    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let query_cache = tsz_solver::construction::QueryCache::new(&program.type_interner);
     let mut checker = CheckerState::new(
         &arena,
         &binder,
@@ -19873,7 +20278,7 @@ function process(image) {
     let program = tsz::parallel::compile_files_with_libs(files, &lib_paths);
     let file = &program.files[0];
     let binder = tsz::parallel::create_binder_from_bound_file(file, &program, 0);
-    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let query_cache = tsz_solver::construction::QueryCache::new(&program.type_interner);
     let mut checker = CheckerState::new(
         &file.arena,
         &binder,

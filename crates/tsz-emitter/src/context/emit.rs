@@ -294,6 +294,7 @@ impl EmitContext {
     /// Create a new `EmitContext` with the given options
     pub fn with_options(options: PrinterOptions) -> Self {
         let target_facts = EmitTargetFacts::from_target(options.target);
+        let initial_counters = options.bundle_module_counters.clone();
         let mut ctx = Self {
             options,
             flags: EmitFlags::default(),
@@ -308,7 +309,10 @@ impl EmitContext {
             needs_async_lowering: false,
             arrow_state: ArrowTransformState::default(),
             destructuring_state: DestructuringState::default(),
-            module_state: ModuleTransformState::default(),
+            module_state: ModuleTransformState {
+                module_temp_counters: initial_counters,
+                ..Default::default()
+            },
             block_scope_state: BlockScopeState::default(),
             private_field_state: PrivateFieldState::default(),
             emit_await_as_yield: false,
@@ -394,6 +398,18 @@ impl EmitContext {
     /// Check if we're in `CommonJS` mode
     pub const fn is_commonjs(&self) -> bool {
         self.options.module.is_commonjs()
+    }
+
+    /// Returns true when the original module kind was AMD, UMD, or System.
+    ///
+    /// The wrapper temporarily overrides `options.module` to `CommonJS` while
+    /// emitting the body, so callers can check this to distinguish wrapper
+    /// body emission from genuine CJS output.
+    pub const fn is_inside_module_wrapper_body(&self) -> bool {
+        matches!(
+            self.original_module_kind,
+            Some(ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System)
+        )
     }
 
     /// Check if we're effectively in `CommonJS` mode, even when the module kind

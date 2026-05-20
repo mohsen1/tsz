@@ -62,129 +62,6 @@ pub(crate) fn optional_chain_root(arena: &NodeArena, idx: NodeIndex) -> NodeInde
 }
 
 impl<'a> CheckerState<'a> {
-    pub(crate) fn expando_element_key_name(&mut self, key_expr_idx: NodeIndex) -> Option<String> {
-        let node = self.ctx.arena.get(key_expr_idx)?;
-        match node.kind {
-            k if k == SyntaxKind::Identifier as u16 => {
-                let ident = self.ctx.arena.get_identifier(node)?;
-                let name = &ident.escaped_text;
-
-                // Resolve through the binder the same way detect_expando_assignment
-                // does, so the key matches what was stored at bind time.
-                let binder_sym = self
-                    .ctx
-                    .binder
-                    .get_node_symbol(key_expr_idx)
-                    .or_else(|| {
-                        self.ctx
-                            .binder
-                            .resolve_identifier(self.ctx.arena, key_expr_idx)
-                    })
-                    .or_else(|| self.ctx.binder.file_locals.get(name));
-                if let Some(sym_id) = binder_sym
-                    && let Some(key) = self.resolved_const_expando_key_from_binder(sym_id, 0)
-                {
-                    return Some(key);
-                }
-
-                // Fallback: resolve through the type system for non-binder cases.
-                let prev = self.ctx.preserve_literal_types;
-                self.ctx.preserve_literal_types = true;
-                let key_type = self.get_type_of_node(key_expr_idx);
-                self.ctx.preserve_literal_types = prev;
-
-                if let Some(lit) =
-                    crate::query_boundaries::common::literal_value(self.ctx.types, key_type)
-                {
-                    return Some(match lit {
-                        tsz_solver::LiteralValue::String(s) => self.ctx.types.resolve_atom(s),
-                        tsz_solver::LiteralValue::Number(n) => n.0.to_string(),
-                        tsz_solver::LiteralValue::Boolean(b) => b.to_string(),
-                        tsz_solver::LiteralValue::BigInt(b) => self.ctx.types.resolve_atom(b),
-                    });
-                }
-
-                if let Some(sym_ref) =
-                    crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, key_type)
-                {
-                    return Some(format!("__unique_{}", sym_ref.0));
-                }
-
-                Some(name.clone())
-            }
-            k if k == SyntaxKind::StringLiteral as u16
-                || k == SyntaxKind::NumericLiteral as u16
-                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
-            {
-                self.ctx.arena.get_literal(node).map(|lit| lit.text.clone())
-            }
-            _ => None,
-        }
-    }
-
-    fn is_direct_expando_element_write_base(&self, object_expr_idx: NodeIndex) -> bool {
-        let Some(node) = self.ctx.arena.get(object_expr_idx) else {
-            return false;
-        };
-        node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            && node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-    }
-
-    fn is_expando_element_access_read(
-        &mut self,
-        object_expr_idx: NodeIndex,
-        key_expr_idx: NodeIndex,
-    ) -> bool {
-        let Some(obj_key) = property_access_chain_text_in_arena(self.ctx.arena, object_expr_idx)
-        else {
-            return false;
-        };
-        let Some(prop_key) = self.expando_element_key_name(key_expr_idx) else {
-            return false;
-        };
-
-        if self
-            .ctx
-            .binder
-            .expando_properties
-            .get(&obj_key)
-            .is_some_and(|props| {
-                props
-                    .iter()
-                    .any(|prop| self.canonical_expando_property_name(prop) == prop_key)
-            })
-        {
-            return true;
-        }
-
-        // Use global expando index for O(1) lookup instead of O(N) binder scan
-        if let Some(expando_idx) = &self.ctx.global_expando_index {
-            if expando_idx.get(&obj_key).is_some_and(|props| {
-                props
-                    .iter()
-                    .any(|prop| self.canonical_expando_property_name(prop) == prop_key)
-            }) {
-                return true;
-            }
-        } else if let Some(all_binders) = &self.ctx.all_binders {
-            for binder in all_binders.iter() {
-                if binder
-                    .expando_properties
-                    .get(&obj_key)
-                    .is_some_and(|props| {
-                        props
-                            .iter()
-                            .any(|prop| self.canonical_expando_property_name(prop) == prop_key)
-                    })
-                {
-                    return true;
-                }
-            }
-        }
-
-        false
-    }
-
     /// Get the type of an element access expression (e.g., arr[0], obj["prop"]).
     ///
     /// Handles element access with optional chaining, index signatures,
@@ -241,6 +118,18 @@ impl<'a> CheckerState<'a> {
             .filter(|_| numeric_string_index.is_none())
             .map(|name| self.ctx.types.literal_string(name))
             .unwrap_or(index_type);
+
+        // When the index is a `symbol`-typed identifier, convert to a
+        // `UniqueSymbol(SymbolRef)` so the solver can match binding-identity
+        // properties stored as `__unique_<sym_id>`.  This mirrors how TypeScript
+        // resolves `ws[sym]` when `sym: symbol` was used as a computed property
+        // name in the object's type declaration.
+        let index_type_for_access = if index_type == TypeId::SYMBOL {
+            self.nonunique_symbol_index_type(access.name_or_argument)
+                .unwrap_or(index_type_for_access)
+        } else {
+            index_type_for_access
+        };
 
         // Get the type of the object. In write context, prefer the receiver's
         // declared type when it already has the indexed member, otherwise fall
@@ -740,11 +629,15 @@ impl<'a> CheckerState<'a> {
                 index_type,
             )
         {
+            let display_receiver = self.display_receiver_for_generic_indexed_write(
+                pre_resolution_object_type,
+                raw_object_type,
+            );
             return self
                 .ctx
                 .types
                 .factory()
-                .index_access(pre_resolution_object_type, index_type);
+                .index_access(display_receiver, index_type);
         }
 
         // Concrete receiver indexed by a generic key (`K extends keyof Receiver`):
@@ -1495,11 +1388,30 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Handle `symbol` (primitive) index on types with late-bound (computed) members.
-        // When a class declares `[expr]()` where `expr` has type `symbol`, the member
-        // is late-bound and not stored as a named property. tsc resolves `obj[expr]` to
-        // the computed member's type; we conservatively return `any` to avoid false
-        // positives like TS2722 ("Cannot invoke possibly undefined").
+        // Match const `symbol` computed members stored under stable binding keys.
+        if result_type.is_none()
+            && index_type == TypeId::SYMBOL
+            && !crate::query_boundaries::common::is_type_parameter(
+                self.ctx.types,
+                pre_resolution_object_type,
+            )
+            && let Some(property_name) =
+                self.symbol_valued_binding_property_name(access.name_or_argument, index_type)
+        {
+            let resolved_type = self.resolve_type_for_property_access(object_type_for_access);
+            let result = self.resolve_property_access_with_env(resolved_type, &property_name);
+            if let PropertyAccessResult::Success {
+                type_id,
+                write_type,
+                ..
+            } = result
+            {
+                use_index_signature_check = false;
+                result_type = Some(effective_write_result(type_id, write_type));
+            }
+        }
+
+        // Late-bound symbol members are not stored as named properties.
         if result_type.is_none()
             && index_type == TypeId::SYMBOL
             && crate::query_boundaries::common::has_late_bound_members(
@@ -1511,11 +1423,7 @@ impl<'a> CheckerState<'a> {
             use_index_signature_check = false;
         }
 
-        // Value-level element access whose index expression has type `any`.
-        // Under noUncheckedIndexedAccess, tsc routes value-level access with
-        // an `any` index through the receiver's applicable index signature, so
-        // reads still widen to `T | undefined` and writes reject `undefined`.
-        // With NUIA disabled, keep the type-level `T[any] = any` behavior.
+        // Under NUIA, value-level `any` indexes use the receiver index signature.
         if result_type.is_none()
             && index_type == TypeId::ANY
             && self.ctx.compiler_options.no_unchecked_indexed_access
@@ -1533,35 +1441,19 @@ impl<'a> CheckerState<'a> {
             use_index_signature_check = false;
         }
 
-        // Preserve mapped/generic key correlation through solver IndexAccess evaluation.
+        // Preserve mapped-type/generic-index relationships for solver evaluation.
         if result_type.is_none()
             && crate::query_boundaries::common::is_type_parameter(self.ctx.types, index_type)
         {
             let resolved_pre = self.resolve_lazy_type(pre_resolution_object_type);
-            let substitution_object = if crate::query_boundaries::common::application_id(
-                self.ctx.types,
-                pre_resolution_object_type,
-            )
-            .is_some()
-            {
-                Some(pre_resolution_object_type)
-            } else if let Some(alias) = self.ctx.types.get_display_alias(pre_resolution_object_type)
-                && crate::query_boundaries::common::application_id(self.ctx.types, alias).is_some()
-            {
-                Some(pre_resolution_object_type)
-            } else if crate::query_boundaries::common::mapped_type_id(self.ctx.types, resolved_pre)
+            if crate::query_boundaries::common::mapped_type_id(self.ctx.types, resolved_pre)
                 .is_some()
             {
-                Some(resolved_pre)
-            } else {
-                None
-            };
-            if let Some(substitution_object) = substitution_object {
                 let index_access = self
                     .ctx
                     .types
                     .factory()
-                    .index_access(substitution_object, index_type);
+                    .index_access(resolved_pre, index_type);
                 let evaluated = self.evaluate_type_with_env(index_access);
                 if evaluated != index_access && evaluated != TypeId::ERROR {
                     result_type = Some(evaluated);
@@ -1924,8 +1816,14 @@ impl<'a> CheckerState<'a> {
             if is_expando_write {
                 result_type = TypeId::ANY;
             }
-            // Suppress TS7053 for expando reads with unique-symbol keys when the
-            // callable already has binder-recorded unique-symbol expando writes.
+            // Suppress TS7053 for expando reads with unique symbol keys on function
+            // types. When `func[symKey]` where symKey is a const Symbol() variable
+            // and `func[symKey] = value` was assigned as an expando property, tsc
+            // does not emit TS7053 on the read side either.
+            // We check: (a) read context, (b) function type, (c) unique symbol index,
+            // (d) the object has ANY unique-symbol expando properties recorded by the
+            // binder. This avoids depending on exact SymbolId matching (which can
+            // fail due to lib-merge rewriting the binder's symbol arena).
             let is_expando_symbol_read = !skip_flow_narrowing
                 && !is_namespace_object
                 && crate::query_boundaries::common::is_function_type(

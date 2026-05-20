@@ -499,8 +499,471 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         type_text: &str,
     ) -> String {
-        let portable = self.qualify_jsdoc_typeof_self_exports(type_text);
+        let portable = self.rewrite_jsdoc_bare_module_import_type_text(
+            &self.qualify_jsdoc_typeof_self_exports(type_text),
+        );
         Self::format_jsdoc_object_type_text(&portable).unwrap_or(portable)
+    }
+
+    fn jsdoc_type_alias_text_for_declaration_emit(&self, type_text: &str) -> String {
+        let portable = self.rewrite_jsdoc_bare_module_import_type_text(type_text);
+        Self::format_jsdoc_object_type_text(&portable).unwrap_or(portable)
+    }
+
+    fn rewrite_jsdoc_bare_module_import_type_text(&self, type_text: &str) -> String {
+        if !type_text.contains("import(") {
+            return type_text.to_string();
+        }
+
+        let mut output = String::new();
+        let mut remaining = type_text;
+        while let Some((start, module_specifier, tail)) = Self::next_import_type_text(remaining) {
+            output.push_str(&remaining[..start]);
+            let import_len = remaining.len() - tail.len() - start;
+            let import_text = &remaining[start..start + import_len];
+            if Self::jsdoc_import_type_tail_is_bare(tail) {
+                if let Some(surface) =
+                    self.jsdoc_bare_module_import_export_surface(&module_specifier)
+                {
+                    output.push_str(&surface);
+                } else {
+                    output.push_str(import_text);
+                }
+            } else {
+                output.push_str(import_text);
+            }
+            remaining = tail;
+        }
+        output.push_str(remaining);
+        output
+    }
+
+    fn jsdoc_import_type_tail_is_bare(tail: &str) -> bool {
+        tail.trim_start()
+            .chars()
+            .next()
+            .is_none_or(|ch| matches!(ch, ',' | ')' | '>' | '|' | '&' | ';' | ':' | '}'))
+    }
+
+    fn jsdoc_bare_module_import_export_surface(&self, module_specifier: &str) -> Option<String> {
+        let binder = self.binder?;
+        let current_path = self.current_file_path.as_deref()?;
+        if let Some(surface) = self
+            .matching_module_export_paths(binder, current_path, module_specifier)
+            .into_iter()
+            .find_map(|module_path| {
+                let exports = binder.module_exports.get(module_path)?;
+                let root_sym_id = exports.get("export=")?;
+                self.jsdoc_export_equals_symbol_surface(root_sym_id, exports)
+            })
+        {
+            return Some(surface);
+        }
+
+        self.jsdoc_bare_module_import_source_surface(current_path, module_specifier)
+    }
+
+    fn jsdoc_bare_module_import_source_surface(
+        &self,
+        current_path: &str,
+        module_specifier: &str,
+    ) -> Option<String> {
+        self.arena_to_path
+            .iter()
+            .filter_map(|(&arena_addr, source_path)| {
+                let relative = self
+                    .strip_ts_extensions(&self.calculate_relative_path(current_path, source_path));
+                if relative != module_specifier
+                    && relative
+                        .strip_suffix("/index")
+                        .is_none_or(|without_index| without_index != module_specifier)
+                {
+                    return None;
+                }
+                let arena = self
+                    .global_symbol_arenas
+                    .values()
+                    .find(|arena| Arc::as_ptr(arena) as usize == arena_addr)?;
+                self.jsdoc_commonjs_source_export_surface(arena.as_ref())
+            })
+            .next()
+    }
+
+    fn jsdoc_commonjs_source_export_surface(&self, source_arena: &NodeArena) -> Option<String> {
+        let source_file = self.arena_source_file(source_arena)?;
+        let root_name = self.jsdoc_commonjs_source_export_equals_name(source_arena, source_file)?;
+        let root_call = self.jsdoc_source_callable_symbol_surface(source_arena, &root_name)?;
+        let mut members =
+            self.jsdoc_commonjs_source_static_members(source_arena, source_file, &root_name)?;
+        members.sort_by(|(left, _), (right, _)| left.cmp(right));
+
+        let mut surface = String::from("{\n");
+        surface.push_str("    ");
+        surface.push_str(&root_call);
+        surface.push('\n');
+        for (name, type_text) in members {
+            surface.push_str("    ");
+            surface.push_str(&name);
+            surface.push_str(": ");
+            surface.push_str(&Self::indent_jsdoc_inline_member_type(&type_text));
+            surface.push_str(";\n");
+        }
+        surface.push('}');
+        Some(surface)
+    }
+
+    fn jsdoc_commonjs_source_export_equals_name(
+        &self,
+        source_arena: &NodeArena,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> Option<String> {
+        for &stmt_idx in &source_file.statements.nodes {
+            let stmt_node = source_arena.get(stmt_idx)?;
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let expr_stmt = source_arena.get_expression_statement(stmt_node)?;
+            let expr_idx =
+                source_arena.skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+            let expr_node = source_arena.get(expr_idx)?;
+            if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                continue;
+            }
+            let binary = source_arena.get_binary_expr(expr_node)?;
+            if binary.operator_token != SyntaxKind::EqualsToken as u16
+                || !Self::jsdoc_source_is_module_exports_reference(source_arena, binary.left)
+            {
+                continue;
+            }
+            let rhs = source_arena.skip_parenthesized_and_assertions_and_comma(binary.right);
+            if let Some(name) = self.identifier_text_from_arena(source_arena, rhs) {
+                return Some(name);
+            }
+        }
+        None
+    }
+
+    fn jsdoc_commonjs_source_static_members(
+        &self,
+        source_arena: &NodeArena,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+        root_name: &str,
+    ) -> Option<Vec<(String, String)>> {
+        let mut members = Vec::new();
+        for &stmt_idx in &source_file.statements.nodes {
+            let stmt_node = source_arena.get(stmt_idx)?;
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let expr_stmt = source_arena.get_expression_statement(stmt_node)?;
+            let expr_idx =
+                source_arena.skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+            let expr_node = source_arena.get(expr_idx)?;
+            if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                continue;
+            }
+            let binary = source_arena.get_binary_expr(expr_node)?;
+            if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+                continue;
+            }
+            let Some((receiver_name, member_name)) =
+                self.jsdoc_source_property_assignment_name(source_arena, binary.left)
+            else {
+                continue;
+            };
+            if receiver_name != root_name {
+                continue;
+            }
+            if !Self::is_unquoted_property_name(&member_name) {
+                return None;
+            }
+            let rhs = source_arena.skip_parenthesized_and_assertions_and_comma(binary.right);
+            let rhs_name = self.identifier_text_from_arena(source_arena, rhs)?;
+            let type_text =
+                self.jsdoc_construct_signature_surface_for_source_name(source_arena, &rhs_name)?;
+            members.push((member_name, type_text));
+        }
+        Some(members)
+    }
+
+    fn jsdoc_source_property_assignment_name(
+        &self,
+        source_arena: &NodeArena,
+        lhs: NodeIndex,
+    ) -> Option<(String, String)> {
+        let lhs = source_arena.skip_parenthesized_and_assertions_and_comma(lhs);
+        let lhs_node = source_arena.get(lhs)?;
+        if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = source_arena.get_access_expr(lhs_node)?;
+        let receiver = source_arena.skip_parenthesized_and_assertions_and_comma(access.expression);
+        let receiver_name = self.identifier_text_from_arena(source_arena, receiver)?;
+        let member_name = self.identifier_text_from_arena(source_arena, access.name_or_argument)?;
+        Some((receiver_name, member_name))
+    }
+
+    fn jsdoc_source_is_module_exports_reference(source_arena: &NodeArena, idx: NodeIndex) -> bool {
+        let idx = source_arena.skip_parenthesized_and_assertions_and_comma(idx);
+        let Some(node) = source_arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = source_arena.get_access_expr(node) else {
+            return false;
+        };
+        let Some(receiver_node) = source_arena.get(access.expression) else {
+            return false;
+        };
+        let Some(member_node) = source_arena.get(access.name_or_argument) else {
+            return false;
+        };
+        source_arena
+            .get_identifier(receiver_node)
+            .is_some_and(|ident| ident.escaped_text == "module")
+            && source_arena
+                .get_identifier(member_node)
+                .is_some_and(|ident| ident.escaped_text == "exports")
+    }
+
+    fn jsdoc_export_equals_symbol_surface(
+        &self,
+        root_sym_id: SymbolId,
+        exports: &tsz_binder::SymbolTable,
+    ) -> Option<String> {
+        let root_call = self.jsdoc_export_equals_call_signature_text(root_sym_id)?;
+        let mut members = Vec::new();
+        for (name, &sym_id) in exports.iter() {
+            if name == "export=" || name == "default" {
+                continue;
+            }
+            if !Self::is_unquoted_property_name(name) {
+                return None;
+            }
+            let type_text = self.jsdoc_exported_static_member_type_text(sym_id)?;
+            members.push((name.clone(), type_text));
+        }
+        members.sort_by(|(left, _), (right, _)| left.cmp(right));
+
+        let mut surface = String::from("{\n");
+        surface.push_str("    ");
+        surface.push_str(&root_call);
+        surface.push('\n');
+        for (name, type_text) in members {
+            surface.push_str("    ");
+            surface.push_str(&name);
+            surface.push_str(": ");
+            surface.push_str(&Self::indent_jsdoc_inline_member_type(&type_text));
+            surface.push_str(";\n");
+        }
+        surface.push('}');
+        Some(surface)
+    }
+
+    fn jsdoc_export_equals_call_signature_text(&self, sym_id: SymbolId) -> Option<String> {
+        self.with_symbol_declarations(sym_id, |source_arena, decl_idx| {
+            let decl_node = source_arena.get(decl_idx)?;
+            let callable = Self::callable_decl_parts_from_node(source_arena, decl_node)?;
+            let params = self.jsdoc_parameter_signature_texts(source_arena, callable.parameters)?;
+            let return_type = if callable.type_annotation.is_some() {
+                self.emit_type_node_text_from_arena(source_arena, callable.type_annotation)
+                    .or_else(|| {
+                        self.source_slice_from_arena(source_arena, callable.type_annotation)
+                    })
+                    .map(|text| text.trim().to_string())
+                    .filter(|text| !text.is_empty())
+                    .unwrap_or_else(|| "any".to_string())
+            } else {
+                "{}".to_string()
+            };
+            Some(format!("({}): {return_type};", params.join(", ")))
+        })
+    }
+
+    fn jsdoc_source_callable_symbol_surface(
+        &self,
+        source_arena: &NodeArena,
+        name: &str,
+    ) -> Option<String> {
+        let source_file = self.arena_source_file(source_arena)?;
+        source_file.statements.nodes.iter().find_map(|&stmt_idx| {
+            let stmt_node = source_arena.get(stmt_idx)?;
+            if stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+                let func = source_arena.get_function(stmt_node)?;
+                if self
+                    .identifier_text_from_arena(source_arena, func.name)
+                    .as_deref()
+                    == Some(name)
+                {
+                    return self.jsdoc_callable_parts_signature_text(
+                        source_arena,
+                        &func.parameters,
+                        func.type_annotation,
+                    );
+                }
+            }
+
+            let var_stmt = source_arena.get_variable(stmt_node)?;
+            for &decl_list_idx in &var_stmt.declarations.nodes {
+                let decl_list_node = source_arena.get(decl_list_idx)?;
+                let decl_list = source_arena.get_variable(decl_list_node)?;
+                for &decl_idx in &decl_list.declarations.nodes {
+                    let decl_node = source_arena.get(decl_idx)?;
+                    let decl = source_arena.get_variable_declaration(decl_node)?;
+                    if self
+                        .identifier_text_from_arena(source_arena, decl.name)
+                        .as_deref()
+                        != Some(name)
+                    {
+                        continue;
+                    }
+                    let initializer =
+                        source_arena.skip_parenthesized_and_assertions_and_comma(decl.initializer);
+                    let init_node = source_arena.get(initializer)?;
+                    if init_node.kind != syntax_kind_ext::ARROW_FUNCTION
+                        && init_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+                    {
+                        return None;
+                    }
+                    let func = source_arena.get_function(init_node)?;
+                    return self.jsdoc_callable_parts_signature_text(
+                        source_arena,
+                        &func.parameters,
+                        func.type_annotation,
+                    );
+                }
+            }
+            None
+        })
+    }
+
+    fn jsdoc_callable_parts_signature_text(
+        &self,
+        source_arena: &NodeArena,
+        parameters: &NodeList,
+        type_annotation: NodeIndex,
+    ) -> Option<String> {
+        let params = self.jsdoc_parameter_signature_texts(source_arena, parameters)?;
+        let return_type = if type_annotation.is_some() {
+            self.emit_type_node_text_from_arena(source_arena, type_annotation)
+                .or_else(|| self.source_slice_from_arena(source_arena, type_annotation))
+                .map(|text| text.trim().to_string())
+                .filter(|text| !text.is_empty())
+                .unwrap_or_else(|| "any".to_string())
+        } else {
+            "{}".to_string()
+        };
+        Some(format!("({}): {return_type};", params.join(", ")))
+    }
+
+    fn jsdoc_parameter_signature_texts(
+        &self,
+        source_arena: &NodeArena,
+        params: &NodeList,
+    ) -> Option<Vec<String>> {
+        let mut texts = Vec::with_capacity(params.nodes.len());
+        for &param_idx in &params.nodes {
+            let param_node = source_arena.get(param_idx)?;
+            let param = source_arena.get_parameter(param_node)?;
+            let name = self
+                .identifier_text_from_arena(source_arena, param.name)
+                .unwrap_or_else(|| "arg".to_string());
+            let type_text = if param.type_annotation.is_some() {
+                self.emit_type_node_text_from_arena(source_arena, param.type_annotation)
+                    .or_else(|| self.source_slice_from_arena(source_arena, param.type_annotation))
+                    .map(|text| text.trim().to_string())
+                    .filter(|text| !text.is_empty())
+                    .unwrap_or_else(|| "any".to_string())
+            } else {
+                "any".to_string()
+            };
+            let rest = if param.dot_dot_dot_token { "..." } else { "" };
+            let optional = if param.question_token { "?" } else { "" };
+            texts.push(format!("{rest}{name}{optional}: {type_text}"));
+        }
+        Some(texts)
+    }
+
+    fn jsdoc_exported_static_member_type_text(&self, sym_id: SymbolId) -> Option<String> {
+        if let Some(type_text) = self.jsdoc_construct_signature_surface_for_symbol(sym_id) {
+            return Some(type_text);
+        }
+
+        let cache = self.type_cache.as_ref()?;
+        let type_id = cache.symbol_types.get(&sym_id).copied()?;
+        Some(self.print_type_id(type_id))
+    }
+
+    fn jsdoc_construct_signature_surface_for_symbol(&self, sym_id: SymbolId) -> Option<String> {
+        self.with_symbol_declarations(sym_id, |source_arena, decl_idx| {
+            let decl_node = source_arena.get(decl_idx)?;
+            self.jsdoc_construct_signature_surface_from_class_node(source_arena, decl_node)
+        })
+    }
+
+    fn jsdoc_construct_signature_surface_for_source_name(
+        &self,
+        source_arena: &NodeArena,
+        name: &str,
+    ) -> Option<String> {
+        let source_file = self.arena_source_file(source_arena)?;
+        source_file.statements.nodes.iter().find_map(|&stmt_idx| {
+            let stmt_node = source_arena.get(stmt_idx)?;
+            if stmt_node.kind != syntax_kind_ext::CLASS_DECLARATION {
+                return None;
+            }
+            let class = source_arena.get_class(stmt_node)?;
+            (self
+                .identifier_text_from_arena(source_arena, class.name)
+                .as_deref()
+                == Some(name))
+            .then(|| {
+                self.jsdoc_construct_signature_surface_from_class_node(source_arena, stmt_node)
+            })
+            .flatten()
+        })
+    }
+
+    fn jsdoc_construct_signature_surface_from_class_node(
+        &self,
+        source_arena: &NodeArena,
+        class_node: &Node,
+    ) -> Option<String> {
+        let class = source_arena.get_class(class_node)?;
+        let constructor_params = class
+            .members
+            .nodes
+            .iter()
+            .find_map(|&member_idx| {
+                let member_node = source_arena.get(member_idx)?;
+                (member_node.kind == syntax_kind_ext::CONSTRUCTOR).then_some(member_node)?;
+                let ctor = source_arena.get_constructor(member_node)?;
+                self.jsdoc_parameter_signature_texts(source_arena, &ctor.parameters)
+            })
+            .unwrap_or_default();
+        Some(format!(
+            "{{\n    new ({}): {{}};\n}}",
+            constructor_params.join(", ")
+        ))
+    }
+
+    fn indent_jsdoc_inline_member_type(type_text: &str) -> String {
+        if !type_text.contains('\n') {
+            return type_text.to_string();
+        }
+        let mut lines = type_text.lines();
+        let Some(first) = lines.next() else {
+            return type_text.to_string();
+        };
+        let mut output = first.to_string();
+        for line in lines {
+            output.push('\n');
+            output.push_str("    ");
+            output.push_str(line);
+        }
+        output
     }
 
     fn qualify_jsdoc_typeof_self_exports(&self, type_text: &str) -> String {
@@ -635,7 +1098,38 @@ impl<'a> DeclarationEmitter<'a> {
                     .join(" | ");
             }
         }
+        if let Some(generic) = Self::normalize_jsdoc_generic_type_reference(trimmed) {
+            return generic;
+        }
         Self::normalize_jsdoc_type_atom(trimmed)
+    }
+
+    fn normalize_jsdoc_generic_type_reference(type_expr: &str) -> Option<String> {
+        let open = type_expr.find('<')?;
+        if !type_expr.ends_with('>') {
+            return None;
+        }
+
+        let base = type_expr[..open].trim();
+        if base.is_empty()
+            || !base
+                .chars()
+                .all(|ch| ch == '_' || ch == '$' || ch == '.' || ch.is_ascii_alphanumeric())
+        {
+            return None;
+        }
+
+        let args = type_expr[open + 1..type_expr.len() - 1].trim();
+        if args.is_empty() {
+            return None;
+        }
+
+        let normalized_args = Self::split_jsdoc_params(args)
+            .into_iter()
+            .map(Self::normalize_jsdoc_type_expr)
+            .collect::<Vec<_>>()
+            .join(", ");
+        Some(format!("{base}<{normalized_args}>"))
     }
 
     fn normalize_jsdoc_object_index_type(type_expr: &str) -> Option<String> {
@@ -2116,12 +2610,14 @@ impl<'a> DeclarationEmitter<'a> {
         Self::jsdoc_has_property_tags(jsdoc) || Self::parse_jsdoc_typedef_alias(jsdoc).is_some()
     }
 
-    pub(in crate::declaration_emitter) fn jsdoc_chain_without_type_tags(
+    pub(in crate::declaration_emitter) fn jsdoc_chain_without_type_or_alias_tags(
         chain: &[String],
     ) -> Vec<String> {
         chain
             .iter()
-            .filter(|jsdoc| !Self::jsdoc_contains_type_tag(jsdoc))
+            .filter(|jsdoc| {
+                !Self::jsdoc_contains_type_tag(jsdoc) && !Self::jsdoc_contains_type_alias_tag(jsdoc)
+            })
             .cloned()
             .collect()
     }
@@ -2919,9 +3415,18 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
+    #[cfg(test)]
     pub(in crate::declaration_emitter) fn render_jsdoc_type_alias_decl(
         decl: &JsdocTypeAliasDecl,
         exported: bool,
+    ) -> Option<String> {
+        Self::render_jsdoc_type_alias_decl_with_type_text(decl, exported, &decl.type_text)
+    }
+
+    fn render_jsdoc_type_alias_decl_with_type_text(
+        decl: &JsdocTypeAliasDecl,
+        exported: bool,
+        type_text: &str,
     ) -> Option<String> {
         let mut source = String::new();
         if !decl.description_lines.is_empty() {
@@ -2941,7 +3446,7 @@ impl<'a> DeclarationEmitter<'a> {
             source.push('>');
         }
         source.push_str(" = ");
-        source.push_str(&Self::jsdoc_type_alias_parser_type_text(&decl.type_text));
+        source.push_str(&Self::jsdoc_type_alias_parser_type_text(type_text));
         source.push_str(";\n");
 
         if decl.render_verbatim {
@@ -2962,6 +3467,15 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             Some(rendered)
         }
+    }
+
+    fn render_jsdoc_type_alias_decl_in_context(
+        &self,
+        decl: &JsdocTypeAliasDecl,
+        exported: bool,
+    ) -> Option<String> {
+        let type_text = self.jsdoc_type_alias_text_for_declaration_emit(&decl.type_text);
+        Self::render_jsdoc_type_alias_decl_with_type_text(decl, exported, &type_text)
     }
 
     fn compact_rendered_jsdoc_type_alias(rendered: &str) -> String {
@@ -3077,7 +3591,7 @@ impl<'a> DeclarationEmitter<'a> {
         if !self.emitted_jsdoc_type_aliases.insert(decl.name.clone()) {
             return;
         }
-        let Some(rendered) = Self::render_jsdoc_type_alias_decl(&decl, exported) else {
+        let Some(rendered) = self.render_jsdoc_type_alias_decl_in_context(&decl, exported) else {
             return;
         };
         self.write(&rendered);
@@ -3088,6 +3602,9 @@ impl<'a> DeclarationEmitter<'a> {
 
     pub(crate) fn emit_leading_jsdoc_type_aliases_for_pos(&mut self, pos: u32, exported: bool) {
         if !self.source_is_js_file {
+            return;
+        }
+        if !self.js_export_equals_names.is_empty() {
             return;
         }
         for jsdoc in self.leading_jsdoc_comment_chain_for_pos(pos) {

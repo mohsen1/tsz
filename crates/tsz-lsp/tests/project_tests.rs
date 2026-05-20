@@ -4110,6 +4110,396 @@ fn test_project_handle_will_rename_files_preserves_quotes() {
 }
 
 #[test]
+fn test_project_handle_will_rename_files_updates_tsconfig_paths_alias() {
+    // Renaming a file referenced through a `paths` alias should rewrite the
+    // alias-mapped specifier, not just relative imports. Mirrors tsserver's
+    // behavior: `@app/foo` becomes `@app/bar` when `src/foo.ts` moves to
+    // `src/bar.ts`.
+    let mut project = Project::new();
+    project.set_file(
+        "/tsconfig.json".to_string(),
+        r#"{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": { "@app/*": ["src/*"] }
+  }
+}"#
+        .to_string(),
+    );
+    project.set_file(
+        "/src/foo.ts".to_string(),
+        "export const x = 1;\n".to_string(),
+    );
+    project.set_file(
+        "/src/consumer.ts".to_string(),
+        "import { x } from \"@app/foo\";\nconst y = x;\n".to_string(),
+    );
+
+    let edits = project.handle_will_rename_files(&[FileRename {
+        old_uri: "/src/foo.ts".to_string(),
+        new_uri: "/src/bar.ts".to_string(),
+    }]);
+
+    let consumer_edits = edits
+        .changes
+        .get("/src/consumer.ts")
+        .expect("paths-aliased import in consumer.ts should be rewritten");
+    assert_eq!(consumer_edits.len(), 1);
+    assert_eq!(consumer_edits[0].new_text, "@app/bar");
+}
+
+#[test]
+fn test_project_handle_will_rename_files_preserves_chosen_alias() {
+    // When multiple alias patterns could host the renamed target, the user's
+    // original alias pattern should be preserved.
+    let mut project = Project::new();
+    project.set_file(
+        "/tsconfig.json".to_string(),
+        r#"{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@app/*": ["src/*"],
+      "~/*": ["src/*"]
+    }
+  }
+}"#
+        .to_string(),
+    );
+    project.set_file(
+        "/src/foo.ts".to_string(),
+        "export const x = 1;\n".to_string(),
+    );
+    project.set_file(
+        "/src/a.ts".to_string(),
+        "import { x } from \"@app/foo\";\nconst y = x;\n".to_string(),
+    );
+    project.set_file(
+        "/src/b.ts".to_string(),
+        "import { x } from \"~/foo\";\nconst y = x;\n".to_string(),
+    );
+
+    let edits = project.handle_will_rename_files(&[FileRename {
+        old_uri: "/src/foo.ts".to_string(),
+        new_uri: "/src/bar.ts".to_string(),
+    }]);
+
+    let a_edits = edits
+        .changes
+        .get("/src/a.ts")
+        .expect("a.ts should be updated");
+    assert_eq!(a_edits[0].new_text, "@app/bar");
+    let b_edits = edits
+        .changes
+        .get("/src/b.ts")
+        .expect("b.ts should be updated");
+    assert_eq!(b_edits[0].new_text, "~/bar");
+}
+
+#[test]
+fn test_project_handle_will_rename_files_alias_with_nested_dirs() {
+    // Wildcard captures must traverse into nested directories. Renaming
+    // `src/utils/math.ts` should produce `@app/utils/math2` (not just
+    // `@app/math2`).
+    let mut project = Project::new();
+    project.set_file(
+        "/tsconfig.json".to_string(),
+        r#"{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": { "@app/*": ["src/*"] }
+  }
+}"#
+        .to_string(),
+    );
+    project.set_file(
+        "/src/utils/math.ts".to_string(),
+        "export const add = (a: number, b: number) => a + b;\n".to_string(),
+    );
+    project.set_file(
+        "/src/consumer.ts".to_string(),
+        "import { add } from \"@app/utils/math\";\nconst y = add(1, 2);\n".to_string(),
+    );
+
+    let edits = project.handle_will_rename_files(&[FileRename {
+        old_uri: "/src/utils/math.ts".to_string(),
+        new_uri: "/src/utils/math2.ts".to_string(),
+    }]);
+
+    let consumer_edits = edits
+        .changes
+        .get("/src/consumer.ts")
+        .expect("nested aliased import should be rewritten");
+    assert_eq!(consumer_edits[0].new_text, "@app/utils/math2");
+}
+
+#[test]
+fn test_project_handle_will_rename_files_alias_leaves_unrelated_imports() {
+    // A path-aliased import that points to a *different* file under the same
+    // alias must not be rewritten.
+    let mut project = Project::new();
+    project.set_file(
+        "/tsconfig.json".to_string(),
+        r#"{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": { "@app/*": ["src/*"] }
+  }
+}"#
+        .to_string(),
+    );
+    project.set_file(
+        "/src/foo.ts".to_string(),
+        "export const x = 1;\n".to_string(),
+    );
+    project.set_file(
+        "/src/other.ts".to_string(),
+        "export const y = 2;\n".to_string(),
+    );
+    project.set_file(
+        "/src/consumer.ts".to_string(),
+        "import { y } from \"@app/other\";\nconst z = y;\n".to_string(),
+    );
+
+    let edits = project.handle_will_rename_files(&[FileRename {
+        old_uri: "/src/foo.ts".to_string(),
+        new_uri: "/src/bar.ts".to_string(),
+    }]);
+
+    assert!(
+        edits
+            .changes
+            .get("/src/consumer.ts")
+            .is_none_or(|e| e.is_empty()),
+        "an aliased import targeting an unrelated file must not be rewritten"
+    );
+}
+
+#[test]
+fn test_project_handle_will_rename_files_leaves_bare_npm_specifiers() {
+    // Bare package specifiers (e.g. an npm package) must never be rewritten
+    // by file-rename, even if no tsconfig is present.
+    let mut project = Project::new();
+    project.set_file(
+        "/src/foo.ts".to_string(),
+        "export const x = 1;\n".to_string(),
+    );
+    project.set_file(
+        "/src/consumer.ts".to_string(),
+        "import { something } from \"lodash\";\nconst y = something;\n".to_string(),
+    );
+
+    let edits = project.handle_will_rename_files(&[FileRename {
+        old_uri: "/src/foo.ts".to_string(),
+        new_uri: "/src/bar.ts".to_string(),
+    }]);
+
+    assert!(
+        edits
+            .changes
+            .get("/src/consumer.ts")
+            .is_none_or(|e| e.is_empty()),
+        "bare npm specifiers must not be rewritten on file rename"
+    );
+}
+
+#[test]
+fn test_project_handle_will_rename_files_alias_mixes_with_relative() {
+    // A consumer that imports both a relative and an aliased path to the
+    // renamed file should see both rewritten in a single rename operation.
+    let mut project = Project::new();
+    project.set_file(
+        "/tsconfig.json".to_string(),
+        r#"{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": { "@app/*": ["src/*"] }
+  }
+}"#
+        .to_string(),
+    );
+    project.set_file(
+        "/src/foo.ts".to_string(),
+        "export const x = 1;\n".to_string(),
+    );
+    project.set_file(
+        "/src/consumer.ts".to_string(),
+        "import { x } from \"./foo\";\nimport { x as y } from \"@app/foo\";\n".to_string(),
+    );
+
+    let edits = project.handle_will_rename_files(&[FileRename {
+        old_uri: "/src/foo.ts".to_string(),
+        new_uri: "/src/bar.ts".to_string(),
+    }]);
+
+    let consumer_edits = edits
+        .changes
+        .get("/src/consumer.ts")
+        .expect("two edits expected");
+    let new_texts: std::collections::HashSet<_> =
+        consumer_edits.iter().map(|e| e.new_text.clone()).collect();
+    // The existing relative-rewrite preserves the new target's extension; the
+    // alias-rewrite preserves the alias style without extension.
+    assert!(
+        new_texts.contains("./bar") || new_texts.contains("./bar.ts"),
+        "relative import should be rewritten, got: {new_texts:?}"
+    );
+    assert!(
+        new_texts.contains("@app/bar"),
+        "aliased import should be rewritten, got: {new_texts:?}"
+    );
+    assert_eq!(consumer_edits.len(), 2);
+}
+
+#[test]
+fn test_project_handle_will_rename_files_alias_in_dynamic_import_and_export_from() {
+    // Dynamic `import(...)` calls, `require(...)`, and `export ... from ...`
+    // specifiers must all be rewritten when they use a path alias.
+    let mut project = Project::new();
+    project.set_file(
+        "/tsconfig.json".to_string(),
+        r#"{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": { "@app/*": ["src/*"] }
+  }
+}"#
+        .to_string(),
+    );
+    project.set_file(
+        "/src/foo.ts".to_string(),
+        "export const x = 1;\n".to_string(),
+    );
+    project.set_file(
+        "/src/consumer.ts".to_string(),
+        "const a = import(\"@app/foo\");\nexport { x } from \"@app/foo\";\n".to_string(),
+    );
+
+    let edits = project.handle_will_rename_files(&[FileRename {
+        old_uri: "/src/foo.ts".to_string(),
+        new_uri: "/src/bar.ts".to_string(),
+    }]);
+
+    let consumer_edits = edits
+        .changes
+        .get("/src/consumer.ts")
+        .expect("both dynamic-import and export-from should be rewritten");
+    assert_eq!(consumer_edits.len(), 2);
+    for edit in consumer_edits {
+        assert_eq!(edit.new_text, "@app/bar");
+    }
+}
+
+#[test]
+fn test_project_handle_will_rename_files_alias_no_wildcard_target_change_skipped() {
+    // For an alias with no wildcard, the alias is pinned to a specific file
+    // path. Renaming that file means the alias itself is now invalid; we do
+    // not invent a rewrite, leaving the user to update tsconfig.json.
+    let mut project = Project::new();
+    project.set_file(
+        "/tsconfig.json".to_string(),
+        r#"{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": { "@foo": ["src/foo"] }
+  }
+}"#
+        .to_string(),
+    );
+    project.set_file(
+        "/src/foo.ts".to_string(),
+        "export const x = 1;\n".to_string(),
+    );
+    project.set_file(
+        "/src/consumer.ts".to_string(),
+        "import { x } from \"@foo\";\nconst y = x;\n".to_string(),
+    );
+
+    let edits = project.handle_will_rename_files(&[FileRename {
+        old_uri: "/src/foo.ts".to_string(),
+        new_uri: "/src/bar.ts".to_string(),
+    }]);
+
+    // We must not invent a rewrite that would map `@foo` to `@bar`; the alias
+    // is pinned in tsconfig.json. The import is intentionally left alone.
+    assert!(
+        edits
+            .changes
+            .get("/src/consumer.ts")
+            .is_none_or(|e| e.is_empty()),
+        "pinned alias without wildcard must not be silently rewritten"
+    );
+}
+
+#[test]
+fn test_project_handle_will_rename_files_alias_with_config_dir_token() {
+    // `${configDir}` should resolve relative to the tsconfig directory.
+    let mut project = Project::new();
+    project.set_file(
+        "/proj/tsconfig.json".to_string(),
+        r#"{
+  "compilerOptions": {
+    "paths": { "@app/*": ["${configDir}/src/*"] }
+  }
+}"#
+        .to_string(),
+    );
+    project.set_file(
+        "/proj/src/foo.ts".to_string(),
+        "export const x = 1;\n".to_string(),
+    );
+    project.set_file(
+        "/proj/src/consumer.ts".to_string(),
+        "import { x } from \"@app/foo\";\nconst y = x;\n".to_string(),
+    );
+
+    let edits = project.handle_will_rename_files(&[FileRename {
+        old_uri: "/proj/src/foo.ts".to_string(),
+        new_uri: "/proj/src/bar.ts".to_string(),
+    }]);
+
+    let consumer_edits = edits
+        .changes
+        .get("/proj/src/consumer.ts")
+        .expect("aliased import with ${configDir} should be rewritten");
+    assert_eq!(consumer_edits[0].new_text, "@app/bar");
+}
+
+#[test]
+fn test_project_get_file_rename_edits_rewrites_path_alias() {
+    // The LSP server entrypoint calls `get_file_rename_edits` directly, which
+    // is a separate code path from `handle_will_rename_files`. Cover it
+    // explicitly so the path-alias rewrite reaches the real LSP wire surface.
+    let mut project = Project::new();
+    project.set_file(
+        "/tsconfig.json".to_string(),
+        r#"{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": { "@app/*": ["src/*"] }
+  }
+}"#
+        .to_string(),
+    );
+    project.set_file(
+        "/src/foo.ts".to_string(),
+        "export const x = 1;\n".to_string(),
+    );
+    project.set_file(
+        "/src/consumer.ts".to_string(),
+        "import { x } from \"@app/foo\";\nconst y = x;\n".to_string(),
+    );
+
+    let edits = project.get_file_rename_edits("/src/foo.ts", "/src/bar.ts");
+
+    let consumer_edits = edits
+        .get("/src/consumer.ts")
+        .expect("get_file_rename_edits should rewrite path-aliased imports");
+    assert_eq!(consumer_edits.len(), 1);
+    assert_eq!(consumer_edits[0].new_text, "@app/bar");
+}
+
+#[test]
 fn test_project_subtypes_returns_empty_for_missing_file() {
     let project = Project::new();
     let result = project.subtypes("nonexistent.ts", Position::new(0, 0));

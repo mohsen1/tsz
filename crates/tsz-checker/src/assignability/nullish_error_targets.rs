@@ -18,15 +18,10 @@ impl<'a> CheckerState<'a> {
         // This override is only for structured targets whose nested members
         // contain an unresolved type, such as `() => Missing` or a class type
         // with a property of that shape.
-        if crate::query_boundaries::common::is_error_type(self.ctx.types, target) {
-            return false;
-        }
-        if let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, target)
-            && members.iter().any(|&member| {
-                crate::query_boundaries::common::is_error_type(self.ctx.types, member)
-            })
-        {
+        if crate::query_boundaries::type_predicates::is_top_level_error_or_error_union_member(
+            self.ctx.types,
+            target,
+        ) {
             return false;
         }
         if !self.type_contains_error(target) {

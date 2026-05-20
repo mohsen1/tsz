@@ -73,6 +73,18 @@ impl<'a> LoweringPass<'a> {
     }
 
     fn parameter_expression_generates_function_temp(&self, idx: NodeIndex) -> bool {
+        self.expression_contains_class_needing_function_temp(idx)
+            || emit_utils::parameter_expression_generates_downlevel_temp(
+                self.arena,
+                self.ctx.needs_es2020_lowering,
+                idx,
+            )
+    }
+
+    /// Recursively walks an expression to detect any class expression whose
+    /// static fields, static blocks, or private members require lowering at
+    /// the current target — making function-scoped temp variables necessary.
+    fn expression_contains_class_needing_function_temp(&self, idx: NodeIndex) -> bool {
         let Some(node) = self.arena.get(idx) else {
             return false;
         };
@@ -83,61 +95,54 @@ impl<'a> LoweringPass<'a> {
             return self.class_expression_parameter_needs_function_temp(class);
         }
 
-        if let Some(computed) = self.arena.get_computed_property(node) {
-            return self.parameter_expression_generates_function_temp(computed.expression);
+        if node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+            && let Some(computed) = self.arena.get_computed_property(node)
+        {
+            return self.expression_contains_class_needing_function_temp(computed.expression);
         }
 
         if let Some(paren) = self.arena.get_parenthesized(node) {
-            return self.parameter_expression_generates_function_temp(paren.expression);
+            return self.expression_contains_class_needing_function_temp(paren.expression);
         }
 
         if let Some(assertion) = self.arena.get_type_assertion(node) {
-            return self.parameter_expression_generates_function_temp(assertion.expression);
+            return self.expression_contains_class_needing_function_temp(assertion.expression);
         }
 
         if let Some(binary) = self.arena.get_binary_expr(node) {
-            return self.parameter_expression_generates_function_temp(binary.left)
-                || self.parameter_expression_generates_function_temp(binary.right);
+            return self.expression_contains_class_needing_function_temp(binary.left)
+                || self.expression_contains_class_needing_function_temp(binary.right);
         }
 
         if let Some(access) = self.arena.get_access_expr(node) {
-            return self.parameter_expression_generates_function_temp(access.expression)
-                || self.parameter_expression_generates_function_temp(access.name_or_argument);
+            return self.expression_contains_class_needing_function_temp(access.expression)
+                || self.expression_contains_class_needing_function_temp(access.name_or_argument);
         }
 
         if let Some(call) = self.arena.get_call_expr(node) {
-            if self.parameter_expression_generates_function_temp(call.expression) {
+            if self.expression_contains_class_needing_function_temp(call.expression) {
                 return true;
             }
             return call.arguments.as_ref().is_some_and(|args| {
                 args.nodes
                     .iter()
                     .copied()
-                    .any(|arg| self.parameter_expression_generates_function_temp(arg))
+                    .any(|arg| self.expression_contains_class_needing_function_temp(arg))
             });
         }
 
         if let Some(cond) = self.arena.get_conditional_expr(node) {
-            return self.parameter_expression_generates_function_temp(cond.condition)
-                || self.parameter_expression_generates_function_temp(cond.when_true)
-                || self.parameter_expression_generates_function_temp(cond.when_false);
+            return self.expression_contains_class_needing_function_temp(cond.condition)
+                || self.expression_contains_class_needing_function_temp(cond.when_true)
+                || self.expression_contains_class_needing_function_temp(cond.when_false);
         }
 
         if let Some(unary) = self.arena.get_unary_expr(node) {
-            return self.parameter_expression_generates_function_temp(unary.operand);
+            return self.expression_contains_class_needing_function_temp(unary.operand);
         }
 
         if let Some(unary) = self.arena.get_unary_expr_ex(node) {
-            return self.parameter_expression_generates_function_temp(unary.expression);
-        }
-
-        if let Some(literal) = self.arena.get_literal_expr(node) {
-            return literal
-                .elements
-                .nodes
-                .iter()
-                .copied()
-                .any(|element| self.parameter_expression_generates_function_temp(element));
+            return self.expression_contains_class_needing_function_temp(unary.expression);
         }
 
         false

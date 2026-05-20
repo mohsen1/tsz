@@ -157,6 +157,65 @@ mod tests {
     }
 
     #[test]
+    fn async_arrow_for_await_temps_are_hoisted_inside_generator() {
+        let source = "async function* gen() { yield 1; }\nconst arrow = async () => { for await (const x of gen()) { console.log(x); } };\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::ES2015,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        set_emitter_source(&mut printer, source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        let arrow_start = output.find("const arrow").expect("arrow should emit");
+        let source_scope = &output[..arrow_start];
+
+        assert!(
+            !source_scope.contains("var _a, e_1, _b, _c;"),
+            "for-await temps from async arrows should not be hoisted outside the arrow.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("function* () {\n    var _a, e_1, _b, _c;\n    try {"),
+            "for-await temps should be hoisted inside the async arrow generator body.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn async_arrow_for_await_assignment_binding_temps_are_hoisted() {
+        let source = "async function* values() { yield 1; }\nlet item;\nconst arrow = async () => { for await (item of values()) { item; } };\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::ES2015,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        set_emitter_source(&mut printer, source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("const arrow = () => __awaiter(void 0, void 0, void 0, function* () {\n    var _a, e_1, _b, _c;\n    try {"),
+            "assignment-target for-await temps should be hoisted in async arrow generator bodies.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("_c = _f.value;\n            _d = false;\n            item = _c;"),
+            "assignment-target for-await should still bind the yielded value through the hoisted value temp.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn async_generator_yield_uses_async_helpers() {
         let source =
             "export async function* f() {\n    await 1;\n    yield 2;\n    yield* [3];\n}\n";

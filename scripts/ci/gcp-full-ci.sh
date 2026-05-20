@@ -368,26 +368,29 @@ run_lint() {
   scripts/arch/check-workspace-metadata.sh || return $?
   scripts/check-crate-root-files.sh || return $?
   node scripts/bench/test-project-rows.mjs || return $?
+  node scripts/bench/project-row-summary.mjs || return $?
+  node scripts/bench/test-project-row-summary.mjs || return $?
+  node scripts/bench/validate-project-metadata.mjs || return $?
+  node scripts/bench/test-validate-project-metadata.mjs || return $?
   node scripts/bench/test-merge-results.mjs || return $?
   node scripts/bench/test-perf-hotspots.mjs || return $?
   node scripts/bench/test-tsgo-winner-report.mjs || return $?
+  node scripts/bench/test-reduction-backlog.mjs || return $?
   node scripts/bench/test-timeout-runner.mjs || return $?
+  node scripts/bench/test-check-artifact-readiness.mjs || return $?
   for script in scripts/ci/*type-challenges*.mjs; do
     node --check "$script" || return $?
   done
   node scripts/ci/test-project-compile-guard-readiness-artifacts.mjs || return $?
-  node scripts/ci/test-type-challenges-assertion-classifier.mjs || return $?
-  node scripts/ci/test-type-challenges-assertion-clean-row.mjs || return $?
-  node scripts/ci/test-type-challenges-assertion-clean-subset.mjs || return $?
-  node scripts/ci/test-type-challenges-assertion-compatibility.mjs || return $?
-  node scripts/ci/test-type-challenges-assertion-candidates.mjs || return $?
+  node scripts/ci/test-pr-ownership-report.mjs || return $?
   node scripts/ci/test-type-challenges-semantic-families.mjs || return $?
+  node scripts/ci/test-pr-ready-state.mjs || return $?
+  node scripts/ci/test-wip-state-comments.mjs || return $?
   node scripts/ci/test-project-compatibility.mjs || return $?
-  node scripts/ci/test-type-challenges-pairing-report.mjs || return $?
-  node scripts/ci/test-type-challenges-template-manifest.mjs || return $?
-  node scripts/ci/test-type-challenges-test-cases-manifest.mjs || return $?
   node scripts/ci/test-type-challenges-solutions-manifest.mjs || return $?
   python3 scripts/ci/test_ci_resources.py || return $?
+  python3 scripts/ci/test_gcp_full_ci_conformance_artifacts.py || return $?
+  python3 scripts/conformance/test_query_conformance.py || return $?
   # Use the dedicated ci-lint profile (debug=false, incremental=false,
   # codegen-units=256). Workspace clippy artifacts go to .target/ci-lint/
   # — separate cache key from .target/debug so dev incrementals on a
@@ -874,10 +877,35 @@ test_dir = Path("TypeScript/tests/cases")
 files = []
 source_suffixes = {".ts", ".tsx", ".js", ".jsx", ".mts", ".cts"}
 declaration_suffixes = (".d.ts", ".d.mts", ".d.cts")
+
+def has_skip_directive(path):
+    # Keep shard-plan totals aligned with the Rust runner, which discovers the
+    # file but excludes it from result totals when `@skip` is present.
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if not stripped.startswith("//"):
+            continue
+        directive = stripped[2:].lstrip().lower()
+        if directive.startswith("@skip") and (
+            len(directive) == len("@skip")
+            or not (
+                directive[len("@skip")].isalnum()
+                or directive[len("@skip")] == "_"
+            )
+        ):
+            return True
+    return False
+
 for path in test_dir.rglob("*"):
     if not path.is_file():
         continue
     path_str = path.as_posix()
+    if path.name.startswith("._"):
+        continue
     if path.suffix not in source_suffixes:
         continue
     if path_str.endswith(declaration_suffixes):
@@ -885,6 +913,8 @@ for path in test_dir.rglob("*"):
     if "/fourslash/" in path_str:
         continue
     if "APISample" in path_str or "APILibCheck" in path_str:
+        continue
+    if has_skip_directive(path):
         continue
     files.append(path)
 
@@ -1054,6 +1084,11 @@ run_conformance() {
   echo "Conformance aggregate: ${total_passed}/${total_tests}"
   echo "Conformance skipped: ${skipped_tests}"
 
+  local failures_file="$METRICS_DIR/conformance-failures-${shard_index}.txt"
+  grep -a '^\(FAIL\|XFAIL\|CRASH\|TIMEOUT\) ' "$log_file" \
+    | sed 's/^\(FAIL\|XFAIL\|CRASH\|TIMEOUT\) \([^ |]*\).*/\2/' \
+    | sort -u > "$failures_file" 2>/dev/null || true
+
   if [[ "$rc" -ne 0 ]]; then
     echo "error: conformance wrapper failed" >&2
     show_log_tail "$log_file"
@@ -1088,10 +1123,6 @@ run_conformance() {
       fi
 
       # Upload per-shard FAIL list so aggregate can show which tests regressed.
-      local failures_file="$METRICS_DIR/conformance-failures-${shard_index}.txt"
-      grep -a '^\(FAIL\|XFAIL\|CRASH\|TIMEOUT\) ' "$log_file" \
-        | sed 's/^\(FAIL\|XFAIL\|CRASH\|TIMEOUT\) \([^ |]*\).*/\2/' \
-        | sort -u > "$failures_file" 2>/dev/null || true
       if [[ -s "$failures_file" ]]; then
         gsutil -q cp "$failures_file" \
           "${bucket%/}/conformance-runs/${run_key}/failures-shard-${shard_index}.txt" 2>/dev/null \
@@ -1147,6 +1178,10 @@ run_conformance_aggregate() {
       local shard_name
       shard_name="$(basename "$shard_dir")"
       cp "$json" "$tmp_dir/shard-${shard_name#conformance-shard-}.json"
+      local artifact_failure_list="$shard_dir/.ci-metrics/conformance-failures-${shard_name#conformance-shard-}.txt"
+      if [[ -f "$artifact_failure_list" ]]; then
+        cp "$artifact_failure_list" "$tmp_dir/failures-shard-${shard_name#conformance-shard-}.txt"
+      fi
       found=$(( found + 1 ))
     done
     if [[ "$found" -gt 0 ]]; then
@@ -1280,7 +1315,9 @@ _check_conformance_regression_allowlist() {
     return 1
   fi
 
-  if [[ -z "$prefix" ]] || ! gsutil -q -m cp "${prefix}/failures-shard-*.txt" "$tmp_dir/" 2>/dev/null; then
+  if compgen -G "$tmp_dir/failures-shard-*.txt" >/dev/null; then
+    :
+  elif [[ -z "$prefix" ]] || ! gsutil -q -m cp "${prefix}/failures-shard-*.txt" "$tmp_dir/" 2>/dev/null; then
     echo "error: conformance regression deficit ${expected_deficit}, but per-shard failure lists are unavailable" >&2
     return 1
   fi
@@ -1349,7 +1386,9 @@ _show_conformance_regressions() {
   local snapshot="scripts/conformance/conformance-detail.json"
 
   # Download all per-shard failure lists (best-effort; non-fatal if missing).
-  if [[ -z "$prefix" ]] || ! gsutil -q -m cp "${prefix}/failures-shard-*.txt" "$tmp_dir/" 2>/dev/null; then
+  if compgen -G "$tmp_dir/failures-shard-*.txt" >/dev/null; then
+    :
+  elif [[ -z "$prefix" ]] || ! gsutil -q -m cp "${prefix}/failures-shard-*.txt" "$tmp_dir/" 2>/dev/null; then
     echo "(no per-shard failure lists available — upload may have been skipped)" >&2
     return
   fi

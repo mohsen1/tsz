@@ -24,7 +24,7 @@ tsz-binder = { path = "crates/tsz-binder", version = "0.1.9" }
 tsz-solver = { path = "crates/tsz-solver", version = "0.1.9" }
 tsz-lowering = { path = "crates/tsz-lowering", version = "0.1.9" }
 tsz-checker = { path = "crates/tsz-checker", version = "0.1.9" }
-tsz-emitter = { path = "crates/tsz-emitter", version = "0.1.9" }
+tsz-emitter = { path = "crates/tsz-emitter", version = "0.1.9", default-features = false }
 tsz-lsp = { path = "crates/tsz-lsp", version = "0.1.9" }
 
 # External dependencies (shared versions)
@@ -41,7 +41,7 @@ fixedbitset = "0.4"
 globset = "0.4"
 indexmap = "2.6"
 memchr = "2.7"
-notify = "6.1"
+notify = { version = "6.1", default-features = false, features = ["crossbeam-channel", "macos_kqueue"] }
 once_cell = "1.19"
 rayon = "1.10"
 regex = "1.11"
