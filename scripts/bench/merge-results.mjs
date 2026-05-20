@@ -13,6 +13,7 @@ const PROJECT_COMPATIBILITY_ROW_SET = new Set([
   ...REQUIRED_PROJECT_ROWS,
   ...COMPILE_CANARY_PROJECT_ROWS,
 ]);
+const BENCHMARK_RUNNER = "scripts/bench/bench-vs-tsgo.sh";
 
 function hasProjectCompatibilityRows(rows) {
   return rows.some((row) => PROJECT_COMPATIBILITY_ROW_SET.has(row?.name));
@@ -210,6 +211,15 @@ function collectRunnerSignatureFailures(payloads, runnerEnvironmentWarnings) {
     ]).map((field) => field.slice(1));
     for (const field of missingPayloadFields) {
       failures.push(`${basename}: missing ${field}`);
+    }
+
+    const benchmarkRunner = String(payload.benchmark_runner ?? "").trim();
+    if (!benchmarkRunner) {
+      failures.push(`${basename}: missing benchmark_runner`);
+    } else if (benchmarkRunner !== BENCHMARK_RUNNER) {
+      failures.push(
+        `${basename}: benchmark_runner ${JSON.stringify(benchmarkRunner)} does not match ${JSON.stringify(BENCHMARK_RUNNER)}`,
+      );
     }
 
     const shardLabel = payload.shard?.label;
@@ -484,7 +494,7 @@ function main() {
 
   const merged = {
     ...mergedArtifactMetadata(payloads, new Date().toISOString()),
-    benchmark_runner: "scripts/bench/bench-vs-tsgo.sh",
+    benchmark_runner: BENCHMARK_RUNNER,
     merged_from: payloads.map(({ file }) => path.basename(file)).sort(),
     validation: {
       hyperfine_exit_codes_required: hyperfineExitCodesRequired,
