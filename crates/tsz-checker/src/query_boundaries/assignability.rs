@@ -1,4 +1,5 @@
 use tsz_common::Atom;
+use tsz_solver::classes::inheritance::InheritanceGraph;
 use tsz_solver::computation::{TypeSubstitution, evaluate_type};
 use tsz_solver::{
     ObjectShape, PropertyInfo, QueryDatabase, SubtypeFailureReason, TypeDatabase, TypeId,
@@ -660,7 +661,7 @@ pub(crate) struct AssignabilityQueryInputs<'a, R: tsz_solver::TypeResolver> {
     pub source: TypeId,
     pub target: TypeId,
     pub flags: u16,
-    pub inheritance_graph: &'a tsz_solver::InheritanceGraph,
+    pub inheritance_graph: &'a InheritanceGraph,
     pub sound_mode: bool,
 }
 
@@ -670,7 +671,7 @@ pub(crate) fn is_assignable_bivariant_with_resolver<R: tsz_solver::TypeResolver>
     source: TypeId,
     target: TypeId,
     flags: u16,
-    inheritance_graph: &tsz_solver::InheritanceGraph,
+    inheritance_graph: &InheritanceGraph,
     sound_mode: bool,
 ) -> bool {
     let policy = tsz_solver::RelationPolicy::from_flags(flags)
@@ -699,7 +700,7 @@ pub(crate) fn is_subtype_with_resolver<R: tsz_solver::TypeResolver>(
     source: TypeId,
     target: TypeId,
     flags: u16,
-    inheritance_graph: &tsz_solver::InheritanceGraph,
+    inheritance_graph: &InheritanceGraph,
     class_check: Option<&dyn Fn(tsz_solver::SymbolRef) -> bool>,
 ) -> tsz_solver::RelationResult {
     let policy = tsz_solver::RelationPolicy::from_flags(flags);
@@ -725,7 +726,7 @@ pub(crate) fn is_redeclaration_identical_with_resolver<R: tsz_solver::TypeResolv
     source: TypeId,
     target: TypeId,
     flags: u16,
-    inheritance_graph: &tsz_solver::InheritanceGraph,
+    inheritance_graph: &InheritanceGraph,
     sound_mode: bool,
 ) -> bool {
     let policy = tsz_solver::RelationPolicy::from_flags(flags)
@@ -838,7 +839,7 @@ pub(crate) fn execute_relation<R: tsz_solver::TypeResolver>(
     db: &dyn QueryDatabase,
     resolver: &R,
     flags: u16,
-    inheritance_graph: &tsz_solver::InheritanceGraph,
+    inheritance_graph: &InheritanceGraph,
     overrides: &dyn tsz_solver::AssignabilityOverrideProvider,
     ctx: Option<&crate::context::CheckerContext<'_>>,
     sound_mode: bool,
