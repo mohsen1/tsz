@@ -6,6 +6,7 @@ TypeScript/tests/cases/compiler/coAndContraVariantInferences2.ts
 TypeScript/tests/cases/compiler/coAndContraVariantInferences3.ts
 TypeScript/tests/cases/compiler/coAndContraVariantInferences4.ts
 TypeScript/tests/cases/compiler/computedPropertyBindingElementDeclarationNoCrash1.ts
+TypeScript/tests/cases/compiler/contextualTypeFunctionObjectPropertyIntersection.ts
 TypeScript/tests/cases/compiler/contextuallyTypedJsxAttribute2.tsx
 TypeScript/tests/cases/compiler/crossFileOverloadModifierConsistency.ts
 TypeScript/tests/cases/compiler/declarationEmitMappedPrivateTypeTypeParameter.ts
