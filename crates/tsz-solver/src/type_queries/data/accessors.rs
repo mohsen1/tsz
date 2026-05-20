@@ -160,6 +160,60 @@ pub fn collect_callable_property_types(db: &dyn TypeDatabase, type_id: TypeId) -
     result
 }
 
+/// True when calling `callee_type` would require a real receiver binding to
+/// satisfy an explicit, non-trivial `this:` constraint on any of its call
+/// signatures.
+///
+/// Mirrors tsc's "explicit `this:`" filter (see also
+/// `tsz-solver::operations::core::call_resolution`): a `this:` constraint is
+/// trivial when the constraint is `any`, `unknown`, `void`, `undefined`,
+/// `null`, or `error` — `void` because tsc explicitly carves it out as
+/// "ignore at call sites" in `resolveUntypedCall`, the rest because any
+/// receiver is assignable to them. For trivial constraints, threading
+/// `actual_this_type` adds no information to the call resolver and risks
+/// perturbing generic inference (the issue #8717 follow-up scope).
+///
+/// Used by non-call-expression call sites (decorators today, tagged
+/// templates and possibly regular calls later) to decide whether to compute
+/// and pass a receiver type for call resolution.
+pub fn callable_requires_explicit_receiver(db: &dyn TypeDatabase, callee_type: TypeId) -> bool {
+    // Walk the underlying shape directly instead of going through
+    // `get_callable_shape_for_type`, which allocates a synthetic
+    // `Arc<CallableShape>` (and a one-element signature vec) for every
+    // Function-typed decorator. Decorator-signature checks are warm: every
+    // class member, every decorator. Avoid the synthetic-shape allocation.
+    if let Some(shape_id) = crate::visitor::callable_shape_id(db, callee_type) {
+        return db
+            .callable_shape(shape_id)
+            .call_signatures
+            .iter()
+            .any(|sig| sig.this_type.is_some_and(is_explicit_this_constraint));
+    }
+    if let Some(shape_id) = crate::visitor::function_shape_id(db, callee_type) {
+        return db
+            .function_shape(shape_id)
+            .this_type
+            .is_some_and(is_explicit_this_constraint);
+    }
+    false
+}
+
+/// Trivial `this:` constraints that don't require a real receiver — any
+/// receiver is assignable to them, so binding `actual_this_type` adds no
+/// information to the call resolver.
+#[inline]
+const fn is_explicit_this_constraint(this_type: TypeId) -> bool {
+    !matches!(
+        this_type,
+        TypeId::ANY
+            | TypeId::UNKNOWN
+            | TypeId::VOID
+            | TypeId::UNDEFINED
+            | TypeId::NULL
+            | TypeId::ERROR
+    )
+}
+
 /// Check if a type is a callable type (Function or Callable with call signatures).
 fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id.is_intrinsic() {
