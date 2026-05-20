@@ -2910,9 +2910,9 @@ function f(s: S) {
 }
 
 /// Nested destructuring: `const { s: { kind } } = outer; if (kind === "a") { outer.s.a; }`
-/// must narrow `outer.s` through the two-level path ["s", "kind"].
+/// must not narrow `outer.s`; current `tsc` still reports TS2339 for both branches.
 #[test]
-fn nested_destructured_discriminant_narrows_root_binding() {
+fn nested_destructured_discriminant_does_not_narrow_root_binding() {
     let diagnostics = strict_diagnostics(
         r#"
 type S = { kind: "a"; a: number } | { kind: "b"; b: string };
@@ -2927,18 +2927,17 @@ function f(outer: { s: S }) {
 "#,
     );
     let ts2339: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2339).collect();
-    let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
-    assert!(
-        ts2339.is_empty() && ts2322.is_empty(),
-        "Nested destructured discriminant `kind === \"a\"` must narrow `outer.s`; \
-         ts2339={ts2339:#?}, ts2322={ts2322:#?}"
+    assert_eq!(
+        ts2339.len(),
+        2,
+        "Nested destructured discriminant must not narrow `outer.s`; got {diagnostics:#?}"
     );
 }
 
 /// Nested destructuring with a renamed leaf: `const { s: { kind: k } } = outer`
-/// should narrow just as well as the shorthand form.
+/// must not narrow `outer.s`.
 #[test]
-fn nested_destructured_renamed_discriminant_narrows_root_binding() {
+fn nested_destructured_renamed_discriminant_does_not_narrow_root_binding() {
     let diagnostics = strict_diagnostics(
         r#"
 type S = { kind: "a"; a: number } | { kind: "b"; b: string };
@@ -2953,18 +2952,17 @@ function f(outer: { s: S }) {
 "#,
     );
     let ts2339: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2339).collect();
-    let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
-    assert!(
-        ts2339.is_empty() && ts2322.is_empty(),
-        "Renamed nested destructured discriminant `k === \"a\"` must narrow `outer.s`; \
-         ts2339={ts2339:#?}, ts2322={ts2322:#?}"
+    assert_eq!(
+        ts2339.len(),
+        2,
+        "Renamed nested destructured discriminant must not narrow `outer.s`; got {diagnostics:#?}"
     );
 }
 
 /// Three-level nesting: `const { a: { b: { kind } } } = d; if (kind === "x") { d.a.b.x; }`
-/// must narrow `d.a.b` through path ["a", "b", "kind"].
+/// must not narrow `d.a.b`.
 #[test]
-fn triple_nested_destructured_discriminant_narrows_root_binding() {
+fn triple_nested_destructured_discriminant_does_not_narrow_root_binding() {
     let diagnostics = strict_diagnostics(
         r#"
 type Leaf = { kind: "x"; x: number } | { kind: "y"; y: string };
@@ -2980,10 +2978,9 @@ function f(d: Deep) {
 "#,
     );
     let ts2339: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2339).collect();
-    let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
-    assert!(
-        ts2339.is_empty() && ts2322.is_empty(),
-        "Triple-nested destructured discriminant must narrow root binding; \
-         ts2339={ts2339:#?}, ts2322={ts2322:#?}"
+    assert_eq!(
+        ts2339.len(),
+        2,
+        "Triple-nested destructured discriminant must not narrow root binding; got {diagnostics:#?}"
     );
 }

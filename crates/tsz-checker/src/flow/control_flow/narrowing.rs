@@ -1572,12 +1572,13 @@ impl<'a> FlowAnalyzer<'a> {
     /// For a const-declared identifier that is a destructuring alias, return
     /// `(base_initializer, property_path)`.
     ///
-    /// Works for arbitrarily nested object destructuring:
+    /// Works for top-level object destructuring:
     /// - `const { type: alias } = obj` → `(obj, ["type"])`
-    /// - `const { s: { kind } } = obj` (starting from `kind`) → `(obj, ["s", "kind"])`
     ///
     /// Returns `None` for non-identifiers, non-const bindings, array patterns,
-    /// rest elements, default initializers, or computed property keys.
+    /// rest elements, default initializers, computed property keys, or nested
+    /// object binding patterns. Current `tsc` does not narrow the root object
+    /// from `const { s: { kind } } = outer; if (kind === "a") outer.s.a`.
     pub(super) fn binding_element_property_alias(
         &self,
         node: NodeIndex,
@@ -1598,7 +1599,7 @@ impl<'a> FlowAnalyzer<'a> {
         // (the name/alias) rather than the BINDING_ELEMENT itself, because the binder calls
         // `declare_symbol(name_ident, ...)`. In that case, walk up to the parent to find
         // the actual BINDING_ELEMENT.
-        let mut current_be_idx = if decl_node.kind == SyntaxKind::Identifier as u16 {
+        let current_be_idx = if decl_node.kind == SyntaxKind::Identifier as u16 {
             let ext = self.arena.get_extended(decl_idx)?;
             ext.parent
         } else {
@@ -1608,66 +1609,51 @@ impl<'a> FlowAnalyzer<'a> {
         // Collect property names bottom-up; reversed before returning.
         let mut path: Vec<Atom> = Vec::new();
 
-        // Walk up through nested BindingElement / ObjectBindingPattern pairs to find
-        // the root VariableDeclaration and accumulate the full property path.
-        for _ in 0..8 {
-            let current_be_node = self.arena.get(current_be_idx)?;
-            if current_be_node.kind != syntax_kind_ext::BINDING_ELEMENT {
-                return None;
-            }
-            let be = self.arena.get_binding_element(current_be_node)?;
-            // Rest elements and default initializers are not safe to track.
-            if be.dot_dot_dot_token || be.initializer.is_some() {
-                return None;
-            }
-            // `{ type: alias }` → property_name is "type"; `{ type }` shorthand → name is "type".
-            let prop_name_idx = if be.property_name.is_some() {
-                be.property_name
-            } else {
-                be.name
-            };
-            let prop_name_node = self.arena.get(prop_name_idx)?;
-            // Only simple (non-computed) identifier property names are supported.
-            let prop_ident = self.arena.get_identifier(prop_name_node)?;
-            path.push(self.interner.intern_string(&prop_ident.escaped_text));
-
-            // Walk up: BindingElement → ObjectBindingPattern → parent
-            let be_ext = self.arena.get_extended(current_be_idx)?;
-            let binding_pattern_idx = be_ext.parent;
-            if binding_pattern_idx.is_none() {
-                return None;
-            }
-            let binding_pattern_node = self.arena.get(binding_pattern_idx)?;
-            if binding_pattern_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN {
-                return None;
-            }
-            let bp_ext = self.arena.get_extended(binding_pattern_idx)?;
-            let parent_idx = bp_ext.parent;
-            if parent_idx.is_none() {
-                return None;
-            }
-            let parent_node = self.arena.get(parent_idx)?;
-
-            if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
-                if !self.is_const_variable_declaration(parent_idx) {
-                    return None;
-                }
-                let var_decl = self.arena.get_variable_declaration(parent_node)?;
-                if var_decl.initializer.is_none() {
-                    return None;
-                }
-                let base = self.skip_parenthesized(var_decl.initializer);
-                path.reverse();
-                return Some((base, path));
-            } else if parent_node.kind == syntax_kind_ext::BINDING_ELEMENT {
-                // Nested pattern: continue with the enclosing BindingElement.
-                current_be_idx = parent_idx;
-            } else {
-                return None;
-            }
+        let current_be_node = self.arena.get(current_be_idx)?;
+        if current_be_node.kind != syntax_kind_ext::BINDING_ELEMENT {
+            return None;
         }
+        let be = self.arena.get_binding_element(current_be_node)?;
+        if be.dot_dot_dot_token || be.initializer.is_some() {
+            return None;
+        }
+        // `{ type: alias }` → property_name is "type"; `{ type }` shorthand → name is "type".
+        let prop_name_idx = if be.property_name.is_some() {
+            be.property_name
+        } else {
+            be.name
+        };
+        let prop_name_node = self.arena.get(prop_name_idx)?;
+        let prop_ident = self.arena.get_identifier(prop_name_node)?;
+        path.push(self.interner.intern_string(&prop_ident.escaped_text));
 
-        None
+        let be_ext = self.arena.get_extended(current_be_idx)?;
+        let binding_pattern_idx = be_ext.parent;
+        if binding_pattern_idx.is_none() {
+            return None;
+        }
+        let binding_pattern_node = self.arena.get(binding_pattern_idx)?;
+        if binding_pattern_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN {
+            return None;
+        }
+        let bp_ext = self.arena.get_extended(binding_pattern_idx)?;
+        let parent_idx = bp_ext.parent;
+        if parent_idx.is_none() {
+            return None;
+        }
+        let parent_node = self.arena.get(parent_idx)?;
+        if parent_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return None;
+        }
+        if !self.is_const_variable_declaration(parent_idx) {
+            return None;
+        }
+        let var_decl = self.arena.get_variable_declaration(parent_node)?;
+        if var_decl.initializer.is_none() {
+            return None;
+        }
+        let base = self.skip_parenthesized(var_decl.initializer);
+        Some((base, path))
     }
 
     pub(crate) fn discriminant_property_info(
@@ -1870,19 +1856,10 @@ impl<'a> FlowAnalyzer<'a> {
             }
         }
 
-        // Destructuring alias, including nested `const { s: { kind } } = outer`.
+        // Top-level destructuring alias `const { prop: alias } = target`.
         if let Some((base, prop_names)) = self.binding_element_property_alias(alias_node) {
             if self.is_matching_reference(base, target) {
                 return Some((prop_names, literal, false, target));
-            }
-            if prop_names.len() > 1
-                && let Some((prefix, is_optional)) = self.relative_discriminant_path(target, base)
-                && !prefix.is_empty()
-                && prefix.len() < prop_names.len()
-                && prop_names[..prefix.len()] == prefix[..]
-            {
-                let remaining = prop_names[prefix.len()..].to_vec();
-                return Some((remaining, literal, is_optional, target));
             }
         }
 
