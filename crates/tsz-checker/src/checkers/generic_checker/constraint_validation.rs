@@ -944,7 +944,14 @@ impl<'a> CheckerState<'a> {
                                 || self.infer_result_satisfies_via_referenced_constraints(
                                     type_arg,
                                     inst_constraint,
-                                );
+                                )
+                                || type_args_list.nodes.get(i).copied().is_some_and(|arg_idx| {
+                                    self.type_arg_satisfies_via_hidden_infer_constraints(
+                                        type_arg,
+                                        arg_idx,
+                                        inst_constraint,
+                                    )
+                                });
                             if !is_satisfied {
                                 // When the constraint is a function type (e.g., `(...args: any) => any`),
                                 // accept any callable base type. For type parameters with callable
@@ -1491,7 +1498,14 @@ impl<'a> CheckerState<'a> {
                             || self.array_element_infer_alias_satisfies_constraint(
                                 type_arg,
                                 inst_constraint,
-                            );
+                            )
+                            || type_args_list.nodes.get(i).copied().is_some_and(|arg_idx| {
+                                self.type_arg_satisfies_via_hidden_infer_constraints(
+                                    type_arg,
+                                    arg_idx,
+                                    inst_constraint,
+                                )
+                            });
                         if !is_satisfied {
                             // When the constraint is a function type, accept callable bases.
                             // The `Function` interface may be lowered as an Object type

@@ -557,14 +557,7 @@ jobs:
       !contains(needs.*.result, 'cancelled')
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 170
-    outputs:
-      should_run: ${{ steps.ready.outputs.should_run }}
     steps:
-      - id: ready
-        name: Confirm benchmark prep artifact should be staged
-        shell: bash
-        run: echo "should_run=true" >> "$GITHUB_OUTPUT"
-
       - name: Download Cloud Build prep artifact
         if: needs.bench-prepare.outputs.should_run == 'true'
         shell: bash
@@ -890,7 +883,7 @@ jobs:
   bench:
     name: bench-${{ matrix.label }}
     needs: bench-prep-artifact
-    if: needs.bench-prep-artifact.outputs.should_run == 'true'
+    if: needs.bench-prep-artifact.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: ${{ matrix.timeout }}
     strategy:
