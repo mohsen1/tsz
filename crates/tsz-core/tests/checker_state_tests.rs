@@ -14,7 +14,8 @@ use crate::parser::ParserState;
 use crate::parser::node::NodeArena;
 use crate::test_fixtures::{TestContext, merge_shared_lib_symbols, setup_lib_contexts};
 use tsz_solver::{
-    RelationPolicy, TypeId, TypeInterner, Visibility, types::RelationCacheKey, types::TypeData,
+    TypeId, Visibility, construction::TypeInterner, relations::relation_queries::RelationPolicy,
+    types::RelationCacheKey, types::TypeData,
 };
 
 fn assignability_test_key(source: TypeId, target: TypeId, flags: u16) -> RelationCacheKey {
