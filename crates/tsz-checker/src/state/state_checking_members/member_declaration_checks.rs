@@ -1578,12 +1578,14 @@ impl<'a> CheckerState<'a> {
                 self.check_grammar_decorator(decorator.expression);
 
                 let decorator_type = self.compute_type_of_node(decorator.expression);
+                let actual_this_type = self.access_receiver_type(decorator.expression);
 
                 if let Some(first_arg) = es_member_first_arg {
                     self.check_es_member_decorator_call_signature(
                         modifier_idx,
                         decorator_type,
                         first_arg,
+                        actual_this_type,
                     );
                 }
 
@@ -1596,6 +1598,7 @@ impl<'a> CheckerState<'a> {
                         modifier_idx,
                         decorator_type,
                         self.has_accessor_modifier_ref(Some(modifiers)),
+                        actual_this_type,
                     );
                 }
 
@@ -1611,6 +1614,7 @@ impl<'a> CheckerState<'a> {
                         modifier_idx,
                         member_idx,
                         self.ctx.compiler_options.experimental_decorators,
+                        actual_this_type,
                     );
                 }
             }
@@ -1668,10 +1672,13 @@ impl<'a> CheckerState<'a> {
                             if self.ctx.compiler_options.experimental_decorators {
                                 let is_constructor_parameter =
                                     node.kind == syntax_kind_ext::CONSTRUCTOR;
+                                let actual_this_type =
+                                    self.access_receiver_type(decorator.expression);
                                 self.check_parameter_decorator_call_signature(
                                     modifier_idx,
                                     decorator_type,
                                     is_constructor_parameter,
+                                    actual_this_type,
                                 );
                             }
                         }

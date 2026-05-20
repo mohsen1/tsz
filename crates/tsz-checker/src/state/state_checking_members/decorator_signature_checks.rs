@@ -35,6 +35,7 @@ impl<'a> CheckerState<'a> {
         decorator_node: NodeIndex,
         decorator_type: TypeId,
         first_arg: TypeId,
+        actual_this_type: Option<TypeId>,
     ) {
         if decorator_type_is_unchecked(decorator_type) {
             return;
@@ -55,7 +56,7 @@ impl<'a> CheckerState<'a> {
             &[first_arg, TypeId::ANY],
             false,
             None,
-            None,
+            actual_this_type,
         );
 
         if !matches!(result, CallResult::Success(_)) {
@@ -185,6 +186,7 @@ impl<'a> CheckerState<'a> {
         decorator_node: NodeIndex,
         member_node: NodeIndex,
         experimental_decorators: bool,
+        actual_this_type: Option<TypeId>,
     ) {
         if decorator_type_is_unchecked(decorator_type) {
             return;
@@ -225,8 +227,13 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or_else(|| vec![TypeId::ANY, TypeId::OBJECT])
         };
 
-        let (result, _, _) =
-            self.resolve_call_with_checker_adapter(resolved, &arg_types, false, None, None);
+        let (result, _, _) = self.resolve_call_with_checker_adapter(
+            resolved,
+            &arg_types,
+            false,
+            None,
+            actual_this_type,
+        );
 
         let return_type = match result {
             CallResult::Success(return_type) => Some(return_type),
@@ -584,6 +591,7 @@ impl<'a> CheckerState<'a> {
         decorator_node: NodeIndex,
         decorator_type: TypeId,
         is_auto_accessor: bool,
+        actual_this_type: Option<TypeId>,
     ) {
         if decorator_type_is_unchecked(decorator_type) {
             return;
@@ -604,8 +612,13 @@ impl<'a> CheckerState<'a> {
         } else {
             &[TypeId::ANY, TypeId::STRING]
         };
-        let (result, _, _) =
-            self.resolve_call_with_checker_adapter(resolved, arg_types, false, None, None);
+        let (result, _, _) = self.resolve_call_with_checker_adapter(
+            resolved,
+            arg_types,
+            false,
+            None,
+            actual_this_type,
+        );
 
         let return_type = match result {
             CallResult::Success(return_type) => Some(return_type),
@@ -704,6 +717,7 @@ impl<'a> CheckerState<'a> {
         decorator_node: NodeIndex,
         decorator_type: TypeId,
         is_constructor_parameter: bool,
+        actual_this_type: Option<TypeId>,
     ) {
         if decorator_type_is_unchecked(decorator_type) {
             return;
@@ -732,7 +746,7 @@ impl<'a> CheckerState<'a> {
             &[TypeId::ANY, key_arg, TypeId::NUMBER],
             false,
             None,
-            None,
+            actual_this_type,
         );
 
         if !matches!(result, CallResult::Success(_)) {

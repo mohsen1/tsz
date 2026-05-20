@@ -31,7 +31,6 @@ TypeScript/tests/cases/compiler/unionPropertyOfProtectedAndIntersectionProperty.
 TypeScript/tests/cases/conformance/es2019/globalThisAmbientModules.ts
 TypeScript/tests/cases/conformance/es2024/sharedMemory.ts
 TypeScript/tests/cases/conformance/es6/destructuring/destructuringArrayBindingPatternAndAssignment2.ts
-TypeScript/tests/cases/conformance/esDecorators/esDecorators-preservesThis.ts
 TypeScript/tests/cases/conformance/externalModules/typeOnly/importEquals2.ts
 TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsTypedefAndLatebound.ts
 TypeScript/tests/cases/conformance/node/esmModuleExports2.ts
