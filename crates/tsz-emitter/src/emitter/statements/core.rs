@@ -341,6 +341,11 @@ impl<'a> Printer<'a> {
         let stmts: Vec<NodeIndex> = block.statements.nodes.to_vec();
         let prev_recovered_module_syntax_block_depth = self.recovered_module_syntax_block_depth;
         self.recovered_module_syntax_block_depth += 1;
+        let prev_lexical_block_missing_initializer_function_depth =
+            self.lexical_block_missing_initializer_function_depth;
+        if self.ctx.target_es5 && !is_function_body_block {
+            self.lexical_block_missing_initializer_function_depth = Some(self.function_scope_depth);
+        }
         for (stmt_i, &stmt_idx) in stmts.iter().enumerate().skip(directive_prologue_count) {
             // Save state before leading comments so we can undo them if the
             // statement produces no output (e.g., namespace alias import or
@@ -507,6 +512,8 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+        self.lexical_block_missing_initializer_function_depth =
+            prev_lexical_block_missing_initializer_function_depth;
         self.recovered_module_syntax_block_depth = prev_recovered_module_syntax_block_depth;
 
         if let Some((byte_offset, line_no)) = hoisted_var_byte_offset {

@@ -2591,6 +2591,44 @@ export function fn3(uuid) {}
 }
 
 #[test]
+fn test_jsdoc_typedef_same_file_typeof_export_stays_unqualified() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/** @satisfies {(uuid: string) => void} */
+export const fn1 = uuid => {};
+
+/** @typedef {Parameters<typeof fn1>} Foo */
+
+/** @type Foo */
+export const v1 = ["abc"];
+
+/** @satisfies {(label: string) => void} */
+export const renamed = label => {};
+
+/** @typedef {ReturnType<typeof renamed>} Bar */
+"#,
+    );
+
+    assert!(
+        output.contains("export function fn1(uuid: string): void;"),
+        "Expected @satisfies parameter fallback to keep exported const-function signature: {output}"
+    );
+    assert!(
+        output.contains("export type Foo = Parameters<typeof fn1>;"),
+        "Expected JSDoc typedef alias to keep same-file typeof reference unqualified: {output}"
+    );
+    assert!(
+        output.contains("export type Bar = ReturnType<typeof renamed>;"),
+        "Expected renamed same-file typeof reference to stay unqualified too: {output}"
+    );
+    assert!(
+        !output.contains("typeof import(\".\").fn1")
+            && !output.contains("typeof import(\".\").renamed"),
+        "Same-file JSDoc typedef aliases should not self-import exported values: {output}"
+    );
+}
+
+#[test]
 fn test_js_function_declaration_emits_constrained_jsdoc_template() {
     let output = emit_js_dts(
         r#"
@@ -3687,6 +3725,46 @@ if (holder.guard.isLeader()) {
     assert!(
         output.contains("declare var holder: {\n    guard: RoyalGuard;\n};"),
         "Expected shorthand object member to use the declared annotation instead of a narrowed flow type: {output}"
+    );
+}
+
+#[test]
+fn test_object_shorthand_definite_assignment_uses_non_nullish_declared_type() {
+    let source = r#"
+const a: string | undefined = 'ff';
+const foo = { a! };
+
+const b: string | undefined = 'plain';
+const plain = { b };
+
+const c: number | null | undefined = 1;
+const numeric = { c! };
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+    let (parser, _) = parse_test_source(source);
+    let shorthand_exclamation_count = parser
+        .arena
+        .nodes
+        .iter()
+        .filter_map(|node| parser.arena.get_shorthand_property(node))
+        .filter(|data| data.exclamation_token_pos != 0)
+        .count();
+    assert_eq!(
+        shorthand_exclamation_count, 2,
+        "Expected parser recovery to preserve two shorthand definite-assignment markers"
+    );
+
+    assert!(
+        output.contains("declare const foo: {\n    a: string;\n};"),
+        "Expected recovered `{{a!}}` shorthand to use the non-nullish declared type: {output}"
+    );
+    assert!(
+        output.contains("declare const plain: {\n    b: string | undefined;\n};"),
+        "Expected plain shorthand to preserve the declared union type: {output}"
+    );
+    assert!(
+        output.contains("declare const numeric: {\n    c: number;\n};"),
+        "Expected recovered shorthand to remove both null and undefined from top-level unions: {output}"
     );
 }
 

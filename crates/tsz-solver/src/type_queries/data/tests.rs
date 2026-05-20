@@ -1,6 +1,6 @@
 use super::*;
 use crate::TypeInterner;
-use crate::types::{CallSignature, CallableShape, ParamInfo, TypeId, TypeParamInfo};
+use crate::types::{CallSignature, CallableShape, ParamInfo, PropertyInfo, TypeId, TypeParamInfo};
 
 fn make_callable_with_construct_sig(
     interner: &TypeInterner,
@@ -308,6 +308,23 @@ fn test_construct_return_type_for_type() {
     assert_eq!(
         construct_return_type_for_type(&interner, TypeId::STRING),
         None
+    );
+}
+
+#[test]
+fn construct_return_type_for_intersection_ignores_static_augmentation_members() {
+    let interner = crate::intern::TypeInterner::new();
+
+    let ctor = make_callable_with_construct_sig(&interner, TypeId::STRING, vec![]);
+    let augmentation = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("enhanced"),
+        TypeId::UNKNOWN,
+    )]);
+    let enhanced_ctor = interner.intersection2(ctor, augmentation);
+
+    assert_eq!(
+        construct_return_type_for_type(&interner, enhanced_ctor),
+        Some(TypeId::STRING)
     );
 }
 

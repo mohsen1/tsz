@@ -102,6 +102,23 @@ function formatDurationMs(value, fractionDigits = 0) {
   return `${ms.toFixed(fractionDigits)}ms`;
 }
 
+function finiteNumber(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function formatFilesReached(value) {
+  const count = finiteNumber(value);
+  return count === null ? null : `${fmt(count)} files`;
+}
+
+function formatPeakMemoryMiB(value) {
+  const bytes = finiteNumber(value);
+  if (bytes === null || bytes <= 0) return null;
+  return `${(bytes / (1024 * 1024)).toLocaleString("en-US", { maximumFractionDigits: 0 })} MiB peak`;
+}
+
 function durationLabelFitsBar(label, widthPx) {
   const width = Number(widthPx);
   if (!Number.isFinite(width) || width <= 0) return false;
@@ -2143,13 +2160,15 @@ export function getProjectCompatibilityDashboard() {
 
   const measurementParts = (row) => {
     const parts = [];
-    if (row.filesReached !== null && row.filesReached !== undefined && Number.isFinite(Number(row.filesReached))) {
-      parts.push(`${fmt(row.filesReached)} files`);
+    const filesReached = formatFilesReached(row.filesReached);
+    const peakMemory = formatPeakMemoryMiB(row.peakMemoryBytes);
+    if (filesReached) {
+      parts.push(filesReached);
     } else if (row.filesReachedReason) {
       parts.push(`files reached: n/a (${row.filesReachedReason})`);
     }
-    if (Number.isFinite(Number(row.peakMemoryBytes)) && Number(row.peakMemoryBytes) > 0) {
-      parts.push(`${(Number(row.peakMemoryBytes) / (1024 * 1024)).toLocaleString("en-US", { maximumFractionDigits: 0 })} MiB peak`);
+    if (peakMemory) {
+      parts.push(peakMemory);
     } else if (row.peakMemoryBytesReason) {
       parts.push(`peak RSS: n/a (${row.peakMemoryBytesReason})`);
     }
@@ -2172,6 +2191,63 @@ export function getProjectCompatibilityDashboard() {
       return `source: ${source.name} @ ${source.ref}`;
     });
   };
+
+  const numericSortValue = (value) => {
+    const number = finiteNumber(value);
+    return number === null ? "" : String(number);
+  };
+
+  const sortableHeader = (key, label, type = "text") =>
+    `<button type="button" class="compat-sort-button" data-compat-sort="${key}" data-sort-type="${type}" aria-label="Sort project compatibility by ${escapeHtml(label)}">${escapeHtml(label)}</button>`;
+
+  const sortScript = `<script>
+(() => {
+  for (const table of document.querySelectorAll("[data-compat-sortable]")) {
+    const tbody = table.tBodies[0];
+    if (!tbody) continue;
+    const buttons = Array.from(table.querySelectorAll("[data-compat-sort]"));
+    for (const button of buttons) {
+      button.addEventListener("click", () => {
+        const key = button.dataset.compatSort;
+        const type = button.dataset.sortType || "text";
+        const direction = button.dataset.direction === "asc" ? "desc" : "asc";
+        for (const candidate of buttons) {
+          candidate.dataset.direction = "";
+          candidate.removeAttribute("aria-sort");
+        }
+        button.dataset.direction = direction;
+        button.setAttribute("aria-sort", direction === "asc" ? "ascending" : "descending");
+        const rows = Array.from(tbody.rows);
+        rows.sort((left, right) => {
+          const leftCell = left.querySelector(\`[data-sort-key="\${key}"]\`);
+          const rightCell = right.querySelector(\`[data-sort-key="\${key}"]\`);
+          const leftRaw = leftCell?.dataset.sortValue ?? "";
+          const rightRaw = rightCell?.dataset.sortValue ?? "";
+          let comparison = 0;
+          if (type === "number") {
+            const leftNumber = Number(leftRaw);
+            const rightNumber = Number(rightRaw);
+            const leftMissing = leftRaw === "" || !Number.isFinite(leftNumber);
+            const rightMissing = rightRaw === "" || !Number.isFinite(rightNumber);
+            if (leftMissing || rightMissing) {
+              comparison = leftMissing === rightMissing ? 0 : leftMissing ? 1 : -1;
+            } else {
+              comparison = leftNumber - rightNumber;
+            }
+          } else {
+            comparison = leftRaw.localeCompare(rightRaw, undefined, { sensitivity: "base", numeric: true });
+          }
+          if (comparison === 0) {
+            comparison = (left.dataset.project || "").localeCompare(right.dataset.project || "", undefined, { sensitivity: "base" });
+          }
+          return direction === "asc" ? comparison : -comparison;
+        });
+        for (const row of rows) tbody.append(row);
+      });
+    }
+  }
+})();
+</script>`;
 
   const artifactFreshnessParts = (row) => {
     const metadata = row.artifactMetadata || {};
@@ -2266,15 +2342,37 @@ export function getProjectCompatibilityDashboard() {
   <h2>Compatibility</h2>
   ${artifactBanner}
   <div class="compat-summary">${escapeHtml(summary)}</div>
-  <ul class="compat-list">
-    ${rows.map((row) => `<li class="compat-item">
-      <div class="compat-row-main">
-        <a href="${row.url}">${escapeHtml(row.label)}</a>
-        <span class="compat-state ${row.className}">${escapeHtml(row.className)}</span>
-        <span class="compat-detail">${escapeHtml(detailLabel(row))}</span>
-      </div>
-      ${renderRowDetails(row)}
-    </li>`).join("\n")}
-  </ul>
+  <div class="compat-table-wrap">
+    <table class="compat-table" data-compat-sortable>
+      <thead>
+        <tr>
+          <th scope="col">${sortableHeader("project", "Project")}</th>
+          <th scope="col">${sortableHeader("state", "State")}</th>
+          <th scope="col">${sortableHeader("exit", "Exit class")}</th>
+          <th scope="col">${sortableHeader("phase", "Phase")}</th>
+          <th scope="col">${sortableHeader("files", "Files", "number")}</th>
+          <th scope="col">${sortableHeader("peak", "Peak RSS", "number")}</th>
+          <th scope="col">Details</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map((row) => `<tr class="compat-item" data-project="${escapeHtml(row.label)}">
+          <td class="compat-project" data-sort-key="project" data-sort-value="${escapeHtml(row.label)}"><a href="${row.url}">${escapeHtml(row.label)}</a></td>
+          <td data-sort-key="state" data-sort-value="${escapeHtml(row.className)}"><span class="compat-state ${row.className}">${escapeHtml(row.className)}</span></td>
+          <td data-sort-key="exit" data-sort-value="${escapeHtml(row.exitClass || "")}"><span class="compat-detail">${escapeHtml(row.exitClass || "unknown")}</span></td>
+          <td data-sort-key="phase" data-sort-value="${escapeHtml(row.phase || "")}"><span class="compat-detail">${escapeHtml(row.phase || "unknown")}</span></td>
+          <td data-sort-key="files" data-sort-value="${numericSortValue(row.filesReached)}">${escapeHtml(formatFilesReached(row.filesReached) || "—")}</td>
+          <td data-sort-key="peak" data-sort-value="${numericSortValue(row.peakMemoryBytes)}">${escapeHtml(formatPeakMemoryMiB(row.peakMemoryBytes) || "—")}</td>
+          <td>
+            <div class="compat-row-main">
+              <span class="compat-detail">${escapeHtml(detailLabel(row))}</span>
+            </div>
+            ${renderRowDetails(row)}
+          </td>
+        </tr>`).join("\n")}
+      </tbody>
+    </table>
+  </div>
+  ${sortScript}
 </section>`;
 }
