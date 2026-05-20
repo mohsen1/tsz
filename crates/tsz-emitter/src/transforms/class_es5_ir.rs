@@ -2148,6 +2148,12 @@ impl<'a> ES5ClassTransformer<'a> {
             };
         // Each entry: (Option<temp_name>, expr_idx, member_idx) for the comma expression.
         let mut computed_prop_entries: Vec<(Option<String>, NodeIndex, NodeIndex)> = Vec::new();
+        // When a static field uses a computed key the IIFE body emits `C[_x] = v`
+        // which must see `_x` already assigned. Since `C` is the IIFE function name
+        // (not the outer `var C` binding), all key temps must be co-located inside
+        // the IIFE in declaration-before-use order. Instance-only classes use a
+        // closure over an outer `var _a` instead, matching tsc's canonical form.
+        let mut static_computed_value_exists = false;
         for &member_idx in &class_data.members.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
@@ -2219,6 +2225,9 @@ impl<'a> ES5ClassTransformer<'a> {
                 self.computed_prop_temp_map
                     .insert(computed.expression, temp.clone());
                 computed_prop_entries.push((Some(temp), computed.expression, member_idx));
+                if self.arena.is_static(&prop.modifiers) {
+                    static_computed_value_exists = true;
+                }
             }
         }
         let consumed_computed_auto_accessor_entries: Vec<usize> =
@@ -2296,17 +2305,19 @@ impl<'a> ES5ClassTransformer<'a> {
                 IRNode::id(self.class_name.clone()),
             )));
         }
-        if !computed_prop_temp_decls.is_empty() {
-            let var_decls: Vec<IRNode> = computed_prop_temp_decls
-                .into_iter()
-                .map(|name| IRNode::VarDecl {
-                    name: name.into(),
-                    initializer: None,
-                })
-                .collect();
-            body.push(IRNode::VarDeclList(var_decls));
-        }
-        body.extend(computed_prop_init_entries);
+        let (outer_temp_decls, outer_temp_inits) = if static_computed_value_exists {
+            if !computed_prop_temp_decls.is_empty() {
+                let var_decls: Vec<IRNode> = computed_prop_temp_decls
+                    .into_iter()
+                    .map(|name| IRNode::var_decl(name, None))
+                    .collect();
+                body.push(IRNode::VarDeclList(var_decls));
+            }
+            body.extend(computed_prop_init_entries);
+            (Vec::new(), Vec::new())
+        } else {
+            (computed_prop_temp_decls, computed_prop_init_entries)
+        };
         // Prototype methods and static members interleaved in source order
         let deferred_static_blocks = self.emit_all_members_ir(&mut body, class_idx);
 
@@ -2437,8 +2448,8 @@ impl<'a> ES5ClassTransformer<'a> {
             super_param: self.has_extends.then(|| self.super_name.clone().into()),
             body,
             weakmap_decls,
-            computed_prop_temp_decls: Vec::new(),
-            computed_prop_temp_inits: Vec::new(),
+            computed_prop_temp_decls: outer_temp_decls,
+            computed_prop_temp_inits: outer_temp_inits,
             weakmap_inits,
             leading_comment,
             deferred_static_blocks,
