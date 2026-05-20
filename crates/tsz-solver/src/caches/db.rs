@@ -1320,8 +1320,8 @@ impl QueryDatabase for TypeInterner {
             Some(TypeData::Union(members_id)) => {
                 // For unions, collect index signatures from all members
                 let members = self.type_list(members_id);
-                let mut string_indices = Vec::new();
-                let mut number_indices = Vec::new();
+                let mut string_indices = Vec::with_capacity(members.len());
+                let mut number_indices = Vec::with_capacity(members.len());
 
                 for &member in members.iter() {
                     let info = self.get_index_signatures(member);
