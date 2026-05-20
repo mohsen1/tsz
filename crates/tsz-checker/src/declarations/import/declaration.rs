@@ -2873,7 +2873,7 @@ mod tests {
     use tsz_binder::BinderState;
     use tsz_common::common::ModuleKind;
     use tsz_parser::parser::ParserState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     #[test]
     fn ts_extension_detects_ts() {

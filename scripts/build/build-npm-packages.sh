@@ -14,7 +14,7 @@
 #   Each platform runner builds its own native binary, then a final job
 #   runs --skip-build to assemble all pre-built artifacts into npm packages.
 
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -55,6 +55,19 @@ PLATFORMS=(
 # Binaries to ship (from tsz-cli crate)
 BINARIES=(tsz tsz-server)
 
+extract_workspace_package_field() {
+  local field="$1"
+  awk -F '"' -v key="$field" '
+    BEGIN { in_workspace_pkg = 0 }
+    /^\[workspace\.package\]/ { in_workspace_pkg = 1; next }
+    /^\[/ { if (in_workspace_pkg) exit }
+    in_workspace_pkg && $1 ~ "^[[:space:]]*" key "[[:space:]]*=" {
+      print $2
+      exit
+    }
+  ' "$PROJECT_ROOT/Cargo.toml"
+}
+
 # ─── Detect current platform ──────────────────────────────────────────────────
 detect_current_platform() {
   local os arch
@@ -92,7 +105,11 @@ get_rust_target() {
 }
 
 # ─── Extract version ──────────────────────────────────────────────────────────
-CARGO_VERSION=$(grep '^version' "$PROJECT_ROOT/Cargo.toml" | head -1 | sed 's/.*"\(.*\)"/\1/')
+CARGO_VERSION="$(extract_workspace_package_field "version")"
+if [ -z "$CARGO_VERSION" ]; then
+  echo "Error: failed to read workspace.package.version from Cargo.toml"
+  exit 1
+fi
 echo "==> Version: $CARGO_VERSION"
 
 # ─── Determine which platforms to build ───────────────────────────────────────

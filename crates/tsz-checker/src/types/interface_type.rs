@@ -66,7 +66,7 @@ fn dedup_call_signatures_keep_last(sigs: &mut Vec<tsz_solver::CallSignature>) {
 pub(crate) fn merge_string_index_by_union(
     existing: &mut IndexSignature,
     extra: IndexSignature,
-    factory: tsz_solver::TypeFactory<'_>,
+    factory: tsz_solver::construction::TypeFactory<'_>,
 ) {
     if existing.key_type != extra.key_type {
         existing.key_type = factory.union2(existing.key_type, extra.key_type);

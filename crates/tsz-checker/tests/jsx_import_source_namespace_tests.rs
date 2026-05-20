@@ -6,7 +6,7 @@ use tsz_checker::state::CheckerState;
 use tsz_common::checker_options::JsxMode;
 use tsz_common::common::ModuleKind;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn compile_named_files(
     files: &[(&str, &str)],

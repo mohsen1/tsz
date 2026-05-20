@@ -81,7 +81,7 @@ fn mapped_parameter_property_mismatch_displays_instantiated_property_slice() {
     let root = parser.parse_source_file();
     let mut binder = tsz_binder::BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let mut checker = crate::state::CheckerState::new(
         parser.get_arena(),
         &binder,

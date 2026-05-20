@@ -59,7 +59,7 @@ fn test_boolean_option_with_trailing_delimiters() {
 fn test_recursive_type_depth_limit() {
     // Validates that recursive type expansion has proper depth limits
     // This should not cause OOM or stack overflow
-    use tsz_solver::MAX_INSTANTIATION_DEPTH;
+    use tsz_solver::computation::MAX_INSTANTIATION_DEPTH;
 
     // Verify the limit is set to a reasonable value
     assert_in_range(
@@ -110,7 +110,7 @@ fn test_type_lowering_operation_limit() {
 #[test]
 fn test_constraint_recursion_depth_limit() {
     // Validates that constraint collection has recursion limits
-    use tsz_solver::MAX_CONSTRAINT_RECURSION_DEPTH;
+    use tsz_solver::operations::MAX_CONSTRAINT_RECURSION_DEPTH;
 
     assert_in_range(
         "Constraint recursion depth",

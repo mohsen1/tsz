@@ -32,7 +32,7 @@
 //! assert_eq!(canon_a, canon_b); // Same structure = same TypeId
 //! ```
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::def::DefId;
 use crate::def::DefKind;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};

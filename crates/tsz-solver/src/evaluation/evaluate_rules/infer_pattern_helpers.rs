@@ -9,6 +9,7 @@
 //! - Union type patterns
 //! - Template literal patterns
 
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::{
     CallableShapeId, FunctionShape, FunctionShapeId, IntrinsicKind, LiteralValue, ObjectShapeId,
@@ -16,7 +17,6 @@ use crate::types::{
 };
 use crate::utils;
 use crate::visitor::array_element_type;
-use crate::{TypeSubstitution, instantiate_type};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
 

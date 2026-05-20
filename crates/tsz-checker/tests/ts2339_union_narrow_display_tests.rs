@@ -16,7 +16,7 @@ use tsz_binder::BinderState;
 use tsz_checker::CheckerState;
 use tsz_checker::context::CheckerOptions;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn diagnostic_messages(source: &str) -> Vec<(u32, String)> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());

@@ -518,7 +518,10 @@ impl<'a> CheckerState<'a> {
         Some(self.format_type_for_assignability_message(display_type))
     }
 
-    fn type_includes_undefined(db: &dyn tsz_solver::TypeDatabase, ty: TypeId) -> bool {
+    fn type_includes_undefined(
+        db: &dyn tsz_solver::construction::TypeDatabase,
+        ty: TypeId,
+    ) -> bool {
         ty == TypeId::UNDEFINED
             || crate::query_boundaries::common::union_members(db, ty)
                 .is_some_and(|members| members.contains(&TypeId::UNDEFINED))
