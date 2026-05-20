@@ -583,8 +583,20 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let display = self.format_type_diagnostic(object_type);
-        display.contains(" & ").then_some(display)
+        // The solver may collapse an `A & B` of equal-shape members into a
+        // single object type but keep the intersection on the display alias,
+        // so check the alias too — that's how tsc still names the intersection
+        // in the message.
+        let db = self.ctx.types;
+        let preserves_intersection_shape =
+            crate::query_boundaries::common::is_intersection_type(db, object_type)
+                || db.get_display_alias(object_type).is_some_and(|alias| {
+                    crate::query_boundaries::common::is_intersection_type(db, alias)
+                });
+        if !preserves_intersection_shape {
+            return None;
+        }
+        Some(self.format_type_diagnostic(object_type))
     }
 
     fn intersection_has_unrelated_public_property_member(

@@ -2457,6 +2457,120 @@ fn test_rendered_type_decision_patterns_do_not_grow() {
     );
 }
 
+/// Catch the multi-line variant of `format_type{,_diagnostic}` decision uses,
+/// where the result is stored in a local and then inspected by a string
+/// predicate. This complements `test_rendered_type_decision_patterns_do_not_grow`
+/// (which only caught single-line uses). Per §25, decisions on rendered type
+/// strings must move to structural solver/query-boundary helpers.
+#[test]
+fn test_multiline_rendered_type_decision_patterns_do_not_grow() {
+    let checker_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+
+    let mut files = Vec::new();
+    walk_rs_files_recursive(&checker_src, &mut files);
+
+    // Find `let <name> = ...format_type{,_diagnostic}(...)...;` then check the
+    // next `LOOKAHEAD_LINES` non-comment lines for `<name>.contains(`,
+    // `.starts_with(`, `.ends_with(`, or `.as_str()` — i.e. a decision based
+    // on the rendered form of `<name>`. The window of 8 lines covers every
+    // present call shape and the longest tolerated predicate ladder; widen
+    // only if a legitimately wider call shape lands.
+    const LOOKAHEAD_LINES: usize = 8;
+    let format_call_pattern = ["format_type(", "format_type_diagnostic("];
+    let probe_suffixes = [".contains(", ".starts_with(", ".ends_with(", ".as_str()"];
+    let mut violations = Vec::new();
+    for path in files {
+        let rel = path.strip_prefix(&checker_src).unwrap_or(&path);
+        if rel.starts_with("tests") {
+            continue;
+        }
+        let src = fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+        let lines: Vec<&str> = src.lines().collect();
+        // Skip everything from the first test-scope opener on. The literal
+        // `mod tests {` covers every test module in this checker today; the
+        // attribute-based prefix covers per-item `#[test]` and `#[cfg(test)]`
+        // bodies that sit outside such a module.
+        let test_scope_start = lines.iter().position(|l| {
+            let t = l.trim_start();
+            t.starts_with("#[cfg(test)]") || t.starts_with("#[test]") || t.starts_with("mod tests")
+        });
+        for (idx, line) in lines.iter().enumerate() {
+            if test_scope_start.is_some_and(|start| idx >= start) {
+                break;
+            }
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            // Skip the same-line case — it's covered by the sibling ratchet
+            // (`test_rendered_type_decision_patterns_do_not_grow`); avoid
+            // double-counting.
+            let inspects_rendered_same_line = probe_suffixes.iter().any(|p| line.contains(p));
+            if inspects_rendered_same_line {
+                continue;
+            }
+            if !format_call_pattern.iter().any(|p| line.contains(p)) {
+                continue;
+            }
+            // Parse the binding name out of a `let <name> = ...` shape.
+            let Some(let_pos) = line.find("let ") else {
+                continue;
+            };
+            let after_let = &line[let_pos + 4..];
+            let after_let = after_let.trim_start_matches("mut ");
+            let name_end = after_let.find(|c: char| !c.is_ascii_alphanumeric() && c != '_');
+            let name = match name_end {
+                Some(end) => &after_let[..end],
+                None => continue,
+            };
+            if name.is_empty() || name == "_" {
+                continue;
+            }
+            // Build the needles once per binding (4 short allocations per
+            // let-line instead of 4×LOOKAHEAD_LINES inside the inner loop).
+            let needles: [String; 4] =
+                std::array::from_fn(|i| format!("{name}{}", probe_suffixes[i]));
+            // Stop at a closing brace. Each let-line is pushed at most once
+            // even if multiple probes match.
+            let mut scanned = 0usize;
+            let mut flagged = false;
+            for follow in lines.iter().skip(idx + 1) {
+                if flagged || scanned >= LOOKAHEAD_LINES {
+                    break;
+                }
+                let follow_trim = follow.trim_start();
+                if follow_trim.starts_with("//") {
+                    continue;
+                }
+                scanned += 1;
+                if follow_trim == "}" {
+                    break;
+                }
+                if needles.iter().any(|n| follow.contains(n)) {
+                    violations.push(format!("{}:{}", path.display(), idx + 1));
+                    flagged = true;
+                }
+            }
+        }
+    }
+
+    // Burn-down ratchet for issue #8775. Lower when a site is migrated; never
+    // raise it. The eventual goal is 0, matching the single-line sibling test.
+    const MULTILINE_RENDERED_TYPE_DECISION_CEILING: usize = 8;
+    assert!(
+        violations.len() <= MULTILINE_RENDERED_TYPE_DECISION_CEILING,
+        "Multi-line rendered-type decision patterns grew to {} lines (ceiling: {}). \
+         A `let s = format_type_diagnostic(...);` followed by `s.contains(...)` / `s.starts_with(...)` \
+         is a §25-forbidden decision over printer output. Route the decision \
+         through a structural solver / query-boundary helper instead. \
+         Violation lines:\n  {}",
+        violations.len(),
+        MULTILINE_RENDERED_TYPE_DECISION_CEILING,
+        violations.join("\n  ")
+    );
+}
+
 /// CLAUDE.md §4: Scanner must not import downstream crates (Parser/Binder/Checker/Solver).
 /// The scanner is the leaf of the pipeline; it only does lexing and string interning.
 #[test]

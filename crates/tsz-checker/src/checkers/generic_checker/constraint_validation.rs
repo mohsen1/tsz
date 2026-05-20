@@ -1242,10 +1242,14 @@ impl<'a> CheckerState<'a> {
                             && self.type_arg_has_explicit_constraint_in_ast(arg_idx)
                         {
                             let constraint_resolved = self.resolve_lazy_type(constraint);
-                            if self
-                                .format_type_diagnostic(constraint_resolved)
-                                .starts_with("keyof ")
-                            {
+                            // When the declared constraint is a `keyof T` and
+                            // the type argument carries an explicit constraint
+                            // clause, tsc reports the mismatch against the
+                            // declared `keyof T`.
+                            if crate::query_boundaries::common::is_keyof_type(
+                                self.ctx.types,
+                                constraint_resolved,
+                            ) {
                                 self.error_type_constraint_not_satisfied(
                                     type_arg,
                                     constraint_resolved,

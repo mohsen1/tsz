@@ -2251,11 +2251,16 @@ impl<'a> CheckerState<'a> {
             return self.type_has_never_indexed_access_surface(body, depth + 1);
         }
 
-        if depth == 0 {
-            let display = self.format_type_diagnostic(target_type);
-            if display.contains("never[") {
-                return true;
-            }
+        // Depth-0 catch-all for `Array<never>` / `never[…]` embedded inside
+        // shapes the recursion above does not descend into (object property
+        // types, callable signatures, etc.).
+        if depth == 0
+            && crate::query_boundaries::type_predicates::type_contains_never_array_or_index_into_never(
+                self.ctx.types.as_type_database(),
+                target_type,
+            )
+        {
+            return true;
         }
 
         false

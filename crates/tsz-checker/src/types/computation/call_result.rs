@@ -271,10 +271,14 @@ impl<'a> CheckerState<'a> {
         }
 
         let display_arg_type = common::widen_argument_type_for_display(self.ctx.types, arg_type);
-        let mut actual_display = self.format_type_diagnostic(display_arg_type);
-        if matches!(actual_display.as_str(), "true[]" | "false[]") {
-            actual_display = "boolean[]".to_string();
-        }
+        // tsc renders `Array<true>` / `Array<false>` as `boolean[]`.
+        let mut actual_display = match common::array_element_type(self.ctx.types, display_arg_type)
+        {
+            Some(elem) if elem == TypeId::BOOLEAN_TRUE || elem == TypeId::BOOLEAN_FALSE => {
+                "boolean[]".to_string()
+            }
+            _ => self.format_type_diagnostic(display_arg_type),
+        };
         let mut target_display = self
             .constrained_variadic_tuple_parameter_display(param_type, arg_type)
             .or_else(|| {
@@ -285,9 +289,7 @@ impl<'a> CheckerState<'a> {
                     .map(|display_type| self.format_type_for_assignability_message(display_type))
             })
             .unwrap_or_else(|| self.format_type_diagnostic(param_type));
-        if target_display.contains("Array<") {
-            target_display = Self::normalize_array_generic_to_shorthand(&target_display);
-        }
+        target_display = Self::normalize_array_generic_to_shorthand(&target_display);
         if let Some((generic_actual_display, generic_target_display)) =
             self.generic_direct_primitive_mismatch_display(arg_type, param_type, arg_idx)
         {
@@ -1009,14 +1011,20 @@ impl<'a> CheckerState<'a> {
                         };
                     }
                 }
-                let aggregate_literal_actual = if self
-                    .format_type_diagnostic(expected)
-                    .contains("<unknown>")
-                {
-                    None
-                } else {
-                    self.literalized_aggregate_actual_for_call_args(args, index, actual, expected)
-                };
+                // When the expected parameter type still mentions an
+                // unresolved type parameter as a type argument, the
+                // literalized actual is not a reliable elaboration source.
+                let aggregate_literal_actual =
+                    if crate::query_boundaries::type_predicates::type_application_args_contain_unknown(
+                        self.ctx.types,
+                        expected,
+                    ) {
+                        None
+                    } else {
+                        self.literalized_aggregate_actual_for_call_args(
+                            args, index, actual, expected,
+                        )
+                    };
                 let original_is_spread_marker = arg_types.get(index).is_some_and(|&ty| {
                     common::is_spread_marker_tuple(self.ctx.types.as_type_database(), ty)
                 });

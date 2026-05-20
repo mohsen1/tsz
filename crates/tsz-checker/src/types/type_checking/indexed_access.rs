@@ -1457,12 +1457,21 @@ impl<'a> CheckerState<'a> {
                 ) {
                 self.format_type(evaluated_index_type)
             } else {
-                let raw = self.format_type(index_type);
-                let evaluated = self.format_type(evaluated_index_type);
-                if raw != evaluated && raw.starts_with("keyof ") && evaluated.contains("keyof ") {
-                    evaluated
+                // When the raw index is `keyof T` and its evaluation still
+                // contains a `keyof _` sub-type, prefer the evaluated form for
+                // the message.
+                let db = self.ctx.types.as_type_database();
+                let raw_is_keyof = crate::query_boundaries::common::is_keyof_type(db, index_type);
+                let evaluated_has_keyof = raw_is_keyof
+                    && index_type != evaluated_index_type
+                    && crate::query_boundaries::type_predicates::type_contains_keyof_anywhere(
+                        db,
+                        evaluated_index_type,
+                    );
+                if evaluated_has_keyof {
+                    self.format_type(evaluated_index_type)
                 } else {
-                    raw
+                    self.format_type(index_type)
                 }
             };
 
