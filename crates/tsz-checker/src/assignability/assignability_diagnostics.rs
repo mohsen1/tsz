@@ -1219,7 +1219,7 @@ impl<'a> CheckerState<'a> {
             && crate::query_boundaries::common::is_callable_type(self.ctx.types, source)
             && crate::query_boundaries::common::is_callable_type(self.ctx.types, target)
             && !self.callable_has_own_generic_signatures(source)
-            && self.ctx.types.is_assignable_to(target, source)
+            && self.diagnostic_relation_boolean_guard(target, source)
             && self.callable_params_contain_type_param_intersection(source)
         {
             return true;
