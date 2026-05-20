@@ -1,7 +1,8 @@
+use tsz_solver::computation::ContextualTypeContext;
 use tsz_solver::operations::{AssignabilityChecker, CallResult};
 use tsz_solver::{
-    ContextualTypeContext, FunctionShape, QueryDatabase, TypeDatabase, TypeEnvironment, TypeId,
-    TypeResolver, TypeSubstitution,
+    FunctionShape, QueryDatabase, TypeDatabase, TypeEnvironment, TypeId, TypeResolver,
+    TypeSubstitution,
 };
 
 pub(crate) use super::super::common::array_element_type as array_element_type_for_type;

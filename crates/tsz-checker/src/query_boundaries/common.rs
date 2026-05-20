@@ -3,7 +3,6 @@ use tsz_solver::{
     TypePredicate, operations::widening,
 };
 
-// Re-export solver value types used by checker call computation.
 pub(crate) use tsz_solver::judge::{DefaultJudge, Judge, JudgeConfig};
 pub(crate) use tsz_solver::operations::property::PropertyAccessResult;
 pub(crate) use tsz_solver::operations::{AssignabilityChecker, CallResult};
@@ -12,10 +11,11 @@ pub(crate) use tsz_solver::type_queries::{
     is_remapped_mapped_index_access, remapped_mapped_index_access_result,
 };
 pub(crate) use tsz_solver::{
-    ContextualTypeContext, FunctionShape, IndexKind, IndexSignatureResolver, IntrinsicKind,
-    MappedType, ObjectFlags, OptionalPropertyChainKey, ParamInfo, PendingDiagnostic,
-    PendingDiagnosticBuilder, QueryDatabase, SourceLocation, SubtypeFailureReason, TypeEnvironment,
-    TypeFormatter, TypeResolver, TypeSubstitution, fill_application_defaults, instantiate_generic,
+    FunctionShape, IndexKind, IndexSignatureResolver, IntrinsicKind, MappedType, ObjectFlags,
+    OptionalPropertyChainKey, ParamInfo, PendingDiagnostic, PendingDiagnosticBuilder,
+    QueryDatabase, SourceLocation, SubtypeFailureReason, TypeEnvironment, TypeFormatter,
+    TypeResolver, TypeSubstitution, computation::ContextualTypeContext, fill_application_defaults,
+    instantiate_generic,
 };
 #[allow(unused_imports)]
 pub(crate) use tsz_solver::{TypeInstantiator, TypeInterner};
@@ -549,7 +549,7 @@ pub(crate) fn widen_argument_type_for_display(db: &dyn TypeDatabase, type_id: Ty
 
 /// Extract the element type from a rest-argument array/tuple type.
 pub(crate) fn rest_argument_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    tsz_solver::rest_argument_element_type(db, type_id)
+    tsz_solver::computation::rest_argument_element_type(db, type_id)
 }
 
 /// Check if a type transitively references any type parameter whose name is in the given set.
@@ -1892,7 +1892,7 @@ pub(crate) fn apply_contextual_type(
     expr_type: TypeId,
     contextual_type: Option<TypeId>,
 ) -> TypeId {
-    tsz_solver::apply_contextual_type(db, expr_type, contextual_type)
+    tsz_solver::computation::apply_contextual_type(db, expr_type, contextual_type)
 }
 
 pub(crate) fn resolve_default_type_args(
