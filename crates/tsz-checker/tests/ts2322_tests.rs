@@ -8077,6 +8077,87 @@ fn test_ts2322_type_param_extends_never_transitive_constraint() {
 }
 
 #[test]
+fn test_ts2322_type_param_assigns_to_recursive_interface_constraint() {
+    let source = r#"
+        interface MyNode<T> {
+            value: T;
+            child?: MyNode<T>;
+        }
+        function f<T extends MyNode<number>>(t: T): MyNode<number> {
+            return t;
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert_eq!(
+        ts2322, 0,
+        "Expected no TS2322 when returning a type parameter through its recursive interface constraint: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_type_param_assigns_to_aliased_recursive_interface_constraint() {
+    let source = r#"
+        interface TreeBox<U> {
+            item: U;
+            next?: TreeBox<U>;
+        }
+        type NumberTree = TreeBox<number>;
+        function f<X extends NumberTree>(x: X): NumberTree {
+            return x;
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert_eq!(
+        ts2322, 0,
+        "Expected no TS2322 when returning a type parameter through an aliased recursive interface constraint: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_type_param_assigns_through_transitive_recursive_constraint() {
+    let source = r#"
+        interface Link<V> {
+            value: V;
+            child?: Link<V>;
+        }
+        function f<Base extends Link<number>, Item extends Base>(item: Item): Link<number> {
+            return item;
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert_eq!(
+        ts2322, 0,
+        "Expected no TS2322 when returning through a transitive recursive interface constraint: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_incompatible_recursive_interface_constraint_still_errors() {
+    let source = r#"
+        interface NumberNode {
+            value: number;
+            child?: NumberNode;
+        }
+        interface TextNode {
+            value: string;
+            child?: TextNode;
+        }
+        function f<T extends TextNode>(t: T): NumberNode {
+            return t;
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        ts2322 >= 1,
+        "Expected TS2322 when a recursive constraint is structurally incompatible with the target: {diags:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_fbounded_object_literal_empty_array_no_error() {
     let source = r#"
         interface TreeNodeBase<T extends TreeNodeBase<T>> {
