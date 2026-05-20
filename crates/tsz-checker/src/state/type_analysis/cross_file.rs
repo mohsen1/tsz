@@ -1,6 +1,7 @@
 //! Cross-file symbol resolution: resolving symbols across multiple files,
 //! delegating type resolution to child checkers, tracking cross-file targets,
 //! and cross-file interface declaration merging.
+pub(crate) use super::cross_file_query_types::CrossFileQueryKind;
 use crate::state::CheckerState;
 use crate::state_type_analysis::cross_file_direct::is_direct_lowering_source_file_arena;
 use crate::symbols_domain::name_text::expression_name_text_in_arena;
@@ -12,8 +13,6 @@ use tsz_common::perf_counters::{
 use tsz_parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
-
-pub(crate) use super::cross_file_query_types::CrossFileQueryKind;
 
 thread_local! {
     static CROSS_ARENA_INTERFACE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
@@ -765,12 +764,6 @@ impl<'a> CheckerState<'a> {
                     (arena, binder, file_idx)
                 })
             };
-            // Even when the shared symbol-arena cache is ineligible (programs with module
-            // augmentations, cross-file delegation paths), allow direct option-bag lowering
-            // for source-file arenas. The structural check inside
-            // `direct_cross_file_interface_lowering` is the safety gate: it rejects
-            // heritage, generics, computed names, and sibling cycles. Results that miss
-            // shared-cache eligibility land in `lib_delegation_cache` (per-checker).
             if let Some((symbol_arena, delegate_binder, _delegate_file_idx)) = direct_target
                 && let Some((direct_type, direct_params)) = self
                     .direct_cross_file_interface_lowering(
@@ -2001,7 +1994,6 @@ impl<'a> CheckerState<'a> {
 #[cfg(test)]
 #[path = "cross_file_query_kind_tests.rs"]
 mod cross_file_query_kind_tests;
-
 #[cfg(test)]
 #[path = "cross_file_cache_tests.rs"]
 mod tests;
