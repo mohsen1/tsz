@@ -2519,7 +2519,7 @@ impl ParserState {
             if self.is_token(SyntaxKind::CommaToken) {
                 let comma_can_be_trailing = !expecting_argument;
                 if expecting_argument {
-                    self.error_expression_expected();
+                    self.error_type_expected();
                     args.push(self.error_node());
                 }
 

@@ -3043,9 +3043,8 @@ fn expr_call_type_arguments_recover_missing_leading_argument() {
     assert!(
         diagnostics
             .iter()
-            .any(|diag| diag.code == diagnostic_codes::EXPRESSION_EXPECTED
-                && diag.start == comma_pos),
-        "expected TS1109 at the missing type argument comma, got {diagnostics:?}"
+            .any(|diag| diag.code == diagnostic_codes::TYPE_EXPECTED && diag.start == comma_pos),
+        "expected TS1110 at the missing type argument comma, got {diagnostics:?}"
     );
 
     let arena = parser.get_arena();
@@ -3080,9 +3079,8 @@ fn expr_tagged_template_type_arguments_recover_missing_leading_argument() {
     assert!(
         diagnostics
             .iter()
-            .any(|diag| diag.code == diagnostic_codes::EXPRESSION_EXPECTED
-                && diag.start == comma_pos),
-        "expected TS1109 at the missing type argument comma, got {diagnostics:?}"
+            .any(|diag| diag.code == diagnostic_codes::TYPE_EXPECTED && diag.start == comma_pos),
+        "expected TS1110 at the missing type argument comma, got {diagnostics:?}"
     );
 
     let arena = parser.get_arena();
