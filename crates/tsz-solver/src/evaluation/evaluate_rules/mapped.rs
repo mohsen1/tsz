@@ -2066,7 +2066,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TypeInterner;
+    use crate::construction::TypeInterner;
     use crate::recursion::RecursionResult;
     use crate::types::TypeParamInfo;
 

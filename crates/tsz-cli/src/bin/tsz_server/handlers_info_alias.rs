@@ -15,7 +15,7 @@ use tsz::lsp::hover::HoverProvider;
 use tsz::lsp::position::LineMap;
 use tsz::parser::node::NodeAccess;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 use super::handlers_info::ParsedFileContext;
 

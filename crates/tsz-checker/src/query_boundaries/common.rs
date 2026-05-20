@@ -5,7 +5,7 @@ use tsz_solver::{
 };
 
 #[allow(unused_imports)]
-pub(crate) use tsz_solver::TypeInterner;
+pub(crate) use tsz_solver::construction::TypeInterner;
 pub(crate) use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 pub(crate) use tsz_solver::judge::{DefaultJudge, Judge, JudgeConfig};
 pub(crate) use tsz_solver::narrowing::OptionalPropertyChainKey;

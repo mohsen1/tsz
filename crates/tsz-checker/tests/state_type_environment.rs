@@ -1,6 +1,7 @@
 use super::*;
+use tsz_solver::DefId;
 use tsz_solver::construction::QueryDatabase;
-use tsz_solver::{DefId, TypeInterner};
+use tsz_solver::construction::TypeInterner;
 
 #[test]
 fn classifies_and_extracts_environment_resolution_shapes() {

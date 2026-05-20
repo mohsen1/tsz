@@ -1,8 +1,8 @@
 use super::*;
 use crate::SubtypeFailureReason;
-use crate::TypeInterner;
 use crate::caches::db::QueryDatabase;
 use crate::computation::TypeEnvironment;
+use crate::construction::TypeInterner;
 use crate::def::DefId;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::{

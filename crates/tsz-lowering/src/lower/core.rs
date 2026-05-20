@@ -2573,7 +2573,7 @@ mod constructor_parity_tests {
     //! field that is not a resolver. These tests fail the build if a future
     //! change drifts one constructor's defaults away from the rest.
     use super::*;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     fn assert_invariant_defaults(lowering: &TypeLowering<'_>) {
         // Caches/shared state must always start fresh.

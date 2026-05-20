@@ -1181,7 +1181,7 @@ mod tests {
     #[test]
     fn resolve_lazy_raw_symbol_fallback_redirects_to_real_def() {
         let mut env = TypeEnvironment::new();
-        let interner = crate::TypeInterner::new();
+        let interner = crate::construction::TypeInterner::new();
 
         let raw_symbol = SymbolRef(7);
         let real_def = DefId(42);
@@ -1199,7 +1199,7 @@ mod tests {
     #[test]
     fn resolve_lazy_raw_symbol_fallback_preserves_class_instance_type() {
         let mut env = TypeEnvironment::new();
-        let interner = crate::TypeInterner::new();
+        let interner = crate::construction::TypeInterner::new();
 
         let raw_symbol = SymbolRef(7);
         let real_def = DefId(42);

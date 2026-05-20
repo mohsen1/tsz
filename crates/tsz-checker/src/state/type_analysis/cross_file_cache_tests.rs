@@ -3,8 +3,9 @@ use crate::context::{CheckerContext, CheckerOptions};
 use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_parser::parser::NodeArena;
+use tsz_solver::TypeParamInfo;
+use tsz_solver::construction::TypeInterner;
 use tsz_solver::def::DefinitionStore;
-use tsz_solver::{TypeInterner, TypeParamInfo};
 
 fn cache_test_state<'a>(
     arena: &'a NodeArena,

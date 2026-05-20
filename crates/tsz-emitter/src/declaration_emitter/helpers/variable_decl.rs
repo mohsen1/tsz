@@ -1382,7 +1382,7 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     fn enum_member_literal_initializer_value(
-        interner: &tsz_solver::TypeInterner,
+        interner: &tsz_solver::construction::TypeInterner,
         type_id: tsz_solver::types::TypeId,
     ) -> Option<tsz_solver::types::LiteralValue> {
         let (_def_id, member_type) = tsz_solver::visitor::enum_components(interner, type_id)?;

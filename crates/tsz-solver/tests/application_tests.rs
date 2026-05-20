@@ -1,6 +1,6 @@
 use super::*;
-use crate::TypeInterner;
 use crate::construction::TypeDatabase;
+use crate::construction::TypeInterner;
 use crate::relations::subtype::NoopResolver;
 use crate::relations::subtype::TypeResolver;
 use crate::type_queries::get_object_shape;

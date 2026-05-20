@@ -2477,8 +2477,9 @@ mod tests {
     use crate::state::CheckerState;
     use tsz_binder::BinderState;
     use tsz_parser::parser::NodeArena;
+    use tsz_solver::TypeParamInfo;
     use tsz_solver::construction::QueryDatabase;
-    use tsz_solver::{TypeInterner, TypeParamInfo};
+    use tsz_solver::construction::TypeInterner;
 
     #[test]
     fn shared_array_resolution_reuses_registered_base_and_params() {

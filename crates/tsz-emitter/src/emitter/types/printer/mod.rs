@@ -6,7 +6,7 @@
 use tsz_binder::{SymbolArena, SymbolId};
 use tsz_common::interner::Atom;
 use tsz_parser::parser::node::NodeArena;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 use crate::type_cache_view::TypeCacheView;
 

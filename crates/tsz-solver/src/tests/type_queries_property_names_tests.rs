@@ -1,8 +1,9 @@
+use crate::construction::TypeInterner;
 use crate::type_queries::{
     collect_homomorphic_source_property_infos, collect_property_name_atoms_for_diagnostics,
     keyof_object_properties,
 };
-use crate::{PropertyInfo, TypeId, TypeInterner, Visibility};
+use crate::{PropertyInfo, TypeId, Visibility};
 
 fn object_with_property(interner: &TypeInterner, name: &str) -> TypeId {
     interner.object(vec![PropertyInfo {

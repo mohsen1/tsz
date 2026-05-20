@@ -2005,7 +2005,7 @@ fn extract_contextual_type_params_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TypeInterner;
+    use crate::construction::TypeInterner;
     use crate::types::TupleElement;
 
     #[test]
