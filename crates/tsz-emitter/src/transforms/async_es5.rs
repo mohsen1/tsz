@@ -304,12 +304,28 @@ impl<'a> AsyncES5Emitter<'a> {
         while let Some(IRNode::ExpressionStatement(expr)) = first_case.statements.first() {
             let directive = match expr.as_ref() {
                 IRNode::StringLiteral(text) | IRNode::RawStringLiteral(text) => text.to_string(),
+                IRNode::Raw(text) => {
+                    let Some(text) = Self::raw_string_directive_text(text) else {
+                        break;
+                    };
+                    text
+                }
                 _ => break,
             };
             directives.push(directive);
             first_case.statements.remove(0);
         }
         directives
+    }
+
+    fn raw_string_directive_text(text: &str) -> Option<String> {
+        let trimmed = text.trim();
+        let bytes = trimmed.as_bytes();
+        let quote = bytes.first().copied()?;
+        if !matches!(quote, b'\'' | b'"') || bytes.last().copied() != Some(quote) {
+            return None;
+        }
+        Some(trimmed[1..trimmed.len() - 1].to_string())
     }
 
     /// Emit a complete async function transformation
