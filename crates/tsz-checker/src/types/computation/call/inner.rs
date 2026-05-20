@@ -9,137 +9,18 @@ use crate::query_boundaries::common::ContextualTypeContext;
 use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
-use std::fmt::Write;
 use tracing::trace;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{FunctionShape, ParamInfo, TypeId, TypeParamInfo};
+use tsz_solver::TypeId;
 
 use super::super::call_result::CallResultContext;
 use super::super::complex::is_contextually_sensitive;
 use super::post_generic::PostGenericCallDiagnostics;
 
 impl<'a> CheckerState<'a> {
-    fn freshen_contextual_signature_shape_for_inference(
-        &mut self,
-        shape: FunctionShape,
-        contextual_type: Option<TypeId>,
-        arg_types: &[TypeId],
-        generic_inference_arg_types: &[TypeId],
-    ) -> FunctionShape {
-        if shape.type_params.is_empty() {
-            return shape;
-        }
-
-        let collides = shape.type_params.iter().any(|tp| {
-            arg_types
-                .iter()
-                .copied()
-                .chain(generic_inference_arg_types.iter().copied())
-                .chain(contextual_type)
-                .flat_map(|ty| {
-                    crate::query_boundaries::common::collect_referenced_types(self.ctx.types, ty)
-                })
-                .any(|referenced| {
-                    crate::query_boundaries::common::type_param_info(self.ctx.types, referenced)
-                        .is_some_and(|referenced_tp| referenced_tp.name == tp.name)
-                })
-        });
-        if !collides {
-            return shape;
-        }
-
-        // TypeSubstitution is name-keyed, so freshen the callee's local type
-        // parameters before matching its return type against outer generic
-        // context that happens to use the same parameter names.
-        let mut substitution = crate::query_boundaries::common::TypeSubstitution::new();
-        let mut renamed_type_params = Vec::with_capacity(shape.type_params.len());
-        let mut name_buf = String::with_capacity(64);
-        for (index, tp) in shape.type_params.iter().enumerate() {
-            name_buf.clear();
-            write!(
-                name_buf,
-                "__contextual_call_shape_{}_tp_{}",
-                shape.return_type.0, index
-            )
-            .expect("write to String is infallible");
-            let fresh_name = self.ctx.types.intern_string(&name_buf);
-            let fresh_type = self.ctx.types.factory().type_param(TypeParamInfo {
-                name: fresh_name,
-                constraint: None,
-                default: None,
-                is_const: tp.is_const,
-            });
-            substitution.insert(tp.name, fresh_type);
-            renamed_type_params.push(TypeParamInfo {
-                name: fresh_name,
-                constraint: tp.constraint.map(|constraint| {
-                    crate::query_boundaries::common::instantiate_type(
-                        self.ctx.types,
-                        constraint,
-                        &substitution,
-                    )
-                }),
-                default: tp.default.map(|default| {
-                    crate::query_boundaries::common::instantiate_type(
-                        self.ctx.types,
-                        default,
-                        &substitution,
-                    )
-                }),
-                is_const: tp.is_const,
-            });
-        }
-
-        FunctionShape {
-            params: shape
-                .params
-                .iter()
-                .map(|param| ParamInfo {
-                    name: param.name,
-                    type_id: crate::query_boundaries::common::instantiate_type(
-                        self.ctx.types,
-                        param.type_id,
-                        &substitution,
-                    ),
-                    optional: param.optional,
-                    rest: param.rest,
-                })
-                .collect(),
-            return_type: crate::query_boundaries::common::instantiate_type(
-                self.ctx.types,
-                shape.return_type,
-                &substitution,
-            ),
-            this_type: shape.this_type.map(|this_type| {
-                crate::query_boundaries::common::instantiate_type(
-                    self.ctx.types,
-                    this_type,
-                    &substitution,
-                )
-            }),
-            type_params: renamed_type_params,
-            type_predicate: shape
-                .type_predicate
-                .map(|predicate| tsz_solver::TypePredicate {
-                    asserts: predicate.asserts,
-                    target: predicate.target,
-                    type_id: predicate.type_id.map(|type_id| {
-                        crate::query_boundaries::common::instantiate_type(
-                            self.ctx.types,
-                            type_id,
-                            &substitution,
-                        )
-                    }),
-                    parameter_index: predicate.parameter_index,
-                }),
-            is_constructor: shape.is_constructor,
-            is_method: shape.is_method,
-        }
-    }
-
     pub(crate) fn get_type_of_call_expression_inner(
         &mut self,
         idx: NodeIndex,
