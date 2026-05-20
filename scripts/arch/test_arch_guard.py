@@ -1593,6 +1593,126 @@ class ArchGuardQueryBoundaryModuleAllowanceTests(unittest.TestCase):
             )
 
 
+class ArchGuardWorkspaceClippyAllowTests(unittest.TestCase):
+    """Cover the #9446 ratchet for workspace-wide Clippy suppression attributes.
+
+    The guard detects any `#[allow(clippy::...)]`, `#![allow(clippy::...)]`, or
+    `#[expect(clippy::...)]` attribute line in Rust sources under `crates/`.
+    Comment lines are excluded.  The cap starts at the current inventory and
+    must decrease to zero as cleanup slices land.
+    """
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _make_tree(self, files: dict[str, str]) -> pathlib.Path:
+        tmp = tempfile.mkdtemp()
+        root = pathlib.Path(tmp)
+        for rel, content in files.items():
+            full = root / rel
+            full.parent.mkdir(parents=True, exist_ok=True)
+            full.write_text(content, encoding="utf-8")
+        return root
+
+    def test_flags_item_level_allow(self):
+        root = self._make_tree(
+            {"crates/tsz-foo/src/a.rs": "#[allow(clippy::too_many_arguments)]\n"}
+        )
+        hits = self.arch_guard.scan_workspace_clippy_allow_count([root / "crates"], 0)
+        self.assertEqual(len(hits), 2)
+        self.assertIn("clippy suppression #1", hits[0])
+        self.assertIn("total Clippy suppression", hits[1])
+
+    def test_flags_crate_level_allow(self):
+        root = self._make_tree(
+            {"crates/tsz-foo/src/lib.rs": "#![allow(clippy::missing_const_for_fn)]\n"}
+        )
+        hits = self.arch_guard.scan_workspace_clippy_allow_count([root / "crates"], 0)
+        self.assertEqual(len(hits), 2)
+
+    def test_flags_expect_variant(self):
+        root = self._make_tree(
+            {"crates/tsz-foo/src/a.rs": "#[expect(clippy::cast_sign_loss)]\n"}
+        )
+        hits = self.arch_guard.scan_workspace_clippy_allow_count([root / "crates"], 0)
+        self.assertEqual(len(hits), 2)
+
+    def test_flags_mixed_allow_with_clippy(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-foo/src/a.rs": (
+                    "#[allow(dead_code, clippy::match_same_arms)]\n"
+                )
+            }
+        )
+        hits = self.arch_guard.scan_workspace_clippy_allow_count([root / "crates"], 0)
+        self.assertEqual(len(hits), 2)
+
+    def test_ignores_comment_lines(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-foo/src/a.rs": (
+                    "// #[allow(clippy::too_many_arguments)]\n"
+                    "fn foo() {}\n"
+                )
+            }
+        )
+        hits = self.arch_guard.scan_workspace_clippy_allow_count([root / "crates"], 0)
+        self.assertEqual(hits, [])
+
+    def test_ignores_non_clippy_allow(self):
+        root = self._make_tree(
+            {"crates/tsz-foo/src/a.rs": "#[allow(dead_code)]\n"}
+        )
+        hits = self.arch_guard.scan_workspace_clippy_allow_count([root / "crates"], 0)
+        self.assertEqual(hits, [])
+
+    def test_passes_when_at_or_under_cap(self):
+        root = self._make_tree(
+            {
+                "crates/a/src/a.rs": "#[allow(clippy::too_many_arguments)]\n",
+                "crates/b/src/b.rs": "#[allow(clippy::match_same_arms)]\n",
+            }
+        )
+        self.assertEqual(
+            self.arch_guard.scan_workspace_clippy_allow_count([root / "crates"], 2),
+            [],
+        )
+        self.assertEqual(
+            self.arch_guard.scan_workspace_clippy_allow_count([root / "crates"], 3),
+            [],
+        )
+
+    def test_includes_test_files(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-foo/tests/foo_tests.rs": (
+                    "#[allow(clippy::assertions_on_constants)]\n"
+                )
+            }
+        )
+        hits = self.arch_guard.scan_workspace_clippy_allow_count([root / "crates"], 0)
+        self.assertEqual(len(hits), 2, f"expected 2 hits (1 match + summary): {hits!r}")
+
+    def test_check_is_registered(self):
+        names = [
+            entry[0] for entry in self.arch_guard.WORKSPACE_CLIPPY_ALLOW_COUNT_CHECKS
+        ]
+        self.assertTrue(any("#9446" in name for name in names))
+
+    def test_real_count_passes_at_pinned_cap(self):
+        for entry in self.arch_guard.WORKSPACE_CLIPPY_ALLOW_COUNT_CHECKS:
+            name, search_roots, max_count = entry
+            hits = self.arch_guard.scan_workspace_clippy_allow_count(
+                search_roots, max_count
+            )
+            self.assertEqual(
+                hits,
+                [],
+                f"{name}: cap is too tight — guard fires at the live count.",
+            )
+
+
 class ArchGuardSnapshotRollbackTests(unittest.TestCase):
     """Cover `SNAPSHOT_ROLLBACK_FILE_COUNT_CHECKS` +
     `scan_snapshot_rollback_file_count`.
