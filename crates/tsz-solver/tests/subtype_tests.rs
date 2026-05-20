@@ -27068,3 +27068,28 @@ fn test_unconstrained_type_param_not_assignable_to_never() {
         "Unconstrained T should NOT be assignable to never"
     );
 }
+
+#[test]
+fn global_function_intrinsic_assignability_is_one_way() {
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let specific_fn = interner.function(FunctionShape {
+        params: vec![ParamInfo::unnamed(TypeId::NUMBER)],
+        this_type: None,
+        return_type: TypeId::STRING,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    assert!(
+        checker.is_subtype_of(specific_fn, TypeId::FUNCTION),
+        "specific callable values assign to the global Function type"
+    );
+    assert!(
+        !checker.is_subtype_of(TypeId::FUNCTION, specific_fn),
+        "the global Function type does not assign to a specific call signature"
+    );
+}
