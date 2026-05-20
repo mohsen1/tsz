@@ -386,6 +386,14 @@ try {
   assert.match(charts, /type-challenges solutions project/);
 
   const compatibilityDashboard = getProjectCompatibilityDashboard();
+  assert.match(compatibilityDashboard, /class="compat-table"/);
+  assert.match(compatibilityDashboard, /data-compat-sort="exit"/);
+  assert.match(compatibilityDashboard, /data-compat-sort="files"/);
+  assert.match(compatibilityDashboard, /data-compat-sort="peak"/);
+  assert.match(compatibilityDashboard, /leftRaw === "" \|\| !Number\.isFinite\(leftNumber\)/);
+  assert.match(compatibilityDashboard, /utility-types[\s\S]*exit success/);
+  assert.match(compatibilityDashboard, /utility-types[\s\S]*10 files/);
+  assert.match(compatibilityDashboard, /utility-types[\s\S]*100 MiB peak/);
   assert.match(compatibilityDashboard, /type-challenges solutions[\s\S]*compat-state green/);
   assert.doesNotMatch(compatibilityDashboard, /type-challenges assertions/);
 

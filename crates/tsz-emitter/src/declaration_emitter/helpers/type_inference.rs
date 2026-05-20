@@ -694,6 +694,12 @@ impl<'a> DeclarationEmitter<'a> {
             return type_text;
         }
 
+        if self.initializer_is_new_expression(initializer)
+            && let Some(type_text) = self.construct_return_new_expression_type_text(initializer)
+        {
+            return type_text;
+        }
+
         if self.object_literal_prefers_syntax_type_text(initializer)
             && let Some(type_text) =
                 self.rewrite_object_literal_computed_member_type_text(initializer, type_id)

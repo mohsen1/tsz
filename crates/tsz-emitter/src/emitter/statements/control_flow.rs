@@ -893,10 +893,10 @@ impl<'a> Printer<'a> {
         body: NodeIndex,
         exports: &[(String, String)],
     ) {
-        let prev_loop_body_missing_initializer_function_depth =
-            self.loop_body_missing_initializer_function_depth;
+        let prev_lexical_block_missing_initializer_function_depth =
+            self.lexical_block_missing_initializer_function_depth;
         if self.ctx.target_es5 {
-            self.loop_body_missing_initializer_function_depth = Some(self.function_scope_depth);
+            self.lexical_block_missing_initializer_function_depth = Some(self.function_scope_depth);
         }
         self.write(" {");
         self.write_line();
@@ -914,15 +914,15 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.decrease_indent();
         self.write("}");
-        self.loop_body_missing_initializer_function_depth =
-            prev_loop_body_missing_initializer_function_depth;
+        self.lexical_block_missing_initializer_function_depth =
+            prev_lexical_block_missing_initializer_function_depth;
     }
 
     fn emit_loop_body(&mut self, body: NodeIndex) {
-        let prev_loop_body_missing_initializer_function_depth =
-            self.loop_body_missing_initializer_function_depth;
+        let prev_lexical_block_missing_initializer_function_depth =
+            self.lexical_block_missing_initializer_function_depth;
         if self.ctx.target_es5 {
-            self.loop_body_missing_initializer_function_depth = Some(self.function_scope_depth);
+            self.lexical_block_missing_initializer_function_depth = Some(self.function_scope_depth);
         }
         let is_block = self
             .arena
@@ -943,8 +943,8 @@ impl<'a> Printer<'a> {
             }
             self.decrease_indent();
         }
-        self.loop_body_missing_initializer_function_depth =
-            prev_loop_body_missing_initializer_function_depth;
+        self.lexical_block_missing_initializer_function_depth =
+            prev_lexical_block_missing_initializer_function_depth;
     }
 
     pub(in crate::emitter) fn emit_return_statement(&mut self, node: &Node) {
@@ -1466,10 +1466,10 @@ impl<'a> Printer<'a> {
         }
 
         self.write("do");
-        let prev_loop_body_missing_initializer_function_depth =
-            self.loop_body_missing_initializer_function_depth;
+        let prev_lexical_block_missing_initializer_function_depth =
+            self.lexical_block_missing_initializer_function_depth;
         if self.ctx.target_es5 {
-            self.loop_body_missing_initializer_function_depth = Some(self.function_scope_depth);
+            self.lexical_block_missing_initializer_function_depth = Some(self.function_scope_depth);
         }
         let body_is_block = self
             .arena
@@ -1492,8 +1492,8 @@ impl<'a> Printer<'a> {
             self.decrease_indent();
             self.write_line();
         }
-        self.loop_body_missing_initializer_function_depth =
-            prev_loop_body_missing_initializer_function_depth;
+        self.lexical_block_missing_initializer_function_depth =
+            prev_lexical_block_missing_initializer_function_depth;
         self.write("while (");
         self.emit(loop_stmt.condition);
         // Map closing `)` — scan backward from node end (past `;`)
