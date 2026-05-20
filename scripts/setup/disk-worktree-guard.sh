@@ -71,6 +71,11 @@ prune_incremental() {
     for tdir in "$wt/target" "$wt/.target" "$wt/.target-bench"; do
       [[ -d "$tdir" ]] || continue
       while IFS= read -r inc; do
+        stale="$(
+          find "$inc" -mindepth 1 -maxdepth 1 -type d -mtime +7 \
+            -print -quit 2>/dev/null || true
+        )"
+        [[ -n "$stale" ]] || continue
         find "$inc" -mindepth 1 -maxdepth 1 -type d -mtime +7 \
           -exec rm -rf {} + 2>/dev/null || true
         pruned=1
