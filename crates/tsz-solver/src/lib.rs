@@ -245,9 +245,6 @@ pub(crate) use evaluation::evaluate::{
     TypeEvaluator, evaluate_conditional, evaluate_index_access, evaluate_index_access_with_options,
     evaluate_keyof, evaluate_mapped, evaluate_type, evaluate_type_with_request,
 };
-pub use instantiation::instantiate::{TypeSubstitution, instantiate_type_with_request};
-pub use instantiation::request::{InstantiationOptions, InstantiationRequest};
-pub use instantiation::result::InstantiationResult;
 #[cfg(test)]
 pub(crate) use operations::compound_assignment::{
     fallback_compound_assignment_result, is_compound_assignment_operator,
@@ -256,10 +253,6 @@ pub(crate) use operations::compound_assignment::{
 #[cfg(test)]
 pub(crate) use operations::{
     AssignabilityChecker, BinaryOpEvaluator, BinaryOpResult, CallEvaluator, CallResult,
-    MAX_CONSTRAINT_RECURSION_DEPTH, get_contextual_signature_cached_with_compat_checker,
-    get_contextual_signature_for_arity_cached_with_compat_checker,
-    get_contextual_signature_for_arity_with_compat_checker,
-    get_contextual_signature_with_compat_checker,
 };
 pub use type_queries::is_const_type_variable;
 pub use types::{
