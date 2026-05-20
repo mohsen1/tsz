@@ -14,10 +14,11 @@
 //! All functions take `TypeId` as input and return structured results,
 //! making them pure logic that can be unit tested independently.
 
+use crate::construction::{QueryDatabase, TypeDatabase};
 use crate::narrowing::NullishFilter;
 use crate::types::TypeListId;
 use crate::visitor::TypeVisitor;
-use crate::{IntrinsicKind, LiteralValue, QueryDatabase, TypeData, TypeDatabase, TypeId};
+use crate::{IntrinsicKind, LiteralValue, TypeData, TypeId};
 use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 

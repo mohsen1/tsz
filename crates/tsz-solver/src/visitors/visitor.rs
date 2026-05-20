@@ -38,9 +38,10 @@
 //! let is_object = is_type_kind(&types, type_id, TypeKind::Object);
 //! ```
 
+use crate::construction::TypeDatabase;
 use crate::def::DefId;
 use crate::types::{IntrinsicKind, StringIntrinsicKind, TupleElement, TypeParamInfo};
-use crate::{LiteralValue, SymbolRef, TypeData, TypeDatabase, TypeId};
+use crate::{LiteralValue, SymbolRef, TypeData, TypeId};
 use rustc_hash::FxHashSet;
 use std::cell::RefCell;
 

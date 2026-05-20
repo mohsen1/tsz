@@ -23,11 +23,28 @@ MIN_FREE_GB="${TSZ_DISK_MIN_FREE_GB:-20}"
 INACTIVE_HOURS="${TSZ_WORKTREE_INACTIVE_HOURS:-4}"
 AUTO_PRUNE=false
 
+usage() {
+  cat <<'EOF'
+Compact disk/worktree guard for agents.
+
+This intentionally avoids broad `du` reports. Use it before creating a new
+worktree or before starting a large build when disk pressure is suspected.
+
+Usage:
+  scripts/setup/disk-worktree-guard.sh
+  scripts/setup/disk-worktree-guard.sh --auto-prune
+
+Environment:
+  TSZ_DISK_MIN_FREE_GB        minimum free space before warning/pruning (default: 20)
+  TSZ_WORKTREE_INACTIVE_HOURS minimum age for reuse candidates (default: 4)
+EOF
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --auto-prune) AUTO_PRUNE=true; shift ;;
-    -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \?//'; exit 0 ;;
-    *) echo "Unknown option: $1" >&2; exit 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown option: $1 (try --help)" >&2; exit 2 ;;
   esac
 done
 

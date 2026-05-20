@@ -285,6 +285,12 @@ them as TSZ repo skills.
   stable across the session.
 - **Sign your work.** Every PR body and GitHub issue you create or comment on
   must include your AgentName so humans (and other agents) can tell who did it.
+- **PR bodies are mandatory coordination state, not paperwork.** Never open or
+  update a PR with `--fill` alone, an empty body, a stale template, or placeholder
+  sections. Use a real body file/heredoc and fill every template section before
+  marking the PR ready. At minimum every PR body must contain:
+  `AgentName`, `Track`, `Invariant`, `Scope`, `Project Corpus Impact`,
+  `Verification`, and `Coordination Notes`.
 - **Comment when changing WIP state.** Adding or re-adding the `WIP` label,
   adding a `[WIP]` title prefix, or converting a PR back to draft because it is
   blocked must be paired with a signed PR comment. Include the reason for the
@@ -298,6 +304,12 @@ them as TSZ repo skills.
   For compiler, benchmark, emit, checker, solver, parser, binder, LSP, WASM, or
   CI changes, name the affected project row when known, name the bug family, and
   cite the local command, CI job, issue, or artifact used as evidence.
+- **Verify the body GitHub actually stored.** Immediately after creating or
+  materially editing a PR, run `gh pr view <number> --json body` (or equivalent)
+  and confirm the required sections are present in the remote body. If any
+  section is missing, update the PR body before pushing more work, rerunning CI,
+  or marking the PR ready. If `project-corpus-pr-body` fails, fix the PR body
+  first; do not rerun failed jobs until the remote body passes this checklist.
 - **Acknowledge code reviews.** When your PR receives a substantive code review,
   especially from `CodeReviewer`, react to the review comment/thread after
   reading it and leave a brief PR comment acknowledging the review with your
@@ -377,20 +389,23 @@ recovery. There is no session picker, campaign loop, or random-pick script.
 
 ## 20.75) Memory-Guarded Execution (`scripts/safe-run.sh`)
 - **All long-running or memory-intensive commands MUST be wrapped with `scripts/safe-run.sh`.**
-- This includes: full conformance runs, `cargo nextest run` (full suite), `cargo build --release`, and any multi-worker test runner.
+- This includes: `cargo nextest run` (full suite), `cargo build --release`, and any multi-worker test runner.
+- CI-only full conformance/snapshot jobs are also memory-guarded when run by
+  maintainers, but this section does not override the local "never run full
+  conformance" rule above.
 - The wrapper monitors the process tree's total RSS and kills it if it exceeds the limit (default: 75% of system RAM).
 - Overhead is negligible — one `ps` call every 5 seconds.
 - Quick, filtered runs (`--filter`, `--max`) and `cargo check` generally don't need the wrapper.
 
 ```bash
-# Wrap any heavy command
+# Wrap heavy allowed local commands
 scripts/safe-run.sh cargo nextest run
-scripts/safe-run.sh ./scripts/conformance/conformance.sh run
-scripts/safe-run.sh ./scripts/conformance/conformance.sh snapshot
+scripts/safe-run.sh cargo build --release
+scripts/safe-run.sh ./scripts/conformance/conformance.sh run --filter mappedTypeRelationships --verbose
 
 # Custom limit (absolute MB or percentage of RAM)
 scripts/safe-run.sh --limit 8192 -- cargo nextest run --cargo-profile release
-scripts/safe-run.sh --limit 50% -- ./scripts/conformance/conformance.sh run
+scripts/safe-run.sh --limit 50% -- ./scripts/conformance/conformance.sh run --filter mappedTypeRelationships
 
 # Debug memory usage
 scripts/safe-run.sh --verbose -- cargo build

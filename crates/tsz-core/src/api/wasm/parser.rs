@@ -28,7 +28,7 @@ use crate::lsp::{
 };
 use crate::parser;
 use crate::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 /// High-performance parser using Node architecture (16 bytes/node).
 /// This is the optimized path for Phase 8 test suite evaluation.

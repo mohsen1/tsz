@@ -541,7 +541,7 @@ impl TypeInterner {
     }
 
     pub(crate) fn intersection_has_disjoint_unit_values(&self, members: &[TypeId]) -> bool {
-        let mut seen = Vec::new();
+        let mut seen = Vec::with_capacity(members.len());
 
         for &member in members {
             let Some(key) = self.get_unit_value_key(member) else {
@@ -1762,7 +1762,7 @@ impl TypeInterner {
         // Find all union members in the intersection and calculate total combinations.
         // Two-pass approach: first compute the full cross-product size to check TS2590,
         // then apply the conservative distribution guard.
-        let mut union_indices = Vec::new();
+        let mut union_indices = Vec::with_capacity(flat.len());
         let mut total_combinations: usize = 1;
 
         for (i, &id) in flat.iter().enumerate() {
@@ -1819,7 +1819,8 @@ impl TypeInterner {
             let union_members = self.type_list(union_members);
 
             // For each existing combination, create new combinations with each union member
-            let mut new_combinations = Vec::new();
+            let mut new_combinations =
+                Vec::with_capacity(combinations.len().saturating_mul(union_members.len()));
             for combination in &combinations {
                 for &union_member in union_members.iter() {
                     let mut new_combination = combination.clone();

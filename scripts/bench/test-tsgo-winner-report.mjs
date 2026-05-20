@@ -36,6 +36,10 @@ withTempDir((dir) => {
     benchmark_runner: "scripts/bench/bench-vs-tsgo.sh",
     quick_mode: true,
     filter: "project|single",
+    measurement_profile: {
+      mode: "release-pgo",
+      generated_at: "2026-05-20T00:00:00.000Z",
+    },
     results: [
       {
         name: "ts-toolbelt-project",
@@ -56,6 +60,12 @@ withTempDir((dir) => {
           files_reached: 242,
           peak_memory_bytes: 734003200,
           semantic_owner_family: "recursive type evaluation pressure",
+        },
+        attribution_artifact: {
+          path: "artifacts/perf/ts-toolbelt-project-attribution.json",
+          generated_at: "2026-05-20T00:05:00.000Z",
+          mode: "attribution",
+          dominant_subsystem: "solver:recursive-evaluation",
         },
       },
       {
@@ -141,7 +151,14 @@ withTempDir((dir) => {
   assert.equal(report.totals.project_green_tsgo_winners, 2);
   assert.equal(report.totals.green_tsgo_winners_with_closure, 2);
   assert.deepEqual(report.totals.missing_loss_closure_rows, ["single-file-loss"]);
+  assert.equal(report.totals.green_tsgo_winners_with_attribution, 1);
+  assert.deepEqual(report.totals.missing_attribution_rows, ["single-file-loss", "vite-vanilla-ts-app"]);
   assert.equal(report.totals.incomplete_compat_excluded, 0);
+  assert.deepEqual(report.measurement_profile, {
+    present: true,
+    mode: "release-pgo",
+    warning: null,
+  });
   assert.equal(report.worst.name, "ts-toolbelt-project");
   assert.equal(report.worst.exit_class, "exit success");
   assert.equal(report.worst.files_reached, 242);
@@ -153,11 +170,29 @@ withTempDir((dir) => {
     issue: 8356,
     url: "https://github.com/mohsen1/tsz/issues/8356",
   });
+  assert.deepEqual(report.worst.attribution_status, {
+    present: true,
+    path: "artifacts/perf/ts-toolbelt-project-attribution.json",
+    url: null,
+    generated_at: "2026-05-20T00:05:00.000Z",
+    mode: "attribution",
+    dominant_subsystem: "solver:recursive-evaluation",
+    warning: null,
+  });
   assert.deepEqual(
     report.rows.map((row) => row.name),
     ["ts-toolbelt-project", "vite-vanilla-ts-app", "single-file-loss"],
   );
   assert.equal(report.rows[1].loss_closure.issue, 7378);
+  assert.deepEqual(report.rows[1].attribution_status, {
+    present: false,
+    path: null,
+    url: null,
+    generated_at: null,
+    mode: null,
+    dominant_subsystem: null,
+    warning: "attribution artifact missing",
+  });
   assert.equal(report.rows[2].loss_closure, null);
   assert.deepEqual(report.by_owner_family, [
     {
@@ -220,6 +255,13 @@ withTempDir((dir) => {
   assert.equal(report.totals.project_green_tsgo_winners, 1);
   assert.equal(report.totals.green_tsgo_winners_with_closure, 0);
   assert.deepEqual(report.totals.missing_loss_closure_rows, ["complete-project", "single-file-win"]);
+  assert.equal(report.totals.green_tsgo_winners_with_attribution, 0);
+  assert.deepEqual(report.totals.missing_attribution_rows, ["complete-project", "single-file-win"]);
+  assert.deepEqual(report.measurement_profile, {
+    present: false,
+    mode: null,
+    warning: "measurement_profile missing",
+  });
   // 6 rows excluded due to missing phase/exit metadata or artifact_missing
   assert.equal(report.totals.incomplete_compat_excluded, 6);
   assert.deepEqual(

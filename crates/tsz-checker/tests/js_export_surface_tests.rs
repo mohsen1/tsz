@@ -14,7 +14,7 @@ use tsz_checker::context::CheckerOptions;
 use tsz_checker::module_resolution::build_module_resolution_maps;
 use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 /// Set up a two-file CommonJS checker test (producer JS, consumer TS).
 /// Returns diagnostics from checking the consumer file.

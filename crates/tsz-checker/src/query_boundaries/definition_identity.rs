@@ -1,6 +1,7 @@
 //! Boundary aliases for stable solver definition identity.
 
-use tsz_solver::{TypeDatabase, TypeId};
+use tsz_solver::TypeId;
+use tsz_solver::construction::TypeDatabase;
 
 pub(crate) type DefId = tsz_solver::def::DefId;
 

@@ -771,12 +771,15 @@ impl<'a> TypePrinter<'a> {
             // Parenthesize function/constructor types and conditional types in union position.
             // Conditional types need parens because `extends` binds more tightly than `|`:
             // `A | B extends C ? D : E` parses as `(A | B) extends C ? D : E`.
-            if self.type_needs_parentheses_in_composition(type_id)
+            let part = if self.type_needs_parentheses_in_composition(type_id)
                 || visitor::conditional_type_id(self.interner, type_id).is_some()
             {
-                parts.push(format!("({s})"));
+                format!("({s})")
             } else {
-                parts.push(s);
+                s.clone()
+            };
+            if !parts.iter().any(|(_, existing)| existing == &part) {
+                parts.push((s, part));
             }
         }
 
@@ -784,9 +787,16 @@ impl<'a> TypePrinter<'a> {
         if parts.is_empty() {
             return "any".to_string();
         }
+        if parts.len() == 1 {
+            return parts.remove(0).0;
+        }
 
         // Join with " | "
-        parts.join(" | ")
+        parts
+            .into_iter()
+            .map(|(_, part)| part)
+            .collect::<Vec<_>>()
+            .join(" | ")
     }
 
     pub(crate) fn try_print_enum_member_union_as_parent(&self, types: &[TypeId]) -> Option<String> {
@@ -2621,7 +2631,7 @@ impl<'a> TypePrinter<'a> {
 
 #[cfg(test)]
 mod tests {
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
     use tsz_solver::types::{TupleElement, TypeId, TypeParamInfo};
 
     use super::TypePrinter;

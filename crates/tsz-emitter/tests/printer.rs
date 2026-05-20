@@ -1359,6 +1359,54 @@ fn system_exported_object_binding_bracket_access_does_not_add_numeric_dot() {
 }
 
 #[test]
+fn trailing_decimal_numeric_follow_recovery_keeps_call_tail() {
+    let source = "var test = 2.toString();\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("var test = 2., toString;\n();"),
+        "Numeric-follow recovery should preserve the identifier and call tail like tsc.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var test = 2.;"),
+        "Recovered numeric-follow initializer must not drop the identifier and call tail.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn trailing_decimal_access_spacing_still_disambiguates_property_dot() {
+    let source = "var test3 = 3 .toString();\nvar test11 = 3. /* comment */ .toString();\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("var test3 = 3..toString();"),
+        "Integer literal property access separated by whitespace still needs a double dot.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var test11 = 3. /* comment */.toString();"),
+        "Trailing-decimal literals with preserved comments should keep one property dot.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn trailing_decimal_remove_comments_keeps_newline_separator() {
+    let source = "var test15 = 3.\n    // comment\n    .toString();\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            remove_comments: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("var test15 = 3.\n    .toString();"),
+        "Removing comments should preserve the newline after a trailing-decimal literal before property access.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn system_reexported_namespace_folds_export_into_es2015_iife_tail() {
     let source = "namespace N { export const x = 1; }\nexport { N as Out };\n";
     let output = parse_lower_print(

@@ -810,19 +810,8 @@ impl<'a> Printer<'a> {
     }
 
     pub(in crate::emitter) fn is_simple_nullish_expression(&self, node_idx: NodeIndex) -> bool {
-        let Some(node) = self.arena.get(node_idx) else {
-            return false;
-        };
-
-        // Match tsc's isSimpleCopiableExpression: identifiers, keywords, and literals
-        // are all safe to repeat without side effects.
         // Note: tsc does NOT unwrap parenthesized expressions here.
-        node.is_identifier()
-            || (node.kind >= SyntaxKind::BreakKeyword as u16
-                && node.kind <= SyntaxKind::DeferKeyword as u16)
-            || node.is_numeric_literal()
-            || node.is_string_literal()
-            || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        crate::transforms::emit_utils::is_simple_copiable_expression(self.arena, node_idx)
     }
 
     /// Check if a token is a compound assignment operator (+=, -=, etc.).

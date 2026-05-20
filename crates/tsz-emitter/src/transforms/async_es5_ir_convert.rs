@@ -13,6 +13,22 @@ use tsz_scanner::SyntaxKind;
 use super::async_es5_ir::AsyncES5Transformer;
 
 impl<'a> AsyncES5Transformer<'a> {
+    pub(super) fn extract_hoisted_var_groups(
+        &self,
+        generator_body: &mut IRNode,
+    ) -> Vec<Vec<String>> {
+        let mut groups = Self::extract_and_remove_var_decl_groups(generator_body);
+        let lowering = self
+            .pending_lowering_hoists
+            .borrow_mut()
+            .drain(..)
+            .collect::<Vec<_>>();
+        if !lowering.is_empty() {
+            groups.push(lowering);
+        }
+        groups
+    }
+
     fn class_super_base_ir(&self) -> IRNode {
         if self.class_super_is_static {
             IRNode::id(self.class_super_name.clone())
@@ -216,6 +232,12 @@ impl<'a> AsyncES5Transformer<'a> {
 
             k if k == syntax_kind_ext::BINARY_EXPRESSION => {
                 if let Some(bin) = self.arena.get_binary_expr(node) {
+                    // ?? is ES2020; the state-machine path runs at ES5/ES2015,
+                    // so lower it inline before the operator reaches the IR
+                    // printer (which writes operators verbatim).
+                    if bin.operator_token == SyntaxKind::QuestionQuestionToken as u16 {
+                        return self.lower_nullish_coalescing_to_ir(bin.left, bin.right);
+                    }
                     let left = self.expression_to_ir(bin.left);
                     let right = self.expression_to_ir(bin.right);
                     let op = self.get_operator_text(bin.operator_token);
@@ -932,5 +954,57 @@ impl<'a> AsyncES5Transformer<'a> {
     /// Get operator text from a token kind
     pub fn get_operator_text(&self, op: u16) -> String {
         crate::transforms::emit_utils::operator_to_str(op).to_string()
+    }
+
+    /// Lower a nullish coalescing expression `left ?? right` to its
+    /// pre-ES2020 equivalent in IR form. The output shape mirrors tsc's
+    /// printer in `binary_downlevel.rs::emit_nullish_coalescing_expression`:
+    ///
+    /// - simple LHS (identifier / keyword / literal — safe to repeat
+    ///   without re-running side effects): `left !== null && left !== void 0
+    ///   ? left : right`.
+    /// - complex LHS: `(t = left) !== null && t !== void 0 ? t : right`,
+    ///   with `t` hoisted via `push_lowering_hoist` so the surrounding
+    ///   `transform_*` entry point declares it in the state-machine
+    ///   scope. Hoisting is required: the IR printer emits expressions
+    ///   one node at a time and has no place to inject a `var` decl
+    ///   inline.
+    pub(super) fn lower_nullish_coalescing_to_ir(
+        &self,
+        left_idx: NodeIndex,
+        right_idx: NodeIndex,
+    ) -> IRNode {
+        let right_ir = self.expression_to_ir(right_idx);
+        if crate::transforms::emit_utils::is_simple_copiable_expression(self.arena, left_idx) {
+            let left_ir = self.expression_to_ir(left_idx);
+            return Self::nullish_ternary(left_ir.clone(), left_ir.clone(), left_ir, right_ir);
+        }
+        let temp = self.generate_hoisted_temp();
+        self.push_lowering_hoist(temp.clone());
+        let left_ir = self.expression_to_ir(left_idx);
+        let assign_temp =
+            IRNode::Parenthesized(Box::new(IRNode::assign(IRNode::id(temp.clone()), left_ir)));
+        Self::nullish_ternary(
+            assign_temp,
+            IRNode::id(temp.clone()),
+            IRNode::id(temp),
+            right_ir,
+        )
+    }
+
+    fn nullish_ternary(
+        not_null_lhs: IRNode,
+        not_void_lhs: IRNode,
+        when_true: IRNode,
+        when_false: IRNode,
+    ) -> IRNode {
+        IRNode::ConditionalExpr {
+            condition: Box::new(IRNode::logical_and(
+                IRNode::binary(not_null_lhs, "!==", IRNode::NullLiteral),
+                IRNode::binary(not_void_lhs, "!==", IRNode::Undefined),
+            )),
+            when_true: Box::new(when_true),
+            when_false: Box::new(when_false),
+        }
     }
 }

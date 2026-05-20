@@ -16,7 +16,7 @@ use crate::checker::context::CheckerOptions;
 use crate::checker::state::CheckerState;
 use crate::parser::ParserState;
 use crate::test_fixtures::{merge_shared_lib_symbols, setup_lib_contexts};
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 // =============================================================================
 // Test Helpers

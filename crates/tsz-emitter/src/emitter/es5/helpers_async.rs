@@ -9,6 +9,8 @@ use super::helpers::ArraySegment;
 use crate::emitter::core::PropertyNameEmit;
 use crate::emitter::declarations::class::replace_identifier;
 use crate::transforms::emit_utils;
+use crate::transforms::ir::IRNode;
+use crate::transforms::ir_printer::IRPrinter;
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -169,9 +171,10 @@ impl<'a> Printer<'a> {
         inits
     }
 
-    fn es5_class_expression_has_instance_fields(
+    fn es5_class_expression_has_instance_field_where(
         &self,
         class_data: &tsz_parser::parser::node::ClassData,
+        name_filter: impl Fn(NodeIndex) -> bool,
     ) -> bool {
         class_data.members.nodes.iter().copied().any(|member_idx| {
             let Some(member_node) = self.arena.get(member_idx) else {
@@ -183,16 +186,38 @@ impl<'a> Printer<'a> {
             let Some(prop) = self.arena.get_property_decl(member_node) else {
                 return false;
             };
-            !self.has_effective_static_modifier_js(&prop.modifiers)
-                && !self
+            if self.has_effective_static_modifier_js(&prop.modifiers)
+                || self
                     .arena
                     .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
-                && !self
+                || self
                     .arena
                     .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
-                && !self
+                || self
                     .arena
                     .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+            {
+                return false;
+            }
+            name_filter(prop.name)
+        })
+    }
+
+    fn es5_class_expression_has_instance_fields(
+        &self,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) -> bool {
+        self.es5_class_expression_has_instance_field_where(class_data, |_| true)
+    }
+
+    fn es5_class_expression_has_computed_instance_fields(
+        &self,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) -> bool {
+        self.es5_class_expression_has_instance_field_where(class_data, |name_idx| {
+            self.arena
+                .get(name_idx)
+                .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
         })
     }
 
@@ -241,6 +266,9 @@ impl<'a> Printer<'a> {
         text: &str,
         continuation_indent_level: u32,
     ) {
+        let indent_unit = self.writer.indent_unit_width() as usize;
+        let indent_unit = if indent_unit == 0 { 4 } else { indent_unit };
+
         let mut lines = text.lines();
         if let Some(first) = lines.next() {
             self.write(first);
@@ -248,13 +276,14 @@ impl<'a> Printer<'a> {
         for line in lines {
             self.write_line();
             if !line.is_empty() {
-                let trimmed = line.trim_start_matches(' ');
-                if trimmed.starts_with("}())") {
-                    let closing_indent_level = continuation_indent_level.saturating_sub(1);
-                    self.write_line_with_absolute_indent(closing_indent_level, trimmed);
-                } else {
-                    self.write_line_with_absolute_indent(continuation_indent_level, trimmed);
-                }
+                let leading = line.len() - line.trim_start_matches(' ').len();
+                let original_level = (leading / indent_unit) as u32;
+                let trimmed = &line[leading..];
+                // Formula: output_level = (continuation - 1) + original_level
+                // Naturally handles the `}())` closing (original_level=0 → continuation-1)
+                // and all deeper lines by adding their nesting relative to the IIFE root.
+                let output_level = continuation_indent_level.saturating_sub(1) + original_level;
+                self.write_line_with_absolute_indent(output_level, trimmed);
             }
         }
     }
@@ -304,17 +333,24 @@ impl<'a> Printer<'a> {
         class_node: NodeIndex,
         class_name: &str,
         class_iife_expr: &str,
+        class_value_temp: Option<&str>,
+        computed_init_exprs: &[IRNode],
         static_elements: &[Es5StaticClassExpressionElement],
         set_function_name: Option<&str>,
     ) {
         let needs_parens = self.class_expression_static_comma_needs_parens(class_node);
-        let temp = if self.class_expression_is_in_loop_body(class_node) {
-            let temp = self.make_unique_name();
-            self.block_scoped_private_temps.push(temp.clone());
-            temp
-        } else {
-            self.make_unique_name_hoisted()
-        };
+        let temp = class_value_temp.map_or_else(
+            || {
+                if self.class_expression_is_in_loop_body(class_node) {
+                    let temp = self.make_unique_name();
+                    self.block_scoped_private_temps.push(temp.clone());
+                    temp
+                } else {
+                    self.make_unique_name_hoisted()
+                }
+            },
+            str::to_string,
+        );
         let continuation_indent_level = self.current_statement_continuation_indent_level();
 
         if needs_parens {
@@ -326,6 +362,14 @@ impl<'a> Printer<'a> {
             class_iife_expr,
             continuation_indent_level,
         );
+
+        for init_expr in computed_init_exprs {
+            self.write(",");
+            self.write_line();
+            self.increase_indent();
+            self.write(&self.render_es5_class_ir_comma_expression(init_expr));
+            self.decrease_indent();
+        }
 
         if let Some(name) = set_function_name {
             self.emit_class_expr_set_function_name_comma_item(&temp, name);
@@ -408,6 +452,27 @@ impl<'a> Printer<'a> {
             self.write(")");
         }
         self.decrease_indent();
+    }
+
+    fn render_es5_class_ir_comma_expression(&self, node: &IRNode) -> String {
+        let expr = match node {
+            IRNode::ExpressionStatement(inner) => inner.as_ref(),
+            other => other,
+        };
+        let mut printer = IRPrinter::with_arena(self.arena);
+        printer.set_transforms(self.transforms.clone());
+        printer.set_target_es5(true);
+        printer.set_remove_comments(self.ctx.options.remove_comments);
+        printer.set_indent_level(self.writer.indent_level());
+        if let Some(text) = self.source_text {
+            printer.set_source_text(text);
+        }
+        if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
+            printer.set_tslib_prefix(true);
+            printer.set_tslib_import_binding(self.commonjs_tslib_import_binding.clone());
+        }
+        printer.emit(expr);
+        printer.take_output()
     }
 
     fn emit_es5_static_class_expression_statements(
@@ -1338,11 +1403,7 @@ impl<'a> Printer<'a> {
         es5_emitter.set_transforms(self.transforms.clone());
         es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
         es5_emitter.set_printer_options(self.ctx.options.clone());
-        es5_emitter.set_module_kind(
-            self.ctx
-                .original_module_kind
-                .unwrap_or(self.ctx.options.module),
-        );
+        es5_emitter.set_module_kind(self.ctx.outer_module_kind());
         if let Some(text) = self.source_text_for_map() {
             if self.writer.has_source_map() {
                 es5_emitter.set_source_map_context(text, self.writer.current_source_index());
@@ -1370,6 +1431,72 @@ impl<'a> Printer<'a> {
             && !defer_static_block_only_tail;
         if use_static_comma || defer_static_block_only_tail {
             es5_emitter.set_skip_static_members(true);
+        }
+
+        if self.es5_class_expression_has_computed_instance_fields(class_data) {
+            let class_emit_name = if class_data.name.is_some() {
+                let candidate = emit_utils::identifier_text_or_empty(self.arena, class_data.name);
+                if candidate.is_empty() || !is_valid_identifier_name(&candidate) {
+                    self.get_class_expression_name(class_node)
+                        .unwrap_or_else(|| self.get_temp_var_name())
+                } else {
+                    candidate
+                }
+            } else {
+                self.make_unique_name_from_base("class")
+            };
+            let (iife_expr, computed_decls, computed_init_exprs) =
+                es5_emitter.emit_class_as_iife_expr(class_node, &class_emit_name);
+            self.sync_es5_class_emitter_state(&mut es5_emitter);
+            let _ = es5_emitter.take_mappings();
+
+            let in_loop = self.class_expression_is_in_loop_body(class_node);
+            for decl in &computed_decls {
+                if in_loop {
+                    self.block_scoped_private_temps.push(decl.clone());
+                } else {
+                    self.hoisted_assignment_temps.push(decl.clone());
+                }
+            }
+            let class_temp = if in_loop {
+                let t = self.make_unique_name();
+                self.block_scoped_private_temps.push(t.clone());
+                t
+            } else {
+                self.make_unique_name_hoisted()
+            };
+
+            let comma_static_elements = if use_static_comma {
+                static_elements.as_slice()
+            } else {
+                &[]
+            };
+            let comma_set_function_name = if use_static_comma {
+                class_expr_set_function_name.as_deref()
+            } else {
+                None
+            };
+            self.emit_es5_static_class_expression_comma(
+                class_node,
+                &class_emit_name,
+                &iife_expr,
+                Some(&class_temp),
+                &computed_init_exprs,
+                comma_static_elements,
+                comma_set_function_name,
+            );
+            if defer_static_block_only_tail {
+                self.deferred_class_static_blocks
+                    .extend(static_elements.iter().filter_map(|element| match element {
+                        Es5StaticClassExpressionElement::StaticBlock {
+                            block,
+                            saved_comment_idx,
+                            ..
+                        } => Some((*block, *saved_comment_idx)),
+                        Es5StaticClassExpressionElement::Field(_) => None,
+                    }));
+            }
+            return;
         }
 
         let (class_name, es5_output) = if class_data.name.is_some() {
@@ -1406,6 +1533,8 @@ impl<'a> Printer<'a> {
                 class_node,
                 &class_name,
                 &class_iife_expr,
+                None,
+                &[],
                 &static_elements,
                 class_expr_set_function_name.as_deref(),
             );

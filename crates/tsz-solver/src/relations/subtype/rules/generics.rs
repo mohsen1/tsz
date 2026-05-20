@@ -20,6 +20,14 @@ use crate::visitor::{
 };
 use crate::visitors::visitor_predicates::is_primitive_type;
 
+fn args_contain_type_parameters(
+    interner: &dyn crate::construction::TypeDatabase,
+    args: &[TypeId],
+) -> bool {
+    args.iter()
+        .any(|arg| crate::visitor::contains_type_parameters(interner, *arg))
+}
+
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     fn iterator_protocol_mismatch_for_same_application_family(
         &mut self,
@@ -538,11 +546,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             // mapped types like `{ [K in keyof T]: T[K] }`) that make
                             // the structural check succeed even though the variance
                             // check on the raw type parameter fails.
-                            let source_has_type_param = s_app
-                                .args
-                                .iter()
-                                .any(|arg| crate::contains_type_parameters(self.interner, *arg));
-                            if !source_has_type_param {
+                            if !args_contain_type_parameters(self.interner, &s_app.args) {
                                 return SubtypeResult::False;
                             }
                         }
@@ -571,7 +575,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             let s_eval = self.evaluate_type(source_type);
                             let t_eval = self.evaluate_type(target_type);
                             if s_eval != source_type || t_eval != target_type {
-                                return self.check_subtype(s_eval, t_eval);
+                                let eval_result = self.check_subtype(s_eval, t_eval);
+                                // Structural collapse (s_eval == t_eval) erases the distinction
+                                // that REJECTION_UNRELIABLE variance correctly detected. For
+                                // concrete args, trust variance over the collapsed result; for
+                                // type-param args, fall through — expanded forms may introduce
+                                // index signatures that make structural True valid.
+                                if rejection_unreliable
+                                    && s_eval == t_eval
+                                    && eval_result.is_true()
+                                    && !args_contain_type_parameters(self.interner, &s_app.args)
+                                {
+                                    return SubtypeResult::False;
+                                }
+                                return eval_result;
                             }
                         }
                     }
@@ -707,6 +724,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         let def_id = self.application_base_def_id(s_app.base)?;
 
+        // Conditional type alias self-comparisons require structural expansion
+        // with recursion identity tracking (tsc's `getRecursionIdentity`
+        // mechanism). When arguments differ, keep the variance path available
+        // so genuine leaf mismatches are not hidden by a DefId-only cycle.
+        if s_app.args == t_app.args && self.is_conditional_alias_base_inline(s_app.base) {
+            return None;
+        }
+
         // Arity normalization: when both applications share the same base but have
         // different arg counts (e.g., Generator<T, void, any> vs Generator<T>),
         // fill in type parameter defaults to normalize both to the same arity.
@@ -807,13 +832,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // For non-mapped types with all-concrete args, variance failures are
         // definitive: incompatible type args means incompatible generic types.
         let rejection_unreliable = variances.iter().any(|v| v.rejection_unreliable());
-        if any_checked && !all_ok && !needs_structural_fallback && !rejection_unreliable {
-            let source_has_type_param = s_args
-                .iter()
-                .any(|arg| crate::contains_type_parameters(self.interner, *arg));
-            if !source_has_type_param {
-                return Some(SubtypeResult::False);
-            }
+        if any_checked
+            && !all_ok
+            && !needs_structural_fallback
+            && !rejection_unreliable
+            && !args_contain_type_parameters(self.interner, &s_args)
+        {
+            return Some(SubtypeResult::False);
         }
 
         // NOTE: A previous heuristic tried to trust invariant variance rejection
@@ -917,7 +942,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// without requiring concrete expansion. This resolves the base type alias/interface
     /// body and instantiates it with the provided type arguments.
     fn try_resolve_application_body(&mut self, app_id: TypeApplicationId) -> Option<TypeId> {
-        use crate::TypeSubstitution;
+        use crate::instantiation::instantiate::TypeSubstitution;
 
         let app = self.interner.type_application(app_id);
 
@@ -952,14 +977,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         let substitution = TypeSubstitution::from_args(self.interner, &type_params, &app.args);
         let app_type = self.interner.application(app.base, app.args.clone());
-        let mut instantiated = crate::instantiate_type_cached(
+        let mut instantiated = crate::instantiation::instantiate::instantiate_type_cached(
             self.interner,
             self.query_db,
             effective_body,
             &substitution,
         );
         if crate::contains_this_type(self.interner, instantiated) {
-            instantiated = crate::substitute_this_type_cached(
+            instantiated = crate::instantiation::instantiate::substitute_this_type_cached(
                 self.interner,
                 self.query_db,
                 instantiated,
@@ -1591,7 +1616,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     fn try_expand_mapped_with_constraint(&mut self, mapped_id: MappedTypeId) -> Option<TypeId> {
-        use crate::{TypeSubstitution, instantiate_type};
+        use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
         let mapped = self.interner.get_mapped(mapped_id);
         if let Some(TypeData::KeyOf(source)) = self.interner.lookup(mapped.constraint)
             && let Some(TypeData::TypeParameter(param)) = self.interner.lookup(source)
@@ -1636,7 +1661,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Returns None if the application cannot be expanded (missing type params or body).
     ///
     pub(crate) fn try_expand_application(&mut self, app_id: TypeApplicationId) -> Option<TypeId> {
-        use crate::TypeSubstitution;
+        use crate::instantiation::instantiate::TypeSubstitution;
 
         let app = self.interner.type_application(app_id);
 
@@ -1713,14 +1738,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let substitution = TypeSubstitution::from_args(self.interner, &type_params, &app.args);
         let app_type = self.interner.application(app.base, app.args.clone());
 
-        let mut instantiated = crate::instantiate_type_cached(
+        let mut instantiated = crate::instantiation::instantiate::instantiate_type_cached(
             self.interner,
             self.query_db,
             effective_body,
             &substitution,
         );
         if crate::contains_this_type(self.interner, instantiated) {
-            instantiated = crate::substitute_this_type_cached(
+            instantiated = crate::instantiation::instantiate::substitute_this_type_cached(
                 self.interner,
                 self.query_db,
                 instantiated,
@@ -1745,9 +1770,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Try to expand a Mapped type to its structural form.
     /// Returns None if the mapped type cannot be expanded (unresolvable constraint).
     pub(crate) fn try_expand_mapped(&mut self, mapped_id: MappedTypeId) -> Option<TypeId> {
-        use crate::{
-            LiteralValue, MappedModifier, PropertyInfo, TypeSubstitution, instantiate_type,
-        };
+        use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+        use crate::{LiteralValue, MappedModifier, PropertyInfo};
 
         let mapped = self.interner.get_mapped(mapped_id);
 
@@ -2023,7 +2047,7 @@ pub(crate) struct FlattenedMapped {
 /// Returns None if the mapped type isn't in homomorphic form (e.g., has name remapping,
 /// or template isn't `X[K]` where K is the iteration param).
 pub(crate) fn flatten_mapped_chain(
-    interner: &dyn crate::TypeDatabase,
+    interner: &dyn crate::construction::TypeDatabase,
     mapped_id: MappedTypeId,
 ) -> Option<FlattenedMapped> {
     use crate::types::MappedModifier;
@@ -2089,7 +2113,7 @@ pub(crate) fn flatten_mapped_chain(
 /// to mapped types that filter keys via as-clauses, since all properties in the
 /// result type are also properties of T with the same types.
 pub(crate) fn is_filtering_name_type(
-    interner: &dyn crate::TypeDatabase,
+    interner: &dyn crate::construction::TypeDatabase,
     name_type: TypeId,
     mapped: &MappedType,
 ) -> bool {
@@ -2114,7 +2138,7 @@ pub(crate) fn is_filtering_name_type(
 
 /// Check if a type is a type parameter with the given name.
 fn is_type_param_with_name(
-    interner: &dyn crate::TypeDatabase,
+    interner: &dyn crate::construction::TypeDatabase,
     type_id: TypeId,
     name: tsz_common::interner::Atom,
 ) -> bool {

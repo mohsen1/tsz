@@ -701,6 +701,52 @@ impl<'a> Printer<'a> {
         )
     }
 
+    pub(in crate::emitter) fn emit_comments_after_deferred_semicolon(
+        &mut self,
+        start_pos: u32,
+        end_pos: u32,
+    ) {
+        if self.ctx.options.remove_comments {
+            return;
+        }
+
+        let Some(text) = self.source_text else {
+            return;
+        };
+
+        while self.comment_emit_idx < self.all_comments.len() {
+            let (comment_pos, comment_end, comment_has_new_line) = {
+                let comment = &self.all_comments[self.comment_emit_idx];
+                (comment.pos, comment.end, comment.has_trailing_new_line)
+            };
+
+            if comment_pos >= end_pos {
+                break;
+            }
+
+            if comment_end <= start_pos {
+                self.comment_emit_idx += 1;
+                continue;
+            }
+
+            if self.comment_preceded_by_newline(comment_pos) {
+                self.write_line();
+            } else {
+                self.write_space();
+            }
+
+            if let Ok(comment_text) =
+                crate::safe_slice::slice(text, comment_pos as usize, comment_end as usize)
+            {
+                self.write_comment_with_reindent(comment_text, Some(comment_pos));
+            }
+            if comment_has_new_line {
+                self.write_line();
+            }
+            self.comment_emit_idx += 1;
+        }
+    }
+
     /// Emit comments in a source range without consulting or advancing the
     /// global comment cursor. This is a narrow recovery path for transformed
     /// emit shapes where an outer transform has already consumed the cursor,

@@ -4,6 +4,7 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 source scripts/ci/suite-metadata.sh
+source scripts/ci/ci-resources.sh
 
 suite="${1:?usage: $0 $(ci_suite_usage github)}"
 if ! ci_suite_is_known github "$suite"; then
@@ -13,6 +14,7 @@ if ! ci_suite_is_known github "$suite"; then
 fi
 export _TSZ_CI_SUITE="$suite"
 export TSZ_CI_SUITE="$suite"
+ci_report_memory "suite-start-${suite}"
 export _TSZ_CI_CACHE_BUCKET="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache}}"
 export TSZ_CI_CACHE_BUCKET="$_TSZ_CI_CACHE_BUCKET"
 export TSZ_CI_METRICS_DIR="${TSZ_CI_METRICS_DIR:-.ci-metrics}"
@@ -25,6 +27,8 @@ mkdir -p "$TSZ_CI_METRICS_DIR" "$TSZ_CI_LOG_DIR" .ci-status
 
 suite_heartbeat_pid=""
 start_suite_heartbeat() {
+  # TSZ_CI_GITHUB_SUITE_HEARTBEAT_SECONDS controls this outer heartbeat.
+  # TSZ_CI_HEARTBEAT_SECONDS controls the per-command heartbeat in run_with_heartbeat.
   local interval="${TSZ_CI_GITHUB_SUITE_HEARTBEAT_SECONDS:-60}"
   (
     while true; do

@@ -553,6 +553,187 @@ fn direct_source_file_type_alias_lowers_scope_independent_alias_body() {
 }
 
 #[test]
+fn direct_source_file_type_alias_lowers_external_declaration_scope_independent_alias_body() {
+    let (target_arena, target_binder, types) = parse_bound_source_with_name(
+        "node_modules/react/tsz-benchmark.d.ts",
+        r#"
+                export type ReactNode = unknown;
+                export type ParenthesizedUnknown = (unknown);
+                export type Box<T> = T[];
+                export type Names = Array<string>;
+                export type MaybeUnknown<T> = unknown;
+                type Local = string;
+                export type Wrapped = Local;
+            "#,
+    );
+    let (requester_arena, requester_binder, _) =
+        parse_bound_source("import type { ReactNode } from 'react';");
+    let ctx = CheckerContext::new(
+        requester_arena.as_ref(),
+        requester_binder.as_ref(),
+        &types,
+        "requester.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    state.ctx.set_all_arenas(Arc::new(vec![
+        Arc::clone(&requester_arena),
+        Arc::clone(&target_arena),
+    ]));
+    state.ctx.set_all_binders(Arc::new(vec![
+        Arc::clone(&requester_binder),
+        Arc::clone(&target_binder),
+    ]));
+
+    let react_node_sym = target_binder
+        .file_locals
+        .get("ReactNode")
+        .expect("ReactNode symbol");
+    let (react_node, react_node_params) = state
+        .direct_source_file_type_alias_result(react_node_sym, Some(1), false)
+        .expect("scope-independent external declaration alias should lower");
+    assert_eq!(react_node, TypeId::UNKNOWN);
+    assert_ne!(react_node, TypeId::ERROR);
+    assert!(react_node_params.is_empty());
+
+    let parenthesized_unknown_sym = target_binder
+        .file_locals
+        .get("ParenthesizedUnknown")
+        .expect("ParenthesizedUnknown symbol");
+    let (parenthesized_unknown_type, parenthesized_unknown_params) = state
+        .direct_source_file_type_alias_result(parenthesized_unknown_sym, Some(1), false)
+        .expect("parenthesized external declaration alias should lower");
+    assert_eq!(parenthesized_unknown_type, TypeId::UNKNOWN);
+    assert!(parenthesized_unknown_params.is_empty());
+
+    let box_sym = target_binder.file_locals.get("Box").expect("Box symbol");
+    let (box_type, box_params) = state
+        .direct_source_file_type_alias_result(box_sym, Some(1), false)
+        .expect("generic external declaration alias should preserve params");
+    assert_ne!(box_type, TypeId::UNKNOWN);
+    assert_ne!(box_type, TypeId::ERROR);
+    assert_eq!(box_params.len(), 1);
+
+    let names_sym = target_binder
+        .file_locals
+        .get("Names")
+        .expect("Names symbol");
+    let (names_type, names_params) = state
+        .direct_source_file_type_alias_result(names_sym, Some(1), false)
+        .expect("external declaration aliases may use the real global Array");
+    assert_ne!(names_type, TypeId::UNKNOWN);
+    assert_ne!(names_type, TypeId::ERROR);
+    assert!(names_params.is_empty());
+
+    let maybe_unknown_sym = target_binder
+        .file_locals
+        .get("MaybeUnknown")
+        .expect("MaybeUnknown symbol");
+    assert!(
+        state
+            .direct_source_file_type_alias_result(maybe_unknown_sym, Some(1), false)
+            .is_none(),
+        "generic aliases that lower to unknown need normal cross-file resolution",
+    );
+
+    let wrapped_sym = target_binder
+        .file_locals
+        .get("Wrapped")
+        .expect("Wrapped symbol");
+    assert!(
+        state
+            .direct_source_file_type_alias_result(wrapped_sym, Some(1), false)
+            .is_none(),
+        "aliases that depend on sibling declarations need normal cross-file resolution",
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_external_declaration_local_array_shadows() {
+    let (target_arena, target_binder, types) = parse_bound_source_with_name(
+        "node_modules/pkg/index.d.ts",
+        r#"
+                export type Array<T> = { value: T };
+                export interface ReadonlyArray<T> { readonly value: T; }
+                export type Box = Array<string>;
+                export type ReadonlyBox = ReadonlyArray<string>;
+            "#,
+    );
+    let (requester_arena, requester_binder, _) =
+        parse_bound_source("import type { Box } from 'pkg';");
+    let ctx = CheckerContext::new(
+        requester_arena.as_ref(),
+        requester_binder.as_ref(),
+        &types,
+        "requester.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    state.ctx.set_all_arenas(Arc::new(vec![
+        Arc::clone(&requester_arena),
+        Arc::clone(&target_arena),
+    ]));
+    state.ctx.set_all_binders(Arc::new(vec![
+        Arc::clone(&requester_binder),
+        Arc::clone(&target_binder),
+    ]));
+
+    let box_sym = target_binder.file_locals.get("Box").expect("Box symbol");
+    assert!(
+        state
+            .direct_source_file_type_alias_result(box_sym, Some(1), false)
+            .is_none(),
+        "package-local Array declarations shadow the global Array type",
+    );
+
+    let readonly_box_sym = target_binder
+        .file_locals
+        .get("ReadonlyBox")
+        .expect("ReadonlyBox symbol");
+    assert!(
+        state
+            .direct_source_file_type_alias_result(readonly_box_sym, Some(1), false)
+            .is_none(),
+        "package-local ReadonlyArray declarations shadow the global ReadonlyArray type",
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_local_declaration_files() {
+    let (target_arena, target_binder, types) =
+        parse_bound_source_with_name("types/local.d.ts", "export type ReactNode = unknown;");
+    let (requester_arena, requester_binder, _) =
+        parse_bound_source("import type { ReactNode } from './types/local';");
+    let ctx = CheckerContext::new(
+        requester_arena.as_ref(),
+        requester_binder.as_ref(),
+        &types,
+        "requester.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    state.ctx.set_all_arenas(Arc::new(vec![
+        Arc::clone(&requester_arena),
+        Arc::clone(&target_arena),
+    ]));
+    state.ctx.set_all_binders(Arc::new(vec![
+        Arc::clone(&requester_binder),
+        Arc::clone(&target_binder),
+    ]));
+    let react_node_sym = target_binder
+        .file_locals
+        .get("ReactNode")
+        .expect("ReactNode symbol");
+
+    assert!(
+        state
+            .direct_source_file_type_alias_result(react_node_sym, Some(1), false)
+            .is_none(),
+        "local declaration files are not external package declaration files",
+    );
+}
+
+#[test]
 fn delegate_source_file_type_alias_caches_generic_params() {
     let (target_arena, target_binder, types) = parse_bound_source_with_name(
         "target.ts",
@@ -1712,171 +1893,5 @@ fn direct_actual_lib_symbol_type_handles_intl_non_generic_alias_bodies() {
     }
 }
 
-#[test]
-fn direct_actual_lib_symbol_type_handles_readonly_generic_alias_body_query() {
-    let lib_files = load_lib_files(&["es5.d.ts"]);
-    let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
-    let root = parser.parse_source_file();
-    let mut binder = BinderState::new();
-    binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
-    let arena = Arc::new(parser.get_arena().clone());
-    let binder = Arc::new(binder);
-    let types = TypeInterner::new();
-    let ctx = CheckerContext::new(
-        arena.as_ref(),
-        binder.as_ref(),
-        &types,
-        "fixture.ts".to_string(),
-        CheckerOptions::default(),
-    );
-    let mut state = CheckerState { ctx };
-    let lib_contexts: Vec<LibContext> = lib_files
-        .iter()
-        .map(|lib| LibContext {
-            arena: Arc::clone(&lib.arena),
-            binder: Arc::clone(&lib.binder),
-        })
-        .collect();
-    state.ctx.set_lib_contexts(lib_contexts);
-    state.ctx.set_actual_lib_file_count(lib_files.len());
-
-    let sym_id = state
-        .ctx
-        .binder
-        .file_locals
-        .get("Readonly")
-        .expect("Readonly should resolve to a lib symbol");
-    let delegate_arena = state
-        .ctx
-        .binder
-        .symbol_arenas
-        .get(&sym_id)
-        .map(std::convert::AsRef::as_ref);
-
-    let (ty, params) = state
-        .direct_actual_lib_symbol_type(
-            sym_id,
-            CrossArenaSymbolMissSource::SymbolArena,
-            delegate_arena,
-            false,
-        )
-        .expect("Readonly should lower through the direct alias body path");
-
-    assert_ne!(ty, TypeId::UNKNOWN);
-    assert_ne!(ty, TypeId::ERROR);
-    assert_eq!(params.len(), 1, "Readonly should expose T");
-
-    let (cached_ty, cached_params) = state
-        .ctx
-        .lib_delegation_cache
-        .symbol_type(sym_id)
-        .expect("direct alias path should populate the delegation cache");
-    assert_eq!(cached_ty, ty);
-    assert_eq!(
-        cached_params.len(),
-        params.len(),
-        "cache hits must preserve generic alias metadata",
-    );
-
-    let (cached_result_ty, cached_result_params) = state
-        .delegate_cross_arena_symbol_resolution(sym_id)
-        .expect("Readonly cache hit should resolve through lib delegation cache");
-    assert_eq!(cached_result_ty, ty);
-    assert_eq!(
-        cached_result_params.len(),
-        params.len(),
-        "Readonly cache hits must return the cached alias type params",
-    );
-}
-
-#[test]
-fn direct_actual_lib_alias_proof_matches_mapped_utility_fallback_bodies() {
-    let lib_files = load_lib_files(&["es5.d.ts", "es2015.iterable.d.ts", "es2019.array.d.ts"]);
-    let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
-    let root = parser.parse_source_file();
-    let mut binder = BinderState::new();
-    binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
-    let arena = Arc::new(parser.get_arena().clone());
-    let binder = Arc::new(binder);
-    let types = TypeInterner::new();
-    let ctx = CheckerContext::new(
-        arena.as_ref(),
-        binder.as_ref(),
-        &types,
-        "fixture.ts".to_string(),
-        CheckerOptions::default(),
-    );
-    let mut state = CheckerState { ctx };
-    let lib_contexts: Vec<LibContext> = lib_files
-        .iter()
-        .map(|lib| LibContext {
-            arena: Arc::clone(&lib.arena),
-            binder: Arc::clone(&lib.binder),
-        })
-        .collect();
-    state.ctx.set_lib_contexts(lib_contexts);
-    state.ctx.set_actual_lib_file_count(lib_files.len());
-
-    for (name, expected_param_count, expected_outcome) in [
-        ("Capitalize", 1, DirectActualLibAliasBodyOutcome::Success),
-        ("Exclude", 2, DirectActualLibAliasBodyOutcome::Success),
-        ("Extract", 2, DirectActualLibAliasBodyOutcome::Success),
-        ("FlatArray", 2, DirectActualLibAliasBodyOutcome::Success),
-        (
-            "IteratorResult",
-            2,
-            DirectActualLibAliasBodyOutcome::Success,
-        ),
-        ("Lowercase", 1, DirectActualLibAliasBodyOutcome::Success),
-        ("NonNullable", 1, DirectActualLibAliasBodyOutcome::Success),
-        ("Omit", 2, DirectActualLibAliasBodyOutcome::Success),
-        ("Partial", 1, DirectActualLibAliasBodyOutcome::Success),
-        ("Pick", 2, DirectActualLibAliasBodyOutcome::Success),
-        ("Record", 2, DirectActualLibAliasBodyOutcome::Success),
-        ("Readonly", 1, DirectActualLibAliasBodyOutcome::Success),
-        ("Required", 1, DirectActualLibAliasBodyOutcome::Success),
-        ("ReturnType", 1, DirectActualLibAliasBodyOutcome::Success),
-        ("Uncapitalize", 1, DirectActualLibAliasBodyOutcome::Success),
-        ("Uppercase", 1, DirectActualLibAliasBodyOutcome::Success),
-        ("WeakKey", 0, DirectActualLibAliasBodyOutcome::Success),
-    ] {
-        let sym_id = state
-            .ctx
-            .binder
-            .file_locals
-            .get(name)
-            .unwrap_or_else(|| panic!("{name} should resolve to a lib symbol"));
-        let delegate_arena = state
-            .ctx
-            .binder
-            .symbol_arenas
-            .get(&sym_id)
-            .map(std::convert::AsRef::as_ref)
-            .unwrap_or_else(|| panic!("{name} should have a delegate arena"));
-        let symbol = state
-            .get_cross_file_symbol(sym_id)
-            .unwrap_or_else(|| panic!("{name} symbol should be available"))
-            .clone();
-
-        let proof = state
-            .direct_actual_lib_type_alias_body(sym_id, &symbol, name, delegate_arena)
-            .unwrap_or_else(|| panic!("{name} should have a proven actual-lib alias body"));
-        assert_eq!(proof.outcome, expected_outcome);
-        assert_eq!(
-            proof.type_params.len(),
-            expected_param_count,
-            "{name} should expose its declared type params",
-        );
-
-        let (fallback_body, fallback_params) = state.compute_type_of_symbol(sym_id);
-        assert_eq!(
-            fallback_body, proof.body,
-            "{name} proof must match the existing child-checker fallback body",
-        );
-        assert_eq!(
-            fallback_params.len(),
-            proof.type_params.len(),
-            "{name} proof must preserve the same type-parameter arity as fallback",
-        );
-    }
-}
+#[path = "cross_file_direct_alias_tests.rs"]
+mod alias_tests;
