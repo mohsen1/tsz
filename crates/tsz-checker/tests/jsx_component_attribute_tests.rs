@@ -3687,6 +3687,7 @@ fn react_component_type_return_rejects_incompatible_contextual_arrow_signature()
 {JSX_PREAMBLE}
 declare namespace React {{
     interface ReactElement<P = any> {{}}
+    type ReactNode = ReactElement<any> | string | number | boolean | null | undefined;
     class Component<P, S = {{}}> {{
         constructor(props: Readonly<P>);
         constructor(props: P, context?: any);
@@ -3696,15 +3697,38 @@ declare namespace React {{
         new(props: P, context?: any): Component<P, S>;
     }}
     interface StatelessComponent<P = {{}}> {{
-        (props: P, context?: any): ReactElement<any> | null;
+        (props: P & {{ children?: ReactNode }}, context?: any): ReactElement<any> | null;
     }}
     type ComponentType<P = {{}}> = ComponentClass<P> | StatelessComponent<P>;
 }}
 
-export function createBad<WrappedProps extends {{ value: string }}>(
-): React.ComponentType<WrappedProps> {{
-    return (props: WrappedProps & {{ value: number }}) => {{
-        return {{}};
+type Exclude<T, U> = T extends U ? never : T;
+type Pick<T, K extends keyof T> = {{ [P in K]: T[P] }};
+type Omit<T, K extends keyof any> = T extends any ? Pick<T, Exclude<keyof T, K>> : never;
+type Overwrite<T, U> = Omit<T, keyof T & keyof U> & U;
+
+type OptionValues = string | number | boolean;
+interface Option<TValue = OptionValues> {{
+    value?: TValue;
+}}
+interface Props<T extends OptionValues> {{
+    value?: Option<T> | T;
+}}
+type ExtractValueType<T> = T extends ReactSelectProps<infer U> ? U : never;
+type ReactSingleSelectProps<WrappedProps extends ReactSelectProps<any>> =
+    Overwrite<Omit<WrappedProps, "multi">, Props<ExtractValueType<WrappedProps>>>;
+
+interface ReactSelectProps<TValue = OptionValues> {{
+    multi?: boolean;
+    value?: Option<TValue> | Option<TValue>[] | string | string[] | number | number[] | boolean;
+}}
+
+export function createBad<WrappedProps extends ReactSelectProps<any>>(
+    WrappedComponent: React.ComponentType<WrappedProps>
+): React.ComponentType<ReactSingleSelectProps<WrappedProps>> {{
+    return (props: ReactSingleSelectProps<WrappedProps> & {{ required: string }}) => {{
+        props.required;
+        return null;
     }};
 }}
 "#
@@ -3717,12 +3741,13 @@ export function createBad<WrappedProps extends {{ value: string }}>(
             strict: true,
             strict_null_checks: true,
             no_implicit_any: true,
+            strict_function_types: true,
             ..CheckerOptions::default()
         },
     );
     assert!(
         has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
-        "contextual callable-union return should still reject incompatible function signatures, got: {diags:?}"
+        "incompatible returned function signature should still emit TS2322, got: {diags:?}"
     );
 }
 
