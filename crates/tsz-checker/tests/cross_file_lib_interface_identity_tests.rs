@@ -244,9 +244,14 @@ const b: number = second();
     assert!(codes.is_empty(), "Diagnostics: {codes:?}");
 }
 
-// Known-failing cases tracked by issue #8476 — drop the `#[ignore]` when fixed.
+// Regression coverage for issue #8476: a class declared in another file that
+// extends a lib type retains its full heritage chain across the import edge.
+// Before the named-import-alias fix in `get_cross_file_symbol`/
+// `get_symbol_globally`, the foreign-file's symbol at the colliding raw
+// `SymbolId` would replace the local alias, and the imported binding's type
+// rendered as `typeof instance` instead of `MyElement` — dropping the
+// `Element`/`Node` properties.
 
-#[ignore = "tsz issue #7690: subclass of lib HTMLElement declared in another module loses heritage chain to Element/Node"]
 #[test]
 fn imported_element_class_extension_unifies_with_lib_html_element() {
     let leaf = r#"
@@ -264,6 +269,62 @@ const n: Node = instance;
 
     let codes = compile_codes(
         &[("component.d.ts", leaf), ("main.ts", consumer)],
+        "main.ts",
+    );
+    assert!(codes.is_empty(), "Diagnostics: {codes:?}");
+}
+
+#[test]
+fn imported_class_extension_unifies_with_lib_html_element_with_renamed_names() {
+    // Anti-§25 hardcoding: the structural rule must hold when the exported
+    // class/instance and the importing alias are renamed.
+    let leaf = r#"
+export class CustomWidget extends HTMLDivElement {
+    extra(): void;
+}
+export const widget: CustomWidget;
+"#;
+    let consumer = r#"
+import { widget as w } from "./component";
+const div: HTMLDivElement = w;
+const he: HTMLElement = w;
+const e: Element = w;
+const n: Node = w;
+"#;
+
+    let codes = compile_codes(
+        &[("component.d.ts", leaf), ("main.ts", consumer)],
+        "main.ts",
+    );
+    assert!(codes.is_empty(), "Diagnostics: {codes:?}");
+}
+
+#[test]
+fn imported_class_extension_heritage_preserved_through_namespace_reexport() {
+    // Adjacent shape: the class flows through a `export *` re-export rather
+    // than a direct named import. The reexport edge must not lose the
+    // heritage chain either.
+    let leaf = r#"
+export class Anchor extends HTMLAnchorElement {
+    label(): void;
+}
+export const anchor: Anchor;
+"#;
+    let reexporter = r#"export * from "./component";"#;
+    let consumer = r#"
+import { anchor } from "./reexport";
+const a: HTMLAnchorElement = anchor;
+const he: HTMLElement = anchor;
+const e: Element = anchor;
+const n: Node = anchor;
+"#;
+
+    let codes = compile_codes(
+        &[
+            ("component.d.ts", leaf),
+            ("reexport.d.ts", reexporter),
+            ("main.ts", consumer),
+        ],
         "main.ts",
     );
     assert!(codes.is_empty(), "Diagnostics: {codes:?}");
