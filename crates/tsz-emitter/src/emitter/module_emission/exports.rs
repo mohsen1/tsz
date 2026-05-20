@@ -61,8 +61,11 @@ enum CjsLiveExportKind {
 
 impl<'a> Printer<'a> {
     const fn is_commonjs_live_export_context(&self) -> bool {
-        self.ctx.is_commonjs()
-            || matches!(self.ctx.original_module_kind, Some(ModuleKind::CommonJS))
+        // Use is_effectively_commonjs() so that the cjs_export_body_mask
+        // (which temporarily sets options.module = None for hoisted function
+        // bodies) does not suppress live-binding mutation tracking for
+        // clause-exported locals.
+        self.ctx.is_effectively_commonjs()
     }
 
     /// Write `exports.name` or `exports["name"]` depending on whether the name

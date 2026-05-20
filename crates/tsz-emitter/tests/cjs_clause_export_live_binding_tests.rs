@@ -311,6 +311,51 @@ fn exported_function_body_updates_later_clause_export() {
     );
 }
 
+/// Non-exported function body: same live-binding rules apply (regression guard).
+#[test]
+fn non_exported_function_body_updates_clause_export() {
+    let source = "let x = 1;\nfunction bar() {\n    x++;\n    ++x;\n    x--;\n}\nexport { x };\n";
+    let output = parse_lower_emit(source, cjs_es2015());
+    assert!(
+        output.contains("exports.x = (x++, x);"),
+        "Postfix statement in non-exported function body must update clause export.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.x = ++x;"),
+        "Prefix statement in non-exported function body must update clause export.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.x = (x--, x);"),
+        "Decrement in non-exported function body must update clause export.\nOutput:\n{output}"
+    );
+}
+
+/// Multiple clause-exported variables: each mutation updates only its own export.
+#[test]
+fn exported_function_body_updates_multiple_clause_exports() {
+    let source = "let a = 1;\nlet b = 2;\nexport function mutate() {\n    a++;\n    b++;\n}\nexport { a, b };\n";
+    let output = parse_lower_emit(source, cjs_es2015());
+    assert!(
+        output.contains("exports.a = (a++, a);"),
+        "a++ must update exports.a inside exported function.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.b = (b++, b);"),
+        "b++ must update exports.b inside exported function.\nOutput:\n{output}"
+    );
+}
+
+/// Assignment inside exported function body updates clause export.
+#[test]
+fn exported_function_body_assignment_updates_clause_export() {
+    let source = "let x = 1;\nexport function set(v: number) {\n    x = v;\n}\nexport { x };\n";
+    let output = parse_lower_emit(source, cjs_es2015());
+    assert!(
+        output.contains("exports.x = x = v"),
+        "Assignment inside exported function must chain through clause export.\nOutput:\n{output}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Full mix: the original bug repro
 // ---------------------------------------------------------------------------
