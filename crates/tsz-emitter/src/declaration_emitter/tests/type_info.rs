@@ -818,6 +818,79 @@ export const Out = applyMixin(Host);
 }
 
 #[test]
+fn test_named_constructor_alias_uses_return_type_parameter_for_instance_members() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+interface PairConstructor<StaticSide, InstanceSide> {
+    new (...args: any[]): InstanceSide;
+    prototype: InstanceSide;
+}
+
+interface Shape {
+    shapeMember: number;
+}
+
+declare class Host {
+    constructor(...args: any[]);
+}
+
+function applyMixin<T extends PairConstructor<{ staticOnly: boolean }, Shape>>(B: T) {
+    abstract class Local extends B {
+        localMethod(): void {}
+    }
+    return Local;
+}
+
+export const Out = applyMixin(Host);
+"#,
+    );
+
+    assert!(
+        output.contains("shapeMember: number;"),
+        "Constructor-shaped aliases should use the type argument returned by the construct signature: {output}"
+    );
+    assert!(
+        !output.contains("staticOnly: boolean;"),
+        "Constructor-shaped aliases must not blindly use the first type argument as the instance shape: {output}"
+    );
+}
+
+#[test]
+fn test_non_constructor_generic_constraint_does_not_inherit_first_type_argument() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+interface Box<Payload> {
+    value: Payload;
+}
+
+interface Shape {
+    shapeMember: number;
+}
+
+declare const RuntimeBase: any;
+
+function applyMixin<TBase extends Box<Shape>>(B: TBase) {
+    abstract class Local extends B {
+        localMethod(): void {}
+    }
+    return Local;
+}
+
+export const Out = applyMixin(RuntimeBase);
+"#,
+    );
+
+    assert!(
+        output.contains("localMethod(): void;"),
+        "Local own member must remain: {output}"
+    );
+    assert!(
+        !output.contains("shapeMember: number;"),
+        "Non-constructor generic constraints must not contribute members from their first type argument: {output}"
+    );
+}
+
+#[test]
 fn test_abstract_constructor_with_static_members_parenthesizes_in_intersection() {
     let (parser, _root) = parse_test_source("");
     let binder = BinderState::new();

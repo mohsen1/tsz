@@ -619,9 +619,11 @@ impl<'a> DeclarationEmitter<'a> {
 
         if let Some(type_ref) = self.arena.get_type_ref(constraint_node)
             && let Some(type_arguments) = type_ref.type_arguments.as_ref()
-            && let Some(first_arg_idx) = type_arguments.nodes.first().copied()
+            && let Some(instance_arg_index) =
+                self.constructor_type_reference_instance_arg_index(type_ref)
+            && let Some(instance_arg_idx) = type_arguments.nodes.get(instance_arg_index).copied()
         {
-            return self.instance_type_node_members_text_at(first_arg_idx, indent_level);
+            return self.instance_type_node_members_text_at(instance_arg_idx, indent_level);
         }
 
         if constraint_node.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
@@ -631,6 +633,116 @@ impl<'a> DeclarationEmitter<'a> {
                 .instance_type_node_members_text_at(func_type.type_annotation, indent_level);
         }
 
+        None
+    }
+
+    fn constructor_type_reference_instance_arg_index(
+        &self,
+        type_ref: &tsz_parser::parser::node::TypeRefData,
+    ) -> Option<usize> {
+        let name = self.get_identifier_text(type_ref.type_name)?;
+        let sym_id = self.resolve_identifier_symbol(type_ref.type_name, &name)?;
+        self.symbol_constructor_instance_type_arg_index(sym_id)
+    }
+
+    fn symbol_constructor_instance_type_arg_index(&self, sym_id: SymbolId) -> Option<usize> {
+        let binder = self.binder?;
+        let symbol = binder.symbols.get(sym_id)?;
+        for decl_idx in symbol.declarations.iter().copied() {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            if let Some(alias) = self.arena.get_type_alias(decl_node)
+                && let Some(index) = self.constructor_type_node_instance_type_arg_index(
+                    alias.type_node,
+                    alias.type_parameters.as_ref(),
+                )
+            {
+                return Some(index);
+            }
+            if let Some(interface) = self.arena.get_interface(decl_node) {
+                for member_idx in interface.members.nodes.iter().copied() {
+                    let Some(member_node) = self.arena.get(member_idx) else {
+                        continue;
+                    };
+                    if member_node.kind != syntax_kind_ext::CONSTRUCT_SIGNATURE {
+                        continue;
+                    }
+                    let Some(signature) = self.arena.get_signature(member_node) else {
+                        continue;
+                    };
+                    if let Some(index) = self.constructor_return_type_parameter_index(
+                        signature.type_annotation,
+                        interface.type_parameters.as_ref(),
+                    ) {
+                        return Some(index);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn constructor_type_node_instance_type_arg_index(
+        &self,
+        type_idx: NodeIndex,
+        type_parameters: Option<&tsz_parser::NodeList>,
+    ) -> Option<usize> {
+        let node = self.arena.get(type_idx)?;
+        if node.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
+            && let Some(func_type) = self.arena.get_function_type(node)
+        {
+            return self.constructor_return_type_parameter_index(
+                func_type.type_annotation,
+                type_parameters,
+            );
+        }
+        if node.kind == syntax_kind_ext::TYPE_LITERAL
+            && let Some(type_literal) = self.arena.get_type_literal(node)
+        {
+            for member_idx in type_literal.members.nodes.iter().copied() {
+                let Some(member_node) = self.arena.get(member_idx) else {
+                    continue;
+                };
+                if member_node.kind != syntax_kind_ext::CONSTRUCT_SIGNATURE {
+                    continue;
+                }
+                let Some(signature) = self.arena.get_signature(member_node) else {
+                    continue;
+                };
+                if let Some(index) = self.constructor_return_type_parameter_index(
+                    signature.type_annotation,
+                    type_parameters,
+                ) {
+                    return Some(index);
+                }
+            }
+        }
+        None
+    }
+
+    fn constructor_return_type_parameter_index(
+        &self,
+        return_type_idx: NodeIndex,
+        type_parameters: Option<&tsz_parser::NodeList>,
+    ) -> Option<usize> {
+        let return_node = self.arena.get(return_type_idx)?;
+        let return_ref = self.arena.get_type_ref(return_node)?;
+        if return_ref
+            .type_arguments
+            .as_ref()
+            .is_some_and(|args| !args.nodes.is_empty())
+        {
+            return None;
+        }
+        let return_name = self.get_identifier_text(return_ref.type_name)?;
+        let type_parameters = type_parameters?;
+        for (index, type_param_idx) in type_parameters.nodes.iter().copied().enumerate() {
+            let type_param = self.arena.get_type_parameter_at(type_param_idx)?;
+            if self.get_identifier_text(type_param.name).as_deref() == Some(return_name.as_str()) {
+                return Some(index);
+            }
+        }
         None
     }
 
