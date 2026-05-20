@@ -762,12 +762,8 @@ impl<'a> DeclarationEmitter<'a> {
             .current_statement_jsdoc_chain
             .iter()
             .any(|jsdoc| Self::jsdoc_contains_type_alias_tag(jsdoc));
-        // Suppress raw @typedef comment blocks when their type aliases have already been
-        // emitted as `export type` / `type` declarations by emit_leading_jsdoc_type_aliases_for_pos.
-        // That function is called when the statement has an effective export and is not
-        // variable-like (i.e. the same condition as the emit_leading_jsdoc_type_aliases_for_pos
-        // call above).  For JS object literal namespace exports the suppression is handled by a
-        // separate path, which is preserved here.
+        // True when emit_leading_jsdoc_type_aliases_for_pos was called above, so the raw
+        // @typedef comment blocks should be suppressed from the JSDoc chain.
         let emitted_leading_typedef_aliases = self.source_is_js_file
             && has_effective_export
             && !is_variable_like_export
@@ -973,11 +969,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos);
         let jsdoc_chain = self.current_statement_jsdoc_chain.clone();
 
-        // In JS files, emit any leading @typedef/@callback aliases ahead of the
-        // function declaration — mirroring how tsc hoists JSDoc type aliases before
-        // their enclosing declaration.  After emitting the aliases we filter those
-        // comment blocks out of the raw JSDoc chain so they don't appear a second
-        // time as literal comment text.
+        // Emit leading typedef aliases first so they appear before the function in the output.
         let has_leading_jsdoc_typedef = self.source_is_js_file
             && self.js_export_equals_names.is_empty()
             && jsdoc_chain
@@ -996,8 +988,6 @@ impl<'a> DeclarationEmitter<'a> {
         let has_jsdoc_overload_signatures = jsdoc_overload_function_node
             .is_some_and(|func_idx| !self.jsdoc_overload_signatures_for_node(func_idx).is_empty());
 
-        // Exclude typedef-only blocks from the JSDoc chain when those blocks have
-        // already been rendered as `export type` / `type` declarations above.
         let effective_chain: Vec<String> = if has_leading_jsdoc_typedef {
             jsdoc_chain
                 .iter()
