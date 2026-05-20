@@ -199,11 +199,16 @@ for (const rowName of pinnedSourceRows) {
   assert.equal(ref, row.ref, `${rowName} fixture source ref drifted from project-rows.mjs`);
 }
 
-{
-  const row = projectRowsByName.get("type-fest-project");
-  const overrideRef = "feedfacecafebeef";
-  const sources = shellFixtureSources(row.name, { [row.ref_env]: overrideRef });
+for (const rowName of pinnedSourceRows) {
+  const row = projectRowsByName.get(rowName);
+  const overrideRepo = `https://example.invalid/${rowName}.git`;
+  const overrideRef = `feedface${rowName.length.toString(16).padStart(4, "0")}`;
+  const sources = shellFixtureSources(rowName, {
+    [row.repo_env]: overrideRepo,
+    [row.ref_env]: overrideRef,
+  });
+  assert.equal(sources.length, 1, `${rowName} should emit exactly one override fixture source`);
   const [, repository, ref] = sources[0].split("|");
-  assert.equal(repository, row.repo, "repo env default should still come from project-rows.mjs");
-  assert.equal(ref, overrideRef, "fixture source should honor shell ref overrides");
+  assert.equal(repository, overrideRepo, `${rowName} fixture source should honor shell repo overrides`);
+  assert.equal(ref, overrideRef, `${rowName} fixture source should honor shell ref overrides`);
 }
