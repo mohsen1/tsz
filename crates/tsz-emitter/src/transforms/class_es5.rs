@@ -343,11 +343,13 @@ impl<'a> ClassES5Emitter<'a> {
         };
         let class_output = self.emit_class_ir(class_idx, Some(name), render_ir);
 
-        // Strip `var name = ` prefix and trailing `;` to get the raw IIFE expr
         let prefix = format!("var {name} = ");
         let trimmed = class_output.trim_end();
         let trimmed = trimmed.strip_suffix(';').unwrap_or(trimmed);
-        let iife_expr = trimmed.strip_prefix(&prefix).unwrap_or(trimmed).to_string();
+        let iife_expr = trimmed
+            .strip_prefix(&prefix)
+            .expect("class emit always produces `var <name> = <expr>;`")
+            .to_string();
 
         (iife_expr, computed_prop_temp_decls, init_exprs)
     }
