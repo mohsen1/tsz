@@ -80,6 +80,127 @@ pub(crate) fn homomorphic_mapped_projection_target<R: TypeResolver>(
     }
 }
 
+/// Returns callable union members that a contextually typed function expression
+/// may be checked against directly.
+///
+/// This models tsc's applicability path for shapes such as
+/// `ComponentClass<P> | StatelessComponent<P>`: the returned function is allowed
+/// to satisfy the callable member even when generic mapped props expand to a
+/// different but equivalent structural form during contextual typing.
+pub(crate) fn contextual_function_callable_union_members(
+    db: &dyn TypeDatabase,
+    source: TypeId,
+    target: TypeId,
+) -> Vec<TypeId> {
+    if !tsz_solver::contains_type_parameters(db, source)
+        || !tsz_solver::contains_type_parameters(db, target)
+    {
+        return Vec::new();
+    }
+
+    let source_is_callable =
+        tsz_solver::type_queries::get_callable_shape_for_type(db, source).is_some_and(|shape| {
+            !shape.call_signatures.is_empty() && shape.construct_signatures.is_empty()
+        }) || tsz_solver::type_queries::get_function_shape(db, source)
+            .is_some_and(|shape| !shape.is_constructor);
+    if !source_is_callable {
+        return Vec::new();
+    }
+
+    let mut callable_members = Vec::new();
+    let evaluated_target = tsz_solver::evaluate_type(db, target);
+    for candidate in [target, evaluated_target] {
+        if let Some(members) = tsz_solver::type_queries::get_union_members(db, candidate) {
+            for &member in members.iter() {
+                let evaluated_member = tsz_solver::evaluate_type(db, member);
+                let callable_member =
+                    tsz_solver::type_queries::get_callable_shape_for_type(db, member)
+                        .map(|shape| (member, shape))
+                        .or_else(|| {
+                            (evaluated_member != member)
+                                .then(|| {
+                                    tsz_solver::type_queries::get_callable_shape_for_type(
+                                        db,
+                                        evaluated_member,
+                                    )
+                                    .map(|shape| (evaluated_member, shape))
+                                })
+                                .flatten()
+                        });
+                if let Some((callable_member, shape)) = callable_member
+                    && !shape.call_signatures.is_empty()
+                    && !callable_members.contains(&callable_member)
+                {
+                    callable_members.push(callable_member);
+                }
+            }
+        }
+    }
+    callable_members
+}
+
+pub(crate) fn contextual_callable_member_failure_is_generic_parameter_drift(
+    db: &dyn TypeDatabase,
+    failure: Option<&super::relation_types::RelationFailure>,
+) -> bool {
+    let Some(super::relation_types::RelationFailure::ParameterTypeMismatch {
+        param_index: 0,
+        source_param,
+        target_param,
+        inner: Some(inner),
+    }) = failure
+    else {
+        return false;
+    };
+
+    if !tsz_solver::contains_type_parameters(db, *source_param)
+        || !tsz_solver::contains_type_parameters(db, *target_param)
+    {
+        return false;
+    }
+
+    matches!(
+        inner.as_ref(),
+        super::relation_types::RelationFailure::TypeMismatch {
+            source_type,
+            target_type,
+        } if *source_type == *target_param && *target_type == *source_param
+    )
+}
+
+pub(crate) fn contextual_callable_member_has_unclassified_generic_parameter_drift(
+    db: &dyn TypeDatabase,
+    source: TypeId,
+    member: TypeId,
+) -> bool {
+    let source_params = tsz_solver::type_queries::get_callable_shape_for_type(db, source)
+        .and_then(|shape| shape.call_signatures.first().map(|sig| sig.params.clone()))
+        .or_else(|| {
+            tsz_solver::type_queries::get_function_shape(db, source)
+                .map(|shape| shape.params.clone())
+        });
+    let Some(member_shape) = tsz_solver::type_queries::get_callable_shape_for_type(db, member)
+    else {
+        return false;
+    };
+    let Some(source_params) = source_params else {
+        return false;
+    };
+    let Some(member_sig) = member_shape.call_signatures.first() else {
+        return false;
+    };
+    let Some(source_param) = source_params.first() else {
+        return false;
+    };
+    let Some(member_param) = member_sig.params.first() else {
+        return false;
+    };
+
+    source_params.len() <= member_sig.params.len()
+        && tsz_solver::contains_type_parameters(db, source_param.type_id)
+        && tsz_solver::contains_type_parameters(db, member_param.type_id)
+}
+
 // ---------------------------------------------------------------------------
 // RelationRequest: unified policy descriptor for relation queries
 // ---------------------------------------------------------------------------

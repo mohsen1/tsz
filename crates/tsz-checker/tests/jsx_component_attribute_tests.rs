@@ -3530,6 +3530,228 @@ const ExplicitChild = (
 }
 
 #[test]
+fn react_component_type_return_accepts_generic_overwritten_props_arrow() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+declare namespace React {{
+    interface ReactElement<P = any> {{}}
+    type ReactNode = ReactElement<any> | string | number | boolean | null | undefined;
+    class Component<P, S = {{}}> {{
+        constructor(props: Readonly<P>);
+        constructor(props: P, context?: any);
+        props: P;
+    }}
+    interface ComponentClass<P = {{}}, S = {{}}> {{
+        new(props: P, context?: any): Component<P, S>;
+    }}
+    interface StatelessComponent<P = {{}}> {{
+        (props: P & {{ children?: ReactNode }}, context?: any): ReactElement<any> | null;
+    }}
+    type ComponentType<P = {{}}> = ComponentClass<P> | StatelessComponent<P>;
+}}
+
+type Exclude<T, U> = T extends U ? never : T;
+type Pick<T, K extends keyof T> = {{ [P in K]: T[P] }};
+type Omit<T, K extends keyof any> = T extends any ? Pick<T, Exclude<keyof T, K>> : never;
+type Overwrite<T, U> = Omit<T, keyof T & keyof U> & U;
+
+type OptionValues = string | number | boolean;
+interface Option<TValue = OptionValues> {{
+    value?: TValue;
+    [property: string]: any;
+}}
+interface Props<T extends OptionValues> {{
+    value?: Option<T> | T;
+    onChange?(value: Option<T> | undefined): void;
+}}
+type ExtractValueType<T> = T extends ReactSelectProps<infer U> ? U : never;
+type ReactSingleSelectProps<WrappedProps extends ReactSelectProps<any>> =
+    Overwrite<Omit<WrappedProps, "multi">, Props<ExtractValueType<WrappedProps>>>;
+
+declare class ReactSelectClass<TValue = OptionValues> extends React.Component<ReactSelectProps<TValue>> {{}}
+interface ReactSelectProps<TValue = OptionValues> {{
+    multi?: boolean;
+    value?: Option<TValue> | Option<TValue>[] | string | string[] | number | number[] | boolean;
+    onChange?: (newValue: Option<TValue> | Option<TValue>[] | null) => void;
+}}
+
+export function createReactSingleSelect<WrappedProps extends ReactSelectProps<any>>(
+    WrappedComponent: React.ComponentType<WrappedProps>
+): React.ComponentType<ReactSingleSelectProps<WrappedProps>> {{
+    return (props) => {{
+        return (
+            <ReactSelectClass<ExtractValueType<WrappedProps>>
+                {{...props}}
+                multi={{false}}
+                value={{props.value}}
+                onChange={{(value) => {{
+                    if (props.onChange) {{
+                        props.onChange(value === null ? undefined : value);
+                    }}
+                }}}}
+            />
+        );
+    }};
+}}
+"#
+    );
+
+    let diags = jsx_diagnostics_with_options(
+        &source,
+        CheckerOptions {
+            jsx_mode: JsxMode::React,
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "generic overwritten props arrow should satisfy React.ComponentType through the callable union member, got: {diags:?}"
+    );
+}
+
+#[test]
+fn react_component_type_return_still_checks_contextual_arrow_body() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+declare namespace React {{
+    interface ReactElement<P = any> {{ tag: string; }}
+    type ReactNode = ReactElement<any> | string | number | boolean | null | undefined;
+    class Component<P, S = {{}}> {{
+        constructor(props: Readonly<P>);
+        constructor(props: P, context?: any);
+        props: P;
+    }}
+    interface ComponentClass<P = {{}}, S = {{}}> {{
+        new(props: P, context?: any): Component<P, S>;
+    }}
+    interface StatelessComponent<P = {{}}> {{
+        (props: P & {{ children?: ReactNode }}, context?: any): ReactElement<any> | null;
+    }}
+    type ComponentType<P = {{}}> = ComponentClass<P> | StatelessComponent<P>;
+}}
+
+type Exclude<T, U> = T extends U ? never : T;
+type Pick<T, K extends keyof T> = {{ [P in K]: T[P] }};
+type Omit<T, K extends keyof any> = T extends any ? Pick<T, Exclude<keyof T, K>> : never;
+type Overwrite<T, U> = Omit<T, keyof T & keyof U> & U;
+
+type OptionValues = string | number | boolean;
+interface Option<TValue = OptionValues> {{
+    value?: TValue;
+}}
+interface Props<T extends OptionValues> {{
+    value?: Option<T> | T;
+}}
+type ExtractValueType<T> = T extends ReactSelectProps<infer U> ? U : never;
+type ReactSingleSelectProps<WrappedProps extends ReactSelectProps<any>> =
+    Overwrite<Omit<WrappedProps, "multi">, Props<ExtractValueType<WrappedProps>>>;
+
+interface ReactSelectProps<TValue = OptionValues> {{
+    multi?: boolean;
+    value?: Option<TValue> | Option<TValue>[] | string | string[] | number | number[] | boolean;
+}}
+
+export function createBad<WrappedProps extends ReactSelectProps<any>>(
+    WrappedComponent: React.ComponentType<WrappedProps>
+): React.ComponentType<ReactSingleSelectProps<WrappedProps>> {{
+    return (_props): React.ReactElement<any> => 123;
+}}
+"#
+    );
+
+    let diags = jsx_diagnostics_with_options(
+        &source,
+        CheckerOptions {
+            jsx_mode: JsxMode::React,
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "invalid contextual arrow body should still emit TS2322, got: {diags:?}"
+    );
+}
+
+#[test]
+fn react_component_type_return_rejects_incompatible_contextual_arrow_signature() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+declare namespace React {{
+    interface ReactElement<P = any> {{}}
+    type ReactNode = ReactElement<any> | string | number | boolean | null | undefined;
+    class Component<P, S = {{}}> {{
+        constructor(props: Readonly<P>);
+        constructor(props: P, context?: any);
+        props: P;
+    }}
+    interface ComponentClass<P = {{}}, S = {{}}> {{
+        new(props: P, context?: any): Component<P, S>;
+    }}
+    interface StatelessComponent<P = {{}}> {{
+        (props: P & {{ children?: ReactNode }}, context?: any): ReactElement<any> | null;
+    }}
+    type ComponentType<P = {{}}> = ComponentClass<P> | StatelessComponent<P>;
+}}
+
+type Exclude<T, U> = T extends U ? never : T;
+type Pick<T, K extends keyof T> = {{ [P in K]: T[P] }};
+type Omit<T, K extends keyof any> = T extends any ? Pick<T, Exclude<keyof T, K>> : never;
+type Overwrite<T, U> = Omit<T, keyof T & keyof U> & U;
+
+type OptionValues = string | number | boolean;
+interface Option<TValue = OptionValues> {{
+    value?: TValue;
+}}
+interface Props<T extends OptionValues> {{
+    value?: Option<T> | T;
+}}
+type ExtractValueType<T> = T extends ReactSelectProps<infer U> ? U : never;
+type ReactSingleSelectProps<WrappedProps extends ReactSelectProps<any>> =
+    Overwrite<Omit<WrappedProps, "multi">, Props<ExtractValueType<WrappedProps>>>;
+
+interface ReactSelectProps<TValue = OptionValues> {{
+    multi?: boolean;
+    value?: Option<TValue> | Option<TValue>[] | string | string[] | number | number[] | boolean;
+}}
+
+export function createBad<WrappedProps extends ReactSelectProps<any>>(
+    WrappedComponent: React.ComponentType<WrappedProps>
+): React.ComponentType<ReactSingleSelectProps<WrappedProps>> {{
+    return (props: ReactSingleSelectProps<WrappedProps> & {{ required: string }}) => {{
+        props.required;
+        return null;
+    }};
+}}
+"#
+    );
+
+    let diags = jsx_diagnostics_with_options(
+        &source,
+        CheckerOptions {
+            jsx_mode: JsxMode::React,
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            strict_function_types: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "incompatible returned function signature should still emit TS2322, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_react_component_type_missing_required_prop_emits_ts2741() {
     let source = format!(
         r#"
