@@ -21,7 +21,7 @@ fn method_decl_is_contextually_sensitive(state: &CheckerState, method: &MethodDe
     // A method referencing `this` is context-sensitive: its `this` type flows from the
     // object's contextual type and can only be resolved after outer type params are inferred.
     let uses_this =
-        tsz_parser::syntax::transform_utils::contains_this_reference(&state.ctx.arena, method.body);
+        tsz_parser::syntax::transform_utils::contains_this_reference(state.ctx.arena, method.body);
     uses_this
         || has_unannotated_params
         || (method.parameters.nodes.is_empty()
@@ -76,9 +76,7 @@ pub(crate) fn is_contextually_sensitive(state: &CheckerState, idx: NodeIndex) ->
             .ctx
             .arena
             .get_method_decl(node)
-            .map_or(true, |method| {
-                method_decl_is_contextually_sensitive(state, method)
-            }),
+            .is_none_or(|method| method_decl_is_contextually_sensitive(state, method)),
 
         // Functions are sensitive ONLY if they have at least one parameter without a type annotation,
         // or (for function expressions) if they reference `this` — whose type flows from the
@@ -97,7 +95,7 @@ pub(crate) fn is_contextually_sensitive(state: &CheckerState, idx: NodeIndex) ->
                 });
                 let uses_this = k == syntax_kind_ext::FUNCTION_EXPRESSION
                     && tsz_parser::syntax::transform_utils::contains_this_reference(
-                        &state.ctx.arena,
+                        state.ctx.arena,
                         func.body,
                     );
 
@@ -180,7 +178,7 @@ pub(crate) fn is_contextually_sensitive(state: &CheckerState, idx: NodeIndex) ->
                                     .ctx
                                     .arena
                                     .get_method_decl(element)
-                                    .map_or(true, |method| {
+                                    .is_none_or(|method| {
                                         method_decl_is_contextually_sensitive(state, method)
                                     });
                                 if sensitive {

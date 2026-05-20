@@ -1839,7 +1839,7 @@ register({
 /// A function expression (non-arrow) that references `this` should be context-sensitive,
 /// because `this` is resolved from the contextual type of the surrounding object.
 /// Uses the same Extension-like type machinery but with `addPrc: function() {...}` syntax
-/// (PROPERTY_ASSIGNMENT with FUNCTION_EXPRESSION value) to verify the rule applies there too.
+/// (`PROPERTY_ASSIGNMENT` with `FUNCTION_EXPRESSION` value) to verify the rule applies there too.
 #[test]
 fn test_function_expression_with_this_is_context_sensitive() {
     let source = r#"
