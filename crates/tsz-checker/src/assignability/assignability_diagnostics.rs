@@ -752,16 +752,14 @@ impl<'a> CheckerState<'a> {
 
         // Reset overflow flags before the assignability check so we detect fresh
         // exceedance from this particular relation rather than a prior one.
-        self.ctx.relation_depth_exceeded.set(false);
-        self.ctx.relation_iteration_exceeded.set(false);
+        self.ctx
+            .relation_overflow
+            .set(crate::context::RelationOverflowFlags::default());
         let assignable = self.diagnostic_relation_boolean_guard(source, target);
         // tsc emits TS2859 ("Excessive complexity") for all relation-checker
         // overflows regardless of whether it was depth or iteration that fired.
         // TS2321 ("Excessive stack depth") fires from a separate mechanism.
-        if !assignable
-            && (self.ctx.relation_iteration_exceeded.get()
-                || self.ctx.relation_depth_exceeded.get())
-        {
+        if !assignable && self.ctx.relation_overflow.get().has_overflow() {
             let source_name = self.format_type_diagnostic(source);
             let target_name = self.format_type_diagnostic(target);
             self.error_at_node(

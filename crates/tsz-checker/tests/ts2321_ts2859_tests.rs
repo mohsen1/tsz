@@ -16,7 +16,7 @@ use tsz_checker::test_utils::check_source_diagnostics;
 /// tsc emits TS2859 (not TS2321 or TS2589) when the relation checker's
 /// recursion guard is tripped by a large template-literal union.
 ///
-/// Pattern: `\`${A}${A}${A}${A}\`` with an 8-member `A` produces a
+/// Pattern: `` `${A}${A}${A}${A}` `` with an 8-member `A` produces a
 /// 4096-member union that overwhelms the relation checker during
 /// assignability comparison.
 #[test]

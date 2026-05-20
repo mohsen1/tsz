@@ -32,12 +32,9 @@ impl<'a> CheckerState<'a> {
     /// invoking the relation.
     #[inline]
     fn propagate_overflow_flags(&self, depth_exceeded: bool, iteration_exceeded: bool) {
-        if depth_exceeded {
-            self.ctx.relation_depth_exceeded.set(true);
-        }
-        if iteration_exceeded {
-            self.ctx.relation_iteration_exceeded.set(true);
-        }
+        let mut overflow = self.ctx.relation_overflow.get();
+        overflow.merge(depth_exceeded, iteration_exceeded);
+        self.ctx.relation_overflow.set(overflow);
     }
 
     pub(crate) fn callable_has_own_generic_signatures(&self, type_id: TypeId) -> bool {

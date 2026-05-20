@@ -204,8 +204,7 @@ impl<'a> CheckerContext<'a> {
             skip_flow_narrowing: false,
             instantiation_depth: Cell::new(0),
             depth_exceeded: Cell::new(false),
-            relation_depth_exceeded: Cell::new(false),
-            relation_iteration_exceeded: Cell::new(false),
+            relation_overflow: Cell::new(crate::context::RelationOverflowFlags::default()),
             skip_callable_type_param_suppression: Cell::new(false),
             eval_session: Rc::new(tsz_solver::EvaluationSession::new()),
             recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(

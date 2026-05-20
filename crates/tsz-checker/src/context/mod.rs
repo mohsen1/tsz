@@ -78,6 +78,25 @@ use tsz_parser::parser::node::NodeArena;
 pub type CrossFileTypeParamsCache =
     Arc<dashmap::DashMap<(u32, NodeIndex), Vec<tsz_solver::TypeParamInfo>>>;
 
+/// Overflow state observed from relation checks that feed assignability
+/// diagnostics.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RelationOverflowFlags {
+    pub depth_exceeded: bool,
+    pub iteration_exceeded: bool,
+}
+
+impl RelationOverflowFlags {
+    pub const fn has_overflow(self) -> bool {
+        self.depth_exceeded || self.iteration_exceeded
+    }
+
+    pub const fn merge(&mut self, depth_exceeded: bool, iteration_exceeded: bool) {
+        self.depth_exceeded |= depth_exceeded;
+        self.iteration_exceeded |= iteration_exceeded;
+    }
+}
+
 /// Maximum depth for nested `get_type_of_symbol` calls before giving up.
 ///
 /// Prevents stack overflow when resolving deeply recursive or circular
@@ -927,13 +946,9 @@ pub struct CheckerContext<'a> {
     /// Whether type instantiation depth was exceeded (for TS2589 emission).
     pub depth_exceeded: Cell<bool>,
 
-    /// Stack-depth limit was exceeded during an assignability/subtype check
-    /// (for TS2321 "Excessive stack depth comparing types" emission).
-    pub relation_depth_exceeded: Cell<bool>,
-
-    /// Iteration-count budget exhausted during an assignability/subtype check
-    /// (for TS2859 "Excessive complexity comparing types" emission).
-    pub relation_iteration_exceeded: Cell<bool>,
+    /// Relation-check overflow state observed during assignability/subtype
+    /// checks that feed diagnostics.
+    pub relation_overflow: Cell<RelationOverflowFlags>,
 
     /// When true, `should_suppress_assignability_diagnostic` skips the callable-
     /// with-type-params suppression. Set by variable declaration checking to
