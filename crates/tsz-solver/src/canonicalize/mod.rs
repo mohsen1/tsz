@@ -534,6 +534,31 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
             .map(|pos| pos as u32)
     }
 
+    /// Canonicalize `type_id` with an extra outer scope of type-parameter
+    /// names visible on top of the stack.
+    ///
+    /// Callers compare types whose type parameters are "free" relative to
+    /// the supplied input — for example, two interface declarations'
+    /// constraints, where each declaration's `T` is bound by its enclosing
+    /// declaration list rather than by any wrapper in the constraint
+    /// expression itself. Pushing the shared scope on entry rewrites those
+    /// otherwise-free `TypeParameter(name)` occurrences to
+    /// `BoundParameter(n)` so two declarations whose constraints reference
+    /// positionally-equivalent parameters canonicalize to the same form.
+    ///
+    /// The scope is pushed before the recursive walk and popped after, so
+    /// subsequent calls on the same `Canonicalizer` are unaffected.
+    pub fn canonicalize_with_param_scope(
+        &mut self,
+        type_id: TypeId,
+        param_names: &[Atom],
+    ) -> TypeId {
+        self.param_stack.push(param_names.to_vec());
+        let result = self.canonicalize(type_id);
+        self.param_stack.pop();
+        result
+    }
+
     /// Find the De Bruijn index for a type parameter by name.
     ///
     /// Searches from the top of the stack (innermost scope) downward.
