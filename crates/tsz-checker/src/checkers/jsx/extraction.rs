@@ -739,7 +739,7 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
-        if self.is_assignable_to(source_render, target_render) {
+        if self.diagnostic_relation_boolean_guard(source_render, target_render) {
             return true;
         }
 
@@ -750,9 +750,9 @@ impl<'a> CheckerState<'a> {
         }
 
         source_returns.iter().any(|&source_return| {
-            target_returns
-                .iter()
-                .any(|&target_return| self.is_assignable_to(source_return, target_return))
+            target_returns.iter().any(|&target_return| {
+                self.diagnostic_relation_boolean_guard(source_return, target_return)
+            })
         })
     }
 
