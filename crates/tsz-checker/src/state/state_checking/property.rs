@@ -878,12 +878,11 @@ impl<'a> CheckerState<'a> {
                         // `User.parent: User` in `User & { admin: boolean }`), widen it
                         // to the full outer intersection so nested literals are checked
                         // against all members, not just the recursive member alone.
-                        let nested_target =
-                            crate::query_boundaries::common::widen_recursive_intersection_member(
-                                self.ctx.types,
-                                nested_target,
-                                resolved_target,
-                            );
+                        let nested_target = query::widen_recursive_intersection_member(
+                            self.ctx.types,
+                            nested_target,
+                            resolved_target,
+                        );
                         if self.check_nested_object_literal_excess_properties(
                             source_prop.name,
                             Some(nested_target),

@@ -8,6 +8,7 @@ pub(crate) use super::super::common::{
     array_element_type, callable_shape_for_type as callable_shape, intersection_members,
     is_mapped_type, is_string_type, is_type_parameter_like, is_unit_type,
     object_shape_for_type as object_shape, tuple_elements, union_members,
+    widen_recursive_intersection_member,
 };
 
 pub(crate) fn extract_string_literal_keys(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<Atom> {
