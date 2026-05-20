@@ -3,9 +3,8 @@ use std::fs;
 use std::path::Path;
 use tsz_binder::BinderState;
 use tsz_parser::parser::node::NodeArena;
-use tsz_solver::{
-    CompatChecker, FunctionShape, ParamInfo, RelationCacheKey, TypeId, TypeInterner, Visibility,
-};
+use tsz_solver::computation::CompatChecker;
+use tsz_solver::{FunctionShape, ParamInfo, RelationCacheKey, TypeId, TypeInterner, Visibility};
 
 fn make_animal_and_dog(interner: &TypeInterner) -> (TypeId, TypeId) {
     let animal_name = interner.intern_string("name");

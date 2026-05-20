@@ -121,7 +121,9 @@ impl<'a, 'b> CheckerOverrideProvider<'a, 'b> {
     }
 }
 
-impl<'a, 'b> tsz_solver::AssignabilityOverrideProvider for CheckerOverrideProvider<'a, 'b> {
+impl<'a, 'b> tsz_solver::relations::compat::AssignabilityOverrideProvider
+    for CheckerOverrideProvider<'a, 'b>
+{
     fn enum_assignability_override(&self, source: TypeId, target: TypeId) -> Option<bool> {
         self.checker.enum_assignability_override(source, target)
     }

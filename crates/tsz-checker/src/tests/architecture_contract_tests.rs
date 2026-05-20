@@ -5,11 +5,12 @@ use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_parser::ParserState;
 use tsz_parser::parser::node::NodeArena;
+use tsz_solver::computation::CompatChecker;
 use tsz_solver::def::resolver::TypeResolver;
 use tsz_solver::def::{DefId, DefinitionStore};
 use tsz_solver::{
-    CompatChecker, FunctionShape, ParamInfo, PropertyInfo, RelationCacheKey, SymbolRef, TypeId,
-    TypeInterner, TypeParamInfo, Visibility,
+    FunctionShape, ParamInfo, PropertyInfo, RelationCacheKey, SymbolRef, TypeId, TypeInterner,
+    TypeParamInfo, Visibility,
 };
 
 /// Read a checker source path. If the path is a directory, concatenate all .rs files.
@@ -1309,7 +1310,7 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
     );
     assert!(
         !call_boundary_src
-            .contains("CallEvaluator::<tsz_solver::CompatChecker>::get_contextual_signature("),
+            .contains("CallEvaluator::<tsz_solver::relations::compat::CompatChecker>::get_contextual_signature("),
         "query_boundaries/call_checker should not depend on concrete solver checker internals for contextual signature lookup"
     );
     assert!(
