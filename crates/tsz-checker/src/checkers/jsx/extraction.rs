@@ -898,7 +898,9 @@ impl<'a> CheckerState<'a> {
                             if return_type != TypeId::NEVER && self.ctx.strict_null_checks() {
                                 all_valid = false;
                             }
-                        } else if !self.is_assignable_to(non_null_return, element_type) {
+                        } else if !self
+                            .diagnostic_relation_boolean_guard(non_null_return, element_type)
+                        {
                             all_valid = false;
                         }
                     }
@@ -972,7 +974,7 @@ impl<'a> CheckerState<'a> {
                             } else {
                                 ret
                             };
-                            self.is_assignable_to(check_ret, t)
+                            self.diagnostic_relation_boolean_guard(check_ret, t)
                                 || (!is_call_sig
                                     && self
                                         .jsx_construct_return_can_use_render_fallback(check_ret, t))
@@ -1043,7 +1045,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if !self.is_assignable_to(non_null_return, jsx_element_type) {
+        if !self.diagnostic_relation_boolean_guard(non_null_return, jsx_element_type) {
             self.report_invalid_jsx_component_return_type(tag_name_idx);
         }
     }
