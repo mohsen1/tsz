@@ -6,7 +6,6 @@
 const KIND_TEXT: &str = "text";
 const KIND_LINK: &str = "link";
 const KIND_LINK_NAME: &str = "linkName";
-const KIND_SPACE: &str = "space";
 const KIND_LINK_TEXT: &str = "linkText";
 
 /// Which variant of the inline link tag was used.
@@ -21,7 +20,7 @@ pub enum LinkVariant {
 }
 
 impl LinkVariant {
-    fn tag_text(&self) -> &'static str {
+    const fn tag_text(&self) -> &'static str {
         match self {
             LinkVariant::Link => "@link",
             LinkVariant::Linkcode => "@linkcode",
@@ -244,24 +243,30 @@ where
 }
 
 /// Build a JSON display-parts array from `text`, expanding inline link
-/// constructs into structured parts that match the tsserver protocol:
+/// constructs into structured parts that match the tsserver protocol.
 ///
+/// For `{@link Foo}` (symbol, no display text):
 /// ```json
-/// [
-///   {"text": "See ", "kind": "text"},
-///   {"text": "{",   "kind": "link"},
-///   {"text": "@link","kind": "linkName"},
-///   {"text": " ",   "kind": "space"},
-///   {"text": "Foo", "kind": "linkText"},
-///   {"text": "}",   "kind": "link"}
-/// ]
+/// [{"text":"{@link ","kind":"link"}, {"text":"Foo","kind":"linkName"}, {"text":"}","kind":"link"}]
+/// ```
+///
+/// For `{@link Foo label}` (symbol with display text):
+/// ```json
+/// [{"text":"{@link ","kind":"link"}, {"text":"Foo","kind":"linkName","target":...},
+///  {"text":"label","kind":"linkText"}, {"text":"}","kind":"link"}]
+/// ```
+///
+/// For `{@link https://example.com Click here}` (URL):
+/// ```json
+/// [{"text":"{@link ","kind":"link"}, {"text":"https://example.com Click here","kind":"linkText"},
+///  {"text":"}","kind":"link"}]
 /// ```
 pub fn build_doc_display_parts(text: &str) -> serde_json::Value {
     build_doc_display_parts_with_resolver(text, |_| None)
 }
 
-/// Like [`build_doc_display_parts`] but includes a `target` property on each
-/// `linkText` part when the resolver returns a value for the link's target name.
+/// Like [`build_doc_display_parts`] but adds a `target` property on the
+/// `linkName` part when the resolver returns a value for the link's target name.
 pub fn build_doc_display_parts_with_resolver<F>(text: &str, resolve: F) -> serde_json::Value
 where
     F: Fn(&str) -> Option<serde_json::Value>,
@@ -280,20 +285,37 @@ where
             parts.push(serde_json::json!({"text": prefix, "kind": KIND_TEXT}));
         }
 
-        parts.push(serde_json::json!({"text": "{", "kind": KIND_LINK}));
-        parts.push(serde_json::json!({"text": span.variant.tag_text(), "kind": KIND_LINK_NAME}));
-        parts.push(serde_json::json!({"text": " ", "kind": KIND_SPACE}));
+        // Opening "link" part contains the full tag prefix, e.g. "{@link ".
+        let open_text = format!("{{{} ", span.variant.tag_text());
+        parts.push(serde_json::json!({"text": open_text, "kind": KIND_LINK}));
 
-        let link_text_part = if let Some(target_val) = resolve(&span.target) {
-            serde_json::json!({
-                "text": span.display_text(),
-                "kind": KIND_LINK_TEXT,
-                "target": target_val
-            })
+        if span.is_url() {
+            // URLs: full content (url + optional display text) as a single linkText part.
+            let full_content = if let Some(ref d) = span.display {
+                format!("{} {}", span.target, d)
+            } else {
+                span.target.clone()
+            };
+            parts.push(serde_json::json!({"text": full_content, "kind": KIND_LINK_TEXT}));
         } else {
-            serde_json::json!({"text": span.display_text(), "kind": KIND_LINK_TEXT})
-        };
-        parts.push(link_text_part);
+            // Symbol refs: target as linkName (with optional target property from resolver),
+            // then display text as linkText only if it differs from the target.
+            let link_name_part = if let Some(target_val) = resolve(&span.target) {
+                serde_json::json!({
+                    "text": &span.target,
+                    "kind": KIND_LINK_NAME,
+                    "target": target_val
+                })
+            } else {
+                serde_json::json!({"text": &span.target, "kind": KIND_LINK_NAME})
+            };
+            parts.push(link_name_part);
+
+            if let Some(ref display) = span.display {
+                parts.push(serde_json::json!({"text": display, "kind": KIND_LINK_TEXT}));
+            }
+        }
+
         parts.push(serde_json::json!({"text": "}", "kind": KIND_LINK}));
 
         last_end = span.end;
@@ -307,7 +329,7 @@ where
     serde_json::Value::Array(parts)
 }
 
-fn is_ident_continue(b: u8) -> bool {
+const fn is_ident_continue(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_'
 }
 
@@ -542,37 +564,34 @@ mod tests {
 
     #[test]
     fn display_parts_simple_link() {
-        // {, @link, space, Foo, } = 5 parts
+        // {open-link, linkName(Foo), close-link} = 3 parts
         let parts = build_doc_display_parts("{@link Foo}");
         let arr = parts.as_array().unwrap();
-        assert_eq!(arr.len(), 5);
+        assert_eq!(arr.len(), 3);
         assert_eq!(arr[0]["kind"], KIND_LINK);
-        assert_eq!(arr[0]["text"], "{");
+        assert_eq!(arr[0]["text"], "{@link ");
         assert_eq!(arr[1]["kind"], KIND_LINK_NAME);
-        assert_eq!(arr[1]["text"], "@link");
-        assert_eq!(arr[2]["kind"], KIND_SPACE);
-        assert_eq!(arr[2]["text"], " ");
-        assert_eq!(arr[3]["kind"], KIND_LINK_TEXT);
-        assert_eq!(arr[3]["text"], "Foo");
-        assert_eq!(arr[4]["kind"], KIND_LINK);
-        assert_eq!(arr[4]["text"], "}");
+        assert_eq!(arr[1]["text"], "Foo");
+        assert_eq!(arr[2]["kind"], KIND_LINK);
+        assert_eq!(arr[2]["text"], "}");
     }
 
     #[test]
     fn display_parts_in_sentence() {
+        // text("Use "), link("{@link "), linkName("Foo"), link("}"), text(" for details.")
         let parts = build_doc_display_parts("Use {@link Foo} for details.");
         let arr = parts.as_array().unwrap();
+        assert_eq!(arr.len(), 5);
         assert_eq!(arr[0]["kind"], KIND_TEXT);
         assert_eq!(arr[0]["text"], "Use ");
         assert_eq!(arr[1]["kind"], KIND_LINK);
+        assert_eq!(arr[1]["text"], "{@link ");
         assert_eq!(arr[2]["kind"], KIND_LINK_NAME);
-        assert_eq!(arr[3]["kind"], KIND_SPACE);
-        assert_eq!(arr[4]["kind"], KIND_LINK_TEXT);
-        assert_eq!(arr[4]["text"], "Foo");
-        assert_eq!(arr[5]["kind"], KIND_LINK);
-        let last = arr.last().unwrap();
-        assert_eq!(last["kind"], KIND_TEXT);
-        assert_eq!(last["text"], " for details.");
+        assert_eq!(arr[2]["text"], "Foo");
+        assert_eq!(arr[3]["kind"], KIND_LINK);
+        assert_eq!(arr[3]["text"], "}");
+        assert_eq!(arr[4]["kind"], KIND_TEXT);
+        assert_eq!(arr[4]["text"], " for details.");
     }
 
     #[test]
@@ -586,16 +605,71 @@ mod tests {
 
     #[test]
     fn display_parts_linkcode_tag_name() {
+        // Opening link part contains the full tag prefix.
         let parts = build_doc_display_parts("{@linkcode myFunc}");
         let arr = parts.as_array().unwrap();
-        assert_eq!(arr[1]["text"], "@linkcode");
+        assert_eq!(arr[0]["kind"], KIND_LINK);
+        assert_eq!(arr[0]["text"], "{@linkcode ");
+        assert_eq!(arr[1]["kind"], KIND_LINK_NAME);
+        assert_eq!(arr[1]["text"], "myFunc");
     }
 
     #[test]
     fn display_parts_link_with_display_text() {
+        // {open-link, linkName(Foo), linkText(the label), close-link} = 4 parts
         let parts = build_doc_display_parts("{@link Foo the label}");
         let arr = parts.as_array().unwrap();
-        let link_text = arr.iter().find(|p| p["kind"] == KIND_LINK_TEXT).unwrap();
-        assert_eq!(link_text["text"], "the label");
+        assert_eq!(arr.len(), 4);
+        assert_eq!(arr[0]["kind"], KIND_LINK);
+        assert_eq!(arr[0]["text"], "{@link ");
+        assert_eq!(arr[1]["kind"], KIND_LINK_NAME);
+        assert_eq!(arr[1]["text"], "Foo");
+        assert_eq!(arr[2]["kind"], KIND_LINK_TEXT);
+        assert_eq!(arr[2]["text"], "the label");
+        assert_eq!(arr[3]["kind"], KIND_LINK);
+        assert_eq!(arr[3]["text"], "}");
+    }
+
+    #[test]
+    fn display_parts_url_with_display_text() {
+        // URL: full "https://... Click here" as a single linkText part.
+        let parts = build_doc_display_parts("{@link https://example.com Click here}");
+        let arr = parts.as_array().unwrap();
+        assert_eq!(arr.len(), 3);
+        assert_eq!(arr[0]["kind"], KIND_LINK);
+        assert_eq!(arr[0]["text"], "{@link ");
+        assert_eq!(arr[1]["kind"], KIND_LINK_TEXT);
+        assert_eq!(arr[1]["text"], "https://example.com Click here");
+        assert_eq!(arr[2]["kind"], KIND_LINK);
+        assert_eq!(arr[2]["text"], "}");
+    }
+
+    #[test]
+    fn display_parts_url_no_display() {
+        let parts = build_doc_display_parts("{@link https://example.com}");
+        let arr = parts.as_array().unwrap();
+        assert_eq!(arr.len(), 3);
+        assert_eq!(arr[1]["kind"], KIND_LINK_TEXT);
+        assert_eq!(arr[1]["text"], "https://example.com");
+    }
+
+    #[test]
+    fn display_parts_resolver_sets_target_on_link_name() {
+        let parts = build_doc_display_parts_with_resolver("{@link Foo}", |name| {
+            if name == "Foo" {
+                Some(serde_json::json!({"fileName": "test.ts", "textSpan": {"start": 0}}))
+            } else {
+                None
+            }
+        });
+        let arr = parts.as_array().unwrap();
+        // 3 parts: open-link, linkName(Foo)+target, close-link
+        assert_eq!(arr.len(), 3);
+        assert_eq!(arr[1]["kind"], KIND_LINK_NAME);
+        assert_eq!(arr[1]["text"], "Foo");
+        assert!(
+            arr[1].get("target").is_some(),
+            "linkName should have target field"
+        );
     }
 }
