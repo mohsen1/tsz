@@ -191,12 +191,17 @@ pub(super) fn sources_have_no_default_lib(sources: &[SourceEntry]) -> bool {
 
 pub(super) fn source_has_no_default_lib(source: &SourceEntry) -> bool {
     if let Some(text) = source.text.as_deref() {
-        return has_no_default_lib_directive(text);
+        return text_may_contain_no_default_lib_directive(text)
+            && has_no_default_lib_directive(text);
     }
     let Ok(text) = std::fs::read_to_string(&source.path) else {
         return false;
     };
-    has_no_default_lib_directive(&text)
+    text_may_contain_no_default_lib_directive(&text) && has_no_default_lib_directive(&text)
+}
+
+fn text_may_contain_no_default_lib_directive(text: &str) -> bool {
+    text.contains("///") && text.contains("reference") && text.contains("no-default-lib")
 }
 
 pub(super) fn has_no_default_lib_directive(source: &str) -> bool {
@@ -244,11 +249,26 @@ pub(super) struct SourceReadResult {
     pub(super) dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>>,
     pub(super) outfile_bundle_paths: FxHashSet<PathBuf>,
     pub(super) outfile_bundle_dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>>,
+    pub(super) module_resolutions: FxHashMap<SourceModuleResolutionKey, SourceModuleResolution>,
     /// Tuples of (`file_path`, `type_name`, `byte_offset_of_types_attr`, `span_length`).
     pub(super) type_reference_errors: Vec<(PathBuf, String, usize, usize)>,
     /// TS1453: Invalid `resolution-mode` values in `/// <reference types="..." />` directives.
     /// Tuples of (`file_path`, `byte_offset`, `span_length`).
     pub(super) resolution_mode_errors: Vec<(PathBuf, usize, usize)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(super) struct SourceModuleResolutionKey {
+    pub(super) containing_file: PathBuf,
+    pub(super) specifier: String,
+    pub(super) import_kind: ImportKind,
+    pub(super) resolution_mode_override: Option<ImportingModuleKind>,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct SourceModuleResolution {
+    pub(super) canonical_path: PathBuf,
+    pub(super) resolved_using_ts_extension: bool,
 }
 
 /// Locate the nearest `tsconfig.json`, starting at `cwd` and walking up parent
@@ -558,13 +578,13 @@ fn parse_source_for_bfs(path: &Path, no_resolve: bool) -> ParsedSource {
         _ => Vec::new(),
     };
     let type_refs = match text {
-        Some(text) if !is_binary => {
+        Some(text) if !is_binary && text_may_contain_reference_directives(text) => {
             tsz::checker::triple_slash_validator::extract_reference_types(text)
         }
         _ => Vec::new(),
     };
     let reference_paths = match text {
-        Some(text) if !is_binary && !no_resolve => {
+        Some(text) if !is_binary && !no_resolve && text_may_contain_reference_directives(text) => {
             tsz::checker::triple_slash_validator::extract_reference_paths(text)
         }
         _ => Vec::new(),
@@ -577,6 +597,10 @@ fn parse_source_for_bfs(path: &Path, no_resolve: bool) -> ParsedSource {
     }
 }
 
+fn text_may_contain_reference_directives(text: &str) -> bool {
+    text.contains("///") && text.contains("reference")
+}
+
 pub(super) fn read_source_files(
     paths: &[PathBuf],
     base_dir: &Path,
@@ -584,13 +608,12 @@ pub(super) fn read_source_files(
     cache: Option<&CompilationCache>,
     changed_paths: Option<&FxHashSet<PathBuf>>,
 ) -> Result<SourceReadResult> {
-    #[cfg(not(target_arch = "wasm32"))]
-    tsz::parallel::ensure_rayon_global_pool();
-
     let mut sources: FxHashMap<PathBuf, (Option<String>, bool, bool)> = FxHashMap::default(); // (text, is_binary, suppress_parser_diagnostics)
     let mut dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>> = FxHashMap::default();
     let mut outfile_bundle_paths: FxHashSet<PathBuf> = FxHashSet::default();
     let mut outfile_bundle_dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>> =
+        FxHashMap::default();
+    let mut module_resolutions: FxHashMap<SourceModuleResolutionKey, SourceModuleResolution> =
         FxHashMap::default();
     let mut seen = FxHashSet::default();
     let mut discovery_order: FxHashMap<PathBuf, usize> = FxHashMap::default();
@@ -689,14 +712,17 @@ pub(super) fn read_source_files(
         // benefit from saturating the disk queue and CPU cores in parallel.
         use rayon::prelude::*;
         let no_resolve = options.no_resolve;
-        let parsed: Vec<Option<ParsedSource>> = batch
-            .par_iter()
-            .zip(actions.par_iter())
-            .map(|(path, action)| match action {
-                BatchAction::Read => Some(parse_source_for_bfs(path, no_resolve)),
-                BatchAction::Cached | BatchAction::SkipJs => None,
-            })
-            .collect();
+        let parsed: Vec<Option<ParsedSource>> =
+            tsz::parallel::run_with_rayon_pool_for_work_items(batch.len(), || {
+                batch
+                    .par_iter()
+                    .zip(actions.par_iter())
+                    .map(|(path, action)| match action {
+                        BatchAction::Read => Some(parse_source_for_bfs(path, no_resolve)),
+                        BatchAction::Cached | BatchAction::SkipJs => None,
+                    })
+                    .collect()
+            });
 
         // Phase 3 (serial): apply each batch entry's action, queueing newly
         // discovered deps into `pending` for the next BFS level.
@@ -817,6 +843,21 @@ pub(super) fn read_source_files(
                     }
                     if let Some(resolved) = outcome.resolved_path {
                         let canonical = normalize(&resolved, options);
+                        if outcome.error.is_none() {
+                            module_resolutions.insert(
+                                SourceModuleResolutionKey {
+                                    containing_file: path.clone(),
+                                    specifier: specifier.clone(),
+                                    import_kind,
+                                    resolution_mode_override,
+                                },
+                                SourceModuleResolution {
+                                    canonical_path: canonical.clone(),
+                                    resolved_using_ts_extension: outcome
+                                        .resolved_using_ts_extension,
+                                },
+                            );
+                        }
                         entry.insert(canonical.clone());
                         if import_kind != tsz::module_resolver::ImportKind::DynamicImport {
                             outfile_bundle_paths.insert(canonical.clone());
@@ -1025,6 +1066,7 @@ pub(super) fn read_source_files(
         dependencies,
         outfile_bundle_paths,
         outfile_bundle_dependencies,
+        module_resolutions,
         type_reference_errors,
         resolution_mode_errors,
     })
@@ -1170,6 +1212,66 @@ mod tests {
         assert!(
             foo_alpha_pos < bar_alpha_pos,
             "reference discovery order should load foo's alpha before bar's alpha; got {paths:?}"
+        );
+    }
+
+    #[test]
+    fn read_source_files_records_successful_module_resolutions() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("src/main.ts");
+        let dep = dir.path().join("src/dep.ts");
+        std::fs::create_dir_all(root.parent().unwrap()).unwrap();
+        std::fs::write(&root, "import { value } from './dep';\nvalue;\n").unwrap();
+        std::fs::write(&dep, "export const value = 1;\n").unwrap();
+
+        let result = read_source_files(
+            &[root],
+            dir.path(),
+            &ResolvedCompilerOptions::default(),
+            None,
+            None,
+        )
+        .expect("read source files");
+        let containing_file = result
+            .sources
+            .iter()
+            .find(|source| source.path.ends_with("main.ts"))
+            .expect("main.ts loaded")
+            .path
+            .clone();
+        let key = SourceModuleResolutionKey {
+            containing_file,
+            specifier: "./dep".to_string(),
+            import_kind: ImportKind::EsmImport,
+            resolution_mode_override: None,
+        };
+        let resolved = result
+            .module_resolutions
+            .get(&key)
+            .expect("successful import resolution recorded");
+        assert!(resolved.canonical_path.ends_with("src/dep.ts"));
+        assert!(!resolved.resolved_using_ts_extension);
+    }
+
+    #[test]
+    fn read_source_files_does_not_record_failed_module_resolutions() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("src/main.ts");
+        std::fs::create_dir_all(root.parent().unwrap()).unwrap();
+        std::fs::write(&root, "import './missing';\n").unwrap();
+
+        let result = read_source_files(
+            &[root],
+            dir.path(),
+            &ResolvedCompilerOptions::default(),
+            None,
+            None,
+        )
+        .expect("read source files");
+
+        assert!(
+            result.module_resolutions.is_empty(),
+            "failed resolution must fall back to diagnostic lookup"
         );
     }
 

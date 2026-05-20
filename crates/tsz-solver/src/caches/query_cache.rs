@@ -4,7 +4,9 @@
 //! relation, property, and element access queries. This is the concrete
 //! database implementation used by the checker at runtime.
 
-use crate::caches::db::{QueryDatabase, TypeDatabase, TypePredicateCache, TypeTupleLimitSignal};
+use crate::caches::db::{
+    QueryDatabase, TypeDatabase, TypeDisplayProvenance, TypePredicateCache, TypeTupleLimitSignal,
+};
 use crate::caches::instantiation_cache::{InstantiationCache, InstantiationCacheKey};
 use crate::caches::query_trace;
 use crate::caches::subtype_reduction_cache::{SubtypeReductionCache, SubtypeReductionKey};
@@ -747,7 +749,7 @@ impl<'a> QueryCache<'a> {
                 }
 
                 // Collect properties per member
-                let mut all_props: Vec<Vec<PropertyInfo>> = Vec::new();
+                let mut all_props: Vec<Vec<PropertyInfo>> = Vec::with_capacity(non_nullish.len());
                 for &member in &non_nullish {
                     all_props.push(self.collect_object_spread_properties_inner(member, visited));
                 }
@@ -864,6 +866,59 @@ impl TypeTupleLimitSignal for QueryCache<'_> {
 
     fn mark_tuple_too_large(&self) {
         self.interner.set_tuple_too_large();
+    }
+}
+
+impl TypeDisplayProvenance for QueryCache<'_> {
+    fn store_display_properties(&self, type_id: TypeId, props: Vec<PropertyInfo>) {
+        self.interner.store_display_properties(type_id, props);
+    }
+
+    fn get_display_properties(&self, type_id: TypeId) -> Option<Arc<Vec<PropertyInfo>>> {
+        self.interner.get_display_properties(type_id)
+    }
+
+    fn store_display_alias(&self, evaluated: TypeId, application: TypeId) {
+        self.interner.store_display_alias(evaluated, application);
+    }
+
+    fn store_display_alias_preferring_application(&self, evaluated: TypeId, application: TypeId) {
+        self.interner
+            .store_display_alias_preferring_application(evaluated, application);
+    }
+
+    fn get_display_alias(&self, type_id: TypeId) -> Option<TypeId> {
+        self.interner.get_display_alias(type_id)
+    }
+
+    fn mark_conditional_alias_base(&self, base: TypeId) {
+        self.interner.mark_conditional_alias_base(base);
+    }
+
+    fn is_conditional_alias_base(&self, base: TypeId) -> bool {
+        self.interner.is_conditional_alias_base(base)
+    }
+
+    fn store_union_origin(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {
+        self.interner
+            .store_union_origin(union_type_id, origin_members);
+    }
+
+    fn replace_union_origin_for_display(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {
+        self.interner
+            .replace_union_origin_for_display(union_type_id, origin_members);
+    }
+
+    fn get_union_origin(&self, type_id: TypeId) -> Option<Arc<Vec<TypeId>>> {
+        self.interner.get_union_origin(type_id)
+    }
+
+    fn take_union_too_complex(&self) -> bool {
+        self.interner.take_union_too_complex()
+    }
+
+    fn mark_union_too_complex(&self) {
+        self.interner.set_union_too_complex();
     }
 }
 
@@ -1128,57 +1183,6 @@ impl TypeDatabase for QueryCache<'_> {
 
     fn string_intrinsic(&self, kind: StringIntrinsicKind, type_arg: TypeId) -> TypeId {
         self.interner.string_intrinsic(kind, type_arg)
-    }
-
-    fn store_display_properties(&self, type_id: TypeId, props: Vec<PropertyInfo>) {
-        self.interner.store_display_properties(type_id, props);
-    }
-
-    fn get_display_properties(&self, type_id: TypeId) -> Option<Arc<Vec<PropertyInfo>>> {
-        self.interner.get_display_properties(type_id)
-    }
-
-    fn store_display_alias(&self, evaluated: TypeId, application: TypeId) {
-        self.interner.store_display_alias(evaluated, application);
-    }
-
-    fn store_display_alias_preferring_application(&self, evaluated: TypeId, application: TypeId) {
-        self.interner
-            .store_display_alias_preferring_application(evaluated, application);
-    }
-
-    fn get_display_alias(&self, type_id: TypeId) -> Option<TypeId> {
-        self.interner.get_display_alias(type_id)
-    }
-
-    fn mark_conditional_alias_base(&self, base: TypeId) {
-        self.interner.mark_conditional_alias_base(base);
-    }
-
-    fn is_conditional_alias_base(&self, base: TypeId) -> bool {
-        self.interner.is_conditional_alias_base(base)
-    }
-
-    fn store_union_origin(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {
-        self.interner
-            .store_union_origin(union_type_id, origin_members);
-    }
-
-    fn replace_union_origin_for_display(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {
-        self.interner
-            .replace_union_origin_for_display(union_type_id, origin_members);
-    }
-
-    fn get_union_origin(&self, type_id: TypeId) -> Option<Arc<Vec<TypeId>>> {
-        self.interner.get_union_origin(type_id)
-    }
-
-    fn take_union_too_complex(&self) -> bool {
-        self.interner.take_union_too_complex()
-    }
-
-    fn mark_union_too_complex(&self) {
-        self.interner.set_union_too_complex();
     }
 
     fn get_class_base_type(&self, symbol_id: SymbolId) -> Option<TypeId> {

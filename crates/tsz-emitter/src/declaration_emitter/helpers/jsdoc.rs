@@ -505,6 +505,11 @@ impl<'a> DeclarationEmitter<'a> {
         Self::format_jsdoc_object_type_text(&portable).unwrap_or(portable)
     }
 
+    fn jsdoc_type_alias_text_for_declaration_emit(&self, type_text: &str) -> String {
+        let portable = self.rewrite_jsdoc_bare_module_import_type_text(type_text);
+        Self::format_jsdoc_object_type_text(&portable).unwrap_or(portable)
+    }
+
     fn rewrite_jsdoc_bare_module_import_type_text(&self, type_text: &str) -> String {
         if !type_text.contains("import(") {
             return type_text.to_string();
@@ -3438,7 +3443,7 @@ impl<'a> DeclarationEmitter<'a> {
         decl: &JsdocTypeAliasDecl,
         exported: bool,
     ) -> Option<String> {
-        let type_text = self.jsdoc_type_text_for_declaration_emit(&decl.type_text);
+        let type_text = self.jsdoc_type_alias_text_for_declaration_emit(&decl.type_text);
         Self::render_jsdoc_type_alias_decl_with_type_text(decl, exported, &type_text)
     }
 
@@ -3566,6 +3571,9 @@ impl<'a> DeclarationEmitter<'a> {
 
     pub(crate) fn emit_leading_jsdoc_type_aliases_for_pos(&mut self, pos: u32, exported: bool) {
         if !self.source_is_js_file {
+            return;
+        }
+        if !self.js_export_equals_names.is_empty() {
             return;
         }
         for jsdoc in self.leading_jsdoc_comment_chain_for_pos(pos) {

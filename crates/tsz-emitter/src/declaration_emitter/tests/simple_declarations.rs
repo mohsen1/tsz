@@ -2591,6 +2591,44 @@ export function fn3(uuid) {}
 }
 
 #[test]
+fn test_jsdoc_typedef_same_file_typeof_export_stays_unqualified() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/** @satisfies {(uuid: string) => void} */
+export const fn1 = uuid => {};
+
+/** @typedef {Parameters<typeof fn1>} Foo */
+
+/** @type Foo */
+export const v1 = ["abc"];
+
+/** @satisfies {(label: string) => void} */
+export const renamed = label => {};
+
+/** @typedef {ReturnType<typeof renamed>} Bar */
+"#,
+    );
+
+    assert!(
+        output.contains("export function fn1(uuid: string): void;"),
+        "Expected @satisfies parameter fallback to keep exported const-function signature: {output}"
+    );
+    assert!(
+        output.contains("export type Foo = Parameters<typeof fn1>;"),
+        "Expected JSDoc typedef alias to keep same-file typeof reference unqualified: {output}"
+    );
+    assert!(
+        output.contains("export type Bar = ReturnType<typeof renamed>;"),
+        "Expected renamed same-file typeof reference to stay unqualified too: {output}"
+    );
+    assert!(
+        !output.contains("typeof import(\".\").fn1")
+            && !output.contains("typeof import(\".\").renamed"),
+        "Same-file JSDoc typedef aliases should not self-import exported values: {output}"
+    );
+}
+
+#[test]
 fn test_js_function_declaration_emits_constrained_jsdoc_template() {
     let output = emit_js_dts(
         r#"
@@ -3266,6 +3304,26 @@ export class Preferences {
 }
 
 #[test]
+fn test_js_function_like_class_zero_arg_constructor_is_omitted() {
+    let source = r#"
+function C1() {
+    this.prop = 1;
+}
+C1.prototype.method = function () {};
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("declare class C1"),
+        "Expected JS function-like class surface: {output}"
+    );
+    assert!(
+        !output.contains("constructor();"),
+        "Expected zero-arg synthetic JS function-like constructors to be omitted: {output}"
+    );
+}
+
+#[test]
 fn test_js_subclass_zero_arg_constructor_is_emitted() {
     let source = r#"
 export class Super {
@@ -3406,6 +3464,34 @@ module.exports = Timer;
         output.matches("export = Timer;").count(),
         1,
         "Did not expect duplicate JS export= statements: {output}"
+    );
+}
+
+#[test]
+fn test_js_export_equals_class_keeps_typedef_local_and_after_surface() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @typedef {string | number} Whatever
+ */
+class Conn {
+    constructor() {}
+}
+module.exports = Conn;
+"#,
+    );
+
+    assert!(
+        output.starts_with("export = Conn;\n/**"),
+        "Expected class export= to precede leading typedef JSDoc: {output}"
+    );
+    assert!(
+        output.contains("\ntype Whatever = string | number;"),
+        "Expected CommonJS typedef alias to remain local and trailing: {output}"
+    );
+    assert!(
+        !output.contains("export type Whatever"),
+        "Did not expect CommonJS typedef alias to emit as exported top-level type: {output}"
     );
 }
 

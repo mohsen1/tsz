@@ -244,6 +244,7 @@ impl<'a> CodeActionProvider<'a> {
                     .get_identifier_text(clause.named_bindings)
                     .map(std::string::ToString::to_string);
             } else if let Some(named) = self.arena.get_named_imports(bindings_node) {
+                named_specs.reserve(named.elements.nodes.len());
                 for &spec_idx in &named.elements.nodes {
                     let spec_node = self.arena.get(spec_idx)?;
                     let spec = self.arena.get_specifier(spec_node)?;
@@ -293,7 +294,7 @@ impl<'a> CodeActionProvider<'a> {
             return Some((edit, title));
         }
 
-        let mut parts = Vec::new();
+        let mut parts = Vec::with_capacity(3);
         if let Some(default_name) = default_name {
             parts.push(default_name);
         }
@@ -301,7 +302,7 @@ impl<'a> CodeActionProvider<'a> {
             parts.push(format!("* as {namespace_name}"));
         }
         if has_named {
-            let mut items = Vec::new();
+            let mut items = Vec::with_capacity(named_specs.len());
             for spec in named_specs {
                 let mut item = String::new();
                 if spec.is_type_only && !clause.is_type_only {
@@ -996,7 +997,7 @@ impl<'a> CodeActionProvider<'a> {
                 return None;
             }
             let had_trailing_comma = trimmed.starts_with(',');
-            let mut edits = Vec::new();
+            let mut edits = Vec::with_capacity(2);
             if !had_trailing_comma {
                 let last_pos = self.line_map.offset_to_position(last_end, self.source);
                 edits.push(TextEdit {
@@ -1318,8 +1319,8 @@ impl<'a> CodeActionProvider<'a> {
         let root_node = self.arena.get(root)?;
         let source_file = self.arena.get_source_file(root_node)?;
 
-        let mut edits = Vec::new();
         let statements = &source_file.statements.nodes;
+        let mut edits = Vec::with_capacity(statements.len());
         let mut i = 0;
 
         while i < statements.len() {
@@ -1397,7 +1398,7 @@ impl<'a> CodeActionProvider<'a> {
             is_side_effect: bool,
         }
 
-        let mut imports = Vec::new();
+        let mut imports = Vec::with_capacity(import_nodes.len());
         let mut block_start = u32::MAX;
         let mut block_end = 0u32;
 
@@ -1438,9 +1439,9 @@ impl<'a> CodeActionProvider<'a> {
             return None;
         }
 
-        let mut groups: Vec<Vec<ImportInfo>> = Vec::new();
-        let mut separators: Vec<String> = Vec::new();
-        let mut current = Vec::new();
+        let mut groups: Vec<Vec<ImportInfo>> = Vec::with_capacity(imports.len());
+        let mut separators: Vec<String> = Vec::with_capacity(imports.len().saturating_sub(1));
+        let mut current = Vec::with_capacity(imports.len());
 
         for idx in 0..imports.len() {
             let mut info = imports[idx].clone();
@@ -1470,8 +1471,8 @@ impl<'a> CodeActionProvider<'a> {
 
         let mut new_text = String::new();
         for (group_idx, group) in groups.into_iter().enumerate() {
-            let mut new_chunks = Vec::new();
-            let mut pending = Vec::new();
+            let mut new_chunks = Vec::with_capacity(group.len());
+            let mut pending = Vec::with_capacity(group.len());
             for info in group {
                 if info.is_side_effect {
                     pending.sort_by(|a: &ImportInfo, b: &ImportInfo| {
@@ -1572,7 +1573,7 @@ impl<'a> CodeActionProvider<'a> {
             return None;
         }
 
-        let mut entries = Vec::new();
+        let mut entries = Vec::with_capacity(named.elements.nodes.len());
         for &specifier_idx in &named.elements.nodes {
             let specifier_node = self.arena.get(specifier_idx)?;
             let specifier = self.arena.get_specifier(specifier_node)?;

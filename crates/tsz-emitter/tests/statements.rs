@@ -263,6 +263,45 @@ fn for_of_capture_hoists_var_declarations_before_loop() {
 }
 
 #[test]
+fn for_of_capture_detects_conditional_expression_inside_callback() {
+    let output = parse_and_lower_print(
+        "const list: any[] = [];\n\
+for (const comp of list) {\n\
+    comp.sp.y = comp.sp.r.find((k: any) => k.c == (comp.xp ? '1' : '0'));\n\
+    for (const item of comp.c) {\n\
+        item.v = !!item.t?.length;\n\
+    }\n\
+}\n",
+        PrintOptions::es5(),
+    );
+
+    let helper = output
+        .find("var _loop_1 = function (comp) {")
+        .expect("outer for-of should synthesize a loop-capture helper");
+    let loop_header = output
+        .find("for (var _i = 0, list_1 = list;")
+        .expect("expected lowered outer for-of loop header");
+
+    assert!(
+        helper < loop_header,
+        "Loop helper should be emitted before the lowered outer for-of.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_loop_1(comp);"),
+        "Lowered outer loop should call the helper with the captured iteration variable.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("k.c == (comp.xp ? '1' : '0')"),
+        "Callback conditional expression should close over the helper parameter.\nOutput:\n{output}"
+    );
+    assert!(
+        output
+            .contains("item.v = !!((_a = item.t) === null || _a === void 0 ? void 0 : _a.length);"),
+        "Nested optional chain should still downlevel inside the captured loop body.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_at_directive_comments_preserved() {
     // tsc preserves all source-level `// @` comments in JS output.
     // The test harness strips actual test directives from the baseline

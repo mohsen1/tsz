@@ -3887,6 +3887,40 @@ fn test_execute_relation_success_path_returns_clean_outcome() {
     );
 }
 
+/// Bivariant callback relation checks must preserve solver overflow flags.
+///
+/// Structural rule: when the bivariant-callback relation hits the same
+/// relation recursion guard as ordinary assignability, the checker boundary
+/// must carry `depth_exceeded` / `iteration_exceeded` into `RelationOutcome`
+/// so diagnostic selection can emit TS2321/TS2859 instead of a generic mismatch.
+#[test]
+fn test_bivariant_relation_boundary_preserves_overflow_flags() {
+    let boundary_source = fs::read_to_string("src/query_boundaries/assignability.rs")
+        .expect("failed to read assignability.rs");
+    let checker_source = fs::read_to_string("src/assignability/assignability_checker.rs")
+        .expect("failed to read assignability_checker.rs");
+
+    assert!(
+        boundary_source.contains(") -> tsz_solver::RelationResult")
+            && boundary_source.contains("tsz_solver::RelationKind::AssignableBivariantCallbacks"),
+        "bivariant relation helper must return the full solver RelationResult"
+    );
+    assert!(
+        boundary_source.contains("(r.is_related(), r.depth_exceeded, r.iteration_exceeded)"),
+        "execute_relation must forward bivariant callback depth/iteration overflow flags"
+    );
+    assert!(
+        !boundary_source.contains("(r, false, false)"),
+        "execute_relation must not erase bivariant callback overflow flags"
+    );
+    assert!(
+        checker_source.contains(
+            "self.propagate_overflow_flags(\n            relation_result.depth_exceeded,\n            relation_result.iteration_exceeded,\n        );"
+        ) && checker_source.contains("let result = relation_result.is_related();"),
+        "legacy bivariant boolean wrapper must merge overflow flags before returning/caching the bool"
+    );
+}
+
 /// Failed relation results should return a structured `RelationOutcome`
 /// that keeps the normalized failure facts attached.
 #[test]

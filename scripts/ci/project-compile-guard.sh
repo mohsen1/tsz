@@ -330,6 +330,13 @@ ensure_git_fixture() {
   tsz_ensure_git_fixture "$@" 0
 }
 
+ensure_generated_app_tools() {
+  if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+    echo "error: node and npm are required for generated app project compile guards" >&2
+    exit 1
+  fi
+}
+
 write_utility_types_config() {
   tsz_write_utility_types_config "$FIXTURE_ROOT/utility-types/tsconfig.tsz-guard.json"
 }
@@ -574,6 +581,22 @@ run_project_row() {
         echo "::warning::type-challenges-solutions-project tsc oracle failed; continuing because TSZ_PROJECT_COMPILE_ALLOW_FAILURES=1"
       fi
       ;;
+    vite-vanilla-ts-app)
+      if [[ "$INCLUDE_GENERATED_APPS" != "1" ]]; then
+        return 0
+      fi
+      ensure_generated_app_tools
+      node scripts/bench/generate-vite-app-fixture.mjs "$FIXTURE_ROOT/vite-vanilla-ts-live"
+      check_project "$name" "$FIXTURE_ROOT/vite-vanilla-ts-live/tsconfig.json" "$FIXTURE_ROOT/vite-vanilla-ts-live/src"
+      ;;
+    nextjs-fresh-app)
+      if [[ "$INCLUDE_GENERATED_APPS" != "1" ]]; then
+        return 0
+      fi
+      ensure_generated_app_tools
+      node scripts/bench/generate-next-app-fixture.mjs "$FIXTURE_ROOT/next-app-live"
+      check_project "$name" "$FIXTURE_ROOT/next-app-live/tsconfig.json" "$FIXTURE_ROOT/next-app-live"
+      ;;
     *)
       echo "error: unknown project row in compile-guard map: $name" >&2
       return 1
@@ -590,24 +613,6 @@ run_required_projects() {
       fi
     fi
   done
-
-if [[ "$INCLUDE_GENERATED_APPS" == "1" ]] \
-  && { should_check_project "vite-vanilla-ts-app" || should_check_project "nextjs-fresh-app"; }; then
-  if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
-    echo "error: node and npm are required for generated app project compile guards" >&2
-    exit 1
-  fi
-
-  if should_check_project "vite-vanilla-ts-app"; then
-    node scripts/bench/generate-vite-app-fixture.mjs "$FIXTURE_ROOT/vite-vanilla-ts-live"
-    check_project "vite-vanilla-ts-app" "$FIXTURE_ROOT/vite-vanilla-ts-live/tsconfig.json" "$FIXTURE_ROOT/vite-vanilla-ts-live/src"
-  fi
-
-  if should_check_project "nextjs-fresh-app"; then
-    node scripts/bench/generate-next-app-fixture.mjs "$FIXTURE_ROOT/next-app-live"
-    check_project "nextjs-fresh-app" "$FIXTURE_ROOT/next-app-live/tsconfig.json" "$FIXTURE_ROOT/next-app-live"
-  fi
-fi
 }
 
 run_canary_projects() {

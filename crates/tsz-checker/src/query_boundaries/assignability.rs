@@ -671,7 +671,7 @@ pub(crate) fn is_assignable_bivariant_with_resolver<R: tsz_solver::TypeResolver>
     flags: u16,
     inheritance_graph: &tsz_solver::InheritanceGraph,
     sound_mode: bool,
-) -> bool {
+) -> tsz_solver::RelationResult {
     let policy = tsz_solver::RelationPolicy::from_flags(flags)
         .with_strict_subtype_checking(sound_mode)
         .with_strict_any_propagation(sound_mode);
@@ -689,7 +689,6 @@ pub(crate) fn is_assignable_bivariant_with_resolver<R: tsz_solver::TypeResolver>
         policy,
         context,
     )
-    .is_related()
 }
 
 pub(crate) fn is_subtype_with_resolver<R: tsz_solver::TypeResolver>(
@@ -800,10 +799,10 @@ pub(crate) fn check_assignable_gate_with_overrides<R: tsz_solver::TypeResolver>(
 pub(crate) struct RelationOutcome {
     /// Whether the relation holds (source is assignable to target).
     pub related: bool,
-    /// Whether the solver's recursion depth limit was exceeded during
-    /// the relation check. When true, the caller should emit TS2859
-    /// ("Excessive complexity comparing types").
+    /// Stack-depth limit (nesting) was exceeded → TS2321 "Excessive stack depth".
     pub depth_exceeded: bool,
+    /// Iteration-count budget was exhausted → TS2859 "Excessive complexity".
+    pub iteration_exceeded: bool,
     /// Structured failure classification when `related` is false.
     /// Converted from the solver's `SubtypeFailureReason`.
     pub failure: Option<super::relation_types::RelationFailure>,
@@ -857,36 +856,42 @@ pub(crate) fn execute_relation<R: tsz_solver::TypeResolver>(
 
     // BivariantCallbacks uses a different solver entry point that treats
     // callback parameter types bivariantly (strips strict-function-types).
-    let (related, depth_exceeded) = if request.kind == RelationKind::BivariantCallbacks {
-        let bivariant_flags = relation_flags & !RelationFlags::STRICT_FUNCTION_TYPES;
-        let r = is_assignable_bivariant_with_resolver(
-            db,
-            resolver,
-            request.source,
-            request.target,
-            bivariant_flags,
-            inheritance_graph,
-            sound_mode,
-        );
-        (r, false)
-    } else {
-        let inputs = AssignabilityQueryInputs {
-            db,
-            resolver,
-            source: request.source,
-            target: request.target,
-            flags: relation_flags,
-            inheritance_graph,
-            sound_mode,
+    let (related, depth_exceeded, iteration_exceeded) =
+        if request.kind == RelationKind::BivariantCallbacks {
+            let bivariant_flags = relation_flags & !RelationFlags::STRICT_FUNCTION_TYPES;
+            let r = is_assignable_bivariant_with_resolver(
+                db,
+                resolver,
+                request.source,
+                request.target,
+                bivariant_flags,
+                inheritance_graph,
+                sound_mode,
+            );
+            (r.is_related(), r.depth_exceeded, r.iteration_exceeded)
+        } else {
+            let inputs = AssignabilityQueryInputs {
+                db,
+                resolver,
+                source: request.source,
+                target: request.target,
+                flags: relation_flags,
+                inheritance_graph,
+                sound_mode,
+            };
+            let relation_result = is_assignable_with_overrides(&inputs, overrides);
+            (
+                relation_result.is_related(),
+                relation_result.depth_exceeded,
+                relation_result.iteration_exceeded,
+            )
         };
-        let relation_result = is_assignable_with_overrides(&inputs, overrides);
-        (relation_result.is_related(), relation_result.depth_exceeded)
-    };
 
     if related {
         return RelationOutcome {
             related: true,
             depth_exceeded,
+            iteration_exceeded,
             failure: None,
             weak_union_violation: false,
             property_classification: None,
@@ -927,6 +932,7 @@ pub(crate) fn execute_relation<R: tsz_solver::TypeResolver>(
     RelationOutcome {
         related: false,
         depth_exceeded,
+        iteration_exceeded,
         failure,
         weak_union_violation,
         property_classification,

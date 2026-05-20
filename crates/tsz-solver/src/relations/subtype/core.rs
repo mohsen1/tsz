@@ -526,9 +526,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
-    /// Whether the recursion depth was exceeded during subtype checking.
+    /// Whether any recursion limit (depth or iteration count) was exceeded.
+    ///
+    /// Use [`iteration_exceeded`] to distinguish complexity overflow (TS2859) from
+    /// stack-depth overflow (TS2321).
     pub const fn depth_exceeded(&self) -> bool {
         self.guard.is_exceeded()
+    }
+
+    /// Whether the iteration (relation-count) budget was exhausted.
+    ///
+    /// When true the caller should emit TS2859 "Excessive complexity comparing
+    /// types". When false but [`depth_exceeded`] is true, the stack depth was
+    /// exceeded and the caller should emit TS2321 "Excessive stack depth".
+    pub const fn iteration_exceeded(&self) -> bool {
+        self.guard.iteration_exceeded()
     }
 
     /// Run `f` with subtype flags configured for tsc's `isTypeIdenticalTo`

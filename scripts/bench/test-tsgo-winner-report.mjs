@@ -53,6 +53,8 @@ withTempDir((dir) => {
           phase: "check",
           last_successful_phase: "check",
           diagnostic_status: "none",
+          files_reached: 242,
+          peak_memory_bytes: 734003200,
           semantic_owner_family: "recursive type evaluation pressure",
         },
       },
@@ -72,6 +74,8 @@ withTempDir((dir) => {
           phase: "check",
           last_successful_phase: "check",
           diagnostic_status: "none",
+          files_reached: 12,
+          peak_memory_bytes: 209715200,
           semantic_owner_family: "generated Vite dependency graph",
         },
       },
@@ -139,6 +143,9 @@ withTempDir((dir) => {
   assert.deepEqual(report.totals.missing_loss_closure_rows, ["single-file-loss"]);
   assert.equal(report.totals.incomplete_compat_excluded, 0);
   assert.equal(report.worst.name, "ts-toolbelt-project");
+  assert.equal(report.worst.exit_class, "exit success");
+  assert.equal(report.worst.files_reached, 242);
+  assert.equal(report.worst.peak_memory_bytes, 734003200);
   assert.deepEqual(report.worst.loss_closure, {
     owner: "Track 1/2 recursive type evaluation",
     operation: "recursive conditional, mapped/indexed access, repeated instantiation and relation cache pressure",
