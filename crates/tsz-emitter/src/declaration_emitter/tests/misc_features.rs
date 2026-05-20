@@ -1865,6 +1865,31 @@ const value = maybe ?? fallback;
 }
 
 #[test]
+fn test_instantiated_short_circuit_function_union_deduplicates_identical_members() {
+    let output = emit_dts_with_binding(
+        r#"
+declare let g: (<T>(x: T) => T) | undefined;
+
+const orValue = g<string> || ((x: string) => x);
+const nullishValue = g<string> ?? ((x: string) => x);
+"#,
+    );
+
+    assert!(
+        output.contains("declare const orValue: (x: string) => string;"),
+        "Expected `||` over identical instantiated function surfaces to collapse to one signature: {output}"
+    );
+    assert!(
+        output.contains("declare const nullishValue: (x: string) => string;"),
+        "Expected `??` over identical instantiated function surfaces to collapse to one signature: {output}"
+    );
+    assert!(
+        !output.contains("((x: string) => string) | ((x: string) => string)"),
+        "Duplicate rendered function signatures should not remain in DTS unions: {output}"
+    );
+}
+
+#[test]
 fn test_const_asserted_array_literal_binding_preserves_literals() {
     let source = r#"let [hello, brave] = ["Hello", "Brave"] as const;"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());

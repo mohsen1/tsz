@@ -37,3 +37,7 @@ workspace = true
 
 [lib]
 doctest = false
+
+[[test]]
+name = "public_api_tests"
+path = "tests/public_api_tests.rs"

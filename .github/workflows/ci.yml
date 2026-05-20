@@ -48,6 +48,7 @@ jobs:
           required_summary=true
           rust_cache_refresh=false
           cache_key_changed=false
+          metadata_only_skip=false
           bench_shell_only=false
           perf_tool_only=false
           arch_tool_only=false
@@ -60,16 +61,19 @@ jobs:
             # CI run from the same SHA's open/sync events, so skip.
             if [[ "${{ github.event.action }}" == "labeled" \
                   && "${{ github.event.label.name }}" != "ci-approved" ]]; then
-              # Skip the actual CI work — a non-ci-approved label add just
-              # duplicates the existing CI run from the same SHA's open/sync
-              # events. But KEEP required_summary=true so the CI Summary job
-              # (the required-status-check name) still runs and passes via the
-              # `should_run=false` short-circuit. Setting required_summary=false
-              # here would rename the summary to "CI Light Summary", which
-              # branch protection does not recognize → PR stays BLOCKED until
-              # a non-label event fires.
+              # Skip the actual CI work — a non-ci-approved label add, such as
+              # an ownership label after PR metadata cleanup, just duplicates
+              # the existing CI run from the same SHA's open/sync events.
+              #
+              # Set required_summary=false so the ci-summary job is named
+              # "CI Light Summary" rather than "CI Summary". This prevents the
+              # labeled event from writing a new "CI Summary: success" check
+              # that would override an existing "CI Summary: failure" from the
+              # last real run, which could allow CI-failed PRs to land on main
+              # (issue #9385).
               echo "Label '${{ github.event.label.name }}' is not 'ci-approved' — skipping redundant run."
               should_run=false
+              metadata_only_skip=true
             fi
             if [[ "${{ github.event.pull_request.draft }}" == "true" ]]; then
               # Draft PRs still run the light CI suite (lint, build, unit).
@@ -267,6 +271,9 @@ jobs:
                 should_run=false
                 required_summary=false
               fi
+            fi
+            if [[ "$metadata_only_skip" == "true" ]]; then
+              required_summary=false
             fi
           elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
             # Skip redundant main CI when the push is a PR merge already validated by PR CI.

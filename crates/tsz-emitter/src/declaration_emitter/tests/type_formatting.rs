@@ -35,6 +35,46 @@ fn test_type_printer_preserves_union_display_origin() {
 }
 
 #[test]
+fn test_type_printer_deduplicates_identical_rendered_union_members() {
+    let interner = TypeInterner::new();
+    let x = interner.intern_string("x");
+    let number_callback = interner.function(FunctionShape::new(
+        vec![ParamInfo::required(x, TypeId::NUMBER)],
+        TypeId::NUMBER,
+    ));
+    let string_callback = interner.function(FunctionShape::new(
+        vec![ParamInfo::required(x, TypeId::STRING)],
+        TypeId::STRING,
+    ));
+    let union = interner.union_preserve_members(vec![number_callback, string_callback]);
+    interner.replace_union_origin_for_display(union, vec![number_callback, number_callback]);
+
+    let printed = crate::emitter::type_printer::TypePrinter::new(&interner).print_type(union);
+
+    assert_eq!(printed, "(x: number) => number");
+}
+
+#[test]
+fn test_type_printer_keeps_distinct_rendered_union_members() {
+    let interner = TypeInterner::new();
+    let x = interner.intern_string("x");
+    let number_callback = interner.function(FunctionShape::new(
+        vec![ParamInfo::required(x, TypeId::NUMBER)],
+        TypeId::NUMBER,
+    ));
+    let string_callback = interner.function(FunctionShape::new(
+        vec![ParamInfo::required(x, TypeId::STRING)],
+        TypeId::STRING,
+    ));
+    let union = interner.union_preserve_members(vec![number_callback, string_callback]);
+    interner.replace_union_origin_for_display(union, vec![number_callback, string_callback]);
+
+    let printed = crate::emitter::type_printer::TypePrinter::new(&interner).print_type(union);
+
+    assert_eq!(printed, "((x: number) => number) | ((x: string) => string)");
+}
+
+#[test]
 fn test_type_printer_prints_named_unique_symbol_as_typeof() {
     let source = "export const x = Symbol();\nexport const y = Symbol();\n";
     let (parser, root) = parse_test_source(source);
