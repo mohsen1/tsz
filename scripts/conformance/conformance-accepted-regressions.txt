@@ -24,7 +24,7 @@ TypeScript/tests/cases/compiler/reverseMappedTypeContextualTypesPerElementOfTupl
 TypeScript/tests/cases/compiler/spyComparisonChecking.ts
 TypeScript/tests/cases/compiler/styledComponentsInstantiaionLimitNotReached.ts
 TypeScript/tests/cases/compiler/temporal.ts
-TypeScript/tests/cases/compiler/thislessFunctionsNotContextSensitive3.ts
+TypeScript/tests/cases/compiler/undefinedAssignableToGenericMappedIntersection.ts
 TypeScript/tests/cases/compiler/unionPropertyOfProtectedAndIntersectionProperty.ts
 TypeScript/tests/cases/conformance/es2019/globalThisAmbientModules.ts
 TypeScript/tests/cases/conformance/es2024/sharedMemory.ts

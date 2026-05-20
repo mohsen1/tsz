@@ -1733,6 +1733,210 @@ Extension.create({
     );
 }
 
+/// A method that references `this` in its body must be treated as context-sensitive.
+/// Variant of `test_ts2783_spread_overwrites_from_inferred_this_options_member` with
+/// all identifiers renamed: same type machinery, different name spellings.
+/// Confirms the rule is structural (not hardcoded to `addOptions`/`addProseMirrorPlugins`).
+#[test]
+fn test_method_with_this_reference_is_context_sensitive_for_inference() {
+    let source = r#"
+declare class Edtr { private _e: any; }
+declare class Plgn { private _p: any; }
+
+type Partial2<T> = { [P in keyof T]?: T[P]; };
+type Required2<T> = { [P in keyof T]-?: T[P]; };
+type Parameters2<T> = T extends (...args: infer P) => any ? P : never;
+type ReturnType2<T> = T extends (...args: any) => infer R ? R : any;
+
+type ParentConf2<T> = Partial2<{
+  [P in keyof T]: Required2<T>[P] extends (...args: any) => any
+    ? (...args: Parameters2<Required2<T>[P]>) => ReturnType2<Required2<T>[P]>
+    : T[P];
+}>;
+
+interface ExtendableConf2<
+  Options = any,
+  Config extends
+    | ExtensionConf2<Options>
+    | ExtendableConf2<Options> = ExtendableConf2<Options, any>,
+> {
+  name: string;
+  addSrc?: (this: {
+    name: string;
+    parent: ParentConf2<Config>["addSrc"];
+  }) => Options;
+  addPrc?: (this: {
+    options: Options;
+    device: Edtr;
+  }) => Plgn[];
+}
+interface ExtensionConf2<Options = any>
+  extends ExtendableConf2<Options, ExtensionConf2<Options>> {}
+
+declare class Ext2<Options = any> {
+  static create<O = any>(config: Partial2<ExtensionConf2<O>>): Ext2<O>;
+}
+
+interface DeviceOpts { device: Edtr; slot?: string; }
+declare function mkPrc(options: DeviceOpts): Plgn;
+
+Ext2.create({
+  name: "my-ext",
+  addSrc() {
+    return {
+      devConfig: { slot: "/" } as DeviceOpts,
+    };
+  },
+  addPrc() {
+    return [mkPrc({ device: this.device, ...this.options.devConfig })];
+  },
+});
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    // `addPrc` references `this`, so it must be context-sensitive (deferred to Round 2).
+    // Round 1 infers O = { devConfig: DeviceOpts } from `addSrc()`. Round 2 types `addPrc`
+    // with `this.options.devConfig: DeviceOpts`. Spreading DeviceOpts brings in `device`
+    // which was already explicitly set → TS2783.
+    let ts2783_count = diagnostic_count(&diagnostics, 2783);
+    assert!(
+        ts2783_count >= 1,
+        "Expected TS2783 for method with `this` reference getting proper Round 2 this-type; \
+         got {ts2783_count}. Diagnostics: {:?}",
+        diagnostic_code_messages(&diagnostics)
+    );
+}
+
+/// A thisless method (no `this` in body) must NOT be considered context-sensitive,
+/// so it participates in Round 1 inference. Only `this`-using methods are deferred.
+/// Variant with different names (`compute`/`V`) to confirm the rule is not name-driven.
+#[test]
+fn test_thisless_method_still_not_context_sensitive_after_this_fix() {
+    let source = r#"
+// @strict: true
+type StateFn<V> = (s: V, ...args: any[]) => any;
+type Opts<V> = {
+  compute?: V | (() => V) | { (): V };
+  actions?: Record<string, StateFn<V>>;
+};
+declare function register<V extends Record<string, unknown>>(opts: Opts<V>): void;
+
+register({
+  compute() { return { value: 42 }; },
+  actions: { inc: (myState) => myState.value++ },
+});
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts18046_count = diagnostic_count(&diagnostics, 18046);
+    assert!(
+        ts18046_count == 0,
+        "Thisless method `compute()` should NOT be context-sensitive; `myState` must be \
+         inferred as {{ value: number }} in Round 1. Got false TS18046 count: {ts18046_count}. \
+         Diagnostics: {:?}",
+        diagnostic_code_messages(&diagnostics)
+    );
+}
+
+/// A function expression (non-arrow) that references `this` should be context-sensitive,
+/// because `this` is resolved from the contextual type of the surrounding object.
+/// Uses the same Extension-like type machinery but with `addPrc: function() {...}` syntax
+/// (PROPERTY_ASSIGNMENT with FUNCTION_EXPRESSION value) to verify the rule applies there too.
+#[test]
+fn test_function_expression_with_this_is_context_sensitive() {
+    let source = r#"
+declare class Edtr3 { private _e3: any; }
+declare class Plgn3 { private _p3: any; }
+
+type Partial3<T> = { [P in keyof T]?: T[P]; };
+type Required3<T> = { [P in keyof T]-?: T[P]; };
+type Parameters3<T> = T extends (...args: infer P) => any ? P : never;
+type ReturnType3<T> = T extends (...args: any) => infer R ? R : any;
+
+type ParentConf3<T> = Partial3<{
+  [P in keyof T]: Required3<T>[P] extends (...args: any) => any
+    ? (...args: Parameters3<Required3<T>[P]>) => ReturnType3<Required3<T>[P]>
+    : T[P];
+}>;
+
+interface ExtendableConf3<
+  Options = any,
+  Config extends
+    | ExtensionConf3<Options>
+    | ExtendableConf3<Options> = ExtendableConf3<Options, any>,
+> {
+  name: string;
+  addSrc3?: (this: {
+    name: string;
+    parent: ParentConf3<Config>["addSrc3"];
+  }) => Options;
+  addPrc3?: (this: {
+    options: Options;
+    device: Edtr3;
+  }) => Plgn3[];
+}
+interface ExtensionConf3<Options = any>
+  extends ExtendableConf3<Options, ExtensionConf3<Options>> {}
+
+declare class Ext3<Options = any> {
+  static create<O = any>(config: Partial3<ExtensionConf3<O>>): Ext3<O>;
+}
+
+interface DeviceOpts3 { device: Edtr3; slot?: string; }
+declare function mkPrc3(options: DeviceOpts3): Plgn3;
+
+Ext3.create({
+  name: "my-ext3",
+  addSrc3() {
+    return { devConfig: { slot: "/" } as DeviceOpts3 };
+  },
+  addPrc3: function() {
+    return [mkPrc3({ device: this.device, ...this.options.devConfig })];
+  },
+});
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    // `addPrc3` is a function expression referencing `this`, so it must be context-sensitive.
+    // Round 1 infers O = { devConfig: DeviceOpts3 } from `addSrc3()`. Round 2 types `addPrc3`
+    // with `this.options.devConfig: DeviceOpts3`. Spreading DeviceOpts3 brings in `device`
+    // which was already explicitly set → TS2783.
+    let ts2783_count = diagnostic_count(&diagnostics, 2783);
+    assert!(
+        ts2783_count >= 1,
+        "Expected TS2783 for function expression with `this` reference getting Round 2 \
+         this-type; got {ts2783_count}. Diagnostics: {:?}",
+        diagnostic_code_messages(&diagnostics)
+    );
+}
+
+/// An arrow function that references `this` should NOT be made context-sensitive by the
+/// `this` check: arrows inherit `this` lexically from the enclosing scope, so the
+/// `this` type inside an arrow is NOT derived from the outer object's contextual type.
+#[test]
+fn test_arrow_with_this_still_not_context_sensitive_due_to_this_check() {
+    let source = r#"
+// @strict: true
+type FnOf<X> = (s: X, ...args: any[]) => any;
+type WrapOpts<X> = {
+  init?: X | (() => X) | { (): X };
+  handlers?: Record<string, FnOf<X>>;
+};
+declare function wrap<X extends Record<string, unknown>>(opts: WrapOpts<X>): void;
+
+wrap({
+  init: () => ({ score: 10 }),
+  handlers: { add: (st) => st.score++ },
+});
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts18046_count = diagnostic_count(&diagnostics, 18046);
+    assert!(
+        ts18046_count == 0,
+        "Arrow function `init: () => ...` should NOT be context-sensitive due to `this` check; \
+         `st` must be inferred as {{ score: number }} in Round 1. Got false TS18046 count: {ts18046_count}. \
+         Diagnostics: {:?}",
+        diagnostic_code_messages(&diagnostics)
+    );
+}
+
 /// Confirm TS2698 still fires in expression context (spreading a non-object).
 #[test]
 fn test_object_spread_of_non_object_in_expression_emits_ts2698() {
