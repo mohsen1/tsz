@@ -165,6 +165,26 @@ e = b;
 }
 
 #[test]
+fn ts2322_index_signature_intersection_keeps_value_intersection_display() {
+    let source = r#"
+let x: { [x: string]: { a: 0 } } & { [x: string]: { b: 0 } };
+x = { y: { a: 0 } };
+"#;
+    let diags = check_source_diagnostics(source);
+    let ts2322 = diags.iter().find(|d| d.code == 2322);
+    assert!(ts2322.is_some(), "expected TS2322, got: {diags:?}");
+    let msg = &ts2322.unwrap().message_text;
+    assert!(
+        msg.contains("Type '{ a: 0; }' is not assignable to type '{ a: 0; } & { b: 0; }'."),
+        "ordinary value intersections should keep their intersection display, got: {msg}"
+    );
+    assert!(
+        !msg.contains("[x: string]"),
+        "ordinary value intersections should not fall back to index-signature container display, got: {msg}"
+    );
+}
+
+#[test]
 fn recursive_intersection_renamed_links_preserve_shape_rule() {
     let source = r#"
 type Chain<Item> = Item & { child: Chain<Item> };

@@ -2,6 +2,39 @@ use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(in crate::error_reporter) fn should_preserve_recursive_alias_intersection_display(
+        &mut self,
+        type_id: TypeId,
+    ) -> bool {
+        let evaluated = self.evaluate_type_for_assignability(type_id);
+        if evaluated != type_id
+            && crate::query_boundaries::recursive_alias::is_recursive_type_alias_application(
+                self.ctx.types,
+                &self.ctx.definition_store,
+                type_id,
+            )
+            && crate::query_boundaries::common::is_non_primitive_intersection(
+                self.ctx.types,
+                evaluated,
+            )
+        {
+            return true;
+        }
+
+        crate::query_boundaries::common::is_non_primitive_intersection(self.ctx.types, type_id)
+            && self
+                .ctx
+                .types
+                .get_display_alias(type_id)
+                .is_some_and(|alias| {
+                    crate::query_boundaries::recursive_alias::is_recursive_type_alias_application(
+                        self.ctx.types,
+                        &self.ctx.definition_store,
+                        alias,
+                    )
+                })
+    }
+
     pub(in crate::error_reporter) fn format_type_diagnostic_for_assignability_display(
         &mut self,
         type_id: TypeId,

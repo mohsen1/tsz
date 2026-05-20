@@ -1454,54 +1454,18 @@ impl<'a> CheckerState<'a> {
                 target_evaluated_for_intersection,
             )
         {
-            // When source is (or evaluates to) a non-primitive intersection that
-            // came from a generic alias Application, route through
-            // `format_type_for_assignability_message` so Cases 1/2 in core_formatting
-            // can show the alias form instead of expanding structurally.
-            let source_evaluated = self.evaluate_type_for_assignability(source);
-            // Case A: source is an Application that evaluates to a non-primitive intersection.
-            let case_a = source_evaluated != source
-                && crate::query_boundaries::recursive_alias::is_recursive_type_alias_application(
-                    self.ctx.types,
-                    &self.ctx.definition_store,
-                    source,
-                )
-                && crate::query_boundaries::common::is_non_primitive_intersection(
-                    self.ctx.types,
-                    source_evaluated,
-                );
-            // Case B: source IS the intersection but carries a display_alias back to its
-            // Application (stored by evaluate_application_type when the alias was expanded).
-            let case_b = crate::query_boundaries::common::is_non_primitive_intersection(
-                self.ctx.types,
-                source,
-            ) && self
-                .ctx
-                .types
-                .get_display_alias(source)
-                .is_some_and(|alias| {
-                    crate::query_boundaries::recursive_alias::is_recursive_type_alias_application(
-                        self.ctx.types,
-                        &self.ctx.definition_store,
-                        alias,
-                    )
-                });
             let src_str = if depth == 0 {
-                if case_a || case_b {
+                if self.should_preserve_recursive_alias_intersection_display(source) {
                     self.format_type_for_assignability_message(source)
                 } else {
-                    self.format_type_for_diagnostic_role(
-                        source,
-                        DiagnosticTypeDisplayRole::AssignmentSource {
-                            target,
-                            anchor_idx: idx,
-                        },
-                    )
+                    self.format_type_diagnostic(source_type)
                 }
             } else {
                 self.format_type_diagnostic(source_type)
             };
-            let tgt_str = if depth == 0 {
+            let target_uses_recursive_alias_display =
+                depth == 0 && self.should_preserve_recursive_alias_intersection_display(target);
+            let tgt_str = if target_uses_recursive_alias_display {
                 self.format_assignability_type_for_message(target, source)
             } else if crate::query_boundaries::common::is_intersection_type(
                 self.ctx.types,
