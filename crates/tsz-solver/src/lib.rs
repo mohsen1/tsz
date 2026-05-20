@@ -42,13 +42,14 @@ pub mod judge {
     //! Re-exports from `relations::judge` for convenience.
     pub use crate::relations::judge::*;
 }
-mod narrowing;
+pub mod narrowing;
 pub mod objects;
 pub mod operations;
 pub mod recursion;
 pub mod relations;
 #[cfg(test)]
 mod sound_prototype;
+pub mod ts_type_flags;
 pub mod type_queries;
 // type_resolver moved into def/resolver.rs
 pub mod types;
@@ -137,9 +138,14 @@ pub mod computation {
     };
 
     // Evaluation
-    pub use crate::evaluation::evaluate::evaluate_type;
+    pub use crate::evaluation::evaluate::{
+        TypeEvaluator, evaluate_conditional, evaluate_index_access,
+        evaluate_index_access_with_options, evaluate_keyof, evaluate_mapped, evaluate_type,
+        evaluate_type_with_request,
+    };
 
     // Instantiation
+    pub use crate::instantiation::application::ApplicationEvaluator;
     pub use crate::instantiation::instantiate::{
         MAX_INSTANTIATION_DEPTH, TypeInstantiator, TypeSubstitution, fill_application_defaults,
         instantiate_function_with_type_args, instantiate_generic, instantiate_type,
@@ -179,7 +185,9 @@ pub mod construction {
     pub use crate::intern::type_factory::*;
     pub use crate::intern::{TypeInterner, clear_thread_local_cache};
 }
-pub use intern::TypeInterner;
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use construction::{QueryDatabase, TypeDatabase, TypeInterner};
 #[cfg(test)]
 pub(crate) use operations::infer_generic_function;
 pub use visitors::visitor::{
@@ -208,10 +216,11 @@ pub use visitors::visitor::{
     unwrap_readonly_or_noinfer, walk_referenced_types,
 };
 
-pub use caches::db::{QueryDatabase, TypeDatabase};
-pub use canonicalize::Canonicalizer;
-pub use classes::inheritance::InheritanceGraph;
-pub use contextual::{ContextualTypeContext, apply_contextual_type, rest_argument_element_type};
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use contextual::{
+    ContextualTypeContext, apply_contextual_type, rest_argument_element_type,
+};
 pub use def::{
     ContentAddressedDefIds, DefId, DefKind, DefinitionInfo, DefinitionStore, EnumMemberValue,
     FileChange, FileChangeSet, InvalidationSummary, StoreStatistics, diff_fingerprints,
@@ -227,62 +236,20 @@ pub use diagnostics::reduce::deep_reduce_for_display;
 pub use diagnostics::{
     DiagnosticArg, DiagnosticSeverity, PendingDiagnostic, PendingDiagnosticBuilder, SourceSpan,
 };
-pub use evaluation::evaluate::{
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use evaluation::evaluate::{
     TypeEvaluator, evaluate_conditional, evaluate_index_access, evaluate_index_access_with_options,
     evaluate_keyof, evaluate_mapped, evaluate_type, evaluate_type_with_request,
-};
-pub use evaluation::session::EvaluationSession;
-pub use instantiation::application::{ApplicationEvaluator, ApplicationResult};
-pub use instantiation::instantiate::{
-    MAX_INSTANTIATION_DEPTH, TypeInstantiator, TypeSubstitution, fill_application_defaults,
-    instantiate_function_with_type_args, instantiate_generic, instantiate_type,
-    instantiate_type_cached, instantiate_type_params_to_constraints, instantiate_type_preserving,
-    instantiate_type_preserving_cached, instantiate_type_preserving_meta,
-    instantiate_type_preserving_meta_cached, instantiate_type_with_depth_status,
-    instantiate_type_with_infer, instantiate_type_with_infer_cached, substitute_this_type,
-    substitute_this_type_at_return_position, substitute_this_type_cached,
-};
-pub use intern::type_factory::TypeFactory;
-pub use narrowing::{
-    CachedPropertyType, DiscriminantInfo, GuardSense, NarrowingCache, NarrowingContext,
-    NarrowingResult, NullishFilter, OptionalPropertyChainKey, TypeGuard, TypeofKind,
-    find_discriminants, is_definitely_nullish, is_nullish_type, narrow_by_discriminant,
-    narrow_by_typeof, remove_nullish, remove_nullish_query, remove_undefined, split_nullish_type,
-    type_contains_undefined,
-};
-pub use objects::{
-    ApparentMemberKind, ElementAccessEvaluator, ElementAccessResult, IndexKind,
-    IndexSignatureResolver, ObjectLiteralBuilder, PropertyCollectionResult, apparent,
-    apparent_object_member_kind, apparent_primitive_member_kind, apparent_primitive_members,
-    apparent_primitive_shape, collect_properties, element_access, index_signatures,
-    literal_value_intrinsic_kind,
 };
 #[cfg(test)]
 pub(crate) use operations::compound_assignment::{
     fallback_compound_assignment_result, is_compound_assignment_operator,
     is_logical_compound_assignment_operator, map_compound_assignment_to_binary,
 };
-pub use operations::{
+#[cfg(test)]
+pub(crate) use operations::{
     AssignabilityChecker, BinaryOpEvaluator, BinaryOpResult, CallEvaluator, CallResult,
-    MAX_CONSTRAINT_RECURSION_DEPTH, get_contextual_signature_cached_with_compat_checker,
-    get_contextual_signature_for_arity_cached_with_compat_checker,
-    get_contextual_signature_for_arity_with_compat_checker,
-    get_contextual_signature_with_compat_checker,
-};
-pub use relations::compat::{AssignabilityOverrideProvider, CompatChecker, NoopOverrideProvider};
-pub use relations::judge::{
-    CallableKind, DefaultJudge, IterableKind, Judge, JudgeConfig, PropertyResult, TruthinessKind,
-};
-pub use relations::lawyer::AnyPropagationRules;
-pub use relations::relation_queries::{
-    AssignabilityFailureAnalysis, RelationContext, RelationKind, RelationPolicy,
-    RelationQueryInputs, RelationResult, analyze_assignability_failure_with_resolver,
-    are_type_params_assignable, check_application_variance, query_relation,
-    query_relation_with_overrides, query_relation_with_resolver,
-};
-pub use relations::subtype::{
-    AnyPropagationMode, SubtypeChecker, SubtypeResult, TypeEnvironment, TypeResolver,
-    are_types_structurally_identical, is_subtype_of, reset_subtype_thread_local_state,
 };
 pub use type_queries::is_const_type_variable;
 pub use types::{
@@ -298,11 +265,6 @@ pub use types::{
     TypeListId, Visibility, is_compiler_managed_type, normalize_display_property_order,
 };
 // unsoundness_audit: accessed via tsz_solver::unsoundness_audit module path
-pub use operations::widening::{
-    display_widen_for_redeclaration, get_base_type_for_comparison, widen_argument_type_for_display,
-    widen_literal_type, widen_type, widen_type_deep, widen_type_for_display,
-    widen_type_for_inference,
-};
 
 // Test modules: Most are loaded by their source files via #[path = "tests/..."] declarations.
 // Only include modules here that aren't loaded elsewhere to avoid duplicate_mod warnings.

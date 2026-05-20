@@ -2292,7 +2292,7 @@ impl BoundFile {
     }
 }
 
-use crate::tsz_solver::TypeInterner;
+use crate::tsz_solver::construction::TypeInterner;
 use crate::tsz_solver::def::DefinitionStore;
 
 /// Merged program state after parallel binding

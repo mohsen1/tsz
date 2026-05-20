@@ -432,9 +432,17 @@ pub struct CliArgs {
     ///
     /// This hidden flag currently tightens relation policy and sticky freshness
     /// behavior. It still emits ordinary TypeScript diagnostics; dedicated TSZ
-    /// sound diagnostics, report-only mode, and config support are planned work.
+    /// sound diagnostics, and config support are planned work.
     #[arg(long, hide = true)]
     pub sound: bool,
+
+    /// Enable Sound Mode and report diagnostics without failing the build.
+    ///
+    /// Implies `--sound`. All diagnostics (including sound violations) are printed,
+    /// but the process always exits 0. Use this to audit sound violations without
+    /// blocking CI during a migration to stricter checking.
+    #[arg(long = "soundReportOnly", alias = "sound-report-only", hide = true)]
+    pub sound_report_only: bool,
 
     /// Add 'undefined' to a type when accessed using an index.
     #[arg(

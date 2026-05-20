@@ -28,10 +28,24 @@ skip()  { echo "  $(dim "$1")"; }
 # ── Flags ────────────────────────────────────────────────────────────────────
 QUICK=false
 FORCE=false
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  scripts/setup/setup.sh          # full setup
+  scripts/setup/setup.sh --quick  # skip cargo check at the end
+  scripts/setup/setup.sh --force  # redo every step even if already done
+
+Runs the standard local setup flow after a fresh clone.
+USAGE
+}
+
 for arg in "$@"; do
   case "$arg" in
     --quick) QUICK=true ;;
     --force) FORCE=true ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown option: $arg (try --help)" >&2; exit 1 ;;
   esac
 done
 
@@ -102,10 +116,10 @@ fi
 # ── 2. TypeScript submodule ─────────────────────────────────────────────────
 step "TypeScript submodule"
 
-# Worktree fast-path: share the primary checkout's TypeScript via symlink to
+# Worktree fast-path: share a populated TypeScript checkout via symlink to
 # avoid materialising a duplicate ~250–500 MB checkout per worktree. No-op in
-# the primary checkout, when already symlinked, or when the primary is
-# uninitialised (we fall through to the normal init below in that case).
+# the primary checkout, when already symlinked, or when no populated source is
+# available (we fall through to the normal init below in that case).
 COMMON_DIR=$(git rev-parse --git-common-dir 2>/dev/null || true)
 GIT_DIR=$(git rev-parse --git-dir 2>/dev/null || true)
 IS_WORKTREE=false
@@ -114,14 +128,36 @@ if [ -n "$COMMON_DIR" ] && [ -n "$GIT_DIR" ] \
   IS_WORKTREE=true
 fi
 
+TYPE_SCRIPT_SOURCE=""
+PRIMARY_REPO=""
+if [ "$IS_WORKTREE" = true ]; then
+  PRIMARY_REPO="$(cd "$COMMON_DIR/.." && pwd -P)"
+  if [ -d "$PRIMARY_REPO/TypeScript/tests/cases" ] && [ -e "$PRIMARY_REPO/TypeScript/.git" ]; then
+    TYPE_SCRIPT_SOURCE="$PRIMARY_REPO"
+  else
+    while IFS= read -r wt; do
+      [ -n "$wt" ] || continue
+      [ "$wt" != "$ROOT_DIR" ] || continue
+      if [ -d "$wt/TypeScript/tests/cases" ] && [ -e "$wt/TypeScript/.git" ]; then
+        TYPE_SCRIPT_SOURCE="$wt"
+        break
+      fi
+    done < <(git worktree list --porcelain | awk '/^worktree / { print substr($0, 10) }')
+  fi
+fi
+
 if [ "$IS_WORKTREE" = true ] && [ -L "$ROOT_DIR/TypeScript" ]; then
-  skip "Already linked to primary checkout's TypeScript."
+  skip "Already linked to a shared TypeScript checkout."
 elif [ "$IS_WORKTREE" = true ] \
      && [ -f "$SCRIPT_DIR/link-ts-submodule.sh" ] \
-     && [ -e "$(cd "$COMMON_DIR/.." && pwd -P)/TypeScript/.git" ]; then
-  bash "$SCRIPT_DIR/link-ts-submodule.sh" --quiet || true
+     && [ -n "$TYPE_SCRIPT_SOURCE" ]; then
+  if [ "$TYPE_SCRIPT_SOURCE" = "$PRIMARY_REPO" ]; then
+    bash "$SCRIPT_DIR/link-ts-submodule.sh" --quiet || true
+  else
+    bash "$SCRIPT_DIR/link-ts-submodule.sh" --quiet --source "$TYPE_SCRIPT_SOURCE" || true
+  fi
   if [ -L "$ROOT_DIR/TypeScript" ]; then
-    echo "  $(green "Linked TypeScript/ to primary checkout (saves ~250–500 MB).")"
+    echo "  $(green "Linked TypeScript/ to shared checkout (saves ~250–500 MB).")"
   fi
 fi
 

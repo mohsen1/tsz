@@ -1,5 +1,7 @@
 use super::*;
-use tsz_solver::{DefId, QueryDatabase, TypeInterner};
+use tsz_solver::DefId;
+use tsz_solver::construction::QueryDatabase;
+use tsz_solver::construction::TypeInterner;
 
 #[test]
 fn classifies_and_extracts_environment_resolution_shapes() {
@@ -144,7 +146,9 @@ fn solver_evaluator_handles_mapped_type_with_resolver() {
     // given a resolver. This validates the architectural path where mapped types
     // flow through evaluate_type_with_env (solver) rather than the checker-side
     // evaluate_mapped_type_with_resolution.
-    use tsz_solver::{MappedType, TypeEnvironment, TypeEvaluator, TypeParamInfo};
+    use tsz_solver::computation::TypeEvaluator;
+    use tsz_solver::relations::subtype::TypeEnvironment;
+    use tsz_solver::{MappedType, TypeParamInfo};
 
     let types = TypeInterner::new();
     let k_name = types.intern_string("K");
@@ -215,7 +219,9 @@ fn non_homomorphic_mapped_type_delegates_to_solver_after_constraint_resolution()
     // expansion. This test validates the architectural improvement where
     // resolved non-homomorphic mapped types are evaluated via
     // evaluate_type_with_env instead of the checker's inline expansion loop.
-    use tsz_solver::{MappedType, TypeEnvironment, TypeEvaluator, TypeParamInfo};
+    use tsz_solver::computation::TypeEvaluator;
+    use tsz_solver::relations::subtype::TypeEnvironment;
+    use tsz_solver::{MappedType, TypeParamInfo};
 
     let types = TypeInterner::new();
     let p_name = types.intern_string("P");
@@ -327,9 +333,9 @@ fn non_identity_homomorphic_mapped_type_inherits_optionality() {
     //   type M1 = { [K in keyof Partial<M0>]: M0[K] }
     // inherits optionality from Partial<M0>'s properties even though the template
     // references M0, not Partial<M0>. This matches tsc's behavior.
-    use tsz_solver::{
-        MappedType, PropertyInfo, TypeEnvironment, TypeEvaluator, TypeParamInfo, Visibility,
-    };
+    use tsz_solver::computation::TypeEvaluator;
+    use tsz_solver::relations::subtype::TypeEnvironment;
+    use tsz_solver::{MappedType, PropertyInfo, TypeParamInfo, Visibility};
 
     let types = TypeInterner::new();
     let k_name = types.intern_string("K");

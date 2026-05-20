@@ -800,7 +800,7 @@ mod tests {
     use tsz_binder::BinderState;
     use tsz_parser::parser::ParserState;
     use tsz_parser::parser::syntax_kind_ext;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     #[test]
     fn declared_type_of_identifier_argument_resolves_cross_file_stable_declaration() {

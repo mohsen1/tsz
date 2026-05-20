@@ -7,45 +7,15 @@ use wasm_bindgen::prelude::wasm_bindgen;
 
 use tsz::lib_loader::LibFile;
 use tsz::parallel::MergedProgram;
+use tsz_solver::construction::TypeInterner;
+use tsz_solver::ts_type_flags::{is_nullable_type, type_id_ts_flags};
 use tsz_solver::{
-    LiteralValue, TypeData, TypeFormatter, TypeId, TypeInterner, is_array_type,
-    is_intersection_type, is_tuple_type, is_type_parameter, is_union_type,
+    TypeFormatter, TypeId, is_array_type, is_intersection_type, is_tuple_type, is_type_parameter,
+    is_union_type,
 };
 
 use super::enums::SignatureKind;
 use super::program::TsCompilerOptions;
-
-// TypeScript `TypeFlags` constants. Mirrors the public bit values from
-// `typescript`'s `TypeFlags` enum so consumers of the wasm API can match
-// against the same numeric flags they use when talking to `tsc`.
-mod type_flags {
-    pub const ANY: u32 = 1 << 0;
-    pub const UNKNOWN: u32 = 1 << 1;
-    pub const STRING: u32 = 1 << 2;
-    pub const NUMBER: u32 = 1 << 3;
-    pub const BOOLEAN: u32 = 1 << 4;
-    pub const ENUM: u32 = 1 << 5;
-    pub const BIGINT: u32 = 1 << 6;
-    pub const STRING_LITERAL: u32 = 1 << 7;
-    pub const NUMBER_LITERAL: u32 = 1 << 8;
-    pub const BOOLEAN_LITERAL: u32 = 1 << 9;
-    pub const BIGINT_LITERAL: u32 = 1 << 11;
-    pub const ES_SYMBOL: u32 = 1 << 12;
-    pub const UNIQUE_ES_SYMBOL: u32 = 1 << 13;
-    pub const VOID: u32 = 1 << 14;
-    pub const UNDEFINED: u32 = 1 << 15;
-    pub const NULL: u32 = 1 << 16;
-    pub const NEVER: u32 = 1 << 17;
-    pub const TYPE_PARAMETER: u32 = 1 << 18;
-    pub const OBJECT: u32 = 1 << 19;
-    pub const UNION: u32 = 1 << 20;
-    pub const INTERSECTION: u32 = 1 << 21;
-    pub const INDEX: u32 = 1 << 22;
-    pub const INDEXED_ACCESS: u32 = 1 << 23;
-    pub const CONDITIONAL: u32 = 1 << 24;
-    pub const NON_PRIMITIVE: u32 = 1 << 26;
-    pub const TEMPLATE_LITERAL: u32 = 1 << 27;
-}
 
 /// TypeScript `TypeChecker` - provides type information
 ///
@@ -176,7 +146,7 @@ impl TsTypeChecker {
     /// Get type flags
     #[wasm_bindgen(js_name = getTypeFlags)]
     pub fn get_type_flags(&self, type_handle: u32) -> u32 {
-        type_flags_for(&*self.interner, TypeId(type_handle))
+        type_id_ts_flags(&*self.interner, TypeId(type_handle))
     }
 
     /// Get symbol flags
@@ -223,88 +193,8 @@ impl TsTypeChecker {
     /// `undefined` intrinsics directly, and for any union that contains them.
     #[wasm_bindgen(js_name = isNullableType)]
     pub fn is_nullable_type(&self, type_handle: u32) -> bool {
-        is_nullable_type_impl(&*self.interner, TypeId(type_handle))
+        is_nullable_type(&*self.interner, TypeId(type_handle))
     }
-}
-
-/// Compute TypeScript-style `TypeFlags` for a `TypeId` using its `TypeData`.
-fn type_flags_for(interner: &TypeInterner, type_id: TypeId) -> u32 {
-    // Intrinsic IDs are reserved and faster to dispatch on directly.
-    match type_id {
-        TypeId::ANY | TypeId::STRICT_ANY => return type_flags::ANY,
-        TypeId::UNKNOWN => return type_flags::UNKNOWN,
-        TypeId::STRING => return type_flags::STRING,
-        TypeId::NUMBER => return type_flags::NUMBER,
-        TypeId::BOOLEAN => return type_flags::BOOLEAN,
-        TypeId::BIGINT => return type_flags::BIGINT,
-        TypeId::SYMBOL => return type_flags::ES_SYMBOL,
-        TypeId::VOID => return type_flags::VOID,
-        TypeId::UNDEFINED => return type_flags::UNDEFINED,
-        TypeId::NULL => return type_flags::NULL,
-        TypeId::NEVER => return type_flags::NEVER,
-        TypeId::BOOLEAN_TRUE | TypeId::BOOLEAN_FALSE => return type_flags::BOOLEAN_LITERAL,
-        _ => {}
-    }
-    match interner.lookup(type_id) {
-        Some(TypeData::Intrinsic(kind)) => match kind {
-            tsz_solver::IntrinsicKind::Any => type_flags::ANY,
-            tsz_solver::IntrinsicKind::Unknown => type_flags::UNKNOWN,
-            tsz_solver::IntrinsicKind::String => type_flags::STRING,
-            tsz_solver::IntrinsicKind::Number => type_flags::NUMBER,
-            tsz_solver::IntrinsicKind::Boolean => type_flags::BOOLEAN,
-            tsz_solver::IntrinsicKind::Bigint => type_flags::BIGINT,
-            tsz_solver::IntrinsicKind::Symbol => type_flags::ES_SYMBOL,
-            tsz_solver::IntrinsicKind::Void => type_flags::VOID,
-            tsz_solver::IntrinsicKind::Undefined => type_flags::UNDEFINED,
-            tsz_solver::IntrinsicKind::Null => type_flags::NULL,
-            tsz_solver::IntrinsicKind::Never => type_flags::NEVER,
-            // The `object` (non-primitive) intrinsic and `Function` intrinsic
-            // both behave as object-like at the TypeFlags level.
-            tsz_solver::IntrinsicKind::Object => type_flags::NON_PRIMITIVE,
-            tsz_solver::IntrinsicKind::Function => type_flags::OBJECT,
-        },
-        Some(TypeData::Literal(literal)) => match literal {
-            LiteralValue::String(_) => type_flags::STRING_LITERAL,
-            LiteralValue::Number(_) => type_flags::NUMBER_LITERAL,
-            LiteralValue::BigInt(_) => type_flags::BIGINT_LITERAL,
-            LiteralValue::Boolean(_) => type_flags::BOOLEAN_LITERAL,
-        },
-        Some(TypeData::Union(_)) => type_flags::UNION,
-        Some(TypeData::Intersection(_)) => type_flags::INTERSECTION,
-        Some(TypeData::TypeParameter(_) | TypeData::Infer(_)) => type_flags::TYPE_PARAMETER,
-        Some(TypeData::Conditional(_)) => type_flags::CONDITIONAL,
-        Some(TypeData::IndexAccess(_, _)) => type_flags::INDEXED_ACCESS,
-        Some(TypeData::KeyOf(_)) => type_flags::INDEX,
-        Some(TypeData::TemplateLiteral(_)) => type_flags::TEMPLATE_LITERAL,
-        Some(TypeData::UniqueSymbol(_)) => type_flags::UNIQUE_ES_SYMBOL,
-        Some(TypeData::Enum(_, _)) => type_flags::ENUM,
-        Some(
-            TypeData::Object(_)
-            | TypeData::ObjectWithIndex(_)
-            | TypeData::Array(_)
-            | TypeData::Tuple(_)
-            | TypeData::Function(_)
-            | TypeData::Callable(_)
-            | TypeData::Mapped(_)
-            | TypeData::Application(_)
-            | TypeData::ReadonlyType(_)
-            | TypeData::ModuleNamespace(_),
-        ) => type_flags::OBJECT,
-        _ => 0,
-    }
-}
-
-fn is_nullable_type_impl(interner: &TypeInterner, type_id: TypeId) -> bool {
-    if type_id == TypeId::NULL || type_id == TypeId::UNDEFINED {
-        return true;
-    }
-    if let Some(TypeData::Union(list_id)) = interner.lookup(type_id) {
-        let members = interner.type_list(list_id);
-        return members
-            .iter()
-            .any(|&m| m == TypeId::NULL || m == TypeId::UNDEFINED);
-    }
-    false
 }
 
 /// Macro for intrinsic type ID getters on `TsTypeChecker`.
@@ -373,6 +263,7 @@ impl TsTypeChecker {
 mod tests {
     use super::*;
     use tsz_solver::TupleElement;
+    use tsz_solver::ts_type_flags::flags as type_flags;
 
     fn checker() -> (Arc<TypeInterner>, TsTypeChecker) {
         let interner = Arc::new(TypeInterner::new());
@@ -488,7 +379,10 @@ mod tests {
             checker.get_type_flags(TypeId::BOOLEAN.0),
             type_flags::BOOLEAN
         );
-        assert_eq!(checker.get_type_flags(TypeId::BIGINT.0), type_flags::BIGINT);
+        assert_eq!(
+            checker.get_type_flags(TypeId::BIGINT.0),
+            type_flags::BIG_INT
+        );
         assert_eq!(
             checker.get_type_flags(TypeId::SYMBOL.0),
             type_flags::ES_SYMBOL
@@ -502,11 +396,11 @@ mod tests {
         assert_eq!(checker.get_type_flags(TypeId::NEVER.0), type_flags::NEVER);
         assert_eq!(
             checker.get_type_flags(TypeId::BOOLEAN_TRUE.0),
-            type_flags::BOOLEAN_LITERAL
+            type_flags::BOOLEAN_LITERAL | type_flags::BOOLEAN
         );
         assert_eq!(
             checker.get_type_flags(TypeId::BOOLEAN_FALSE.0),
-            type_flags::BOOLEAN_LITERAL
+            type_flags::BOOLEAN_LITERAL | type_flags::BOOLEAN
         );
 
         let str_lit = interner.literal_string("hello");

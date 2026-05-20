@@ -1,4 +1,5 @@
-use tsz_solver::{TypeDatabase, TypeId};
+use tsz_solver::TypeId;
+use tsz_solver::construction::TypeDatabase;
 
 pub(crate) fn is_top_level_error_or_error_union_member(
     db: &dyn TypeDatabase,
@@ -17,6 +18,10 @@ pub(crate) fn contains_conditional_with_application_extends(
     type_id: TypeId,
 ) -> bool {
     tsz_solver::type_queries::contains_conditional_with_application_extends(db, type_id)
+}
+
+pub(crate) fn is_this_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_this_type(db, type_id)
 }
 
 pub(crate) fn type_predicate_type_assignable_to_parameter_with<F>(
@@ -82,7 +87,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     #[test]
     fn top_level_error_or_error_union_member_detects_error_shapes() {

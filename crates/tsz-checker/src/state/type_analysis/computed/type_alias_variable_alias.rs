@@ -23,7 +23,7 @@ impl<'a> CheckerState<'a> {
         import_module: &Option<String>,
         import_name: &Option<String>,
         escaped_name: &str,
-        factory: &tsz_solver::TypeFactory<'_>,
+        factory: &tsz_solver::construction::TypeFactory<'_>,
     ) -> (TypeId, Vec<tsz_solver::TypeParamInfo>) {
         if flags & symbol_flags::TYPE_ALIAS != 0 {
             if escaped_name == "BuiltinIteratorReturn"

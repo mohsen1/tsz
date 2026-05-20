@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::intern::TypeInterner;
+use crate::relations::subtype::SubtypeChecker;
 use crate::types::{MappedType, PropertyInfo, TypeParamInfo};
 
 #[test]

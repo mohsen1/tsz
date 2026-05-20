@@ -6,7 +6,7 @@
 //! - Definite assignment checking works properly
 //! - TDZ violations are detected
 
-use crate::TypeInterner;
+use crate::construction::TypeInterner;
 use crate::flow_analysis::{FlowFacts, FlowTypeEvaluator};
 use rustc_hash::{FxHashMap, FxHashSet};
 

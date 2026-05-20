@@ -1725,10 +1725,11 @@ impl<'a> CheckerContext<'a> {
 #[cfg(test)]
 mod tests {
     use super::super::{CheckerContext, CheckerOptions};
-    use crate::query_boundaries::common::{TypeEnvironment, TypeInterner};
     use std::sync::Arc;
     use tsz_binder::BinderState;
     use tsz_parser::parser::ParserState;
+    use tsz_solver::computation::TypeEnvironment;
+    use tsz_solver::construction::TypeInterner;
     use tsz_solver::def::DefinitionInfo;
 
     fn minimal_checker_ctx() -> (

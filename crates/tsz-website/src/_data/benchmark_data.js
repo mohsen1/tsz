@@ -60,12 +60,13 @@ function runnerEnvironmentSummary(data) {
   const parts = [];
   const generatedAt = formatUtcTimestamp(data?.generated_at);
   if (generatedAt) parts.push(`Generated ${generatedAt}`);
+  const sourceCommit = normalizedCommit(data?.source_commit);
+  if (sourceCommit) parts.push(`sha ${sourceCommit.slice(0, 12)}`);
   const measurement = measurementProfileSummary(data);
   if (measurement) parts.push(measurement);
 
   const env = data?.runner_environment;
   if (!env || typeof env !== "object") {
-    parts.push("runner hardware metadata unavailable for this artifact");
     return parts.join(" · ");
   }
 
@@ -201,16 +202,19 @@ function compareByTszSpeedup(a, b) {
   return String(a?.name || "").localeCompare(String(b?.name || ""));
 }
 
-function hasSuccessfulTiming(row) {
+function hasSuccessfulTimingPair(row) {
   return !row?.status
     && row?.winner !== "error"
     && hasTiming(row?.tsz_ms)
-    && hasTiming(row?.tsgo_ms)
-    && hasGreenProjectCompatibility(row);
+    && hasTiming(row?.tsgo_ms);
+}
+
+function hasSuccessfulTiming(row) {
+  return hasSuccessfulTimingPair(row);
 }
 
 function isFailedBenchmark(row) {
-  if (!row || hasSuccessfulTiming(row)) return false;
+  if (!row || hasSuccessfulTimingPair(row)) return false;
   return Boolean(row.status) || row.winner === "error" || hasTiming(row.tsz_ms) || hasTiming(row.tsgo_ms);
 }
 
@@ -573,6 +577,15 @@ function compatibilityState(row) {
   const compatibility = row?.compatibility || {};
   const diagnosticStatus = String(compatibility.diagnostic_status || "").toLowerCase();
   const recordedState = String(compatibility.state || "").toLowerCase();
+  if (!Object.keys(compatibility).length) {
+    return {
+      className: "gray",
+      stateLabel: "Gray",
+      exitClass: "missing or incomplete artifact",
+      phase: "artifact",
+      diagnosticDeltas: "not available",
+    };
+  }
   if (recordedState === "gray") {
     return {
       className: "gray",
@@ -596,7 +609,7 @@ function compatibilityState(row) {
     };
   }
 
-  if (hasSuccessfulTiming(row)) {
+  if (hasSuccessfulTimingPair(row) && hasGreenProjectCompatibility(row)) {
     if (diagnosticStatus && diagnosticStatus !== "none") {
       return {
         className: "yellow",
@@ -920,7 +933,7 @@ function categoryMeta(category) {
     },
     "Projects: generated apps": {
       title: "Generated apps",
-      description: "Generated application fixtures with modern framework dependencies and generated configs.",
+      description: "Programmatically created app projects with framework defaults and common TypeScript dependencies.",
     },
     "Projects: external libraries": {
       title: "External libraries",
@@ -2043,7 +2056,9 @@ function generateCharts(data, mode = "projects") {
       }
       return (String(a.name || "") > String(b.name || "") ? 1 : -1);
     });
-    const desc = isProject ? "" : categoryDescription(category);
+    const desc = category === "Projects: generated apps" || !isProject
+      ? categoryDescription(category)
+      : "";
     const repoLink = meta.repo
       ? ` <a class="bench-category-repo" href="${meta.repo}" target="_blank" rel="noopener noreferrer">${escapeHtml(meta.repoLabel || meta.repo)}</a>`
       : "";

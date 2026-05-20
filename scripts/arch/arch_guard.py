@@ -494,7 +494,7 @@ ROOT_SOLVER_EXPLICIT_REEXPORT_COUNT_CHECKS = [
             "relations",
             "widening",
         ),
-        124,
+        0,
     ),
 ]
 
@@ -510,7 +510,7 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         "Checker query boundary: direct common quarantine references outside query_boundaries (#8225)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         ("crates/tsz-checker/src/query_boundaries/",),
-        3395,
+        3397,
     ),
 ]
 
@@ -622,7 +622,7 @@ REGEX_LINE_COUNT_CHECKS = [
             r"diagnostic\.message_text|raw|evaluated)"
             r"\.(?:contains|starts_with|ends_with|as_str)\s*\("
         ),
-        15,
+        14,
     ),
     (
         "Emitter boundary: source_text.contains recovery decisions (Track 9/10)",
@@ -662,7 +662,7 @@ REGEX_LINE_COUNT_CHECKS = [
             r"\b(?:self|self\.ctx\.types|self\.interner)"
             r"\.is_assignable_to(?:_[A-Za-z0-9_]+)?\s*\("
         ),
-        112,
+        94,
     ),
     (
         "Checker residency boundary: with_parent_cache_attributed migration callsites (Track 10)",
@@ -1015,8 +1015,15 @@ ROOT_SOLVER_COMPUTATION_API_SYMBOLS = (
     "CallEvaluator",
     "CallResult",
     "CompatChecker",
+    "apply_contextual_type",
     "ContextualTypeContext",
+    "evaluate_conditional",
+    "evaluate_index_access",
+    "evaluate_index_access_with_options",
+    "evaluate_keyof",
+    "evaluate_mapped",
     "evaluate_type",
+    "evaluate_type_with_request",
     "get_contextual_signature",
     "get_contextual_signature_cached",
     "get_contextual_signature_cached_with_compat_checker",
@@ -1046,6 +1053,7 @@ ROOT_SOLVER_COMPUTATION_API_SYMBOLS = (
     "substitute_this_type_at_return_position",
     "substitute_this_type_cached",
     "TypeEnvironment",
+    "TypeEvaluator",
     "TypeInstantiator",
     "TypeResolver",
     "TypeSubstitution",

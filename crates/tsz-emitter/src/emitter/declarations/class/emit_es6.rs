@@ -1892,8 +1892,25 @@ impl<'a> Printer<'a> {
                                 self.comment_emit_idx += 1;
                             }
                         }
+                        let arrow_comment_scan_end =
+                            self.source_text.map_or(*init_end, |text| text.len() as u32);
+                        let arrow_comment_range = self
+                            .rightmost_concise_arrow_deferred_comment_range(
+                                *init_idx,
+                                arrow_comment_scan_end,
+                            );
                         self.with_scoped_static_initializer_context_cleared(|this| {
-                            this.emit_expression(*init_idx);
+                            if let Some((comment_start, comment_end)) = arrow_comment_range {
+                                this.with_arrow_concise_body_trailing_comments_deferred(
+                                    comment_start,
+                                    comment_end,
+                                    |this| {
+                                        this.emit_expression(*init_idx);
+                                    },
+                                );
+                            } else {
+                                this.emit_expression(*init_idx);
+                            }
                         });
                     }
                     self.write(";");

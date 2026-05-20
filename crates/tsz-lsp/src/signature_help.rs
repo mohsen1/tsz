@@ -4501,7 +4501,7 @@ mod signature_help_internal_tests {
     use tsz_binder::BinderState;
     use tsz_common::position::{LineMap, Position};
     use tsz_parser::ParserState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     #[test]
     fn split_top_level_text_keeps_function_type_commas_grouped() {

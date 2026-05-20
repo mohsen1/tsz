@@ -11,7 +11,7 @@ use tsz::lsp::Project;
 use tsz::lsp::completions::{CompletionItem, CompletionItemKind, Completions, sort_priority};
 use tsz::lsp::jsdoc::{jsdoc_for_node, parse_jsdoc};
 use tsz::lsp::position::{LineMap, Position};
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 impl Server {
     fn is_class_member_snippet_context(

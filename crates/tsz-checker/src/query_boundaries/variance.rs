@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
 use tsz_common::interner::Atom;
+use tsz_solver::TypeId;
+use tsz_solver::construction::TypeDatabase;
 use tsz_solver::def::DefId;
 use tsz_solver::def::resolver::TypeResolver;
-use tsz_solver::{TypeDatabase, TypeId};
 
 pub(crate) use tsz_solver::type_handles::Variance;
 
