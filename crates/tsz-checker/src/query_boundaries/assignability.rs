@@ -671,7 +671,7 @@ pub(crate) fn is_assignable_bivariant_with_resolver<R: tsz_solver::TypeResolver>
     flags: u16,
     inheritance_graph: &tsz_solver::InheritanceGraph,
     sound_mode: bool,
-) -> bool {
+) -> tsz_solver::RelationResult {
     let policy = tsz_solver::RelationPolicy::from_flags(flags)
         .with_strict_subtype_checking(sound_mode)
         .with_strict_any_propagation(sound_mode);
@@ -689,7 +689,6 @@ pub(crate) fn is_assignable_bivariant_with_resolver<R: tsz_solver::TypeResolver>
         policy,
         context,
     )
-    .is_related()
 }
 
 pub(crate) fn is_subtype_with_resolver<R: tsz_solver::TypeResolver>(
@@ -869,7 +868,7 @@ pub(crate) fn execute_relation<R: tsz_solver::TypeResolver>(
                 inheritance_graph,
                 sound_mode,
             );
-            (r, false, false)
+            (r.is_related(), r.depth_exceeded, r.iteration_exceeded)
         } else {
             let inputs = AssignabilityQueryInputs {
                 db,

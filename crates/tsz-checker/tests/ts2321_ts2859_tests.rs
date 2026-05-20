@@ -126,3 +126,36 @@ function check(x: Huge | null, y: Huge & Obj) { x = y; }
         "TS2321 must not fire for relation-checker overflow. Got: {diags:?}"
     );
 }
+
+/// Overflow reached through the bivariant-callback relation boundary must also
+/// emit TS2859, not silently pass or emit a different code.
+///
+/// The bivariant path (`RelationKind::AssignableBivariantCallbacks`) is used when
+/// `strictFunctionTypes` is off for a particular comparison; it goes through a
+/// separate solver entry point and previously dropped overflow flags.
+#[test]
+fn ts2859_not_dropped_through_bivariant_callback_path() {
+    // Construct a callback parameter comparison that forces the bivariant solver
+    // path by wrapping the large template-literal union in a function type.
+    // The parameter type comparison is done bivariantly (both directions), so
+    // the 4096-member union overwhelms the guard regardless of variance direction.
+    let source = r#"
+type Digits = '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7';
+type BigStr = `${Digits}${Digits}${Digits}${Digits}` | undefined;
+type Shape = { a: string } | { b: number };
+type Cb1 = (x: BigStr | null) => void;
+type Cb2 = (x: BigStr & Shape) => void;
+function run(f: Cb1, g: Cb2) { f = g; }
+"#;
+    let diags = check_source_diagnostics(source);
+    // The comparison must not silently vanish — either TS2859 fires (overflow
+    // detected) or TS2345 fires (normal mismatch). TS2589 must never appear.
+    assert!(
+        !diags.iter().any(|d| d.code == 2589),
+        "TS2589 must not fire for relation-checker overflow via bivariant path. Got: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 2321),
+        "TS2321 must not fire for relation-checker overflow via bivariant path. Got: {diags:?}"
+    );
+}

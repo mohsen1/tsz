@@ -3125,7 +3125,7 @@ impl<'a> CheckerState<'a> {
 
         let env = self.ctx.type_env.borrow();
         // Preserve existing behavior: bivariant path does not use checker overrides.
-        let result = is_assignable_bivariant_with_resolver(
+        let relation_result = is_assignable_bivariant_with_resolver(
             self.ctx.types,
             &*env,
             source,
@@ -3134,6 +3134,7 @@ impl<'a> CheckerState<'a> {
             &self.ctx.inheritance_graph,
             self.ctx.sound_mode(),
         );
+        let result = relation_result.is_related();
 
         // Cache the result for non-inference types
         // Use ORIGINAL types for cache key (not evaluated types)
