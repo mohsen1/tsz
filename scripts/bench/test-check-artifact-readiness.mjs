@@ -217,8 +217,8 @@ withTempDir((dir) => {
   assert.match(result.stdout, /0\.0 MiB/, "should show peak RSS in MiB");
   assert.match(
     result.stdout,
-    /recursive type evaluation pressure/,
-    "should name the semantic owner family for red rows",
+    /recursive alias instantiation/,
+    "should name the first known blocker for red rows",
   );
 });
 console.log("✅ red row present in artifact exits 0 (not missing)");
