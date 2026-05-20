@@ -1146,6 +1146,84 @@ fn anonymous_class_expr_with_static_private_field_sets_function_name() {
     );
 }
 
+/// When `++ClassName.#field` or `ClassName.#field++` appears in a static method
+/// body, tsc allocates a receiver temp even though the class-name identifier is
+/// syntactically simple, because the alias (`_a`) must be captured once and
+/// reused for both the outer SET receiver and the inner GET receiver.
+///
+/// Verify two name choices (`Counter` and `Score`) to prove the fix is
+/// structural and not keyed to a specific identifier spelling.
+#[test]
+fn static_private_field_unary_mutation_allocates_receiver_temp() {
+    let source_counter = r#"class Counter {
+    static #val = 0;
+    static inc() { ++Counter.#val; }
+    static dec() { Counter.#val--; }
+}
+"#;
+    let out = parse_and_print_for_target(source_counter, ScriptTarget::ES2015);
+    assert!(
+        out.contains("__classPrivateFieldSet(_b = _a, _a,"),
+        "`++Counter.#val` must allocate a receiver temp so outer SET and inner GET share the same alias.\nOutput:\n{out}"
+    );
+    assert!(
+        out.contains("__classPrivateFieldGet(_b, _a,"),
+        "inner GET after prefix-increment must reference the captured receiver temp.\nOutput:\n{out}"
+    );
+    assert!(
+        out.lines()
+            .filter(|l| l.contains("__classPrivateFieldSet(_b = _a,"))
+            .count()
+            >= 2,
+        "both `inc` and `dec` bodies must allocate the receiver temp.\nOutput:\n{out}"
+    );
+    assert!(
+        !out.contains("__classPrivateFieldSet(Counter,"),
+        "class name must not appear literally as a SET argument — it must be replaced by the alias temp.\nOutput:\n{out}"
+    );
+
+    let source_score = r#"class Score {
+    static #pts = 0;
+    static add() { ++Score.#pts; }
+    static pop() { Score.#pts--; }
+}
+"#;
+    let out2 = parse_and_print_for_target(source_score, ScriptTarget::ES2015);
+    assert!(
+        out2.contains("__classPrivateFieldSet(_b = _a, _a,"),
+        "`++Score.#pts` must also allocate a receiver temp (different class name).\nOutput:\n{out2}"
+    );
+    assert!(
+        !out2.contains("__classPrivateFieldSet(Score,"),
+        "class name `Score` must not appear literally as a SET argument.\nOutput:\n{out2}"
+    );
+}
+
+/// Same receiver-temp requirement for compound assignment (`+=`, `-=`) on static
+/// private fields.  Two operator variants prove the rule isn't operator-specific.
+#[test]
+fn static_private_field_compound_assignment_allocates_receiver_temp() {
+    let source = r#"class Score {
+    static #pts = 0;
+    static add(n: number) { Score.#pts += n; }
+    static sub(n: number) { Score.#pts -= n; }
+}
+"#;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
+    assert!(
+        output.contains("__classPrivateFieldSet(_b = _a, _a,"),
+        "`Score.#pts += n` must allocate a receiver temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__classPrivateFieldGet(_b, _a,"),
+        "inner GET for compound assignment must reference the captured receiver temp.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("__classPrivateFieldSet(Score,"),
+        "class name must not appear literally as a SET argument for compound assignment.\nOutput:\n{output}"
+    );
+}
+
 /// Counter-regression for `__setFunctionName` over-emission: a class
 /// expression with *only instance-private* members (no static fields, no
 /// static blocks, no static private fields, no decorators) keeps the
@@ -1170,5 +1248,130 @@ fn anonymous_class_expr_instance_private_only_does_not_set_function_name() {
     assert!(
         output.contains("_C_field = new WeakMap()"),
         "instance private field WeakMap should still initialize in the comma expression.\nOutput:\n{output}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Synthesized constructor: rest params vs `arguments` object
+//
+// When a derived class needs a synthesized constructor (because it has
+// instance field initializers or private fields but no explicit constructor),
+// tsc emits `constructor(...args) { super(...args); }` for ES2015+ targets
+// and `constructor() { super(...arguments); }` for ES5.
+// ---------------------------------------------------------------------------
+
+/// ES2015 target: derived class with instance field must use rest params in
+/// the synthesized constructor, not the ES5-only `arguments` object.
+#[test]
+fn derived_class_with_field_synthesizes_rest_args_at_es2015() {
+    let source = r#"class Base {}
+class Child extends Base {
+    x = 1;
+}
+"#;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
+    assert!(
+        output.contains("constructor(...args)"),
+        "ES2015 synthesized constructor must use rest params `...args`.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("super(...args)"),
+        "ES2015 synthesized constructor must forward rest params via `super(...args)`.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("super(...arguments)"),
+        "ES2015 synthesized constructor must NOT use the ES5 `arguments` object.\nOutput:\n{output}"
+    );
+}
+
+/// ES2020 target: same rule applies — rest params, not `arguments`.
+#[test]
+fn derived_class_with_field_synthesizes_rest_args_at_es2020() {
+    let source = r#"class Animal {}
+class Dog extends Animal {
+    name = "fido";
+}
+"#;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2020);
+    assert!(
+        output.contains("constructor(...args)"),
+        "ES2020 synthesized constructor must use rest params `...args`.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("super(...args)"),
+        "ES2020 synthesized constructor must forward via `super(...args)`.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("super(...arguments)"),
+        "ES2020 synthesized constructor must NOT use the ES5 `arguments` object.\nOutput:\n{output}"
+    );
+}
+
+/// ES5 target: at ES5, classes are fully desugared via `__extends` and
+/// `_super.apply(this, arguments)` — no `constructor()` syntax at all.
+/// This is the pre-existing correct behavior; we test that the ES5 path
+/// does NOT emit `constructor(...args)` (the ES2015+ form).
+#[test]
+fn derived_class_with_field_at_es5_uses_extends_helper_not_rest_params() {
+    let source = r#"class Base {}
+class Child extends Base {
+    x = 1;
+}
+"#;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES5);
+    assert!(
+        output.contains("__extends"),
+        "ES5 derived class must use `__extends` helper.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_super.apply(this, arguments)"),
+        "ES5 derived class must forward args via `_super.apply(this, arguments)`.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("constructor(...args)"),
+        "ES5 output must NOT emit ES2015+ rest-params constructor syntax.\nOutput:\n{output}"
+    );
+}
+
+/// ES2015 target: derived class with private instance field also triggers
+/// synthesized constructor and must use rest params.
+#[test]
+fn derived_class_with_private_field_synthesizes_rest_args_at_es2015() {
+    let source = r#"class Base {}
+class Child extends Base {
+    #value = 42;
+}
+"#;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
+    assert!(
+        output.contains("constructor(...args)"),
+        "ES2015 synthesized constructor for private-field derived class must use rest params.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("super(...args)"),
+        "ES2015 synthesized constructor for private-field derived class must use `super(...args)`.\nOutput:\n{output}"
+    );
+}
+
+/// Derived class with an explicit constructor must NOT have a synthesized one
+/// (regression guard: the rest-params path must not affect explicit ctors).
+#[test]
+fn derived_class_with_explicit_constructor_is_not_synthesized() {
+    let source = r#"class Base {}
+class Child extends Base {
+    x = 1;
+    constructor(public y: number) {
+        super();
+    }
+}
+"#;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
+    assert!(
+        !output.contains("constructor(...args)"),
+        "Explicit constructor must not be replaced with a synthesized rest-params one.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("constructor(y)"),
+        "Explicit constructor parameter must be preserved.\nOutput:\n{output}"
     );
 }

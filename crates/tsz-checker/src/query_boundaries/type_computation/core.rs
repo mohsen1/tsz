@@ -231,7 +231,7 @@ pub(crate) fn widen_mutable_object_literal_property_types(
 /// `unknown`, `any`, and `never` do not constrain literal property types in
 /// tsc's contextual literal check, so they should not suppress the normal
 /// widening of property literals in non-fresh object contexts.
-pub(crate) fn is_literal_permissive_object_context(type_id: TypeId) -> bool {
+pub(crate) const fn is_literal_permissive_object_context(type_id: TypeId) -> bool {
     matches!(type_id, TypeId::UNKNOWN | TypeId::ANY | TypeId::NEVER)
 }
 

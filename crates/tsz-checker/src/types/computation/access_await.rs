@@ -315,7 +315,10 @@ impl<'a> CheckerState<'a> {
     /// when the await operand is `new Promise(resolve => ...)`.
     /// Returns `None` if `Promise` is not available in lib files.
     pub(crate) fn get_promise_type(&mut self, type_arg: TypeId) -> Option<TypeId> {
-        if let Some(promise_base) = self.resolve_global_interface_type("Promise")
+        if let Some(promise_base) = self
+            .ctx
+            .lib_promise_type_ref()
+            .or_else(|| self.resolve_global_interface_type("Promise"))
             && promise_base != TypeId::ANY
             && promise_base != TypeId::ERROR
             && promise_base != TypeId::UNKNOWN

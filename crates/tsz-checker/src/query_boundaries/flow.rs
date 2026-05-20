@@ -127,11 +127,8 @@ pub(crate) fn apply_flow_observation(
             }
         }
 
-        FlowObservation::DestructuringElement { has_default, .. } => {
-            narrow_with_default_policy(db, base_type, *has_default)
-        }
-
-        FlowObservation::DestructuringProperty { has_default, .. } => {
+        FlowObservation::DestructuringElement { has_default, .. }
+        | FlowObservation::DestructuringProperty { has_default, .. } => {
             narrow_with_default_policy(db, base_type, *has_default)
         }
 

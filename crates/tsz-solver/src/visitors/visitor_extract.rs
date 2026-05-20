@@ -8,9 +8,9 @@ use crate::construction::TypeDatabase;
 use crate::def::DefId;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::types::{
-    CallableShapeId, ConditionalTypeId, FunctionShapeId, IntrinsicKind, LiteralValue, MappedTypeId,
-    ObjectShapeId, OrderedFloat, StringIntrinsicKind, TemplateLiteralId, TemplateSpan, TupleListId,
-    TypeApplicationId, TypeListId, TypeParamInfo,
+    CallableShapeId, ConditionalTypeId, FunctionShape, FunctionShapeId, IntrinsicKind,
+    LiteralValue, MappedTypeId, ObjectShapeId, OrderedFloat, StringIntrinsicKind,
+    TemplateLiteralId, TemplateSpan, TupleListId, TypeApplicationId, TypeListId, TypeParamInfo,
 };
 use crate::visitor::TypeVisitor;
 use crate::{SymbolRef, TypeData, TypeId};
@@ -155,6 +155,160 @@ pub fn array_element_type(types: &dyn TypeDatabase, type_id: TypeId) -> Option<T
         TypeData::Array(element) => Some(*element),
         _ => None,
     })
+}
+
+/// Widen `unique symbol` occurrences that appear in inferred declaration value
+/// surfaces.
+///
+/// TypeScript prints `symbol` for inferred value-position declarations that
+/// would otherwise expose unnameable `unique symbol` constituents, while still
+/// preserving explicit/nameable unique-symbol type positions. DTS emission asks
+/// this solver-owned structural helper instead of inspecting `TypeData`
+/// directly.
+pub fn widen_unique_symbol_value_type_for_dts(types: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    widen_unique_symbol_value_type_for_dts_inner(types, type_id, 0)
+}
+
+fn widen_unique_symbol_value_type_for_dts_inner(
+    types: &dyn TypeDatabase,
+    type_id: TypeId,
+    depth: usize,
+) -> TypeId {
+    if depth > 16 {
+        return type_id;
+    }
+
+    match types.lookup(type_id) {
+        Some(TypeData::UniqueSymbol(_)) => TypeId::SYMBOL,
+        Some(TypeData::Array(elem)) => {
+            let widened = widen_unique_symbol_value_type_for_dts_inner(types, elem, depth + 1);
+            if widened != elem {
+                types.array(widened)
+            } else {
+                type_id
+            }
+        }
+        Some(TypeData::Application(app_id)) => {
+            let app = types.type_application(app_id);
+            let mut changed = false;
+            let args = app
+                .args
+                .iter()
+                .copied()
+                .map(|arg| {
+                    let widened =
+                        widen_unique_symbol_value_type_for_dts_inner(types, arg, depth + 1);
+                    changed |= widened != arg;
+                    widened
+                })
+                .collect::<Vec<_>>();
+            if changed {
+                types.application(app.base, args)
+            } else {
+                type_id
+            }
+        }
+        Some(TypeData::Function(shape_id)) => {
+            let shape = types.function_shape(shape_id);
+            let return_type =
+                widen_unique_symbol_value_type_for_dts_inner(types, shape.return_type, depth + 1);
+            if return_type != shape.return_type {
+                types.function(FunctionShape {
+                    type_params: shape.type_params.clone(),
+                    params: shape.params.clone(),
+                    this_type: shape.this_type,
+                    return_type,
+                    type_predicate: shape.type_predicate,
+                    is_constructor: shape.is_constructor,
+                    is_method: shape.is_method,
+                })
+            } else {
+                type_id
+            }
+        }
+        Some(TypeData::Object(shape_id)) => {
+            let shape = types.object_shape(shape_id);
+            let mut changed = false;
+            let props = shape
+                .properties
+                .iter()
+                .cloned()
+                .map(|mut prop| {
+                    let ty = widen_unique_symbol_value_type_for_dts_inner(
+                        types,
+                        prop.type_id,
+                        depth + 1,
+                    );
+                    let write_ty = widen_unique_symbol_value_type_for_dts_inner(
+                        types,
+                        prop.write_type,
+                        depth + 1,
+                    );
+                    changed |= ty != prop.type_id || write_ty != prop.write_type;
+                    prop.type_id = ty;
+                    prop.write_type = write_ty;
+                    prop
+                })
+                .collect::<Vec<_>>();
+            if changed {
+                types.object_with_flags_and_symbol(props, shape.flags, shape.symbol)
+            } else {
+                type_id
+            }
+        }
+        Some(TypeData::ObjectWithIndex(shape_id)) => {
+            let shape = types.object_shape(shape_id);
+            let mut changed = false;
+            let props = shape
+                .properties
+                .iter()
+                .cloned()
+                .map(|mut prop| {
+                    let ty = widen_unique_symbol_value_type_for_dts_inner(
+                        types,
+                        prop.type_id,
+                        depth + 1,
+                    );
+                    let write_ty = widen_unique_symbol_value_type_for_dts_inner(
+                        types,
+                        prop.write_type,
+                        depth + 1,
+                    );
+                    changed |= ty != prop.type_id || write_ty != prop.write_type;
+                    prop.type_id = ty;
+                    prop.write_type = write_ty;
+                    prop
+                })
+                .collect::<Vec<_>>();
+            if changed {
+                let mut new_shape = (*shape).clone();
+                new_shape.properties = props;
+                types.object_with_index(new_shape)
+            } else {
+                type_id
+            }
+        }
+        Some(TypeData::Union(list_id)) => {
+            let members = types.type_list(list_id);
+            let mut changed = false;
+            let widened_members = members
+                .iter()
+                .copied()
+                .map(|member| {
+                    let widened =
+                        widen_unique_symbol_value_type_for_dts_inner(types, member, depth + 1);
+                    changed |= widened != member;
+                    widened
+                })
+                .collect::<Vec<_>>();
+            if changed {
+                types.union(widened_members)
+            } else {
+                type_id
+            }
+        }
+        _ => type_id,
+    }
 }
 
 /// Extract the tuple list id if this is a tuple type.
