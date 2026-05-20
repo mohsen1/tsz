@@ -7,9 +7,10 @@ pub(super) use tsz_binder::{BinderState, symbol_flags};
 pub(super) use tsz_parser::parser::node::NodeAccess;
 pub(super) use tsz_parser::parser::syntax_kind_ext;
 pub(super) use tsz_parser::parser::{NodeIndex, ParserState};
+pub(super) use tsz_solver::construction::TypeInterner;
 pub(super) use tsz_solver::{
     CallSignature, CallableShape, DefId, FunctionShape, IndexSignature, ObjectFlags, ObjectShape,
-    ParamInfo, PropertyInfo, SymbolRef, TupleElement, TypeId, TypeInterner,
+    ParamInfo, PropertyInfo, SymbolRef, TupleElement, TypeId,
 };
 
 // =============================================================================

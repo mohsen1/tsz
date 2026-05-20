@@ -8,7 +8,7 @@
 //! - Modifier computation and property expansion
 
 use super::data::ExactLiteralPropertyKey;
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::types::{MappedModifier, PropertyInfo, TypeData, TypeId};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::Atom;
@@ -1521,8 +1521,8 @@ pub fn expand_mapped_type_to_properties(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TypeInterner;
     use crate::caches::db::QueryDatabase;
+    use crate::construction::TypeInterner;
     use crate::types::TypeParamInfo;
 
     #[test]

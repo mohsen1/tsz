@@ -4,7 +4,7 @@
 //! Used by the checker when explicit type arguments are provided to a generic
 //! (e.g., `foo<number>(x)`).
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::AssignabilityChecker;
 use crate::types::{TypeId, TypeParamInfo};

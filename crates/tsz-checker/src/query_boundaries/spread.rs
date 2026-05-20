@@ -5,7 +5,8 @@
 //! be reached only through `query_boundaries/`.
 
 use tsz_common::interner::Atom;
-use tsz_solver::{DefId, TypeDatabase, TypeId};
+use tsz_solver::construction::TypeDatabase;
+use tsz_solver::{DefId, TypeId};
 
 /// If `type_id` is `TypeData::UnresolvedTypeName(atom)`, return the atom.
 /// Used by checker code that needs to re-attempt qualified-name resolution

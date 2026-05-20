@@ -39,6 +39,33 @@ DRY_RUN=false
 QUIET=false
 FULL=false
 
+usage() {
+  cat <<'USAGE'
+Clean git-ignored artifacts from the current tsz repository.
+
+Usage:
+  scripts/setup/clean.sh [OPTIONS]
+
+Options:
+  --dry-run    Show what would be cleaned without deleting anything
+  --full       Also remove Rust build caches (.target/, .target-bench/)
+  --quiet      Suppress output (for use in git hooks)
+  -h, --help   Show this help
+
+Protected (never deleted without --full):
+  .target/, .target-bench/ — Rust incremental build caches
+
+Protected (never deleted):
+  .env, .env.local, .env.* — environment config files
+
+Examples:
+  scripts/setup/clean.sh --dry-run    # Preview what would be removed
+  scripts/setup/clean.sh              # Clean debris, keep build caches
+  scripts/setup/clean.sh --full       # Nuke everything including build caches
+  scripts/setup/clean.sh --quiet      # Silent mode (git hooks)
+USAGE
+}
+
 # ── Argument parsing ────────────────────────────────────────────────────────
 
 while [[ $# -gt 0 ]]; do
@@ -46,7 +73,7 @@ while [[ $# -gt 0 ]]; do
     --dry-run) DRY_RUN=true; shift ;;
     --full)    FULL=true; shift ;;
     --quiet)   QUIET=true; shift ;;
-    -h|--help) sed -n '2,/^[^#]/{ /^#/s/^# \?//p; }' "$0"; exit 0 ;;
+    -h|--help) usage; exit 0 ;;
     *)         echo "Unknown option: $1 (try --help)"; exit 1 ;;
   esac
 done

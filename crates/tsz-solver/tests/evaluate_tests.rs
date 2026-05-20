@@ -1,7 +1,8 @@
 use super::*;
-use crate::TypeInterner;
+use crate::construction::TypeInterner;
 use crate::def::DefId;
-use crate::{SubtypeChecker, TypeSubstitution, instantiate_type};
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::relations::subtype::SubtypeChecker;
 
 #[test]
 fn evaluator_cache_statistics_report_entries_and_size() {
@@ -9917,8 +9918,8 @@ fn test_index_access_object_with_number_index_signature_no_unchecked() {
 
 #[test]
 fn test_index_access_resolves_ref() {
-    use crate::TypeEnvironment;
     use crate::def::DefId;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
     let mut env = TypeEnvironment::new();
@@ -10864,8 +10865,8 @@ fn test_keyof_type_param_with_type_param_constraint_not_collapsed() {
 
 #[test]
 fn test_keyof_resolves_ref() {
-    use crate::TypeEnvironment;
     use crate::def::DefId;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
     let mut env = TypeEnvironment::new();
@@ -11372,7 +11373,7 @@ fn test_keyof_object_keyword() {
 
 #[test]
 fn test_object_trifecta_keyof_object_interface() {
-    use crate::TypeEnvironment;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
     let mut env = TypeEnvironment::new();
@@ -28649,7 +28650,8 @@ fn test_multiple_infers_different_constraints() {
 
 #[test]
 fn test_typeof_variable_reference_basic() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // typeof x where x: number
     let interner = TypeInterner::new();
@@ -28667,7 +28669,8 @@ fn test_typeof_variable_reference_basic() {
 
 #[test]
 fn test_typeof_variable_reference_object_type() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // typeof x where x: { a: string, b: number }
     let interner = TypeInterner::new();
@@ -28690,7 +28693,8 @@ fn test_typeof_variable_reference_object_type() {
 
 #[test]
 fn test_typeof_variable_reference_array_type() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // typeof arr where arr: string[]
     let interner = TypeInterner::new();
@@ -28710,7 +28714,8 @@ fn test_typeof_variable_reference_array_type() {
 
 #[test]
 fn test_typeof_imported_value_basic() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // typeof importedValue where importedValue: boolean
     let interner = TypeInterner::new();
@@ -28729,7 +28734,8 @@ fn test_typeof_imported_value_basic() {
 
 #[test]
 fn test_typeof_imported_value_complex() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // typeof importedConfig where importedConfig: { port: number, host: string }
     let interner = TypeInterner::new();
@@ -28752,7 +28758,8 @@ fn test_typeof_imported_value_complex() {
 
 #[test]
 fn test_typeof_function_type() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // typeof fn where fn: (x: number) => string
     let interner = TypeInterner::new();
@@ -28785,7 +28792,8 @@ fn test_typeof_function_type() {
 
 #[test]
 fn test_typeof_function_multiple_params() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // typeof fn where fn: (a: string, b: number) => boolean
     let interner = TypeInterner::new();
@@ -28826,7 +28834,8 @@ fn test_typeof_function_multiple_params() {
 
 #[test]
 fn test_typeof_const_string_literal() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // typeof x where x: "hello" (const assertion)
     let interner = TypeInterner::new();
@@ -28846,7 +28855,8 @@ fn test_typeof_const_string_literal() {
 
 #[test]
 fn test_typeof_const_number_literal() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // typeof x where x: 42 (const assertion)
     let interner = TypeInterner::new();
@@ -28866,7 +28876,8 @@ fn test_typeof_const_number_literal() {
 
 #[test]
 fn test_typeof_const_tuple_readonly() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // typeof x where x = [1, 2, 3] as const -> readonly [1, 2, 3]
     let interner = TypeInterner::new();
@@ -28910,7 +28921,8 @@ fn test_typeof_const_tuple_readonly() {
 
 #[test]
 fn test_typeof_const_object_readonly() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // typeof x where x = { a: 1, b: "hello" } as const
     // -> { readonly a: 1, readonly b: "hello" }
@@ -28937,7 +28949,8 @@ fn test_typeof_const_object_readonly() {
 
 #[test]
 fn test_typeof_unresolved_passes_through() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // When resolver doesn't know the symbol, TypeQuery passes through unchanged
     let interner = TypeInterner::new();
@@ -28955,7 +28968,8 @@ fn test_typeof_unresolved_passes_through() {
 
 #[test]
 fn test_typeof_in_union() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // typeof x | typeof y
     let interner = TypeInterner::new();
@@ -28991,7 +29005,8 @@ fn test_typeof_in_union() {
 
 #[test]
 fn test_typeof_in_keyof() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // keyof typeof x where x: { a: string, b: number }
     let interner = TypeInterner::new();
@@ -29020,7 +29035,8 @@ fn test_typeof_in_keyof() {
 
 #[test]
 fn test_typeof_indexed_access() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // (typeof x)["a"] where x: { a: number, b: string }
     let interner = TypeInterner::new();
@@ -29971,7 +29987,7 @@ fn test_mapped_type_template_literal_keys() {
 
 #[test]
 fn test_satisfies_basic_literal_string() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = "hello" satisfies string
     // The literal type "hello" should satisfy the string constraint
@@ -29987,7 +30003,7 @@ fn test_satisfies_basic_literal_string() {
 
 #[test]
 fn test_satisfies_basic_literal_number() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = 42 satisfies number
     let interner = TypeInterner::new();
@@ -30002,7 +30018,7 @@ fn test_satisfies_basic_literal_number() {
 
 #[test]
 fn test_satisfies_basic_object_type() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = { a: 1, b: "hello" } satisfies { a: number, b: string }
     let interner = TypeInterner::new();
@@ -30031,7 +30047,7 @@ fn test_satisfies_basic_object_type() {
 
 #[test]
 fn test_satisfies_constraint_failure() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = "hello" satisfies number - should fail
     let interner = TypeInterner::new();
@@ -30044,7 +30060,8 @@ fn test_satisfies_constraint_failure() {
 
 #[test]
 fn test_satisfies_literal_widening_preserved_string() {
-    use crate::{LiteralValue, SubtypeChecker};
+    use crate::LiteralValue;
+    use crate::relations::subtype::SubtypeChecker;
 
     // With satisfies, literal types are preserved:
     // const x = "hello" satisfies string -> type is "hello"
@@ -30066,7 +30083,8 @@ fn test_satisfies_literal_widening_preserved_string() {
 
 #[test]
 fn test_satisfies_literal_widening_preserved_number() {
-    use crate::{LiteralValue, SubtypeChecker};
+    use crate::LiteralValue;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = 42 satisfies number -> type remains 42 (literal)
     let interner = TypeInterner::new();
@@ -30083,7 +30101,8 @@ fn test_satisfies_literal_widening_preserved_number() {
 
 #[test]
 fn test_satisfies_literal_widening_preserved_boolean() {
-    use crate::{LiteralValue, SubtypeChecker};
+    use crate::LiteralValue;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = true satisfies boolean -> type remains true (literal)
     let interner = TypeInterner::new();
@@ -30100,7 +30119,7 @@ fn test_satisfies_literal_widening_preserved_boolean() {
 
 #[test]
 fn test_satisfies_excess_property_check_fails() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // In TypeScript, satisfies performs excess property checking:
     // const x = { a: 1, b: 2, c: 3 } satisfies { a: number, b: number }
@@ -30129,7 +30148,7 @@ fn test_satisfies_excess_property_check_fails() {
 
 #[test]
 fn test_satisfies_missing_property_fails() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = { a: 1 } satisfies { a: number, b: number }
     // This fails because 'b' is required but missing
@@ -30152,7 +30171,7 @@ fn test_satisfies_missing_property_fails() {
 
 #[test]
 fn test_satisfies_optional_property_satisfied() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = { a: 1 } satisfies { a: number, b?: number }
     // This succeeds because 'b' is optional
@@ -30189,7 +30208,7 @@ fn test_satisfies_optional_property_satisfied() {
 
 #[test]
 fn test_satisfies_vs_annotation_literal_preservation() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // Demonstrating satisfies vs type annotation difference:
     //
@@ -30223,7 +30242,7 @@ fn test_satisfies_vs_annotation_literal_preservation() {
 
 #[test]
 fn test_satisfies_vs_annotation_object_properties() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // With satisfies, object property types are preserved:
     //   const x = { status: "success" } satisfies { status: string }
@@ -30258,7 +30277,7 @@ fn test_satisfies_vs_annotation_object_properties() {
 
 #[test]
 fn test_satisfies_union_constraint() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = "a" satisfies "a" | "b" | "c"
     let interner = TypeInterner::new();
@@ -30278,7 +30297,7 @@ fn test_satisfies_union_constraint() {
 
 #[test]
 fn test_satisfies_array_type() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = [1, 2, 3] satisfies number[]
     let interner = TypeInterner::new();
@@ -30318,7 +30337,7 @@ fn test_satisfies_array_type() {
 
 #[test]
 fn test_satisfies_record_type() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = { foo: 1, bar: 2 } satisfies Record<string, number>
     let interner = TypeInterner::new();
@@ -30349,7 +30368,7 @@ fn test_satisfies_record_type() {
 
 #[test]
 fn test_satisfies_with_generic_function() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const fn = <T>(x: T) => x satisfies <T>(x: T) => T
     let interner = TypeInterner::new();
@@ -30401,7 +30420,7 @@ fn test_satisfies_with_generic_function() {
 
 #[test]
 fn test_satisfies_preserves_narrower_type() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
     use crate::types::LiteralValue;
 
     // const x = "hello" satisfies string
@@ -30423,7 +30442,7 @@ fn test_satisfies_preserves_narrower_type() {
 
 #[test]
 fn test_satisfies_with_union_literals() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = "a" | "b" satisfies string
     let interner = TypeInterner::new();
@@ -30439,7 +30458,7 @@ fn test_satisfies_with_union_literals() {
 
 #[test]
 fn test_satisfies_with_intersection() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = { a: 1 } & { b: 2 } satisfies { a: number, b: number }
     let interner = TypeInterner::new();
@@ -31349,7 +31368,7 @@ fn test_const_object_literal_nested() {
 
 #[test]
 fn test_const_object_literal_vs_mutable() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = { a: 1 } as const  ->  { readonly a: 1 }
     // let y = { a: 1 }             ->  { a: number }
@@ -31559,7 +31578,7 @@ fn test_const_array_nested() {
 
 #[test]
 fn test_const_array_vs_mutable() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = [1, 2] as const  ->  readonly [1, 2]
     // A non-readonly tuple [1, 2] is subtype of number[]
@@ -31747,7 +31766,7 @@ fn test_template_literal_type_structure() {
 
 #[test]
 fn test_template_literal_union_expansion() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // `${"a" | "b"}` expands to "a" | "b"
     let interner = TypeInterner::new();
@@ -31766,7 +31785,7 @@ fn test_template_literal_union_expansion() {
 
 #[test]
 fn test_const_enum_like_object() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const Direction = { Up: 0, Down: 1, Left: 2, Right: 3 } as const
     // -> { readonly Up: 0, readonly Down: 1, readonly Left: 2, readonly Right: 3 }

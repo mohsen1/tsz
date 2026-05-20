@@ -1,7 +1,8 @@
 use tsz_binder::BinderState;
 use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
-use tsz_solver::{TypeInterner, type_queries};
+use tsz_solver::construction::TypeInterner;
+use tsz_solver::type_queries;
 
 #[test]
 fn test_enum_member_types_prefilled_after_enum_resolution() {

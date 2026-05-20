@@ -236,7 +236,7 @@ mod tests {
     use crate::context::{CheckerContext, CheckerOptions};
     use tsz_binder::BinderState;
     use tsz_parser::ParserState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     /// Resolving `Symbol::stable_declarations.first()` for a `let`
     /// initialized with an array-literal must return the same variable

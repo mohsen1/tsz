@@ -25,7 +25,7 @@ fn check(source: &str) -> Vec<Diagnostic> {
     let mut binder = tsz_binder::BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let options = CheckerOptions::default();
 
     let mut checker = tsz_checker::state::CheckerState::new(

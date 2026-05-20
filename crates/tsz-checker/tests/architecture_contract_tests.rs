@@ -3,9 +3,9 @@ use std::fs;
 use std::path::Path;
 use tsz_binder::BinderState;
 use tsz_parser::parser::node::NodeArena;
-use tsz_solver::{
-    CompatChecker, FunctionShape, ParamInfo, RelationCacheKey, TypeId, TypeInterner, Visibility,
-};
+use tsz_solver::computation::CompatChecker;
+use tsz_solver::construction::TypeInterner;
+use tsz_solver::{FunctionShape, ParamInfo, RelationCacheKey, TypeId, Visibility};
 
 fn make_animal_and_dog(interner: &TypeInterner) -> (TypeId, TypeId) {
     let animal_name = interner.intern_string("name");
@@ -390,7 +390,7 @@ fn test_no_direct_type_queries_data_access_outside_query_boundaries() {
 }
 
 /// Architecture contract: checker code outside `query_boundaries/` and `tests/`
-/// must not construct `tsz_solver::RelationPolicy` or `tsz_solver::RelationContext`
+/// must not construct `tsz_solver::relations::relation_queries::RelationPolicy` or `tsz_solver::relations::relation_queries::RelationContext`
 /// directly.
 ///
 /// These solver-internal policy types should only be constructed inside
@@ -431,8 +431,8 @@ fn test_no_direct_relation_policy_construction_outside_query_boundaries() {
             if trimmed.starts_with("//") {
                 continue;
             }
-            if line.contains("tsz_solver::RelationPolicy")
-                || line.contains("tsz_solver::RelationContext")
+            if line.contains("tsz_solver::relations::relation_queries::RelationPolicy")
+                || line.contains("tsz_solver::relations::relation_queries::RelationContext")
             {
                 violations.push(format!("{}:{}: {}", rel, line_index + 1, trimmed));
             }
@@ -549,7 +549,7 @@ fn test_ambient_signature_checks_uses_assignability_query_boundary_helpers() {
 }
 
 /// Architecture contract: checker code outside `query_boundaries/` and `tests/`
-/// must not construct `tsz_solver::TypeEvaluator` directly.
+/// must not construct `tsz_solver::computation::TypeEvaluator` directly.
 ///
 /// `TypeEvaluator` is the solver's internal evaluation engine. Checker code should
 /// use the boundary wrappers in `query_boundaries/state/type_environment.rs`
@@ -592,7 +592,7 @@ fn test_no_direct_type_evaluator_construction_outside_query_boundaries() {
             }
             if line.contains("TypeEvaluator::with_resolver")
                 || line.contains("TypeEvaluator::new(")
-                || line.contains("use tsz_solver::TypeEvaluator")
+                || line.contains("use tsz_solver::computation::TypeEvaluator")
             {
                 violations.push(format!("{}:{}: {}", rel, line_index + 1, trimmed));
             }
