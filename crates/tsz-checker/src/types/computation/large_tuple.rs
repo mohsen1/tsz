@@ -117,6 +117,28 @@ impl<'a> CheckerState<'a> {
             return self.estimate_type_alias_length(sym_id, alias_stack, depth + 1);
         }
 
+        if node.kind == syntax_kind_ext::UNION_TYPE {
+            let Some(union) = self.ctx.arena.get_composite_type(node) else {
+                return TupleLengthEstimate::Unknown;
+            };
+            // A union used as a spread can expand to any arm; the cardinality of the
+            // worst-case arm determines whether the limit is breached.
+            let mut max = TupleLengthEstimate::Known(0);
+            for &arm in &union.types.nodes {
+                let arm_len = self.estimate_tuple_type_node_length(arm, alias_stack, depth + 1);
+                if arm_len.is_too_large() {
+                    return TupleLengthEstimate::TooLarge;
+                }
+                max = match (max, arm_len) {
+                    (TupleLengthEstimate::Known(a), TupleLengthEstimate::Known(b)) => {
+                        TupleLengthEstimate::Known(a.max(b))
+                    }
+                    _ => TupleLengthEstimate::Unknown,
+                };
+            }
+            return max;
+        }
+
         TupleLengthEstimate::Unknown
     }
 

@@ -1417,7 +1417,7 @@ type Y = Forever<42>;
 /// so tsc emits TS2799 rather than TS2589.
 ///
 /// Structural rule: when a generic alias application triggers the tuple-too-large
-/// sentinel (solver emits TypeId::ERROR from `visit_tuple`), the checker emits
+/// sentinel (solver emits `TypeId::ERROR` from `visit_tuple`), the checker emits
 /// TS2799 regardless of whether the alias body is conditional or unconditional.
 #[test]
 fn conditional_tuple_accumulator_alias_emits_ts2799_not_ts2589() {
