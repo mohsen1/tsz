@@ -2168,15 +2168,14 @@ impl<'a> AstToIr<'a> {
             let lexical_this_capture_alias = self.lexical_this_capture_alias.take();
             self.lexical_this_capture_alias
                 .set(lexical_this_capture_alias.clone());
-            let this_substitution = class_alias.map(ThisSubstitution::Identifier).or_else(|| {
-                if captures_this {
-                    prev_substitution
-                        .clone()
-                        .or_else(|| lexical_this_capture_alias.clone())
-                } else {
-                    None
-                }
-            });
+            let class_alias = class_alias.map(ThisSubstitution::Identifier);
+            let this_substitution = if captures_this {
+                lexical_this_capture_alias
+                    .or_else(|| prev_substitution.clone())
+                    .or(class_alias)
+            } else {
+                None
+            };
 
             if captures_this && this_substitution.is_none() {
                 self.this_captured.set(true);

@@ -598,6 +598,35 @@ fn class_accessors_capture_arrow_this_with_default_alias_when_available() {
 }
 
 #[test]
+fn static_members_capture_arrow_this_with_member_local_alias() {
+    let output = emit_es5(
+        "class C {\n\
+             static field = this;\n\
+             static get value() { () => this.field; return null; }\n\
+             static set value(next) { () => { this.field = next; }; }\n\
+             static method() { () => this.value; }\n\
+         }\n",
+    );
+
+    assert!(
+        output.contains("var _this = this;"),
+        "Static accessor/method arrows should capture the member-local this value.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return _this.field;"),
+        "Static getter arrow should read through the member-local this alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_this.field = next;"),
+        "Static setter arrow should assign through the member-local this alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return _this.value;"),
+        "Static method arrow should read through the member-local this alias.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn async_es5_labeled_block_break_after_await_lowers_to_generator_jump() {
     let output = emit_es5(
         "async function f() {\n\
