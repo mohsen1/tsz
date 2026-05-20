@@ -146,7 +146,10 @@ impl<'a> CheckerState<'a> {
         }
 
         let read_ok = if source_prop.is_method || target_prop.is_method {
-            self.is_assignable_to_bivariant(source_prop.type_id, target_prop.type_id)
+            self.diagnostic_relation_boolean_guard_bivariant(
+                source_prop.type_id,
+                target_prop.type_id,
+            )
         } else {
             self.diagnostic_relation_boolean_guard(source_prop.type_id, target_prop.type_id)
         };

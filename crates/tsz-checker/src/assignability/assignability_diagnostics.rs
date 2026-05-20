@@ -1632,7 +1632,7 @@ impl<'a> CheckerState<'a> {
         {
             return true;
         }
-        if self.is_assignable_to_bivariant(source, target) {
+        if self.diagnostic_relation_boolean_guard_bivariant(source, target) {
             return false;
         }
 
