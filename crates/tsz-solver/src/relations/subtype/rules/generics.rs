@@ -707,6 +707,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         let def_id = self.application_base_def_id(s_app.base)?;
 
+        // Conditional type alias self-comparisons require structural expansion
+        // with recursion identity tracking (tsc's `getRecursionIdentity`
+        // mechanism). When arguments differ, keep the variance path available
+        // so genuine leaf mismatches are not hidden by a DefId-only cycle.
+        if s_app.args == t_app.args && self.is_conditional_alias_base_inline(s_app.base) {
+            return None;
+        }
+
         // Arity normalization: when both applications share the same base but have
         // different arg counts (e.g., Generator<T, void, any> vs Generator<T>),
         // fill in type parameter defaults to normalize both to the same arity.
