@@ -135,21 +135,17 @@ where
 /// don't process Markdown links still see the human-readable form, and so a
 /// broken target never crashes hover (acceptance criterion).
 pub fn expand_links_to_markdown(text: &str, resolver: &mut impl LinkUriResolver) -> String {
-    splice_links(
-        text,
-        |segment| escape_markdown_label(segment),
-        |link| {
-            let label = link.display.unwrap_or(link.target);
-            match (resolver.resolve_link_uri(link.target), link.style) {
-                (Some(uri), LinkStyle::Code) => format!("[{}]({uri})", format_inline_code(label)),
-                (Some(uri), LinkStyle::Plain) => {
-                    format!("[{}]({uri})", escape_markdown_label(label))
-                }
-                (None, LinkStyle::Code) => format_inline_code(label),
-                (None, LinkStyle::Plain) => escape_markdown_label(label),
+    splice_links(text, escape_markdown_label, |link| {
+        let label = link.display.unwrap_or(link.target);
+        match (resolver.resolve_link_uri(link.target), link.style) {
+            (Some(uri), LinkStyle::Code) => format!("[{}]({uri})", format_inline_code(label)),
+            (Some(uri), LinkStyle::Plain) => {
+                format!("[{}]({uri})", escape_markdown_label(label))
             }
-        },
-    )
+            (None, LinkStyle::Code) => format_inline_code(label),
+            (None, LinkStyle::Plain) => escape_markdown_label(label),
+        }
+    })
 }
 
 /// Rewrite inline link tokens in `text` into plain text for hovers that do
