@@ -818,10 +818,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.arena
             .get(initializer)
             .is_some_and(|node| node.kind == syntax_kind_ext::CALL_EXPRESSION)
-            && matches!(
-                interner.lookup(type_id),
-                Some(tsz_solver::types::TypeData::Application(_))
-            )
+            && tsz_solver::visitor::application_id(interner, type_id).is_some()
     }
 
     pub(in crate::declaration_emitter) fn widened_inferred_expression_type_text(
@@ -845,133 +842,12 @@ impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn widen_unique_symbol_value_type_for_dts(
         &self,
         type_id: tsz_solver::types::TypeId,
-        depth: usize,
+        _depth: usize,
     ) -> tsz_solver::types::TypeId {
-        if depth > 16 {
-            return type_id;
-        }
         let Some(interner) = self.type_interner else {
             return type_id;
         };
-
-        match interner.lookup(type_id) {
-            Some(tsz_solver::types::TypeData::UniqueSymbol(_)) => tsz_solver::types::TypeId::SYMBOL,
-            Some(tsz_solver::types::TypeData::Array(elem)) => {
-                let widened = self.widen_unique_symbol_value_type_for_dts(elem, depth + 1);
-                if widened != elem {
-                    interner.array(widened)
-                } else {
-                    type_id
-                }
-            }
-            Some(tsz_solver::types::TypeData::Application(app_id)) => {
-                let app = interner.type_application(app_id);
-                let mut changed = false;
-                let args = app
-                    .args
-                    .iter()
-                    .copied()
-                    .map(|arg| {
-                        let widened = self.widen_unique_symbol_value_type_for_dts(arg, depth + 1);
-                        changed |= widened != arg;
-                        widened
-                    })
-                    .collect::<Vec<_>>();
-                if changed {
-                    interner.application(app.base, args)
-                } else {
-                    type_id
-                }
-            }
-            Some(tsz_solver::types::TypeData::Function(shape_id)) => {
-                let shape = interner.function_shape(shape_id);
-                let return_type =
-                    self.widen_unique_symbol_value_type_for_dts(shape.return_type, depth + 1);
-                if return_type != shape.return_type {
-                    interner.function(tsz_solver::types::FunctionShape {
-                        type_params: shape.type_params.clone(),
-                        params: shape.params.clone(),
-                        this_type: shape.this_type,
-                        return_type,
-                        type_predicate: shape.type_predicate,
-                        is_constructor: shape.is_constructor,
-                        is_method: shape.is_method,
-                    })
-                } else {
-                    type_id
-                }
-            }
-            Some(tsz_solver::types::TypeData::Object(shape_id)) => {
-                let shape = interner.object_shape(shape_id);
-                let mut changed = false;
-                let props = shape
-                    .properties
-                    .iter()
-                    .cloned()
-                    .map(|mut prop| {
-                        let ty =
-                            self.widen_unique_symbol_value_type_for_dts(prop.type_id, depth + 1);
-                        let write_ty =
-                            self.widen_unique_symbol_value_type_for_dts(prop.write_type, depth + 1);
-                        changed |= ty != prop.type_id || write_ty != prop.write_type;
-                        prop.type_id = ty;
-                        prop.write_type = write_ty;
-                        prop
-                    })
-                    .collect::<Vec<_>>();
-                if changed {
-                    interner.object_with_flags_and_symbol(props, shape.flags, shape.symbol)
-                } else {
-                    type_id
-                }
-            }
-            Some(tsz_solver::types::TypeData::ObjectWithIndex(shape_id)) => {
-                let shape = interner.object_shape(shape_id);
-                let mut changed = false;
-                let props = shape
-                    .properties
-                    .iter()
-                    .cloned()
-                    .map(|mut prop| {
-                        let ty =
-                            self.widen_unique_symbol_value_type_for_dts(prop.type_id, depth + 1);
-                        let write_ty =
-                            self.widen_unique_symbol_value_type_for_dts(prop.write_type, depth + 1);
-                        changed |= ty != prop.type_id || write_ty != prop.write_type;
-                        prop.type_id = ty;
-                        prop.write_type = write_ty;
-                        prop
-                    })
-                    .collect::<Vec<_>>();
-                if changed {
-                    let mut new_shape = (*shape).clone();
-                    new_shape.properties = props;
-                    interner.object_with_index(new_shape)
-                } else {
-                    type_id
-                }
-            }
-            Some(tsz_solver::types::TypeData::Union(list_id)) => {
-                let members = interner.type_list(list_id);
-                let mut changed = false;
-                let widened_members = members
-                    .iter()
-                    .copied()
-                    .map(|member| {
-                        let widened =
-                            self.widen_unique_symbol_value_type_for_dts(member, depth + 1);
-                        changed |= widened != member;
-                        widened
-                    })
-                    .collect::<Vec<_>>();
-                if changed {
-                    interner.union(widened_members)
-                } else {
-                    type_id
-                }
-            }
-            _ => type_id,
-        }
+        tsz_solver::visitor::widen_unique_symbol_value_type_for_dts(interner, type_id)
     }
 
     pub(in crate::declaration_emitter) fn rewrite_exported_import_equals_type_text(
