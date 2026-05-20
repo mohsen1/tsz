@@ -1897,22 +1897,20 @@ const stringOrBooleanOrNumber = stringOrBoolean || number;
     );
 
     assert!(
-        output.contains("declare const stringOrNumber: \"string\" | \"number\";"),
-        "Expected `||` over literal-typed consts to preserve both arms: {output}"
+        output.contains("declare const stringOrNumber: \"string\";"),
+        "Expected `||` over definitely-truthy literal consts to keep the reachable left arm: {output}"
     );
     assert!(
-        output.contains("declare const stringOrBoolean: \"string\" | \"boolean\";"),
-        "Expected `||` to preserve string and boolean literal arms: {output}"
+        output.contains("declare const stringOrBoolean: \"string\";"),
+        "Expected `||` to drop the unreachable right arm for a definitely-truthy left literal: {output}"
     );
     assert!(
-        output.contains("declare const booleanOrNumber: \"number\" | \"boolean\";"),
-        "Expected `||` to preserve source declaration order for operands: {output}"
+        output.contains("declare const booleanOrNumber: \"number\";"),
+        "Expected `||` to keep the reachable left operand when it is definitely truthy: {output}"
     );
     assert!(
-        output.contains(
-            "declare const stringOrBooleanOrNumber: \"string\" | \"number\" | \"boolean\";"
-        ),
-        "Expected chained `||` to merge prior literal unions in declaration order: {output}"
+        output.contains("declare const stringOrBooleanOrNumber: \"string\";"),
+        "Expected chained `||` to keep pruning unreachable right operands: {output}"
     );
 }
 
@@ -1933,6 +1931,47 @@ const value = empty || fallback;
 }
 
 #[test]
+fn test_short_circuit_keeps_fallback_when_left_union_can_be_falsy() {
+    let output = emit_dts_with_binding(
+        r#"
+const maybe: "" | "value" = "" as any;
+const fallback: "fallback" = "fallback";
+const value = maybe || fallback;
+"#,
+    );
+
+    assert!(
+        output.contains("declare const value: \"value\" | \"fallback\";"),
+        "Expected `||` declaration inference to keep fallback only when the left side can be falsy: {output}"
+    );
+}
+
+#[test]
+fn test_short_circuit_drops_right_for_truthy_function_expression() {
+    let output = emit_dts_with_binding(
+        r#"
+class C { private p: string; }
+var l = (() => new C()) || "";
+var m = (function () { return new C(); }) || "";
+"#,
+    );
+
+    assert!(
+        output.contains("declare var l: () => C;"),
+        "Expected `||` with a parenthesized arrow left operand to keep only the function type: {output}"
+    );
+    assert!(
+        output.contains("declare var m: () => C;"),
+        "Expected `||` with a parenthesized function-expression left operand to keep only the function type: {output}"
+    );
+    assert!(
+        !output.contains("declare var l: (() => C) | string;")
+            && !output.contains("declare var m: (() => C) | string;"),
+        "Definitely-truthy function expressions should not union in the unreachable right operand: {output}"
+    );
+}
+
+#[test]
 fn test_short_circuit_reference_respects_annotated_widened_surface() {
     let output = emit_dts_with_binding(
         r#"
@@ -1946,7 +1985,7 @@ export const y = ab || c;
 
     assert!(
         output.contains("export declare const y: string;"),
-        "Expected referenced annotated short-circuit declarations to expose their declared surface: {output}"
+        "Expected referenced annotated short-circuit declarations to keep their reachable declared surface: {output}"
     );
     assert!(
         !output.contains("export declare const y: \"a\" | \"b\" | \"c\";"),

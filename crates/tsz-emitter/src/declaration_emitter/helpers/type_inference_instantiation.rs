@@ -41,14 +41,24 @@ impl<'a> DeclarationEmitter<'a> {
         let mut left_parts = self.short_circuit_operand_type_parts(binary.left, depth + 1)?;
         let right_parts = self.short_circuit_operand_type_parts(binary.right, depth + 1)?;
 
-        if operator == SyntaxKind::BarBarToken as u16 {
+        let include_right_parts = if operator == SyntaxKind::BarBarToken as u16 {
+            let include_right_parts = left_parts
+                .iter()
+                .any(|part| Self::short_circuit_or_excludes_left_type(&part.text));
             left_parts.retain(|part| !Self::short_circuit_or_excludes_left_type(&part.text));
+            include_right_parts
         } else {
+            let include_right_parts = left_parts
+                .iter()
+                .any(|part| Self::short_circuit_nullish_excludes_left_type(&part.text));
             left_parts.retain(|part| !Self::short_circuit_nullish_excludes_left_type(&part.text));
-        }
+            include_right_parts
+        };
 
         let mut parts = left_parts;
-        parts.extend(right_parts);
+        if include_right_parts {
+            parts.extend(right_parts);
+        }
         Self::dedupe_and_sort_short_circuit_type_parts(&mut parts);
         if parts.is_empty() {
             return None;
