@@ -1926,6 +1926,7 @@ pub(super) fn create_binder_from_bound_file_with_augmentations(
     binder.lib_binders = program.lib_binders.clone();
     // Track lib-originating symbols so unused checking can skip them
     binder.lib_symbol_ids = program.lib_symbol_ids.clone();
+    binder.lib_type_namespace = Arc::new(program.build_lib_type_namespace(file_idx));
 
     binder
 }
@@ -2041,6 +2042,7 @@ pub(super) fn create_cross_file_lookup_binder_with_augmentations(
     binder.set_lib_symbols_merged(true);
     binder.lib_binders = program.lib_binders.clone();
     binder.lib_symbol_ids = program.lib_symbol_ids.clone();
+    binder.lib_type_namespace = Arc::new(program.build_lib_type_namespace(file_idx));
 
     binder
 }

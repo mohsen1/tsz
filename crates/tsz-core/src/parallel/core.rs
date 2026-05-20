@@ -2476,6 +2476,34 @@ impl MergedProgram {
         }
         file_locals
     }
+
+    /// Build the `lib_type_namespace` map for a reconstructed binder.
+    ///
+    /// Scans only the per-file locals for `file_idx` (not merged globals) for
+    /// VALUE-only user symbols whose names also appear as TYPE symbols in
+    /// `self.globals`. This lets the checker's symbol resolver fall back to
+    /// the lib TYPE symbol when a local VALUE-only symbol would otherwise block it.
+    #[must_use]
+    pub fn build_lib_type_namespace(&self, file_idx: usize) -> FxHashMap<String, SymbolId> {
+        use crate::binder::symbol_flags;
+        let Some(file_locals) = self.file_locals.get(file_idx) else {
+            return FxHashMap::default();
+        };
+        let mut result = FxHashMap::default();
+        for (name, &sym_id) in file_locals.iter() {
+            let sym_flags = self.symbols.get(sym_id).map_or(0, |s| s.flags);
+            if (sym_flags & symbol_flags::VALUE) == 0 || (sym_flags & symbol_flags::TYPE) != 0 {
+                continue;
+            }
+            if let Some(global_id) = self.globals.get(name) {
+                let global_flags = self.symbols.get(global_id).map_or(0, |s| s.flags);
+                if (global_flags & symbol_flags::TYPE) != 0 {
+                    result.insert(name.clone(), global_id);
+                }
+            }
+        }
+        result
+    }
 }
 
 /// Check if two symbols can be merged across multiple files.
@@ -6640,6 +6668,7 @@ pub fn create_binder_from_bound_file(
     binder.lib_symbol_reverse_remap = file.lib_symbol_reverse_remap.clone();
     binder.lib_binders = program.lib_binders.clone();
     binder.lib_symbol_ids = program.lib_symbol_ids.clone();
+    binder.lib_type_namespace = Arc::new(program.build_lib_type_namespace(file_idx));
 
     // Compose semantic_defs: start with the global map (cross-file + lib entries)
     // then overlay the file's own entries. Per-file entries take precedence for
@@ -6735,6 +6764,7 @@ pub fn create_binder_from_bound_file_with_shared(
     binder.lib_symbol_reverse_remap = file.lib_symbol_reverse_remap.clone();
     binder.lib_binders = program.lib_binders.clone();
     binder.lib_symbol_ids = program.lib_symbol_ids.clone();
+    binder.lib_type_namespace = Arc::new(program.build_lib_type_namespace(file_idx));
 
     if !program.definition_store.is_fully_populated() {
         if file.semantic_defs.is_empty() {

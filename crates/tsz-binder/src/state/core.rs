@@ -508,6 +508,7 @@ impl BinderState {
             lib_binders: Arc::new(Vec::new()),
             lib_symbol_ids: Arc::new(FxHashSet::default()),
             lib_symbol_reverse_remap: Arc::new(FxHashMap::default()),
+            lib_type_namespace: Arc::new(FxHashMap::default()),
             module_exports: Arc::new(FxHashMap::default()),
             reexports: Arc::new(FxHashMap::default()),
             wildcard_reexports: Arc::new(FxHashMap::default()),
@@ -577,6 +578,7 @@ impl BinderState {
         Arc::make_mut(&mut self.lib_binders).clear();
         Arc::make_mut(&mut self.lib_symbol_ids).clear();
         Arc::make_mut(&mut self.lib_symbol_reverse_remap).clear();
+        Arc::make_mut(&mut self.lib_type_namespace).clear();
         Arc::make_mut(&mut self.module_exports).clear();
         Arc::make_mut(&mut self.reexports).clear();
         Arc::make_mut(&mut self.wildcard_reexports).clear();
@@ -752,6 +754,7 @@ impl BinderState {
             lib_binders: Arc::new(Vec::new()),
             lib_symbol_ids: Arc::new(FxHashSet::default()),
             lib_symbol_reverse_remap: Arc::new(FxHashMap::default()),
+            lib_type_namespace: Arc::new(FxHashMap::default()),
             module_exports: Arc::new(FxHashMap::default()),
             reexports: Arc::new(FxHashMap::default()),
             wildcard_reexports: Arc::new(FxHashMap::default()),
@@ -876,6 +879,7 @@ impl BinderState {
             lib_binders: Arc::new(Vec::new()),
             lib_symbol_ids: Arc::new(FxHashSet::default()),
             lib_symbol_reverse_remap: Arc::new(FxHashMap::default()),
+            lib_type_namespace: Arc::new(FxHashMap::default()),
             module_exports,
             reexports,
             wildcard_reexports,
@@ -1505,10 +1509,14 @@ impl BinderState {
         }
 
         // Restore lib symbols from the saved lib_symbols map (if they were pre-merged).
+        // lib_symbols was captured before binding, so user shadow symbols are already in
+        // file_locals; when a lib TYPE symbol is blocked, record it in lib_type_namespace.
         if has_lib_symbols {
             for (name, sym_id) in &lib_symbols {
                 if !self.file_locals.has(name) {
                     self.file_locals.set(name.clone(), *sym_id);
+                } else if self.lib_symbol_ids.contains(sym_id) {
+                    self.try_record_lib_type_shadow(name, *sym_id);
                 }
             }
         }
