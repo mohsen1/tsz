@@ -1975,7 +1975,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // `(I1 | I2)["f"]` indexed-access pattern).
                 //
                 // Non-optional, non-nullable function properties (e.g.
-                // `interface Prop { children: (user: User) => JSX.Element }`)\n                // are intentionally NOT covered: their union simplification
+                // `interface Prop { children: (user: User) => JSX.Element }`)
+                // are intentionally NOT covered: their union simplification
                 // is well-behaved and the JSX render-prop diagnostic
                 // prioritisation depends on it.
                 shape.properties.iter().any(|p| {

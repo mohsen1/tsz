@@ -154,9 +154,10 @@ const _b = <FComp />;
         codes.contains(&2786),
         "FComp (plain fn) must emit TS2786 when ElementType only allows constructors. Got: {codes:?}"
     );
-    assert!(
-        !codes.iter().filter(|&&c| c == 2786).count() > 1 || codes.contains(&2786),
-        "Comp (class) must NOT emit TS2786 when it satisfies ElementType. Got: {codes:?}"
+    assert_eq!(
+        codes.iter().filter(|&&c| c == 2786).count(),
+        1,
+        "Only FComp (plain fn) should emit TS2786; Comp (class) satisfies ElementType. Got: {codes:?}"
     );
 }
 
