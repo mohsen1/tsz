@@ -2045,7 +2045,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// 2. Template is an indexed access whose object is the **same TypeId** as the
     ///    T identified in (1) — guards against `{ [K in keyof T & …]: U[K] }` where
     ///    the template indexes a *different* generic.
-    /// 3. The index in the template is a TypeParameter whose name matches the
+    /// 3. The index in the template is a `TypeParameter` whose name matches the
     ///    mapped type's iteration variable — guards against `{ [K in keyof T & …]: T[string] }`.
     ///
     /// Expansion is blocked because T's concrete key-set is unknown; expanding
@@ -2057,13 +2057,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         };
         // (1) Find the TypeId of T from the first `keyof T` member in the intersection.
         let Some(keyof_param) = self.interner.type_list(members).iter().find_map(|&m| {
-            if let Some(TypeData::KeyOf(s)) = self.interner.lookup(m) {
-                if matches!(
+            if let Some(TypeData::KeyOf(s)) = self.interner.lookup(m)
+                && matches!(
                     self.interner.lookup(s),
                     Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
-                ) {
-                    return Some(s);
-                }
+                )
+            {
+                return Some(s);
             }
             None
         }) else {
