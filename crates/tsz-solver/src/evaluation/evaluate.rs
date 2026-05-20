@@ -826,27 +826,25 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             "evaluate_application"
         );
 
-        // Phase 2 — per-DefId recursion guard. Allows up to MAX_DEF_DEPTH
-        // recursive expansions of the same alias before bailing to
-        // `TypeId::ERROR`, mirroring tsc's TS2589 behavior.
+        // Phase 2 — per-DefId recursion guard. Up to MAX_DEF_DEPTH bounded
+        // recursive expansions are allowed before bailing to `TypeId::ERROR`,
+        // matching tsc's TS2589 behavior.
         if !self.increment_def_depth(def_id) {
             self.guard.mark_exceeded();
             return TypeId::ERROR;
         }
 
-        // Phase 3 — build the evaluation context and save the outer
-        // apparent conditional branch.
+        // Phase 3 — build the evaluation context.
         let ctx = self.application_evaluation_context(def_id, app.base);
 
         // See `ApplicationEvalOutcome` for why ShortCircuit branches do not
-        // restore `_saved_apparent` — outer caller observes `None`.
-        let _saved_apparent = self.apparent_conditional_branch.take();
+        // restore `saved_apparent` — outer caller observes `None`.
+        let saved_apparent = self.apparent_conditional_branch.take();
 
         // Phase 4 — raw-args cache shortcut. Lite resolvers (e.g. inside
         // `SubtypeChecker`) often return `None` for `get_lazy_type_params`,
         // so the normal expanded-args lookup never runs. Trying `app.args`
-        // first lets every context benefit from previously computed
-        // results without redoing the work.
+        // first lets every context benefit from previously computed results.
         if let Some(db) = self.query_db {
             let no_unchecked = self.no_unchecked_indexed_access;
             if let Some(cached) = db.lookup_application_eval_cache(def_id, &app.args, no_unchecked)
@@ -856,10 +854,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
         }
 
-        // Phase 5 — body-aware instantiation. Picks between the canonical
-        // known-params path and the lite-resolver fallback, and returns a
-        // typed outcome describing whether display-alias bookkeeping
-        // should run.
         let outcome = self.evaluate_application_body(def_id, original_type_id, &app.args, &ctx);
 
         // Phase 6 — outcome-dependent cleanup. ShortCircuit matches the
@@ -875,7 +869,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // application, then restore whatever was saved for the
                 // outer caller.
                 let my_apparent_branch = self.apparent_conditional_branch.take();
-                self.apparent_conditional_branch = _saved_apparent;
+                self.apparent_conditional_branch = saved_apparent;
                 self.decrement_def_depth(def_id);
 
                 // Phase 7 — display-alias bookkeeping. Skip entirely when
