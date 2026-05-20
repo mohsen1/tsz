@@ -652,6 +652,36 @@ impl<'a> ScopeWalker<'a> {
         found_stack.unwrap_or_else(|| self.scope_stack.clone())
     }
 
+    /// Resolve `name` in the scope chain active at `anchor`, falling back to
+    /// the binder's file-level locals.
+    ///
+    /// Used by features that need to look up a symbol by spelling at a known
+    /// AST location (for example, JSDoc `{@link Foo}` resolution at the
+    /// declaration that owns the comment).
+    pub fn resolve_name_at(
+        &mut self,
+        root: NodeIndex,
+        anchor: NodeIndex,
+        name: &str,
+    ) -> Option<SymbolId> {
+        let scopes = self.get_scope_chain(root, anchor);
+        Self::resolve_name_in_scopes(&scopes, name).or_else(|| self.binder.file_locals.get(name))
+    }
+
+    /// Cached counterpart to `resolve_name_at`. Reuses the per-anchor scope
+    /// chain stored in `cache` when present.
+    pub fn resolve_name_at_cached(
+        &mut self,
+        root: NodeIndex,
+        anchor: NodeIndex,
+        name: &str,
+        cache: &mut ScopeCache,
+        stats: Option<&mut ScopeCacheStats>,
+    ) -> Option<SymbolId> {
+        let scopes = self.get_scope_chain_cached(root, anchor, cache, stats);
+        Self::resolve_name_in_scopes(scopes, name).or_else(|| self.binder.file_locals.get(name))
+    }
+
     pub fn get_scope_chain_cached<'b>(
         &'b mut self,
         root: NodeIndex,

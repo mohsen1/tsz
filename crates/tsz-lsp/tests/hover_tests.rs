@@ -1719,3 +1719,156 @@ fn test_hover_keyword_returns_none() {
     let info = get_hover_at(source, 0, 0);
     assert!(info.is_none(), "Should return None for keyword 'const'");
 }
+
+/// `{@link X}` in a hovered declaration's JSDoc should resolve `X` to its
+/// declaration in scope and render a Markdown anchor with a file URI that
+/// points at that declaration line.
+#[test]
+fn test_hover_jsdoc_inline_link_resolves_to_declaration_uri() {
+    let source = concat!(
+        "interface Target { value: number; }\n",
+        "/** See {@link Target} for details. */\n",
+        "function consumer() {}\n",
+        "consumer();",
+    );
+    let info = get_hover_at(source, 3, 0).expect("hover info for consumer call");
+    let doc = info
+        .contents
+        .iter()
+        .find(|c| c.contains("See "))
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        doc.contains("[Target](file:///test.ts#L1,"),
+        "expected Markdown anchor for `Target`, got: {doc}",
+    );
+    assert!(
+        !doc.contains("{@link"),
+        "raw @link token should be rewritten, got: {doc}",
+    );
+}
+
+/// `{@linkcode X}` should render the target in inline code voice inside the
+/// Markdown link.
+#[test]
+fn test_hover_jsdoc_linkcode_uses_inline_code_voice() {
+    let source = concat!(
+        "type Bag = { kind: \"a\" };\n",
+        "/** Holds a {@linkcode Bag}. */\n",
+        "function take() {}\n",
+        "take();",
+    );
+    let info = get_hover_at(source, 3, 0).expect("hover info for take call");
+    let doc = info
+        .contents
+        .iter()
+        .find(|c| c.contains("Holds a "))
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        doc.contains("[`Bag`](file:///test.ts#L1,"),
+        "expected Markdown link with inline code voice, got: {doc}",
+    );
+}
+
+/// `{@link X|display}` should keep the user-supplied display text as the
+/// visible label of the rendered Markdown link.
+#[test]
+fn test_hover_jsdoc_link_preserves_display_alias() {
+    let source = concat!(
+        "interface Settings { live: boolean; }\n",
+        "/** Configured by {@link Settings|the settings object}. */\n",
+        "function configure() {}\n",
+        "configure();",
+    );
+    let info = get_hover_at(source, 3, 0).expect("hover info for configure call");
+    let doc = info
+        .contents
+        .iter()
+        .find(|c| c.contains("Configured by"))
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        doc.contains("[the settings object](file:///test.ts#L1,"),
+        "expected display alias as Markdown label, got: {doc}",
+    );
+}
+
+/// An unresolved `{@link X}` must not crash hover and must degrade to plain
+/// text in both the Markdown body and the plain `documentation` field. This
+/// is the acceptance criterion in issue #8759 ("broken @link does not crash").
+#[test]
+fn test_hover_jsdoc_unresolved_link_degrades_to_plain_text() {
+    let source = concat!(
+        "/** See {@link Missing} for the real one. */\n",
+        "function alone() {}\n",
+        "alone();",
+    );
+    let info = get_hover_at(source, 2, 0).expect("hover info for alone call");
+    let doc = info
+        .contents
+        .iter()
+        .find(|c| c.contains("See "))
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        doc.contains("See Missing for the real one."),
+        "unresolved link should appear as plain text, got: {doc}",
+    );
+    assert!(
+        !doc.contains("file:///") && !doc.contains("{@link"),
+        "no link URI and no raw @link token expected, got: {doc}",
+    );
+    assert!(
+        info.documentation.contains("See Missing for the real one."),
+        "plain documentation should also strip the link token, got: {}",
+        info.documentation,
+    );
+}
+
+/// §25 rename axis — renaming the user-chosen identifier must keep the link
+/// resolvable. If swapping `Target` for `Other` broke this, the fix would
+/// be hardcoded to a specific spelling.
+#[test]
+fn test_hover_jsdoc_link_is_target_name_independent() {
+    for name in ["Target", "Other", "MyKindOfThing"] {
+        let source = format!(
+            "interface {name} {{ value: number; }}\n/** See {{@link {name}}}. */\nfunction consumer() {{}}\nconsumer();",
+        );
+        let info = get_hover_at(&source, 3, 0).expect("hover info");
+        let doc = info
+            .contents
+            .iter()
+            .find(|c| c.contains("See "))
+            .cloned()
+            .unwrap_or_default();
+        let expected = format!("[{name}](file:///test.ts#L1,");
+        assert!(
+            doc.contains(&expected),
+            "expected resolved link for `{name}`, got: {doc}",
+        );
+    }
+}
+
+/// The plain `documentation` field (tsserver-style, no Markdown) must show
+/// the link's label without any URI noise.
+#[test]
+fn test_hover_jsdoc_plain_documentation_strips_link_uri() {
+    let source = concat!(
+        "interface Target { value: number; }\n",
+        "/** See {@link Target|the target} for details. */\n",
+        "function consumer() {}\n",
+        "consumer();",
+    );
+    let info = get_hover_at(source, 3, 0).expect("hover info for consumer call");
+    assert!(
+        info.documentation.contains("See the target for details."),
+        "plain documentation should keep display label only, got: {}",
+        info.documentation,
+    );
+    assert!(
+        !info.documentation.contains("{@link"),
+        "raw token should not survive in plain documentation, got: {}",
+        info.documentation,
+    );
+}

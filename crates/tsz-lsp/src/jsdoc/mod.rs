@@ -2,6 +2,8 @@
 //!
 //! Provides shared extraction and parsing for hover and signature help.
 
+pub mod link;
+
 use rustc_hash::FxHashMap;
 use tsz_common::comments::{get_jsdoc_content, get_leading_comments_from_cache, is_jsdoc_comment};
 use tsz_parser::parser::node::{NodeAccess, NodeArena};

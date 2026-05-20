@@ -4,11 +4,15 @@
 //! building display strings, and extracting symbol metadata.
 
 use super::{HoverInfo, HoverProvider, format};
+use crate::jsdoc::link::{
+    LinkUriResolver, expand_links_to_markdown, expand_links_to_plain, iter_inline_links,
+};
 use crate::jsdoc::{jsdoc_for_node, parse_jsdoc};
 use crate::resolver::{ScopeCache, ScopeCacheStats, ScopeWalker};
 use crate::utils::{
     find_symbol_query_node_at_or_before, is_comment_context, should_backtrack_to_previous_symbol,
 };
+use tsz_binder::SymbolId;
 use tsz_checker::state::CheckerState;
 use tsz_common::position::Range;
 use tsz_parser::NodeIndex;
@@ -224,8 +228,10 @@ impl<'a> HoverProvider<'a> {
         } else {
             String::new()
         };
-        let formatted_doc = self.format_jsdoc_for_hover(&raw_documentation);
-        let documentation_text = self.extract_plain_documentation(&raw_documentation);
+        let markdown_doc = self.expand_jsdoc_inline_links(root, decl_node_idx, &raw_documentation);
+        let plain_doc = self.expand_jsdoc_inline_links_plain(&raw_documentation);
+        let formatted_doc = self.format_jsdoc_for_hover(&markdown_doc);
+        let documentation_text = self.extract_plain_documentation(&plain_doc);
 
         // 9. Build response
         let mut contents = Vec::with_capacity(if formatted_doc.is_some() { 2 } else { 1 });
@@ -1913,4 +1919,136 @@ impl<'a> HoverProvider<'a> {
             Some(formatted)
         }
     }
+
+    /// Rewrite `{@link Foo}` / `{@linkcode Foo}` / `{@linkplain Foo}` tokens
+    /// in a raw JSDoc body into Markdown links pointing at the target's
+    /// declaration. Targets that fail to resolve fall back to plain text so a
+    /// broken `@link` never crashes hover.
+    fn expand_jsdoc_inline_links(&self, root: NodeIndex, anchor: NodeIndex, doc: &str) -> String {
+        if doc.is_empty() || iter_inline_links(doc).is_empty() {
+            return doc.to_string();
+        }
+        let mut resolver = HoverLinkResolver::new(self, root, anchor);
+        expand_links_to_markdown(doc, &mut resolver)
+    }
+
+    /// Plain-text counterpart used for the tsserver-style `documentation`
+    /// field, which carries no Markdown.
+    fn expand_jsdoc_inline_links_plain(&self, doc: &str) -> String {
+        if doc.is_empty() || iter_inline_links(doc).is_empty() {
+            return doc.to_string();
+        }
+        let mut resolver = NeverResolver;
+        expand_links_to_plain(doc, &mut resolver)
+    }
+
+    /// Build a `file://` URI that addresses a symbol's declaration location.
+    /// Returns `None` for declarations outside the active source file
+    /// (e.g. lib globals, cross-file refs) so the link degrades gracefully
+    /// rather than pointing at an invalid offset.
+    fn symbol_declaration_link_uri(&self, symbol_id: SymbolId) -> Option<String> {
+        let symbol = self.binder.symbols.get(symbol_id)?;
+        let source_len = self.source_text.len() as u32;
+        let decl_idx = *symbol.declarations.iter().find(|&&decl_idx| {
+            let Some(node) = self.arena.get(decl_idx) else {
+                return false;
+            };
+            node.pos < node.end && node.pos <= source_len && node.end <= source_len
+        })?;
+        let node = self.arena.get(decl_idx)?;
+        let pos = self.line_map.offset_to_position(node.pos, self.source_text);
+        Some(format!(
+            "{}#L{},{}",
+            file_uri(&self.file_name),
+            pos.line.saturating_add(1),
+            pos.character.saturating_add(1),
+        ))
+    }
+}
+
+/// Resolver that walks the current source file's scope chain to map a JSDoc
+/// `@link` target identifier to a file URI for its declaration. The scope
+/// chain at `anchor` is computed lazily on the first resolved link and reused
+/// for the remainder of the comment.
+struct HoverLinkResolver<'a, 'p> {
+    provider: &'p HoverProvider<'a>,
+    root: NodeIndex,
+    anchor: NodeIndex,
+    chain: Option<Vec<tsz_binder::SymbolTable>>,
+}
+
+impl<'a, 'p> HoverLinkResolver<'a, 'p> {
+    fn new(provider: &'p HoverProvider<'a>, root: NodeIndex, anchor: NodeIndex) -> Self {
+        Self {
+            provider,
+            root,
+            anchor,
+            chain: None,
+        }
+    }
+
+    fn resolve(&mut self, target: &str) -> Option<SymbolId> {
+        // Resolve the head identifier. Member tails (`Foo.bar`, `Foo#bar`,
+        // `pkg/Foo`) are intentionally not followed: they require type or
+        // module-context lookup that the single-file hover does not own, and
+        // landing on the namespace declaration is still useful for navigation.
+        let head = target
+            .split(|c: char| c == '.' || c == '#' || c == '/')
+            .next()?
+            .trim();
+        if head.is_empty() {
+            return None;
+        }
+        let chain = self.chain.get_or_insert_with(|| {
+            ScopeWalker::new(self.provider.arena, self.provider.binder)
+                .get_scope_chain(self.root, self.anchor)
+        });
+        chain
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(head))
+            .or_else(|| self.provider.binder.file_locals.get(head))
+    }
+}
+
+impl LinkUriResolver for HoverLinkResolver<'_, '_> {
+    fn resolve_link_uri(&mut self, target: &str) -> Option<String> {
+        let symbol_id = self.resolve(target)?;
+        self.provider.symbol_declaration_link_uri(symbol_id)
+    }
+}
+
+/// Resolver used when only plain-text rewriting is needed; never produces a
+/// URI so the renderer falls back to label text only.
+struct NeverResolver;
+
+impl LinkUriResolver for NeverResolver {
+    fn resolve_link_uri(&mut self, _target: &str) -> Option<String> {
+        None
+    }
+}
+
+/// Percent-encode the LSP-style file path into a `file://…` URI.
+///
+/// We mirror tsserver: paths arrive normalized, so this is a thin wrapper
+/// that protects only space, `#`, `?`, and `%` characters that would
+/// otherwise collide with URI semantics.
+fn file_uri(path: &str) -> String {
+    let mut out = String::with_capacity(path.len() + 7);
+    if !path.starts_with("file://") {
+        out.push_str("file://");
+        if !path.starts_with('/') {
+            out.push('/');
+        }
+    }
+    for byte in path.bytes() {
+        match byte {
+            b' ' => out.push_str("%20"),
+            b'#' => out.push_str("%23"),
+            b'?' => out.push_str("%3F"),
+            b'%' => out.push_str("%25"),
+            _ => out.push(byte as char),
+        }
+    }
+    out
 }
