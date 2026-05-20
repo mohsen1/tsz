@@ -106,6 +106,7 @@ git -C "$REPO_ROOT" worktree list --porcelain \
   | awk '
       /^worktree / { if (path) print path "\t" branch; path=substr($0,10); branch="" }
       /^branch / { branch=substr($0,8) }
+      /^detached / { branch="detached:" substr($0,10) }
       END { if (path) print path "\t" branch }
     ' \
   | while IFS=$'\t' read -r wt branch; do
