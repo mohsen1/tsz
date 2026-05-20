@@ -1,4 +1,4 @@
-//! Regression coverage for #8725 / templateLiteralTypes6 parity.
+//! Regression coverage for #8725 / `templateLiteralTypes6` parity.
 //!
 //! Structural rule: when an outer-scope type parameter `E` flows into a
 //! generic call whose corresponding callee parameter is itself a type
@@ -10,7 +10,7 @@
 //!
 //! Each test deliberately renames the inner identifiers (`T`/`U`,
 //! `Scope`/`Event`, `Outer`/`Inner`, `Side`) so the structural rule cannot
-//! be hardcoded to a specific spelling per CLAUDE.md §25.
+//! be hardcoded to a specific spelling per `CLAUDE.md` §25.
 
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::diagnostics::Diagnostic;
