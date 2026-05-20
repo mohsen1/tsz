@@ -2160,6 +2160,18 @@ impl<'a> CheckerState<'a> {
         self.is_assignable_to(source, target)
     }
 
+    /// Environment-aware boolean relation guard for diagnostic code paths.
+    ///
+    /// Use this only when the caller intentionally needs the current
+    /// `TypeEnvironment` and no relation-cache lookup.
+    pub(crate) fn diagnostic_relation_boolean_guard_with_env(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        self.is_assignable_to_with_env(source, target)
+    }
+
     /// Check if source type is assignable to target type.
     ///
     /// This is the main entry point for assignability checking, used throughout
