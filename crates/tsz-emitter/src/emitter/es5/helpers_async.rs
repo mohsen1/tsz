@@ -169,36 +169,10 @@ impl<'a> Printer<'a> {
         inits
     }
 
-    fn es5_class_expression_has_instance_fields(
+    fn es5_class_expression_has_instance_field_where(
         &self,
         class_data: &tsz_parser::parser::node::ClassData,
-    ) -> bool {
-        class_data.members.nodes.iter().copied().any(|member_idx| {
-            let Some(member_node) = self.arena.get(member_idx) else {
-                return false;
-            };
-            if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
-                return false;
-            }
-            let Some(prop) = self.arena.get_property_decl(member_node) else {
-                return false;
-            };
-            !self.has_effective_static_modifier_js(&prop.modifiers)
-                && !self
-                    .arena
-                    .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
-                && !self
-                    .arena
-                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
-                && !self
-                    .arena
-                    .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
-        })
-    }
-
-    fn es5_class_expression_has_computed_instance_fields(
-        &self,
-        class_data: &tsz_parser::parser::node::ClassData,
+        name_filter: impl Fn(NodeIndex) -> bool,
     ) -> bool {
         class_data.members.nodes.iter().copied().any(|member_idx| {
             let Some(member_node) = self.arena.get(member_idx) else {
@@ -223,11 +197,25 @@ impl<'a> Printer<'a> {
             {
                 return false;
             }
-            // Check if the property name is a computed name (e.g. `[expr] = value`)
-            let Some(name_node) = self.arena.get(prop.name) else {
-                return false;
-            };
-            name_node.kind == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
+            name_filter(prop.name)
+        })
+    }
+
+    fn es5_class_expression_has_instance_fields(
+        &self,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) -> bool {
+        self.es5_class_expression_has_instance_field_where(class_data, |_| true)
+    }
+
+    fn es5_class_expression_has_computed_instance_fields(
+        &self,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) -> bool {
+        self.es5_class_expression_has_instance_field_where(class_data, |name_idx| {
+            self.arena
+                .get(name_idx)
+                .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
         })
     }
 
@@ -1453,7 +1441,6 @@ impl<'a> Printer<'a> {
                 self.make_unique_name_hoisted()
             };
 
-            // Emit: (classTmp = IIFE, propTemp = expr, classTmp)
             let needs_parens = self.class_expression_static_comma_needs_parens(class_node);
             let continuation_indent_level = self.current_statement_continuation_indent_level();
             if needs_parens {

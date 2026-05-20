@@ -316,7 +316,6 @@ impl<'a> ClassES5Emitter<'a> {
             );
         };
 
-        // Render each init as a bare expression (strip ExpressionStatement wrapper)
         let init_exprs: Vec<String> = computed_prop_temp_inits
             .iter()
             .map(|node| {
@@ -328,7 +327,6 @@ impl<'a> ClassES5Emitter<'a> {
             })
             .collect();
 
-        // Render the class without computed-prop parts → `var name = IIFE;`
         let render_ir = IRNode::ES5ClassIIFE {
             name: ir_name,
             binding_name,
