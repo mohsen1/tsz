@@ -1,11 +1,12 @@
-use tsz_solver::construction::TypeInterner;
-use tsz_solver::{
-    InstantiationOptions, InstantiationRequest, InstantiationResult, TypeId, TypeSubstitution,
+use tsz_solver::computation::{
+    InstantiationOptions, InstantiationRequest, InstantiationResult, TypeSubstitution,
     instantiate_type_with_request,
 };
+use tsz_solver::construction::TypeInterner;
+use tsz_solver::type_handles::TypeId;
 
 #[test]
-fn root_exports_staged_instantiation_api() {
+fn computation_exports_staged_instantiation_api() {
     let interner = TypeInterner::new();
     let substitution = TypeSubstitution::new();
     let options = InstantiationOptions::new().with_preserve_meta_types(true);

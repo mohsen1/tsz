@@ -2099,9 +2099,8 @@ impl<'a> CheckerState<'a> {
 
         let cached = registered_def.and_then(|def_id| {
             let cached_id = self.ctx.definition_store.find_type_param_for_def(def_id)?;
-            if let Some(tsz_solver::TypeData::TypeParameter(cached_info)) =
-                self.ctx.types.lookup(cached_id)
-                && cached_info == info
+            if crate::query_boundaries::common::type_param_info(self.ctx.types, cached_id)
+                .is_some_and(|cached_info| cached_info == info)
             {
                 Some(cached_id)
             } else {
