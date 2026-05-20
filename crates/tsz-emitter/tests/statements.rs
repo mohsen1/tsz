@@ -47,6 +47,23 @@ fn invalid_jsx_closing_fragment_drops_recovered_slash() {
 }
 
 #[test]
+fn expression_statement_arrow_initializer_keeps_trailing_comment_after_semicolon() {
+    let output = parse_and_emit_strict_es2015(
+        "declare var a: () => number;\na = () => 1 // ok, same number of required params\n",
+        "a.ts",
+    );
+
+    assert!(
+        output.contains("a = () => 1; // ok, same number of required params"),
+        "Expression statements should attach trailing comments after the generated semicolon.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("1 // ok, same number of required params\n;"),
+        "Arrow concise-body printing should not consume the expression statement's trailing comment before the semicolon.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn js_satisfies_binary_expression_is_erased() {
     let output = parse_and_emit_strict_es2015("var v = undefined satisfies 1;", "a.js");
     assert_eq!(output.trim_end(), "\"use strict\";\nvar v = undefined;");

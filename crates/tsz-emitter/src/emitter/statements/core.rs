@@ -1617,7 +1617,10 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        let prev_suppress_arrow_trailing = self.suppress_arrow_concise_body_trailing_comments;
+        self.suppress_arrow_concise_body_trailing_comments = true;
         self.emit_expression_in_statement_position(expr_stmt.expression);
+        self.suppress_arrow_concise_body_trailing_comments = prev_suppress_arrow_trailing;
         if self.emit_recovered_jsx_unary_trailing_less_than(node, expr_stmt.expression) {
             self.write_line();
         }
