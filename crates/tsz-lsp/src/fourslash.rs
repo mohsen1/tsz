@@ -49,6 +49,7 @@
 use rustc_hash::FxHashMap;
 
 use crate::project::Project;
+use crate::utils::replace_whole_word_into;
 use tsz_common::position::{Location, Position, Range};
 
 /// A marker position extracted from test source text.
@@ -2045,6 +2046,135 @@ impl FourslashTest {
     }
 }
 
+// ─── Variant Generator ───────────────────────────────────────────────────────
+
+/// Variant generator for fourslash tests.
+///
+/// Runs the same assertions across multiple identifier-renamed variants of a
+/// single template fixture, catching spelling-specific regressions where an
+/// LSP feature would only work for one hardcoded identifier name.
+///
+/// # Opt-in criteria
+///
+/// Apply `FourslashVariants` when the test exercises a name-resolution or
+/// symbol-lookup path that could plausibly be sensitive to identifier spelling:
+///
+/// - Member-access completions (`obj./*c*/`)
+/// - Go-to-definition / references for local or imported names
+/// - Hover display that resolves a symbol by name
+/// - Rename that must rewrite all occurrences of the renamed identifier
+/// - Code actions triggered by diagnostics mentioning a specific identifier
+///
+/// Do **not** apply to tests whose correctness depends on a specific built-in
+/// identifier (`Array`, `Symbol.iterator`, `Promise`). Those are resolved via
+/// the binder's built-in table, not as user-chosen identifiers.
+///
+/// # Expected-output normalization
+///
+/// Assertions that reference the original identifier in expected strings must
+/// be adapted per variant. Prefer identifier-neutral assertions where possible:
+/// `expect_found()`, `expect_at_marker("def")`, `expect_includes("methodName")`
+/// (where `methodName` is not the varied identifier). Avoid
+/// `expect_display_string_contains("myVar")` inside a `for_each` closure.
+///
+/// # Example
+/// ```ignore
+/// use tsz_lsp::fourslash::{FourslashTest, FourslashVariants};
+///
+/// FourslashVariants::new("
+///     const /*def*/myVar = 1;
+///     /*ref*/myVar;
+/// ")
+/// .with_rename("myVar", &["x", "renamed", "dataPoint"])
+/// .for_each(|mut t| {
+///     t.go_to_definition("ref").expect_at_marker("def");
+/// });
+/// ```
+pub struct FourslashVariants {
+    /// Dedented template source (ready for `from_content`).
+    template: String,
+    /// Each entry: (`original_name`, `list_of_alternatives`).
+    renames: Vec<(String, Vec<String>)>,
+}
+
+impl FourslashVariants {
+    /// Create a new variant generator with the given template fixture.
+    ///
+    /// The template string is dedented the same way as `FourslashTest::new`.
+    /// Use `with_rename` to register which identifiers should be varied.
+    pub fn new(template: impl Into<String>) -> Self {
+        let raw = template.into();
+        Self {
+            template: dedent(&raw),
+            renames: Vec::new(),
+        }
+    }
+
+    /// Register an identifier to vary across alternative names.
+    ///
+    /// `original` is the identifier as it appears in the template.
+    /// `alternatives` are the replacement names tested alongside the original.
+    ///
+    /// Only whole-word occurrences are replaced; `/*marker*/` comment spans are
+    /// kept verbatim so marker positions remain stable across variants.
+    pub fn with_rename(mut self, original: &str, alternatives: &[&str]) -> Self {
+        self.renames.push((
+            original.to_string(),
+            alternatives.iter().map(|s| s.to_string()).collect(),
+        ));
+        self
+    }
+
+    /// Run `f` for every variant: the original template plus every renamed copy.
+    ///
+    /// Each variant is an independent `FourslashTest`. The original is always
+    /// run first, followed by each alternative in registration order.
+    pub fn for_each(self, mut f: impl FnMut(FourslashTest)) {
+        f(FourslashTest::from_content(&self.template));
+
+        for (original, alternatives) in &self.renames {
+            for alt in alternatives {
+                let variant = rename_identifier_in_source(&self.template, original, alt);
+                f(FourslashTest::from_content(&variant));
+            }
+        }
+    }
+}
+
+/// Replace whole-word occurrences of `original` with `replacement` in
+/// `source`, preserving `/*...*/` marker comment spans verbatim.
+///
+/// "Whole-word" means the match is not adjacent to `[a-zA-Z0-9_$]` characters.
+/// This prevents renaming `myVar` when it appears as a prefix of `myVarExtra`.
+pub fn rename_identifier_in_source(source: &str, original: &str, replacement: &str) -> String {
+    if original.is_empty() || original == replacement {
+        return source.to_string();
+    }
+    let mut result = String::with_capacity(source.len());
+    let mut rest = source;
+    while !rest.is_empty() {
+        if let Some(comment_start) = rest.find("/*") {
+            let before = &rest[..comment_start];
+            replace_whole_word_into(before, original, replacement, &mut result);
+            rest = &rest[comment_start..];
+            if let Some(close_pos) = rest[2..].find("*/") {
+                let end = 2 + close_pos + 2;
+                result.push_str(&rest[..end]);
+                rest = &rest[end..];
+            } else {
+                result.push_str(rest);
+                return result;
+            }
+        } else {
+            replace_whole_word_into(rest, original, replacement, &mut result);
+            break;
+        }
+    }
+    result
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 /// Remove common leading whitespace from a multi-line string.
 ///
 /// This allows tests to be written with natural indentation:
@@ -2094,6 +2224,108 @@ fn dedent(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── rename_identifier_in_source unit tests ────────────────────────────
+
+    #[test]
+    fn rename_basic_replacement() {
+        let out = rename_identifier_in_source("const myVar = 1; myVar + 1;", "myVar", "x");
+        assert_eq!(out, "const x = 1; x + 1;");
+    }
+
+    #[test]
+    fn rename_preserves_marker_names() {
+        // /*myVar*/ is a marker comment — the name inside must not be changed.
+        // The identifier after the marker *should* be changed.
+        let out = rename_identifier_in_source("const /*myVar*/myVar = 1;", "myVar", "x");
+        assert_eq!(out, "const /*myVar*/x = 1;");
+    }
+
+    #[test]
+    fn rename_no_partial_match() {
+        // "myVar" must not be replaced when it is a prefix of a longer identifier.
+        let out = rename_identifier_in_source("myVarExtra + myVar;", "myVar", "x");
+        assert_eq!(out, "myVarExtra + x;");
+    }
+
+    #[test]
+    fn rename_no_suffix_match() {
+        // "myVar" must not be replaced when it appears as a suffix.
+        let out = rename_identifier_in_source("prefixmyVar + myVar;", "myVar", "x");
+        assert_eq!(out, "prefixmyVar + x;");
+    }
+
+    #[test]
+    fn rename_same_name_is_noop() {
+        let src = "const x = 1;";
+        let out = rename_identifier_in_source(src, "x", "x");
+        assert_eq!(out, src);
+    }
+
+    #[test]
+    fn rename_empty_original_is_noop() {
+        let src = "const x = 1;";
+        let out = rename_identifier_in_source(src, "", "y");
+        assert_eq!(out, src);
+    }
+
+    #[test]
+    fn rename_multiple_markers_preserved() {
+        let src = "const /*def*/v = 1;\n/*ref*/v;";
+        let out = rename_identifier_in_source(src, "v", "renamed");
+        assert_eq!(out, "const /*def*/renamed = 1;\n/*ref*/renamed;");
+    }
+
+    #[test]
+    fn rename_dollar_sign_ident() {
+        let out = rename_identifier_in_source("const $x = 1; $x;", "$x", "myVal");
+        assert_eq!(out, "const myVal = 1; myVal;");
+    }
+
+    #[test]
+    fn rename_does_not_replace_inside_string_literal() {
+        // We do NOT special-case string literals — the rename is source-text based.
+        // This test documents the current behaviour: occurrences inside strings are replaced.
+        // Tests using FourslashVariants should not put the varied identifier in string literals.
+        let out = rename_identifier_in_source(r#"const x = "x";"#, "x", "y");
+        assert_eq!(out, r#"const y = "y";"#);
+    }
+
+    // ── FourslashVariants integration tests ──────────────────────────────
+
+    #[test]
+    fn fourslash_variants_runs_original_and_alternatives() {
+        let mut visited: Vec<String> = Vec::new();
+        FourslashVariants::new("const /*def*/myVar = 1;\n/*ref*/myVar;")
+            .with_rename("myVar", &["x", "renamed"])
+            .for_each(|mut t| {
+                let names = t.marker_names();
+                let mut sorted = names.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+                sorted.sort();
+                visited.push(sorted.join(","));
+                t.go_to_definition("ref").expect_at_marker("def");
+            });
+        assert_eq!(
+            visited.len(),
+            3,
+            "expected 3 variants, got {}",
+            visited.len()
+        );
+        assert!(visited.iter().all(|v| v == &visited[0]));
+    }
+
+    #[test]
+    fn fourslash_variants_catches_spelling_regression() {
+        // If hover were hardcoded to only work when the identifier is "magicName",
+        // the variants with "alpha" and "beta" would fail here. All three must pass.
+        FourslashVariants::new("const /*x*/magicName = 42;")
+            .with_rename("magicName", &["alpha", "beta"])
+            .for_each(|mut t| {
+                t.hover("x").expect_found();
+            });
+    }
+
+    // ── original parse_markers tests ─────────────────────────────────────
 
     #[test]
     fn test_parse_markers_simple() {

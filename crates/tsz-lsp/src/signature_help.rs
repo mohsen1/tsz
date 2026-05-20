@@ -7,7 +7,7 @@ use rustc_hash::FxHashMap;
 
 use crate::jsdoc::{JsdocTag, ParsedJsdoc, inline_param_jsdocs, jsdoc_for_node, parse_jsdoc};
 use crate::resolver::{ScopeCache, ScopeCacheStats};
-use crate::utils::find_node_at_or_before_offset;
+use crate::utils::{find_node_at_or_before_offset, replace_whole_word_into};
 use tsz_binder::symbol_flags;
 use tsz_checker::state::CheckerState;
 use tsz_common::position::Position;
@@ -4462,36 +4462,11 @@ fn apply_type_param_substitution(
 fn substitute_type_params(s: &str, type_param_substitutions: &[(String, String)]) -> String {
     let mut result = s.to_string();
     for (name, substitution) in type_param_substitutions {
-        // Replace whole-word occurrences of the type parameter name with its
-        // substitution. A "word boundary" here means the character before/after
-        // is not alphanumeric or underscore (matching TypeScript identifier
-        // characters).
         let mut out = String::with_capacity(result.len());
-        let name_len = name.len();
-        let bytes = result.as_bytes();
-        let len = bytes.len();
-        let mut i = 0;
-        while i < len {
-            if i + name_len <= len && &result[i..i + name_len] == name.as_str() {
-                let before_ok = i == 0 || !is_ident_char(bytes[i - 1]);
-                let after_ok = i + name_len == len || !is_ident_char(bytes[i + name_len]);
-                if before_ok && after_ok {
-                    out.push_str(substitution);
-                    i += name_len;
-                    continue;
-                }
-            }
-            out.push(bytes[i] as char);
-            i += 1;
-        }
+        replace_whole_word_into(&result, name, substitution, &mut out);
         result = out;
     }
     result
-}
-
-#[inline]
-const fn is_ident_char(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || b == b'_'
 }
 
 #[cfg(test)]

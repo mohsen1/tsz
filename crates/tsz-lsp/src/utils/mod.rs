@@ -240,6 +240,42 @@ pub fn should_backtrack_to_previous_symbol(source_text: &str, offset: u32) -> bo
     !(current.is_ascii_alphanumeric() || current == b'_' || current == b'$')
 }
 
+/// Return true if `c` is a TypeScript identifier continuation character
+/// (`[a-zA-Z0-9_$]`).
+pub const fn is_ts_ident_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_' || c == '$'
+}
+
+/// Append `segment` to `out`, replacing whole-word occurrences of `needle`
+/// with `replacement`.
+///
+/// "Whole-word" means the match is not adjacent to a `[a-zA-Z0-9_$]` character.
+/// Direct byte indexing is safe because `is_ts_ident_char` only matches ASCII,
+/// so boundary characters are always single-byte in UTF-8 source.
+pub fn replace_whole_word_into(segment: &str, needle: &str, replacement: &str, out: &mut String) {
+    let bytes = segment.as_bytes();
+    let mut scan_from = 0usize;
+    let mut copied_to = 0usize;
+    while scan_from + needle.len() <= segment.len() {
+        let Some(rel) = segment[scan_from..].find(needle) else {
+            break;
+        };
+        let match_start = scan_from + rel;
+        let match_end = match_start + needle.len();
+        let before_ok = match_start == 0 || !is_ts_ident_char(bytes[match_start - 1] as char);
+        let after_ok = match_end >= segment.len() || !is_ts_ident_char(bytes[match_end] as char);
+        if before_ok && after_ok {
+            out.push_str(&segment[copied_to..match_start]);
+            out.push_str(replacement);
+            copied_to = match_end;
+            scan_from = match_end;
+        } else {
+            scan_from = match_start + 1;
+        }
+    }
+    out.push_str(&segment[copied_to..]);
+}
+
 /// Check if a node is the `import` keyword (for dynamic import expressions).
 pub fn is_import_keyword(arena: &NodeArena, node_idx: NodeIndex) -> bool {
     if node_idx.is_none() {

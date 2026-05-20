@@ -3,7 +3,7 @@
 //! These tests use the `FourslashTest` framework to declare test scenarios
 //! with marker positions (`/*name*/`) and fluent assertions.
 
-use super::fourslash::FourslashTest;
+use super::fourslash::{FourslashTest, FourslashVariants};
 
 // =============================================================================
 // Go-to-Definition Tests
@@ -5248,4 +5248,156 @@ fn edit_file_fixes_diagnostic() {
 
     // Should be clean now
     t.verify_no_errors("test.ts");
+}
+
+// =============================================================================
+// FourslashVariants: Shape-Variant Tests
+//
+// These tests run the same assertion across multiple identifier-renamed copies
+// of a fixture, proving that LSP features work correctly for any user-chosen
+// identifier name rather than relying on a hardcoded spelling.
+//
+// Opt-in criteria: use FourslashVariants when a test exercises a
+// name-resolution path (definition, hover, completions, rename) that could
+// plausibly be sensitive to the identifier spelling used in the fixture.
+// =============================================================================
+
+#[test]
+fn variants_definition_const_across_names() {
+    FourslashVariants::new(
+        "
+        const /*def*/myVar = 1;
+        /*ref*/myVar;
+    ",
+    )
+    .with_rename("myVar", &["x", "renamedIdent", "data"])
+    .for_each(|mut t| {
+        t.go_to_definition("ref").expect_at_marker("def");
+    });
+}
+
+#[test]
+fn variants_definition_function_across_names() {
+    FourslashVariants::new(
+        "
+        function /*def*/myFunc(n: number) { return n; }
+        /*ref*/myFunc(1);
+    ",
+    )
+    .with_rename("myFunc", &["greet", "compute", "run"])
+    .for_each(|mut t| {
+        t.go_to_definition("ref").expect_at_marker("def");
+    });
+}
+
+#[test]
+fn variants_hover_local_variable() {
+    FourslashVariants::new("const /*v*/myVar = 42;")
+        .with_rename("myVar", &["x", "value", "count"])
+        .for_each(|mut t| {
+            t.hover("v").expect_found();
+        });
+}
+
+#[test]
+fn variants_hover_interface_property() {
+    FourslashVariants::new(
+        "
+        interface Shape {
+            myProp: number;
+        }
+        declare const s: Shape;
+        s./*v*/myProp;
+    ",
+    )
+    .with_rename("myProp", &["area", "perimeter", "width"])
+    .for_each(|mut t| {
+        t.hover("v").expect_found();
+    });
+}
+
+#[test]
+fn variants_completions_scope_across_names() {
+    FourslashVariants::new(
+        "
+        const myVar = 42;
+        const other = /*c*/
+    ",
+    )
+    .with_rename("myVar", &["alpha", "beta", "gamma"])
+    .for_each(|mut t| {
+        t.completions("c").expect_found();
+    });
+}
+
+#[test]
+fn variants_completions_member_access_class() {
+    FourslashVariants::new(
+        "
+        class MyClass {
+            greet() { return 'hi'; }
+            farewell() { return 'bye'; }
+        }
+        const myObj = new MyClass();
+        myObj./*c*/
+    ",
+    )
+    .with_rename("myObj", &["instance", "obj", "ref_"])
+    .for_each(|mut t| {
+        t.completions("c")
+            .expect_found()
+            .expect_includes("greet")
+            .expect_includes("farewell");
+    });
+}
+
+#[test]
+fn variants_completions_member_access_interface() {
+    FourslashVariants::new(
+        "
+        interface Config {
+            host: string;
+            port: number;
+        }
+        declare const myCfg: Config;
+        myCfg./*c*/
+    ",
+    )
+    .with_rename("myCfg", &["cfg", "options", "settings"])
+    .for_each(|mut t| {
+        t.completions("c")
+            .expect_found()
+            .expect_includes("host")
+            .expect_includes("port");
+    });
+}
+
+#[test]
+fn variants_rename_local_variable() {
+    FourslashVariants::new(
+        "
+        const /*v*/myVar = 1;
+        myVar + myVar;
+    ",
+    )
+    .with_rename("myVar", &["x", "count", "total"])
+    .for_each(|mut t| {
+        t.rename("v", "newName")
+            .expect_success()
+            .expect_edits_in_file("test.ts");
+    });
+}
+
+#[test]
+fn variants_references_local_variable() {
+    FourslashVariants::new(
+        "
+        const /*def*/myVar = 1;
+        myVar + myVar;
+    ",
+    )
+    .with_rename("myVar", &["x", "n", "data"])
+    .for_each(|mut t| {
+        t.references("def").expect_found();
+    });
 }
