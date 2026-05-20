@@ -227,17 +227,11 @@ impl<'a> Printer<'a> {
             self.write_line();
         }
 
-        let prev_module = self.ctx.options.module;
-        let prev_outer = self.ctx.cjs_export_body_outer_module;
-        self.ctx.options.module = ModuleKind::None;
-        self.ctx.cjs_export_body_outer_module = Some(prev_module);
-
-        let before_len = self.writer.len();
-        emit_inner(self);
-        let inner_emitted = self.writer.len() > before_len;
-
-        self.ctx.options.module = prev_module;
-        self.ctx.cjs_export_body_outer_module = prev_outer;
+        let inner_emitted = self.with_cjs_export_body_mask(|this| {
+            let before_len = this.writer.len();
+            emit_inner(this);
+            this.writer.len() > before_len
+        });
 
         // If the inner emit produced nothing (e.g., variable declaration with
         // no initializer where only the type annotation was stripped), skip
