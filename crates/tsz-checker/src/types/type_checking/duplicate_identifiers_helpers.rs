@@ -1417,12 +1417,37 @@ impl<'a> CheckerState<'a> {
     /// external module files. Returns remote declarations that conflict with
     /// the given name from the current file's global contributions.
     ///
-    /// Scans other files' ASTs directly because `all_binders` stores merged
-    /// global augmentations (identical for every file), not per-file data.
+    /// Uses the pre-built `global_scope_conflict_index` for O(1) lookup when
+    /// available (set by `ProgramContext::build_global_indices`), falling back to
+    /// an `O(N_files × N_stmts)` AST scan for the legacy path (tests/single-file).
     pub(super) fn global_scope_conflict_declarations_for_current_file(
         &self,
         name: &str,
     ) -> Vec<(NodeIndex, u32, bool, bool, DuplicateDeclarationOrigin)> {
+        // O(1) index lookup when the program-wide index is available.
+        if let Some(ref index) = self.ctx.global_scope_conflict_index {
+            let current_file = self.ctx.current_file_idx;
+            return index
+                .get(name)
+                .map(|entries| {
+                    entries
+                        .iter()
+                        .filter(|(file_idx, ..)| *file_idx != current_file)
+                        .map(|&(_, decl_idx, flags, is_ambient)| {
+                            (
+                                decl_idx,
+                                flags,
+                                false,
+                                is_ambient,
+                                DuplicateDeclarationOrigin::GlobalScopeConflict,
+                            )
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+        }
+
+        // Fallback: O(N_files × N_stmts) AST scan when the index is not available.
         use tsz_parser::parser::syntax_kind_ext;
 
         let Some(all_arenas) = self.ctx.all_arenas.as_ref() else {
@@ -2967,6 +2992,146 @@ declare module "express" {
             assert!(
                 conflicts.iter().all(|(_, _, is_local, _, _)| !*is_local),
                 "All conflict declarations should be remote: {conflicts:#?}"
+            );
+        });
+    }
+
+    // ───── global_scope_conflict_index tests ─────────────────────────────────
+    //
+    // These tests verify that the pre-built `global_scope_conflict_index`
+    // (populated by `set_all_binders` / `ProgramContext::build_global_indices`)
+    // produces the same results as the legacy AST scan.  Each case uses at
+    // least two distinct symbol-name spellings to confirm the logic is general
+    // and not keyed on a specific identifier.
+
+    #[test]
+    fn global_scope_conflict_index_umd_export_found_by_name_alpha() {
+        // `export as namespace Alpha` in /a.d.ts must be visible as a
+        // GlobalScopeConflict when checking /index.d.ts.
+        let files = [
+            (
+                "/a.d.ts",
+                "export as namespace Alpha;\nexport const x: number;\n",
+            ),
+            ("/index.d.ts", "declare var Alpha: number;\n"),
+        ];
+        with_checker(&files, "/index.d.ts", |checker, _, _| {
+            let conflicts = checker.global_scope_conflict_declarations_for_current_file("Alpha");
+            assert!(
+                !conflicts.is_empty(),
+                "Expected UMD 'Alpha' from /a.d.ts to surface as a conflict"
+            );
+            assert!(
+                conflicts
+                    .iter()
+                    .all(|(_, flags, _, _, _)| { (*flags & tsz_binder::symbol_flags::ALIAS) != 0 }),
+                "UMD export entries must carry the ALIAS flag: {conflicts:#?}"
+            );
+        });
+    }
+
+    #[test]
+    fn global_scope_conflict_index_umd_export_found_by_name_beta() {
+        // Rename UMD export to Beta — proves no hardcoding on "Alpha".
+        let files = [
+            (
+                "/a.d.ts",
+                "export as namespace Beta;\nexport const x: number;\n",
+            ),
+            ("/index.d.ts", "declare var Beta: number;\n"),
+        ];
+        with_checker(&files, "/index.d.ts", |checker, _, _| {
+            let conflicts = checker.global_scope_conflict_declarations_for_current_file("Beta");
+            assert!(
+                !conflicts.is_empty(),
+                "Expected UMD 'Beta' from /a.d.ts to surface as a conflict"
+            );
+        });
+    }
+
+    #[test]
+    fn global_scope_conflict_index_excludes_own_umd_export() {
+        // The current file's own UMD export must not appear as a conflict
+        // against itself (file_idx filter).
+        let files = [
+            (
+                "/a.d.ts",
+                "export as namespace MyLib;\nexport const x: number;\n",
+            ),
+            ("/index.d.ts", "declare var MyLib: number;\n"),
+        ];
+        with_checker(&files, "/a.d.ts", |checker, _, _| {
+            let conflicts = checker.global_scope_conflict_declarations_for_current_file("MyLib");
+            assert!(
+                conflicts.is_empty(),
+                "Current file's own UMD export must not conflict with itself: {conflicts:#?}"
+            );
+        });
+    }
+
+    #[test]
+    fn global_scope_conflict_index_declare_global_var_name_globalx() {
+        // `declare global { var GlobalX }` inside an external module in /a.d.ts
+        // must surface when checking /index.d.ts.
+        let files = [
+            (
+                "/a.d.ts",
+                "export const foo: string;\ndeclare global { var GlobalX: number; }\n",
+            ),
+            ("/index.d.ts", "declare var GlobalX: string;\n"),
+        ];
+        with_checker(&files, "/index.d.ts", |checker, _, _| {
+            let conflicts = checker.global_scope_conflict_declarations_for_current_file("GlobalX");
+            assert!(
+                !conflicts.is_empty(),
+                "Expected 'declare global {{ var GlobalX }}' to appear as a conflict"
+            );
+            assert!(
+                conflicts.iter().all(|(_, flags, _, is_ambient, _)| {
+                    (*flags & tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0
+                        && !*is_ambient
+                }),
+                "Declare-global var entries: flags must include FUNCTION_SCOPED_VARIABLE \
+                 and is_ambient must be false: {conflicts:#?}"
+            );
+        });
+    }
+
+    #[test]
+    fn global_scope_conflict_index_declare_global_var_name_globaly() {
+        // Same structural rule, renamed to GlobalY — proves no hardcoding.
+        let files = [
+            (
+                "/a.d.ts",
+                "export const foo: string;\ndeclare global { var GlobalY: number; }\n",
+            ),
+            ("/index.d.ts", "declare var GlobalY: string;\n"),
+        ];
+        with_checker(&files, "/index.d.ts", |checker, _, _| {
+            let conflicts = checker.global_scope_conflict_declarations_for_current_file("GlobalY");
+            assert!(
+                !conflicts.is_empty(),
+                "Expected 'declare global {{ var GlobalY }}' to appear as a conflict"
+            );
+        });
+    }
+
+    #[test]
+    fn global_scope_conflict_index_missing_name_returns_empty() {
+        // A name that exists nowhere must return an empty Vec.
+        let files = [
+            (
+                "/a.d.ts",
+                "export as namespace Alpha;\nexport const x: number;\n",
+            ),
+            ("/index.d.ts", "declare var SomeOtherName: number;\n"),
+        ];
+        with_checker(&files, "/index.d.ts", |checker, _, _| {
+            let conflicts =
+                checker.global_scope_conflict_declarations_for_current_file("NeverDeclared");
+            assert!(
+                conflicts.is_empty(),
+                "Unknown name must produce empty conflict list: {conflicts:#?}"
             );
         });
     }

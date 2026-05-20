@@ -252,6 +252,7 @@ impl<'a> CheckerContext<'a> {
             global_module_binder_index: None,
             global_arena_index: None,
             global_file_name_index: None,
+            global_scope_conflict_index: None,
             program_reexports: None,
             program_wildcard_reexports: None,
             program_wildcard_reexports_type_only: None,

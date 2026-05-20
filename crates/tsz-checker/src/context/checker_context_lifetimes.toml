@@ -197,6 +197,7 @@ global_augmentation_targets_index = { lifetime = "ProgramStable", capability = "
 global_module_binder_index = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
 global_arena_index = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
 global_file_name_index = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
+global_scope_conflict_index = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
 program_reexports = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
 program_wildcard_reexports = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
 program_wildcard_reexports_type_only = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }

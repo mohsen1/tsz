@@ -25,6 +25,7 @@ mod core;
 mod cross_file_query;
 mod env_eval_cache;
 mod file_session_reset;
+pub(crate) mod global_scope_conflicts;
 pub mod lifetime_shells;
 pub use lifetime_shells::{FileSession, LspPersistentCache, SpeculationScope, WorkerContext};
 mod def_mapping;
@@ -103,6 +104,8 @@ impl RelationOverflowFlags {
 /// symbol references (e.g., mutually referencing type aliases, deeply
 /// nested namespace exports). Matches `MAX_INSTANTIATION_DEPTH` (50).
 pub(crate) const MAX_SYMBOL_RESOLUTION_DEPTH: u32 = 50;
+
+pub use global_scope_conflicts::{GlobalScopeConflictEntry, GlobalScopeConflictIndex};
 
 mod global_declared_modules;
 pub use global_declared_modules::GlobalDeclaredModules;
@@ -1152,6 +1155,9 @@ pub struct CheckerContext<'a> {
     /// `resolve_import_target_from_file` via `resolve_specifier_via_file_index`.
     pub global_file_name_index: Option<Arc<crate::module_resolution::FileNameIndex>>,
 
+    /// Pre-built global-scope duplicate candidate index.
+    pub global_scope_conflict_index: Option<Arc<GlobalScopeConflictIndex>>,
+
     /// Program-wide `FileReexportsMap` shared across cross-file lookup
     /// binders. The full merged map lives here once; per-file cross-file
     /// lookup binders leave their `reexports` field empty and the
@@ -1508,6 +1514,8 @@ pub struct ProgramContext {
     pub global_arena_index: Option<Arc<FxHashMap<usize, usize>>>,
     /// Pre-computed filename reverse index; see `CheckerContext::global_file_name_index`.
     pub global_file_name_index: Option<Arc<crate::module_resolution::FileNameIndex>>,
+    /// Pre-built global-scope duplicate candidate index.
+    pub global_scope_conflict_index: Option<Arc<GlobalScopeConflictIndex>>,
     /// Program-wide re-export index shared across cross-file lookup binders;
     /// see `CheckerContext::program_reexports`.
     pub program_reexports: Option<Arc<tsz_binder::FileReexportsMap>>,
@@ -1578,6 +1586,7 @@ impl Default for ProgramContext {
             global_module_binder_index: None,
             global_arena_index: None,
             global_file_name_index: None,
+            global_scope_conflict_index: None,
             program_reexports: None,
             program_wildcard_reexports: None,
             program_wildcard_reexports_type_only: None,
@@ -1649,6 +1658,9 @@ impl ProgramContext {
         }
         if let Some(ref idx) = self.global_arena_index {
             ctx.global_arena_index = Some(Arc::clone(idx));
+        }
+        if let Some(ref idx) = self.global_scope_conflict_index {
+            ctx.global_scope_conflict_index = Some(Arc::clone(idx));
         }
         if let Some(ref m) = self.program_reexports {
             ctx.program_reexports = Some(Arc::clone(m));
@@ -1982,5 +1994,12 @@ impl ProgramContext {
         // Filename reverse index: one O(N) build replaces the O(N²) fallback rebuild.
         let file_name_idx = crate::module_resolution::build_file_name_index(&self.all_arenas);
         self.global_file_name_index = Some(Arc::new(file_name_idx));
+
+        self.global_scope_conflict_index = Some(Arc::new(
+            global_scope_conflicts::build_global_scope_conflict_index_for_program(
+                &self.all_binders,
+                &arena_to_file_idx,
+            ),
+        ));
     }
 }

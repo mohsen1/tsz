@@ -5,9 +5,10 @@
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
-use tsz_binder::{BinderState, SymbolId};
+use tsz_binder::{BinderState, SymbolId, symbol_flags};
 use tsz_checker::context::{GlobalDeclaredModules, ProgramContext};
 use tsz_checker::state::CheckerState;
+use tsz_parser::parser::ParserState;
 use tsz_parser::parser::node::NodeArena;
 use tsz_solver::TypeInterner;
 use tsz_solver::construction::QueryCache;
@@ -34,6 +35,7 @@ fn empty_program_context() -> ProgramContext {
         global_module_binder_index: None,
         global_arena_index: None,
         global_file_name_index: None,
+        global_scope_conflict_index: None,
         program_reexports: None,
         program_wildcard_reexports: None,
         program_wildcard_reexports_type_only: None,
@@ -68,6 +70,25 @@ fn make_checker<'a>(
         "test.ts".to_string(),
         Default::default(),
     )
+}
+
+fn program_context_from_sources(files: &[(&str, &str)]) -> ProgramContext {
+    let mut arenas = Vec::with_capacity(files.len());
+    let mut binders = Vec::with_capacity(files.len());
+
+    for (name, source) in files {
+        let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+        arenas.push(Arc::new(parser.get_arena().clone()));
+        binders.push(Arc::new(binder));
+    }
+
+    let mut env = empty_program_context();
+    env.all_arenas = Arc::new(arenas);
+    env.all_binders = Arc::new(binders);
+    env
 }
 
 #[test]
@@ -380,6 +401,80 @@ fn build_global_indices_populates_module_binder_index() {
     let binders_other = idx.get("other-lib").unwrap();
     assert!(binders_other.contains(&1));
     assert!(!binders_other.contains(&0));
+}
+
+#[test]
+fn build_global_indices_indexes_umd_exports_for_program_context() {
+    let mut env = program_context_from_sources(&[
+        ("/consumer.d.ts", "declare var Alpha: number;\n"),
+        (
+            "/umd.d.ts",
+            "export as namespace Alpha;\nexport const x: number;\n",
+        ),
+    ]);
+
+    env.build_global_indices();
+    let index = env
+        .global_scope_conflict_index
+        .as_ref()
+        .expect("program global-scope conflict index should be built");
+    let entries = index
+        .get("Alpha")
+        .expect("UMD export should be indexed by namespace name");
+    assert!(
+        entries.iter().any(|(file_idx, _, flags, is_ambient)| {
+            *file_idx == 1 && (*flags & symbol_flags::ALIAS) != 0 && *is_ambient
+        }),
+        "expected UMD Alpha from /umd.d.ts in program index, got: {entries:#?}"
+    );
+
+    let interner = TypeInterner::new();
+    let query_cache = QueryCache::new(&interner);
+    let mut checker = make_checker(&env.all_arenas[0], &env.all_binders[0], &query_cache);
+    env.apply_to(&mut checker.ctx);
+    let installed = checker
+        .ctx
+        .global_scope_conflict_index
+        .as_ref()
+        .expect("apply_to should install program global-scope conflict index");
+    assert!(Arc::ptr_eq(installed, index));
+}
+
+#[test]
+fn build_global_indices_indexes_declare_global_vars_for_program_context() {
+    let mut env = program_context_from_sources(&[
+        ("/consumer.d.ts", "declare var GlobalX: string;\n"),
+        (
+            "/augment.d.ts",
+            "export const marker: number;\ndeclare global { var GlobalX: number; }\n",
+        ),
+    ]);
+
+    env.build_global_indices();
+    let index = env
+        .global_scope_conflict_index
+        .as_ref()
+        .expect("program global-scope conflict index should be built");
+    let entries = index
+        .get("GlobalX")
+        .expect("declare global var should be indexed by name");
+    assert!(
+        entries.iter().any(|(file_idx, _, flags, is_ambient)| {
+            *file_idx == 1 && (*flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0 && !*is_ambient
+        }),
+        "expected declare global var from /augment.d.ts in program index, got: {entries:#?}"
+    );
+
+    let interner = TypeInterner::new();
+    let query_cache = QueryCache::new(&interner);
+    let mut checker = make_checker(&env.all_arenas[0], &env.all_binders[0], &query_cache);
+    env.apply_to(&mut checker.ctx);
+    let installed = checker
+        .ctx
+        .global_scope_conflict_index
+        .as_ref()
+        .expect("apply_to should install program global-scope conflict index");
+    assert!(Arc::ptr_eq(installed, index));
 }
 
 #[test]

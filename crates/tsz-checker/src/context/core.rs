@@ -19,6 +19,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_solver::TypeId;
 
+use super::global_scope_conflicts::build_global_scope_conflict_index_for_legacy;
 use super::{CheckerContext, LibContext, ResolutionError, TypeCache};
 
 impl TypeCache {
@@ -474,6 +475,7 @@ impl<'a> CheckerContext<'a> {
         self.global_module_binder_index = parent.global_module_binder_index.clone();
         self.global_arena_index = parent.global_arena_index.clone();
         self.global_file_name_index = parent.global_file_name_index.clone();
+        self.global_scope_conflict_index = parent.global_scope_conflict_index.clone();
         self.lib_contexts = parent.lib_contexts.clone();
         self.lib_binders_cached = parent.lib_binders_cached.clone();
         self.set_actual_lib_file_count(parent.actual_lib_file_count);
@@ -675,6 +677,11 @@ impl<'a> CheckerContext<'a> {
         self.global_augmentation_targets_index = Some(Arc::new(aug_targets_index));
         self.global_module_binder_index = Some(Arc::new(module_binder_index));
         self.build_arena_index();
+
+        self.global_scope_conflict_index = Some(Arc::new(
+            build_global_scope_conflict_index_for_legacy(&binders, arena_to_file_idx.as_ref()),
+        ));
+
         self.all_binders = Some(binders);
     }
 
@@ -701,14 +708,8 @@ impl<'a> CheckerContext<'a> {
 
     /// Validate that skeleton-derived declared modules match the binder-built ones.
     ///
-    /// Called from the orchestration layer after `set_all_binders` when a
-    /// `SkeletonIndex` is available. In debug builds, asserts exact match between
-    /// the two construction paths, proving the skeleton captures all the data
-    /// needed for this index. In release builds, this is a no-op.
-    ///
-    /// # Arguments
-    /// * `skeleton_exact` - Exact module names from `SkeletonIndex::build_declared_module_sets()`
-    /// * `skeleton_patterns` - Wildcard patterns from `SkeletonIndex::build_declared_module_sets()`
+    /// Debug-only check for the orchestration layer after `set_all_binders`
+    /// when a `SkeletonIndex` is available.
     pub fn validate_skeleton_declared_modules(
         &self,
         skeleton_exact: &FxHashSet<String>,
