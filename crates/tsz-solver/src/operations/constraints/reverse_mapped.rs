@@ -170,7 +170,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         let mut source_has_true = false;
         let mut source_has_false = false;
-        let mut source_values = Vec::new();
+        let mut source_values = Vec::with_capacity(source_union.len());
         for &m in source_union.iter() {
             if let Some((done_true, value_type)) = classify_iterator_result_member(m) {
                 if done_true {
@@ -184,7 +184,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         let mut target_has_true = false;
         let mut target_has_false = false;
-        let mut target_values = Vec::new();
+        let mut target_values = Vec::with_capacity(target_union.len());
         for &m in target_union.iter() {
             if let Some((done_true, value_type)) = classify_iterator_result_member(m) {
                 if done_true {
@@ -299,7 +299,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             "constrain_reverse_mapped_type"
         );
 
-        let mut reverse_properties = Vec::new();
+        let mut reverse_properties = Vec::with_capacity(source_obj.properties.len());
         let mut any_reversed = false;
 
         for prop in &source_obj.properties {
@@ -958,7 +958,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let source_props = source_obj.properties.clone();
                 let source_string_idx = source_obj.string_index;
                 let source_number_idx = source_obj.number_index;
-                let mut reverse_properties = Vec::new();
+                let mut reverse_properties = Vec::with_capacity(source_props.len());
                 let mut any_reversed = false;
 
                 self.reverse_mapped_depth.set(depth + 1);
