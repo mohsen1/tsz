@@ -32,6 +32,12 @@ class ConformanceArtifactHandoffTests(unittest.TestCase):
                 re.MULTILINE,
             ),
         )
+        upload_start = self.workflow.index(
+            "name: conformance-shard-${{ matrix.shard }}"
+        )
+        upload_end = self.workflow.index("conformance-aggregate:", upload_start)
+        upload = self.workflow[upload_start:upload_end]
+        self.assertIn("include-hidden-files: true", upload)
 
     def test_shard_writes_failure_list_before_optional_gcs_upload(self):
         body = self.function_body("run_conformance", "\nrun_conformance_aggregate() {")
