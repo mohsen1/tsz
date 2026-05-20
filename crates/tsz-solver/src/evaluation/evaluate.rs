@@ -1429,11 +1429,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if !instantiated_is_new_intermediate {
             return;
         }
-        if original_args.iter().any(|&arg| {
-            crate::type_queries::contains_generic_type_parameters_db(self.interner, arg)
-        }) {
-            return;
-        }
         let instantiated_is_application = matches!(
             self.interner.lookup(instantiated),
             Some(TypeData::Application(_))
@@ -1453,8 +1448,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // `type LinkedList<T> = T & { next: LinkedList<T> }` evaluates to an
             // Intersection). Map `evaluated → original_type_id` so diagnostics show
             // the alias name instead of the expanded structural form.
-            if self.is_recursive_type_alias_application(original_type_id)
-                && Self::is_structural_display_alias_result(self.interner, evaluated)
+            //
+            // `evaluated_is_mapped` is checked first: Mapped is a subset of structural,
+            // so true short-circuits the more expensive `is_structural_display_alias_result`
+            // call and avoids a duplicate `lookup(evaluated)`.
+            let evaluated_is_mapped =
+                matches!(self.interner.lookup(evaluated), Some(TypeData::Mapped(_)));
+            if evaluated_is_mapped
+                || Self::is_structural_display_alias_result(self.interner, evaluated)
             {
                 // Only store the display alias when `evaluated` was freshly produced
                 // by this evaluation (allocated after `original_type_id`). If it
@@ -1470,11 +1471,32 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     (Some(eval_order), Some(orig_order)) => eval_order > orig_order,
                     _ => evaluated.0 > original_type_id.0,
                 };
-                if evaluated_is_fresh {
+                // Safe to store in two cases:
+                // 1. Recursive aliases: the recursive self-reference ensures the structural
+                //    type is unique to this instantiation, so aliasing is unambiguous.
+                // 2. Generic aliases whose body evaluates to a fresh Mapped type: each
+                //    distinct set of type-argument TypeIds produces a distinct MappedType
+                //    node (the constraint is baked into the interned key). Storing the
+                //    alias lets diagnostics show e.g. `Mapped2<K>` instead of the
+                //    expanded `{ [P in K as \`get${P}\`]: ... }` form, matching tsc.
+                if evaluated_is_fresh
+                    && (evaluated_is_mapped
+                        || self.is_recursive_type_alias_application(original_type_id))
+                {
                     self.interner
                         .store_display_alias_preferring_application(evaluated, original_type_id);
                 }
             }
+            return;
+        }
+
+        // Application→Application chain: when the outer application's args contain
+        // generic type parameters, skip storing the alias. Intermediate Applications
+        // in a type-alias chain (e.g. `Outer<T>` instantiated to `Inner<T>`) must not
+        // displace the outer Application as the canonical display alias.
+        if original_args.iter().any(|&arg| {
+            crate::type_queries::contains_generic_type_parameters_db(self.interner, arg)
+        }) {
             return;
         }
 
