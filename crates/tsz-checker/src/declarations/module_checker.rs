@@ -843,7 +843,10 @@ impl<'a> CheckerState<'a> {
             // so that resolve_application_property can substitute T with the inner type.
             // Without this, .then() callback parameters remain as unsubstituted `T`.
             self.ensure_def_ready_for_lowering(sym_id, "Promise");
-            let promise_base = self.ctx.create_lazy_type_ref(sym_id);
+            let promise_base = self
+                .ctx
+                .lib_promise_type_ref()
+                .unwrap_or_else(|| self.ctx.create_lazy_type_ref(sym_id));
             return factory.application(promise_base, vec![inner_type]);
         }
 

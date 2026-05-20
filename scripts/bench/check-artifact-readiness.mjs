@@ -116,6 +116,7 @@ function analyzeArtifact(artifact) {
     const row = byName.get(name) ?? null;
     const state = rowState(row);
     const def = PROJECT_ROWS_BY_NAME[name];
+    const compatibility = row?.compatibility ?? {};
     return {
       name,
       label: def?.label ?? name,
@@ -123,8 +124,19 @@ function analyzeArtifact(artifact) {
       tsz_ms: row?.tsz_ms ?? null,
       tsgo_ms: row?.tsgo_ms ?? null,
       winner: row?.winner ?? null,
-      exit_class: row?.compatibility?.exit_class ?? null,
-      diagnostic_status: row?.compatibility?.diagnostic_status ?? null,
+      exit_class: compatibility.exit_class ?? null,
+      phase: compatibility.phase ?? null,
+      last_successful_phase: compatibility.last_successful_phase ?? null,
+      first_failure_class: compatibility.first_failure_class ?? null,
+      owner_family: compatibility.semantic_owner_family ?? compatibility.owner_family ?? null,
+      known_blockers: Array.isArray(compatibility.known_blockers)
+        ? compatibility.known_blockers.filter(Boolean).slice(0, 8)
+        : [],
+      diagnostic_status: compatibility.diagnostic_status ?? null,
+      files_reached: compatibility.files_reached ?? null,
+      files_reached_reason: compatibility.files_reached_reason ?? null,
+      peak_memory_bytes: compatibility.peak_memory_bytes ?? null,
+      peak_memory_bytes_reason: compatibility.peak_memory_bytes_reason ?? null,
     };
   });
 
@@ -165,7 +177,16 @@ function buildJson({ artifactAbsent, parseError, artifact, measurementProfile, r
       tsgo_ms: r.tsgo_ms,
       winner: r.winner,
       exit_class: r.exit_class,
+      phase: r.phase,
+      last_successful_phase: r.last_successful_phase,
+      first_failure_class: r.first_failure_class,
+      owner_family: r.owner_family,
+      known_blockers: r.known_blockers,
       diagnostic_status: r.diagnostic_status,
+      files_reached: r.files_reached,
+      files_reached_reason: r.files_reached_reason,
+      peak_memory_bytes: r.peak_memory_bytes,
+      peak_memory_bytes_reason: r.peak_memory_bytes_reason,
     })) ?? [],
   };
 }
@@ -173,6 +194,22 @@ function buildJson({ artifactAbsent, parseError, artifact, measurementProfile, r
 function fmtMs(ms) {
   if (ms == null) return "—";
   return `${Number(ms).toFixed(0)} ms`;
+}
+
+function mdCell(value) {
+  return String(value ?? "—").replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+}
+
+function fmtFilesReached(value, reason) {
+  if (Number.isFinite(Number(value))) return String(Number(value));
+  return reason ? `n/a (${reason})` : "—";
+}
+
+function fmtPeakMemory(value, reason) {
+  if (Number.isFinite(Number(value))) {
+    return `${(Number(value) / (1024 * 1024)).toFixed(1)} MiB`;
+  }
+  return reason ? `n/a (${reason})` : "—";
 }
 
 function artifactAge(generatedAt) {
@@ -219,12 +256,13 @@ function buildReport({ artifact, measurementProfile, rows, missing, red, yellow,
   }
 
   lines.push("### All required rows", "");
-  lines.push("| State | Row | tsz | tsgo | Winner | Exit | Diagnostics |");
-  lines.push("|:-----:|-----|----:|----:|--------|------|-------------|");
+  lines.push("| State | Row | tsz | tsgo | Winner | Exit | Phase | Last phase | Files | Peak RSS | Failure | Blocker family | Diagnostics |");
+  lines.push("|:-----:|-----|----:|----:|--------|------|-------|------------|------:|---------:|---------|----------------|-------------|");
   for (const r of rows) {
     const icon = STATE_ICON[r.state] ?? "?";
+    const blockerFamily = r.known_blockers?.[0] ?? r.first_failure_class ?? r.owner_family ?? "—";
     lines.push(
-      `| ${icon} | \`${r.label}\` | ${fmtMs(r.tsz_ms)} | ${fmtMs(r.tsgo_ms)} | ${r.winner ?? "—"} | ${r.exit_class ?? "—"} | ${r.diagnostic_status ?? "—"} |`,
+      `| ${icon} | \`${mdCell(r.label)}\` | ${fmtMs(r.tsz_ms)} | ${fmtMs(r.tsgo_ms)} | ${mdCell(r.winner)} | ${mdCell(r.exit_class)} | ${mdCell(r.phase)} | ${mdCell(r.last_successful_phase)} | ${mdCell(fmtFilesReached(r.files_reached, r.files_reached_reason))} | ${mdCell(fmtPeakMemory(r.peak_memory_bytes, r.peak_memory_bytes_reason))} | ${mdCell(r.first_failure_class)} | ${mdCell(blockerFamily)} | ${mdCell(r.diagnostic_status)} |`,
     );
   }
 

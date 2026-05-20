@@ -501,9 +501,10 @@ impl<'a> CheckerState<'a> {
                 // If display_alias didn't provide type args, try heuristic recovery.
                 if !formatted.contains('<') {
                     let def_id = self.ctx.get_or_create_def_id(sym_id);
-                    let type_param_count = if let Some(type_params) =
-                        self.ctx.get_def_type_params(def_id)
-                    {
+                    let type_param_names = self.symbol_type_param_names_for_display(symbol);
+                    let type_param_count = if !type_param_names.is_empty() {
+                        type_param_names.len()
+                    } else if let Some(type_params) = self.ctx.get_def_type_params(def_id) {
                         type_params.len()
                     } else {
                         symbol
@@ -516,7 +517,7 @@ impl<'a> CheckerState<'a> {
                             })
                             .unwrap_or(0)
                     };
-                    if type_param_count > 0 && shape.properties.len() >= type_param_count {
+                    if type_param_count > 0 {
                         // Recover instantiation args from actual value-carrying members.
                         // For methods, use return type (not the full function signature)
                         // since method return types often directly reflect type params.
@@ -606,25 +607,50 @@ impl<'a> CheckerState<'a> {
                                 candidates.sort_by(|a, b| a.0.cmp(&b.0));
                                 candidates
                             };
-                        let mut candidates = build_candidates(
-                            |prop| !prop.is_method && !prop.is_class_prototype,
-                            self.ctx.types.as_type_database(),
-                        );
-                        if candidates.len() < type_param_count {
+                        let mut candidates: Vec<(String, TypeId)> = if type_param_names.is_empty() {
+                            Vec::new()
+                        } else {
+                            shape
+                                .properties
+                                .iter()
+                                .filter_map(|prop| {
+                                    let candidate = self
+                                        .declared_property_type_arg_candidate_for_display(
+                                            symbol,
+                                            prop.name,
+                                            resolve_candidate_type(prop),
+                                            &type_param_names,
+                                        )?;
+                                    let name =
+                                        self.ctx.types.resolve_atom_ref(prop.name).to_string();
+                                    Some((name, candidate))
+                                })
+                                .collect()
+                        };
+                        candidates.sort_by(|a, b| a.0.cmp(&b.0));
+                        if candidates.len() < type_param_count
+                            && shape.properties.len() >= type_param_count
+                        {
                             candidates = build_candidates(
-                                |prop| !prop.is_method,
+                                |prop| !prop.is_method && !prop.is_class_prototype,
                                 self.ctx.types.as_type_database(),
                             );
-                        }
-                        if candidates.len() < type_param_count {
-                            candidates = build_candidates(
-                                |prop| !prop.is_class_prototype,
-                                self.ctx.types.as_type_database(),
-                            );
-                        }
-                        if candidates.len() < type_param_count {
-                            candidates =
-                                build_candidates(|_| true, self.ctx.types.as_type_database());
+                            if candidates.len() < type_param_count {
+                                candidates = build_candidates(
+                                    |prop| !prop.is_method,
+                                    self.ctx.types.as_type_database(),
+                                );
+                            }
+                            if candidates.len() < type_param_count {
+                                candidates = build_candidates(
+                                    |prop| !prop.is_class_prototype,
+                                    self.ctx.types.as_type_database(),
+                                );
+                            }
+                            if candidates.len() < type_param_count {
+                                candidates =
+                                    build_candidates(|_| true, self.ctx.types.as_type_database());
+                            }
                         }
                         let args: Vec<String> = candidates
                             .iter()
@@ -637,6 +663,29 @@ impl<'a> CheckerState<'a> {
                             formatted = format!("{}<{}>", symbol_name, args.join(", "));
                         }
                     }
+                }
+            }
+        }
+
+        if !formatted.contains('<')
+            && let Some(sym_id) =
+                crate::query_boundaries::common::type_shape_symbol(self.ctx.types, display_ty)
+            && let Some(symbol) = self.get_cross_file_symbol(sym_id)
+        {
+            let symbol_name = symbol.escaped_name.clone();
+            let type_param_names = self.symbol_type_param_names_for_display(symbol);
+            let type_param_count = type_param_names.len();
+            if type_param_count > 0 {
+                let candidates = self.signature_type_arg_display_candidates(display_ty);
+                if candidates.len() >= type_param_count {
+                    let args: Vec<String> = candidates
+                        .iter()
+                        .take(type_param_count)
+                        .map(|type_id| {
+                            self.format_type_diagnostic_for_assignability_display(*type_id)
+                        })
+                        .collect();
+                    formatted = format!("{}<{}>", symbol_name, args.join(", "));
                 }
             }
         }
@@ -1486,100 +1535,6 @@ impl<'a> CheckerState<'a> {
             expanded_target_str
         }
     }
-    fn widen_numeric_member_literals_in_display_text(display: &str) -> String {
-        let bytes = display.as_bytes();
-        let mut out = String::with_capacity(display.len());
-        let mut i = 0usize;
-        let is_boundary = |b: u8| {
-            matches!(
-                b,
-                b';' | b',' | b'}' | b'>' | b')' | b'|' | b'&' | b']' | b' '
-            )
-        };
-        while i < bytes.len() {
-            if i + 2 < bytes.len() && bytes[i] == b':' && bytes[i + 1] == b' ' {
-                out.push(':');
-                out.push(' ');
-                i += 2;
-
-                let mut j = i;
-                if j < bytes.len() && bytes[j] == b'-' {
-                    j += 1;
-                }
-                let mut saw_digit = false;
-                while j < bytes.len() && bytes[j].is_ascii_digit() {
-                    j += 1;
-                    saw_digit = true;
-                }
-                if j < bytes.len() && bytes[j] == b'.' {
-                    j += 1;
-                    while j < bytes.len() && bytes[j].is_ascii_digit() {
-                        j += 1;
-                        saw_digit = true;
-                    }
-                }
-                if saw_digit && (j >= bytes.len() || is_boundary(bytes[j])) {
-                    out.push_str("number");
-                    i = j;
-                    continue;
-                }
-            }
-
-            out.push(bytes[i] as char);
-            i += 1;
-        }
-        out
-    }
-
-    fn ts2820_target_contains_alias_surface(&self, target: TypeId) -> bool {
-        self.ts2820_any_in_members(target, &|s, t| {
-            s.ctx.types.get_display_alias(t).is_some()
-                || s.lookup_type_alias_name_for_display(t).is_some()
-        })
-    }
-    fn ts2820_target_contains_application_surface(&self, target: TypeId) -> bool {
-        self.ts2820_any_in_members(target, &|s, t| {
-            s.ts2820_is_named_application_surface(t)
-                || s.ctx
-                    .types
-                    .get_display_alias(t)
-                    .is_some_and(|alias| s.ts2820_is_named_application_surface(alias))
-        })
-    }
-    fn ts2820_any_in_members(
-        &self,
-        target: TypeId,
-        predicate: &dyn Fn(&Self, TypeId) -> bool,
-    ) -> bool {
-        if predicate(self, target) {
-            return true;
-        }
-        crate::query_boundaries::common::union_members(self.ctx.types, target)
-            .or_else(|| {
-                crate::query_boundaries::common::intersection_members(self.ctx.types, target)
-            })
-            .is_some_and(|members| {
-                members
-                    .iter()
-                    .any(|&member| self.ts2820_any_in_members(member, predicate))
-            })
-    }
-    fn ts2820_is_named_application_surface(&self, target: TypeId) -> bool {
-        let Some((base, args)) =
-            crate::query_boundaries::common::application_info(self.ctx.types, target)
-        else {
-            return false;
-        };
-        !args.is_empty() && self.ts2820_application_base_has_named_surface(base)
-    }
-    fn ts2820_application_base_has_named_surface(&self, base: TypeId) -> bool {
-        crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)
-            .or_else(|| self.ctx.definition_store.find_def_for_type(base))
-            .is_some()
-            || self.ctx.types.get_display_alias(base).is_some()
-            || self.lookup_type_alias_name_for_display(base).is_some()
-    }
-
     pub(super) fn first_nonpublic_constructor_param_property(
         &mut self,
         ty: TypeId,
