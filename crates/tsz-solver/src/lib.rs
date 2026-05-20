@@ -256,8 +256,7 @@ pub(crate) use operations::compound_assignment::{
 #[cfg(test)]
 pub(crate) use operations::{
     AssignabilityChecker, BinaryOpEvaluator, BinaryOpResult, CallEvaluator, CallResult,
-    GenericCallRequest, GenericCallResult, MAX_CONSTRAINT_RECURSION_DEPTH,
-    get_contextual_signature_cached_with_compat_checker,
+    MAX_CONSTRAINT_RECURSION_DEPTH, get_contextual_signature_cached_with_compat_checker,
     get_contextual_signature_for_arity_cached_with_compat_checker,
     get_contextual_signature_for_arity_with_compat_checker,
     get_contextual_signature_with_compat_checker,
