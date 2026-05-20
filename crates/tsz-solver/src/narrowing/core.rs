@@ -2673,13 +2673,8 @@ mod cache_visibility_tests {
             .borrow_mut()
             .insert((TypeId::STRING, prop), Arc::new(discriminants));
         cache.narrow_type_cache.borrow_mut().insert(
-            NarrowTypeCacheKey {
-                source_type: TypeId::STRING,
-                guard: TypeGuard::Truthy,
-                sense: GuardSense::Positive,
-                compiler_flags: 0,
-                resolver_generation: 0,
-            },
+            NarrowingRequest::new(TypeId::STRING, TypeGuard::Truthy, GuardSense::Positive)
+                .cache_key(NarrowingOptions::new(), 0),
             TypeId::STRING,
         );
 
