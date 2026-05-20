@@ -537,3 +537,83 @@ fn test_private_identifier_emits_private_marker() {
         "#secret should not appear in .d.ts: {output}"
     );
 }
+
+// =============================================================================
+// Class Expression Synthesis
+// tsc rule: when `export const X = class { }` (or `class X { }` with matching
+// name) has no explicit type annotation, the .d.ts synthesizes a class
+// declaration `export declare class X { ... }` preserving all members.
+// =============================================================================
+
+#[test]
+fn export_const_anonymous_class_expr_synthesizes_class_decl() {
+    let output = emit_dts("export const C = class {\n    foo(): void {}\n};");
+    assert!(
+        output.contains("export declare class C"),
+        "anonymous class expression should synthesize class decl: {output}"
+    );
+    assert!(
+        output.contains("foo(): void"),
+        "method should be preserved in synthesized class: {output}"
+    );
+    assert!(
+        !output.contains("new ()"),
+        "should not emit constructor type for synthesized class: {output}"
+    );
+}
+
+#[test]
+fn export_const_same_name_class_expr_synthesizes_class_decl() {
+    let output = emit_dts("export const D = class D {\n    bar(): void {}\n};");
+    assert!(
+        output.contains("export declare class D"),
+        "same-name class expression should synthesize class decl: {output}"
+    );
+    assert!(
+        output.contains("bar(): void"),
+        "method should be preserved in synthesized class: {output}"
+    );
+}
+
+#[test]
+fn export_const_different_name_class_expr_emits_structural_type() {
+    // When inner class name differs from binding name, emit structural type.
+    let output = emit_dts("export const E = class F {\n    baz(): void {}\n};");
+    assert!(
+        !output.contains("export declare class E"),
+        "different-name class expression must not synthesize class decl for binding: {output}"
+    );
+    assert!(
+        output.contains("const E"),
+        "binding name must be preserved for different-name class expression: {output}"
+    );
+}
+
+#[test]
+fn export_const_typed_class_expr_emits_annotation() {
+    // Explicit type annotation takes priority over class synthesis.
+    let output = emit_dts(
+        "interface IC { foo(): void; }\nexport const T: IC = class {\n    foo(): void {}\n};",
+    );
+    assert!(
+        !output.contains("export declare class T"),
+        "annotated class expression must not synthesize class decl: {output}"
+    );
+    assert!(
+        output.contains("const T: IC"),
+        "annotation should be preserved in DTS: {output}"
+    );
+}
+
+#[test]
+fn export_const_generic_class_expr_synthesizes_generic_class_decl() {
+    let output = emit_dts("export const Box = class<T> {\n    value!: T;\n};");
+    assert!(
+        output.contains("export declare class Box<T>"),
+        "generic class expression should synthesize generic class decl: {output}"
+    );
+    assert!(
+        output.contains("value: T"),
+        "generic member should be preserved in synthesized class: {output}"
+    );
+}

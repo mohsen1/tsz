@@ -304,6 +304,7 @@ impl AsyncES5Transformer<'_> {
             if let Some(source_text) = self.source_text {
                 nested.set_source_text(source_text);
             }
+            nested.set_module_kind(self.module_kind);
             let has_await = nested.body_contains_await(method.body);
             let mut generator_body = nested.transform_generator_body(method.body, has_await);
             let hoisted_var_groups =

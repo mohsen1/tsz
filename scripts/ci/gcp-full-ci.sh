@@ -385,6 +385,7 @@ run_lint() {
   node scripts/ci/test-pr-ownership-report.mjs || return $?
   node scripts/ci/test-type-challenges-semantic-families.mjs || return $?
   node scripts/ci/test-pr-ready-state.mjs || return $?
+  node scripts/ci/test-check-stale-ci-runs.mjs || return $?
   node scripts/ci/test-wip-state-comments.mjs || return $?
   node scripts/ci/test-project-compatibility.mjs || return $?
   node scripts/ci/test-type-challenges-solutions-manifest.mjs || return $?
@@ -767,7 +768,7 @@ prep_node_artifacts() {
   (
     cd scripts
     if [[ ! -x node_modules/.bin/tsc ]]; then
-      npm install --silent
+      npm install --silent --include=dev
     else
       echo "Using cached scripts/node_modules"
     fi
@@ -1089,8 +1090,9 @@ run_conformance() {
   echo "Conformance skipped: ${skipped_tests}"
 
   local failures_file="$METRICS_DIR/conformance-failures-${shard_index}.txt"
-  grep -a '^\(FAIL\|XFAIL\|CRASH\|TIMEOUT\) ' "$log_file" \
-    | sed 's/^\(FAIL\|XFAIL\|CRASH\|TIMEOUT\) \([^ |]*\).*/\2/' \
+  # XFAIL is known failing debt in conformance math, so keep it in the shard
+  # failure list used by aggregate accepted-regression checks.
+  awk '/^(FAIL|XFAIL|CRASH|TIMEOUT) / { print $2 }' "$log_file" \
     | sort -u > "$failures_file" 2>/dev/null || true
 
   if [[ "$rc" -ne 0 ]]; then
@@ -1965,7 +1967,7 @@ run_build() {
   ci_section "Seed scripts node_modules for parallel job cache"
   if [[ ! -x scripts/node_modules/.bin/tsc ]]; then
     if command -v npm >/dev/null 2>&1; then
-      (cd scripts && npm install --silent)
+      (cd scripts && npm install --silent --include=dev)
     else
       echo "warn: npm not found in build image; skipping scripts/node_modules seed (shards will reinstall on cache-miss)" >&2
     fi

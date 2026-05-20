@@ -57,6 +57,11 @@ pub struct BlockScopeState {
     /// same emitted name, while collisions with block-scoped `let`/`const`
     /// still trigger renaming.
     var_registrations: FxHashMap<String, String>,
+    /// Saved `var` registrations for outer function scopes.
+    var_registration_stack: Vec<FxHashMap<String, String>>,
+    /// Source-level names that should force a block-scoped rename inside the
+    /// current generated function scope.
+    function_scope_shadowed_names: Vec<FxHashSet<String>>,
 }
 
 impl BlockScopeState {
@@ -74,13 +79,28 @@ impl BlockScopeState {
     pub fn enter_function_scope(&mut self) {
         self.scope_stack.push(FxHashMap::default());
         self.function_scope_marks.push(true);
+        self.var_registration_stack
+            .push(std::mem::take(&mut self.var_registrations));
         self.var_registrations.clear();
+        self.function_scope_shadowed_names
+            .push(FxHashSet::default());
     }
 
     /// Exit the current block scope
     pub fn exit_scope(&mut self) {
         self.scope_stack.pop();
-        self.function_scope_marks.pop();
+        if self.function_scope_marks.pop().unwrap_or(false) {
+            self.var_registrations = self.var_registration_stack.pop().unwrap_or_default();
+            self.function_scope_shadowed_names.pop();
+        }
+    }
+
+    /// Force block-scoped declarations with `original_name` to rename in the
+    /// current generated function scope.
+    pub fn register_function_scope_shadowed_name(&mut self, original_name: &str) {
+        if let Some(current) = self.function_scope_shadowed_names.last_mut() {
+            current.insert(original_name.to_string());
+        }
     }
 
     /// Register a variable declaration in the current scope
@@ -101,6 +121,10 @@ impl BlockScopeState {
 
         let needs_rename = is_builtin_shadow
             || self.reserved_names.contains(original_name)
+            || self
+                .function_scope_shadowed_names
+                .last()
+                .is_some_and(|names| names.contains(original_name))
             || if at_function_level {
                 // At function body level: only check the current function scope itself
                 // (for redeclarations within the same scope)
@@ -192,14 +216,39 @@ impl BlockScopeState {
     /// block-scoped declarations that collide with them are renamed, while
     /// `var` declarations with the same name still reuse the parameter binding.
     pub fn register_function_parameter(&mut self, original_name: &str) {
+        self.register_function_parameter_with_emitted_name(original_name, original_name);
+    }
+
+    /// Register a generated function parameter whose emitted name may differ
+    /// from the source binding it represents.
+    ///
+    /// Loop-capture helpers can pass a block-scoping rename into the helper
+    /// signature, so references to the original binding inside the helper body
+    /// must resolve through that same emitted parameter name.
+    pub fn register_function_parameter_with_emitted_name(
+        &mut self,
+        original_name: &str,
+        emitted_name: &str,
+    ) {
         if let Some(current_scope) = self.scope_stack.last_mut() {
             current_scope
                 .entry(original_name.to_string())
-                .or_insert_with(|| original_name.to_string());
+                .or_insert_with(|| emitted_name.to_string());
+            if emitted_name != original_name {
+                current_scope
+                    .entry(emitted_name.to_string())
+                    .or_insert_with(|| emitted_name.to_string());
+            }
         }
         self.var_registrations
             .entry(original_name.to_string())
-            .or_insert_with(|| original_name.to_string());
+            .or_insert_with(|| emitted_name.to_string());
+        if emitted_name != original_name {
+            self.var_registrations
+                .entry(emitted_name.to_string())
+                .or_insert_with(|| emitted_name.to_string());
+            self.reserved_names.insert(emitted_name.to_string());
+        }
     }
 
     /// Register a `var` declaration in the current scope.
@@ -308,6 +357,8 @@ impl BlockScopeState {
         self.reserved_names.clear();
         self.function_scope_marks.clear();
         self.var_registrations.clear();
+        self.var_registration_stack.clear();
+        self.function_scope_shadowed_names.clear();
     }
 }
 

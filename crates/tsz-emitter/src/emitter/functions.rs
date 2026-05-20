@@ -181,8 +181,16 @@ impl<'a> Printer<'a> {
     }
 
     pub(crate) fn function_body_contains_new_target(&self, func: &FunctionData) -> bool {
-        (func.body.is_some() && contains_new_target_reference(self.arena, func.body))
-            || func.parameters.nodes.iter().any(|&param_idx| {
+        self.function_like_contains_new_target(func.body, &func.parameters.nodes)
+    }
+
+    pub(crate) fn function_like_contains_new_target(
+        &self,
+        body: NodeIndex,
+        parameters: &[NodeIndex],
+    ) -> bool {
+        (body.is_some() && contains_new_target_reference(self.arena, body))
+            || parameters.iter().any(|&param_idx| {
                 let Some(param_node) = self.arena.get(param_idx) else {
                     return false;
                 };

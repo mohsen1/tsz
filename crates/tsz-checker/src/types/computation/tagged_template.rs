@@ -186,7 +186,7 @@ impl<'a> CheckerState<'a> {
                     | syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
             )
         );
-        let actual_this_type = self.actual_this_type_for_tagged_template_call(unwrapped_tag);
+        let actual_this_type = self.access_receiver_type(unwrapped_tag);
 
         // For tagged templates, the tag function parameters are:
         //   param[0] = TemplateStringsArray (always)
@@ -402,21 +402,6 @@ impl<'a> CheckerState<'a> {
             actual_this_type,
             selected_callee_type,
         )
-    }
-
-    fn actual_this_type_for_tagged_template_call(
-        &mut self,
-        unwrapped_tag: NodeIndex,
-    ) -> Option<TypeId> {
-        let tag_node = self.ctx.arena.get(unwrapped_tag)?;
-        if tag_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            && tag_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-        {
-            return None;
-        }
-
-        let access = self.ctx.arena.get_access_expr(tag_node)?;
-        Some(self.get_type_of_node(access.expression))
     }
 
     #[allow(clippy::too_many_arguments)]

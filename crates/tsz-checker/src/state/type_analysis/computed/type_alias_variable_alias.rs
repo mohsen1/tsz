@@ -1008,7 +1008,7 @@ impl<'a> CheckerState<'a> {
                 let suppress_ts2694 =
                     self.check_import_qualified_shadows_namespace(import.module_specifier);
                 if !suppress_ts2694
-                    && self.report_type_query_missing_member(import.module_specifier)
+                    && self.report_qualified_alias_missing_member(import.module_specifier)
                 {
                     return (TypeId::ERROR, Vec::new());
                 }
