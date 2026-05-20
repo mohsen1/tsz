@@ -276,7 +276,13 @@ fn expression_generates_downlevel_temp_inner(arena: &NodeArena, idx: NodeIndex) 
     false
 }
 
-fn is_simple_copiable_expression(arena: &NodeArena, idx: NodeIndex) -> bool {
+/// Match tsc's `isSimpleCopiableExpression`: an expression whose evaluation
+/// has no observable side effects and which is therefore safe to reference
+/// more than once in a lowered form (e.g. the `a` in
+/// `a !== null && a !== void 0 ? a : b`). Identifiers, keywords (including
+/// `this`, `super`, the boolean literals, `null`), numeric and string
+/// literals, and template literals without substitutions all qualify.
+pub(crate) fn is_simple_copiable_expression(arena: &NodeArena, idx: NodeIndex) -> bool {
     let Some(node) = arena.get(idx) else {
         return false;
     };

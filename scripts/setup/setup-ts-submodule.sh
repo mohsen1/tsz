@@ -13,6 +13,32 @@ set -e
 TS_REPO="https://github.com/microsoft/TypeScript.git"
 TS_DIR="TypeScript"
 
+usage() {
+  cat <<'USAGE'
+Usage:
+  scripts/setup/setup-ts-submodule.sh
+
+Initializes the TypeScript submodule with a sparse checkout containing the
+test corpus, lib files, compiler/services sources, harness code, and scripts.
+
+Run this from the primary checkout before using
+scripts/setup/link-ts-submodule.sh in sibling worktrees.
+USAGE
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1 (try --help)" >&2
+      exit 1
+      ;;
+  esac
+done
+
 echo "→ Setting up TypeScript submodule (sparse checkout)..."
 
 # Cleanup: Remove any stale lock files

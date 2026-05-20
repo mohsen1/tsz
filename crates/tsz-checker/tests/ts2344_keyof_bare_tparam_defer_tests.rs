@@ -21,7 +21,7 @@ use tsz_checker::state::CheckerState;
 use tsz_checker::test_utils::load_lib_files;
 use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn compile_and_get_diagnostic_codes(source: &str) -> Vec<u32> {
     compile_and_get_diagnostic_codes_with_options(source, CheckerOptions::default())

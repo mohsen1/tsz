@@ -1,4 +1,4 @@
-use crate::transforms::async_es5_ir::AsyncES5Transformer;
+use crate::transforms::async_es5_ir::{AsyncES5Transformer, AsyncTransformState};
 use crate::transforms::ir::{IRGeneratorCase, IRNode};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -12,6 +12,26 @@ pub(super) struct AsyncLoopControlTargets {
 }
 
 impl<'a> AsyncES5Transformer<'a> {
+    /// Finalize prefix statements before opening a loop-entry case. Later
+    /// backedges must land on the loop case without re-running the prefix.
+    pub(super) fn flush_preceding_case_for_new_label(
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+        state: &mut AsyncTransformState,
+    ) {
+        if current_statements.is_empty() {
+            return;
+        }
+        let new_label = state.next_label();
+        current_statements.push(Self::generator_label_assignment(new_label));
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+        *current_label = new_label;
+    }
+
     pub(super) fn process_loop_body_statement_in_async(
         &mut self,
         idx: NodeIndex,

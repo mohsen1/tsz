@@ -9,7 +9,7 @@
 //! - Pre-evaluation intrinsic checks (Object/Function interfaces)
 //! - Meta-type evaluation bridging
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::def::DefId;
 use crate::def::resolver::TypeResolver;
 use crate::relations::subtype::{SubtypeChecker, SubtypeResult, is_disjoint_unit_type};
@@ -462,18 +462,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             false
         };
 
-        // For conditional type aliases that are same-base-app, we STILL enter the
-        // def_guard (unlike non-conditional same-base-app where def_pair = None).
-        // This implements tsc's recursion identity mechanism: the def_guard fires
-        // as a cycle on the second occurrence of the same conditional alias,
-        // returning `result_on_cycle` (compatible). This matches tsc's behavior for
-        // deeply recursive conditional types like `NestedRecord<K,V>` where tsc
-        // intentionally bails out after detecting the alias has appeared twice.
-        // Mapped type aliases (Id<T>) are NOT conditional and continue with def_pair=None.
+        // For conditional type aliases that are same-base-app with identical
+        // arguments, we still enter the def_guard (unlike non-conditional
+        // same-base-app where def_pair = None). This implements tsc's recursion
+        // identity mechanism for self-comparisons while still allowing
+        // `DeepReadonly<number>` vs `DeepReadonly<string>` to compare the
+        // differing arguments instead of cycling on the alias DefId alone.
         let is_cond_same_base_app = both_same_base_app
-            && s_app_id
-                .map(|aid| self.interner.type_application(aid).base)
-                .is_some_and(|base| self.is_conditional_alias_base_inline(base));
+            && if let (Some(s_app_id), Some(t_app_id)) = (s_app_id, t_app_id) {
+                let s_app = self.interner.type_application(s_app_id);
+                let t_app = self.interner.type_application(t_app_id);
+                s_app.args == t_app.args && self.is_conditional_alias_base_inline(s_app.base)
+            } else {
+                false
+            };
         let def_pair = if both_same_base_app && !is_cond_same_base_app {
             None
         } else if let (Some(s_def), Some(t_def)) = (s_def_id, t_def_id) {

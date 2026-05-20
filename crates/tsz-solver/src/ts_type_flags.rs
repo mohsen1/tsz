@@ -7,8 +7,8 @@
 //! match against `TypeData` next to the `TypeFlags` bit constants so
 //! callers only need to depend on the public surface.
 
-use crate::types::{IntrinsicKind, LiteralValue};
 use crate::query::TypeStore;
+use crate::types::{IntrinsicKind, LiteralValue};
 use crate::{TypeData, TypeId};
 
 /// Bit values mirroring TypeScript's public `TypeFlags` enum from

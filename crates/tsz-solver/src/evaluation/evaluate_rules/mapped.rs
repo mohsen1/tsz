@@ -3,7 +3,7 @@
 //! Handles TypeScript's mapped types: `{ [K in keyof T]: T[K] }`
 //! Including homomorphic mapped types that preserve modifiers.
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::instantiation::instantiate::{
     TypeSubstitution, instantiate_type, instantiate_type_preserving,
 };
@@ -2066,7 +2066,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TypeInterner;
+    use crate::construction::TypeInterner;
     use crate::recursion::RecursionResult;
     use crate::types::TypeParamInfo;
 

@@ -1,5 +1,6 @@
+use crate::construction::TypeDatabase;
 use crate::evaluation::evaluate::{evaluate_index_access_with_options, evaluate_type};
-use crate::{LiteralValue, TypeData, TypeDatabase, TypeId};
+use crate::{LiteralValue, TypeData, TypeId};
 
 #[derive(Debug, Clone)]
 pub enum ElementAccessResult {

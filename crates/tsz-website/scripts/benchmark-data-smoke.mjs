@@ -16,7 +16,7 @@ type Result = PickValue<Variant>;`;
 
 await fs.writeFile(artifact, `${JSON.stringify({
   generated_at: "2026-05-16T00:00:00.000Z",
-  source_commit: "local",
+  source_commit: "0123456789abcdef0123456789abcdef01234567",
   workflow_name: "Bench",
   workflow_run_id: "1001",
   workflow_run_url: "https://github.com/mohsen1/tsz/actions/runs/1001",
@@ -353,9 +353,11 @@ process.env.TSZ_WEBSITE_BENCHMARK_ARTIFACT = artifact;
 try {
   const {
     getBenchmarkCharts,
+    getBenchmarkEnvironmentSummary,
     getBenchmarkPages,
     getProjectCompatibilityDashboard,
   } = await import("../src/_data/benchmark_data.js");
+  assert.match(getBenchmarkEnvironmentSummary(), /sha 0123456789ab/);
   const pages = getBenchmarkPages();
   const fixturePage = pages.find((page) => page.name === "conditionalTypeDiscriminatingLargeUnionRegularTypeFetchingSpeedReasonable.ts");
   assert.ok(fixturePage, "expected TypeScript fixture benchmark page");
@@ -400,7 +402,10 @@ try {
   process.env.TSZ_WEBSITE_BENCHMARK_ARTIFACT = failedOnlyArtifact;
   const failedOnlyCharts = getBenchmarkCharts();
   assert.doesNotMatch(failedOnlyCharts, /No benchmark data/i);
-  assert.match(failedOnlyCharts, /No successful project benchmark timing pairs/);
+  assert.doesNotMatch(failedOnlyCharts, /No successful project benchmark timing pairs/);
+  assert.match(failedOnlyCharts, /Large repositories/);
+  assert.match(failedOnlyCharts, /Large ts repo project/);
+  assert.match(failedOnlyCharts, /tsgo 100\.0x faster/);
   assert.match(failedOnlyCharts, /Compile canaries and incomplete project timings/);
   assert.match(failedOnlyCharts, /RxJS project/);
   const failedOnlyCompatibility = getProjectCompatibilityDashboard();

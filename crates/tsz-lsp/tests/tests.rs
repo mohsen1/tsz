@@ -212,7 +212,7 @@ fn test_lsp_diagnostic_conversion() {
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let mut checker = tsz_checker::state::CheckerState::new(
         arena,
         &binder,

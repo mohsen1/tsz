@@ -20,7 +20,7 @@ use tsz_checker::context::CheckerOptions;
 use tsz_checker::state::CheckerState;
 use tsz_common::common::ModuleKind;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn diagnostics_for_esm_default_import(dep_source: &str, main_source: &str) -> Vec<(u32, String)> {
     let mut parser_dep = ParserState::new("dep.d.ts".to_string(), dep_source.to_string());

@@ -652,6 +652,7 @@ build_test_binaries() {
   ci_section "Build dist-fast test binaries"
   local binaries=(
     .target/dist-fast/tsz
+    .target/dist-fast/tsz-lsp
     .target/dist-fast/tsz-server
     .target/dist-fast/tsz-conformance
     .target/dist-fast/generate-tsc-cache
@@ -683,6 +684,7 @@ build_test_binaries() {
     echo "Using cached dist-fast binaries"
     ls -lh "${binaries[@]}"
     mkdir -p .target/release
+    ln -sf "$ROOT_DIR/.target/dist-fast/tsz-lsp" .target/release/tsz-lsp
     ln -sf "$ROOT_DIR/.target/dist-fast/tsz-server" .target/release/tsz-server
     return 0
   fi
@@ -708,6 +710,7 @@ build_test_binaries() {
       -p tsz-cli \
       -p tsz-conformance \
       --bin tsz \
+      --bin tsz-lsp \
       --bin tsz-server \
       --bin tsz-conformance \
       --bin generate-tsc-cache
@@ -719,6 +722,7 @@ build_test_binaries() {
     return "$cargo_rc"
   fi
   mkdir -p .target/release
+  ln -sf "$ROOT_DIR/.target/dist-fast/tsz-lsp" .target/release/tsz-lsp
   ln -sf "$ROOT_DIR/.target/dist-fast/tsz-server" .target/release/tsz-server
   ls -lh "${binaries[@]}"
 }
@@ -1941,6 +1945,16 @@ run_node_harness_prep() {
   timed prep_node_artifacts prep_node_artifacts
 }
 
+run_lsp_e2e_smoke() {
+  ci_section "LSP protocol smoke"
+  local bin="$ROOT_DIR/.target/dist-fast/tsz-lsp"
+  if [[ ! -x "$bin" ]]; then
+    echo "error: expected executable dist-fast LSP binary at $bin" >&2
+    return 1
+  fi
+  node scripts/lsp/e2e-smoke.mjs "$bin"
+}
+
 run_build() {
   ci_section "Build dist-fast binaries (upload for parallel jobs)"
   timed build_test_binaries build_test_binaries
@@ -2039,6 +2053,9 @@ main() {
       ;;
     unit-shard)
       timed run_unit_shard run_unit_shard
+      ;;
+    lsp-e2e)
+      timed run_lsp_e2e_smoke run_lsp_e2e_smoke
       ;;
     wasm)
       timed build_wasm build_wasm

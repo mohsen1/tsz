@@ -1,10 +1,11 @@
 use super::*;
-use crate::TypeInterner;
-use crate::TypeResolver;
+use crate::Visibility;
 use crate::construction::QueryCache;
+use crate::construction::TypeInterner;
 use crate::def::DefId;
 use crate::diagnostics::SubtypeFailureReason;
-use crate::{TypeSubstitution, Visibility, instantiate_type};
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::relations::subtype::TypeResolver;
 use tsz_binder::SymbolId;
 
 #[test]
@@ -1506,7 +1507,7 @@ impl TypeResolver for ReadonlyArrayDefResolver {
     fn resolve_ref(
         &self,
         _symbol: SymbolRef,
-        _interner: &dyn crate::TypeDatabase,
+        _interner: &dyn crate::construction::TypeDatabase,
     ) -> Option<TypeId> {
         None
     }
@@ -3736,7 +3737,7 @@ fn test_object_with_index_satisfies_numeric_property_number_index() {
 ///   `type Wrap<T> = T extends object ? { inner: Wrap<T> } : T`
 ///
 /// Two Applications of the same conditional alias base should terminate via
-/// the def_guard cycle detector rather than recursing indefinitely.
+/// the `def_guard` cycle detector rather than recursing indefinitely.
 #[test]
 fn test_same_base_conditional_alias_check_terminates() {
     let interner = TypeInterner::new();
@@ -3790,10 +3791,11 @@ fn test_same_base_conditional_alias_check_terminates() {
         "Wrap<string> should be a subtype of itself"
     );
 
-    // Different args: may be true (cycle) or false (structural mismatch)
-    // but must not diverge
-    let _result2 = checker.check_subtype(app_string, app_number);
-    // No assertion on direction — just ensure it returns without stack overflow.
+    let result2 = checker.check_subtype(app_string, app_number);
+    assert!(
+        result2.is_false(),
+        "Wrap<string> should not be a subtype of Wrap<number>; recursion identity must not hide different args"
+    );
 }
 
 /// Verify that two Applications of the same conditional alias with identical
@@ -26990,8 +26992,9 @@ fn test_explain_failure_resolves_typequery_to_structural_form() {
     //
     // Assignment `x5 = Outer` where `x5: typeof importInst` should produce
     // MissingProperty for 'C' (TS2741), not generic TypeMismatch (TS2322).
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
     use crate::types::TypeData;
-    use crate::{SymbolRef, TypeEnvironment};
 
     let interner = TypeInterner::new();
 

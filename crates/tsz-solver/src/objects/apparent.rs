@@ -1,4 +1,4 @@
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::types::{
     IndexSignature, IntrinsicKind, LiteralValue, ObjectFlags, ObjectShape, PropertyInfo, TypeId,
     Visibility,
@@ -318,11 +318,49 @@ pub fn apparent_primitive_member_kind(
     }
 }
 
+fn object_member_capacity(include_to_locale: bool) -> usize {
+    3 + OBJECT_METHODS_RETURN_BOOLEAN.len()
+        + OBJECT_METHODS_RETURN_STRING.len()
+        + OBJECT_METHODS_RETURN_ANY.len()
+        + usize::from(include_to_locale)
+}
+
+fn apparent_primitive_member_capacity(kind: IntrinsicKind) -> usize {
+    match kind {
+        IntrinsicKind::String => {
+            1 + STRING_METHODS_RETURN_STRING.len()
+                + STRING_METHODS_RETURN_NUMBER.len()
+                + STRING_METHODS_RETURN_BOOLEAN.len()
+                + STRING_METHODS_RETURN_ANY.len()
+                + STRING_METHODS_RETURN_STRING_ARRAY.len()
+                + object_member_capacity(true)
+        }
+        IntrinsicKind::Number => {
+            NUMBER_METHODS_RETURN_STRING.len() + 1 + object_member_capacity(false)
+        }
+        IntrinsicKind::Boolean => {
+            BOOLEAN_METHODS_RETURN_STRING.len() + 1 + object_member_capacity(false)
+        }
+        IntrinsicKind::Bigint => {
+            BIGINT_METHODS_RETURN_STRING.len() + 1 + object_member_capacity(false)
+        }
+        IntrinsicKind::Symbol => 3 + object_member_capacity(true),
+        IntrinsicKind::Object => object_member_capacity(true),
+        IntrinsicKind::Function => {
+            FUNCTION_METHODS_RETURN_ANY.len()
+                + FUNCTION_VALUES_ANY.len()
+                + 2
+                + object_member_capacity(false)
+        }
+        _ => 0,
+    }
+}
+
 pub fn apparent_primitive_members(
     interner: &dyn TypeDatabase,
     kind: IntrinsicKind,
 ) -> Vec<ApparentMember> {
-    let mut members = Vec::new();
+    let mut members = Vec::with_capacity(apparent_primitive_member_capacity(kind));
 
     match kind {
         IntrinsicKind::String => {
