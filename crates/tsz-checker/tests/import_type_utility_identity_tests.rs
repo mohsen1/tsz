@@ -96,6 +96,50 @@ const fromEnvelope: ExtractFromEnvelope<Envelope<import("./module").Wrap<number>
 }
 
 #[test]
+fn import_type_extends_structural_match_no_false_positive() {
+    let diagnostics = diagnostics_for_import_utility(
+        r#"
+type IsBox<T> = T extends import("./module").Box ? true : false;
+
+type Test1 = IsBox<import("./module").Box>;
+declare const t1: Test1;
+const t1Check: true = t1;
+
+type Test2 = IsBox<{ unrelated: number }>;
+declare const t2: Test2;
+const t2Check: false = t2;
+
+type Unwrap<T> = T extends import("./module").Wrap<infer U> ? U : never;
+type UnwrappedString = Unwrap<import("./module").Wrap<string>>;
+declare const u: UnwrappedString;
+const uCheck: string = u;
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "Structural conditional with cross-file import in extends position produced \
+         unexpected diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn conditional_infer_binding_is_not_visible_in_false_branch() {
+    let diagnostics = diagnostics_for_import_utility(
+        r#"
+type FalseBranch<T> = T extends [infer U] ? U : U;
+type Result = FalseBranch<string>;
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2304),
+        "Expected TS2304 for an infer binding referenced from the false branch. \
+         Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn typeof_import_function_member_feeds_return_type() {
     let diagnostics = diagnostics_for_import_utility(
         r#"
