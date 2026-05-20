@@ -74,11 +74,17 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    /// Get a symbol from the current binder, lib binders, or other file binders.
+    /// This ensures we can resolve symbols from lib.d.ts and other files.
+    ///
+    /// Named import aliases are pinned locally (see `cross_file_named_alias_pin`)
+    /// before the cross-file overlay is consulted; raw `SymbolId`s are
+    /// file-local and the overlay would otherwise substitute an unrelated
+    /// same-id decl from the source module.
     pub(crate) fn get_symbol_globally(&self, sym_id: SymbolId) -> Option<&tsz_binder::Symbol> {
         if let Some(alias) = self.local_named_import_alias(sym_id) {
             return Some(alias);
         }
-
         if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
             && file_idx != self.ctx.current_file_idx
             && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
@@ -87,14 +93,18 @@ impl<'a> CheckerState<'a> {
             return Some(sym);
         }
 
+        // 1. Check current file
         if let Some(sym) = self.ctx.binder.get_symbol(sym_id) {
             return Some(sym);
         }
+        // 2. Check lib files (lib.d.ts, etc.)
         for lib in self.ctx.lib_contexts.iter() {
             if let Some(sym) = lib.binder.get_symbol(sym_id) {
                 return Some(sym);
             }
         }
+        // 3. O(1) fast-path: if this SymbolId was already resolved to a specific
+        //    file via resolve_symbol_file_index, go directly to that binder.
         {
             let file_idx = self.ctx.resolve_symbol_file_index(sym_id);
             if let Some(file_idx) = file_idx
@@ -104,6 +114,7 @@ impl<'a> CheckerState<'a> {
                 return Some(sym);
             }
         }
+        // 4. Fallback: O(N) scan over all binders
         if let Some(binders) = &self.ctx.all_binders {
             for binder in binders.iter() {
                 if let Some(sym) = binder.get_symbol(sym_id) {
@@ -114,13 +125,15 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Get a symbol, preferring the cross-file binder for known cross-file `SymbolIds`.
+    /// Resolves through `cross_file_symbol_targets` first to avoid same-raw-id
+    /// collisions with the local binder; named import aliases are pinned local
+    /// (see `cross_file_named_alias_pin`).
     pub(crate) fn get_cross_file_symbol(&self, sym_id: SymbolId) -> Option<&tsz_binder::Symbol> {
         if let Some(alias) = self.local_named_import_alias(sym_id) {
             return Some(alias);
         }
-
-        let file_idx = self.ctx.resolve_symbol_file_index(sym_id);
-        if let Some(file_idx) = file_idx
+        if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
             && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
             && let Some(sym) = binder.get_symbol(sym_id)
         {
@@ -1911,11 +1924,7 @@ impl<'a> CheckerState<'a> {
                             if let Some(expr) = arena.get_expr_type_args(type_node) {
                                 (expr.expression, expr.type_arguments.as_ref())
                             } else if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
-                                if let Some(type_ref) = arena.get_type_ref(type_node) {
-                                    (type_ref.type_name, type_ref.type_arguments.as_ref())
-                                } else {
-                                    (type_idx, None)
-                                }
+                                (expr.expression, expr.type_arguments.as_ref())
                             } else {
                                 (type_idx, None)
                             };
