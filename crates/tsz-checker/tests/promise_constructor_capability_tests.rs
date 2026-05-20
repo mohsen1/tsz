@@ -265,6 +265,40 @@ async function generic(): Box<number> {
 }
 
 #[test]
+fn ts1064_does_not_fire_for_global_promise_with_indexed_return_type() {
+    let diagnostics = check_with_libs(
+        r#"
+interface Obj {
+  stringProp: string;
+  anyProp: any;
+}
+
+async function tuple(): Promise<[number, boolean]> {
+  throw 0;
+}
+
+async function indexed(obj: Obj): Promise<Obj["stringProp"]> {
+  return obj.stringProp;
+}
+
+async function genericIndexed<TObj extends Obj, K extends keyof TObj>(
+  obj: TObj,
+  key: K,
+): Promise<TObj[K]> {
+  return obj[key];
+}
+"#,
+        &["lib.es5.d.ts", "lib.es2015.promise.d.ts"],
+    );
+
+    let ts1064: Vec<_> = diagnostics.iter().filter(|d| d.code == 1064).collect();
+    assert!(
+        ts1064.is_empty(),
+        "Did not expect TS1064 for annotations resolving to the global Promise, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn preserves_type_parameter_from_custom_promise_like_type() {
     // Test that we preserve type parameters from custom Promise-like types
     // even when complex Promise unwrapping fails.
