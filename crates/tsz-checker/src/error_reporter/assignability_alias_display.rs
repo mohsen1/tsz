@@ -60,6 +60,7 @@ impl<'a> CheckerState<'a> {
     pub(in crate::error_reporter) fn declared_generic_alias_source_display_for_target_display(
         &self,
         anchor_idx: NodeIndex,
+        source: TypeId,
         source_display: &str,
         target_display: &str,
     ) -> Option<String> {
@@ -72,15 +73,19 @@ impl<'a> CheckerState<'a> {
             && Self::generic_alias_name_from_display(source_display) == Some(annotation_name)
             && Self::generic_alias_name_from_display(target_display) == Some(annotation_name)
         {
-            if source_display.contains(" & ") || source_display.contains('{') {
+            if crate::query_boundaries::common::is_intersection_type(self.ctx.types, source)
+                || crate::query_boundaries::common::object_shape_id(self.ctx.types, source)
+                    .is_some()
+            {
                 return Some(self.format_declared_annotation_for_diagnostic(&annotation_text));
             }
             return Some(source_display.to_string());
         }
-        if !source_display.contains(" extends ")
-            && !source_display.contains("infer ")
-            && !source_display.contains("=>")
-        {
+        let source_is_conditional =
+            crate::query_boundaries::common::contains_conditional_type(self.ctx.types, source);
+        let source_is_callable =
+            crate::query_boundaries::common::is_callable_type(self.ctx.types, source);
+        if !source_is_conditional && !source_is_callable {
             return None;
         }
         Self::declared_generic_alias_annotation_matches_target_display(
@@ -93,6 +98,8 @@ impl<'a> CheckerState<'a> {
     pub(in crate::error_reporter) fn declared_generic_alias_assignment_pair_display(
         &mut self,
         anchor_idx: NodeIndex,
+        source: TypeId,
+        target: TypeId,
         source_display: &str,
         target_display: &str,
     ) -> Option<(String, String)> {
@@ -114,7 +121,7 @@ impl<'a> CheckerState<'a> {
             && let Some(annotation_text) =
                 self.declared_type_annotation_text_for_expression(expr_idx)
             && annotation_text.contains('<')
-            && target_display.contains('<')
+            && crate::query_boundaries::common::application_id(self.ctx.types, target).is_some()
             && let Some(annotation_name) = Self::generic_alias_name_from_display(&annotation_text)
             && let Some(target_name) = Self::generic_alias_name_from_display(target_display)
             && annotation_name != target_name
@@ -124,6 +131,7 @@ impl<'a> CheckerState<'a> {
         }
         if let Some(source_display) = self.declared_generic_alias_source_display_for_target_display(
             anchor_idx,
+            source,
             source_display,
             target_display,
         ) {
@@ -136,17 +144,22 @@ impl<'a> CheckerState<'a> {
         let annotation_text = self.declared_type_annotation_text_for_expression(expr_idx)?;
         if annotation_text == source_display
             || annotation_text.trim_start().starts_with("typeof ")
+            // No structural query for module-import types yet; keep as display fallback.
             || source_display.starts_with("import(")
-            || (source_display.contains('{') && !annotation_text.contains('{'))
+            || (crate::query_boundaries::common::object_shape_id(self.ctx.types, source).is_some()
+                && !annotation_text.contains('{'))
             || (!annotation_text.contains('<')
-                && source_display.contains('<')
-                && target_display.contains('<'))
+                && crate::query_boundaries::common::application_id(self.ctx.types, source)
+                    .is_some()
+                && crate::query_boundaries::common::application_id(self.ctx.types, target)
+                    .is_some())
             || annotation_text.contains(" | ")
             || annotation_text.contains(" & ")
             || annotation_text.contains('<')
             || annotation_text.contains('.')
-            || (source_display.contains("| undefined") && !annotation_text.contains("| undefined"))
-            || crate::error_reporter::assignability::display_is_literal_value(source_display)
+            || (crate::query_boundaries::common::type_contains_undefined(self.ctx.types, source)
+                && !annotation_text.contains("| undefined"))
+            || crate::query_boundaries::common::is_literal_type(self.ctx.types, source)
         {
             return None;
         }
@@ -157,6 +170,8 @@ impl<'a> CheckerState<'a> {
     pub(in crate::error_reporter) fn rewrite_declared_generic_alias_source_in_ts2322_message(
         &mut self,
         anchor_idx: NodeIndex,
+        source: TypeId,
+        target: TypeId,
         message: String,
     ) -> String {
         let Some(rest) = message.strip_prefix("Type '") else {
@@ -172,6 +187,8 @@ impl<'a> CheckerState<'a> {
         if let Some((source_display, target_display)) = self
             .declared_generic_alias_assignment_pair_display(
                 anchor_idx,
+                source,
+                target,
                 source_display,
                 target_display,
             )
