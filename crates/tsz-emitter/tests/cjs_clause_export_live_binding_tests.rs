@@ -312,6 +312,105 @@ fn exported_function_body_updates_later_clause_export() {
 }
 
 // ---------------------------------------------------------------------------
+// Function body rewrites — broader generalization (§26)
+// ---------------------------------------------------------------------------
+
+/// Clause-exported variable mutation inside an exported function body with a
+/// different binding name (guards against name-specific hardcoding).
+#[test]
+fn exported_function_body_updates_clause_export_different_name() {
+    let source = "let counter = 0;\nexport function tick() {\n    counter++;\n    ++counter;\n    counter += 2;\n}\nexport { counter };\n";
+    let output = parse_lower_emit(source, cjs_es2015());
+    assert!(
+        output.contains("exports.counter = (counter++, counter)"),
+        "Postfix `counter++` inside exported function must update `exports.counter`.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.counter = ++counter"),
+        "Prefix `++counter` inside exported function must update `exports.counter`.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.counter = counter += 2"),
+        "Compound `+=` inside exported function must update `exports.counter`.\nOutput:\n{output}"
+    );
+}
+
+/// Clause-aliased export: mutation inside the exported function must use the alias key.
+#[test]
+fn exported_function_body_updates_renamed_clause_export() {
+    let source = "let n = 0;\nexport function step() { ++n; n--; }\nexport { n as index };\n";
+    let output = parse_lower_emit(source, cjs_es2015());
+    assert!(
+        output.contains("exports.index = ++n"),
+        "Prefix `++n` inside exported function must update `exports.index`.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.index = (n--, n)"),
+        "Postfix `n--` inside exported function must update `exports.index`.\nOutput:\n{output}"
+    );
+}
+
+/// Clause-exported variable mutated inside a NON-exported function.
+/// The non-exported function still runs in the same module scope, so tsc
+/// also rewrites these mutations.
+#[test]
+fn non_exported_function_body_updates_clause_export() {
+    let source = "let v = 0;\nfunction update() { ++v; v += 5; }\nexport { v };\n";
+    let output = parse_lower_emit(source, cjs_es2015());
+    assert!(
+        output.contains("exports.v = ++v"),
+        "Prefix `++v` inside non-exported function must update `exports.v`.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.v = v += 5"),
+        "Compound `v += 5` inside non-exported function must update `exports.v`.\nOutput:\n{output}"
+    );
+}
+
+/// Inline export (`export let x`) combined with a clause alias (`export { x as y }`):
+/// mutations inside an exported function must update both `exports.x` and `exports.y`.
+#[test]
+fn exported_function_body_updates_inline_and_clause_alias() {
+    let source = "export let x = 0;\nexport function bump() { ++x; }\nexport { x as alias };\n";
+    let output = parse_lower_emit(source, cjs_es2015());
+    assert!(
+        output.contains("exports.alias = ++exports.x"),
+        "Prefix `++x` inside exported function must update `exports.alias` from `exports.x`.\nOutput:\n{output}"
+    );
+}
+
+/// Multiple clause-exported variables: each must be independently rewritten inside
+/// the exported function body.
+#[test]
+fn exported_function_body_updates_multiple_clause_exports() {
+    let source = "let a = 0;\nlet b = 0;\nexport function dual() { a++; ++b; }\nexport { a, b };\n";
+    let output = parse_lower_emit(source, cjs_es2015());
+    assert!(
+        output.contains("exports.a = (a++, a)"),
+        "Postfix `a++` inside exported function must update `exports.a`.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.b = ++b"),
+        "Prefix `++b` inside exported function must update `exports.b`.\nOutput:\n{output}"
+    );
+}
+
+/// Function-body mutation rewrites apply identically with ES5 target output.
+#[test]
+fn exported_function_body_updates_clause_export_es5() {
+    let source = "let score = 10;\nexport function add(n) {\n    score += n;\n    ++score;\n}\nexport { score };\n";
+    let output = parse_lower_emit(source, cjs_es5());
+    assert!(
+        output.contains("exports.score = score += n"),
+        "Compound `score += n` inside exported function must update `exports.score` (ES5).\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.score = ++score"),
+        "Prefix `++score` inside exported function must update `exports.score` (ES5).\nOutput:\n{output}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Full mix: the original bug repro
 // ---------------------------------------------------------------------------
 
