@@ -4,5 +4,5 @@ pub mod freshness;
 pub(crate) mod judge;
 pub mod lawyer;
 pub mod relation_queries;
-pub(crate) mod subtype;
+pub mod subtype;
 pub mod variance;

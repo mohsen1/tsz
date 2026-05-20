@@ -22,8 +22,8 @@ use rustc_hash::FxHashSet;
 use std::cell::RefCell;
 
 use crate::TypeDatabase;
-use crate::TypeResolver;
 use crate::evaluation::evaluate::TypeEvaluator;
+use crate::relations::subtype::TypeResolver;
 use crate::types::{PropertyInfo, TypeData, TypeId};
 
 // Reusable scratch `FxHashSet<TypeId>` for `deep_reduce_for_display`'s

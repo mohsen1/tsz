@@ -6,9 +6,10 @@
 //! - Trivial single-type-param fast path
 //! - Placeholder normalization
 
+use crate::TypeDatabase;
 use crate::instantiation::instantiate::{TypeInstantiator, TypeSubstitution, instantiate_generic};
+use crate::relations::subtype::TypeResolver;
 use crate::types::{TypeData, TypeId};
-use crate::{TypeDatabase, TypeResolver};
 use std::sync::atomic::{AtomicU64, Ordering};
 use tsz_common::Atom;
 

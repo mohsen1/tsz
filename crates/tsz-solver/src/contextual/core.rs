@@ -798,7 +798,7 @@ impl<'a> ContextualTypeContext<'a> {
     /// with the application arguments, and retry the `ThisType` extraction.
     pub fn get_this_type_from_marker_with_resolver(
         &self,
-        resolver: &dyn crate::TypeResolver,
+        resolver: &dyn crate::relations::subtype::TypeResolver,
     ) -> Option<TypeId> {
         // First try the simple extraction (no expansion needed).
         if let Some(result) = self.get_this_type_from_marker() {
@@ -870,7 +870,7 @@ impl<'a> ContextualTypeContext<'a> {
     #[inline]
     pub fn get_this_type_from_marker_expanding(
         &self,
-        resolver: &dyn crate::TypeResolver,
+        resolver: &dyn crate::relations::subtype::TypeResolver,
     ) -> Option<TypeId> {
         self.get_this_type_from_marker_with_resolver(resolver)
     }
