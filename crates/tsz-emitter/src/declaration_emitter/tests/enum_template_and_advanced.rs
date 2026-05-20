@@ -1115,6 +1115,32 @@ fn make_path_only_emitter<'a>(parser: &'a ParserState) -> DeclarationEmitter<'a>
 }
 
 #[test]
+fn strip_ts_extensions_restores_arbitrary_extension_declaration_user_form() {
+    let (parser, _root) = parse_test_source("");
+    let emitter = make_path_only_emitter(&parser);
+
+    assert_eq!(emitter.strip_ts_extensions("./foo.d.html.ts"), "./foo.html");
+    assert_eq!(
+        emitter.strip_ts_extensions("../styles.d.css.ts"),
+        "../styles.css"
+    );
+    assert_eq!(
+        emitter.strip_ts_extensions("components/Button.d.svelte.ts"),
+        "components/Button.svelte"
+    );
+}
+
+#[test]
+fn strip_ts_extensions_leaves_regular_ts_js_declaration_shapes_on_normal_path() {
+    let (parser, _root) = parse_test_source("");
+    let emitter = make_path_only_emitter(&parser);
+
+    assert_eq!(emitter.strip_ts_extensions("./foo.d.ts"), "./foo");
+    assert_eq!(emitter.strip_ts_extensions("./foo.d.mts"), "./foo");
+    assert_eq!(emitter.strip_ts_extensions("./foo.d.js.ts"), "./foo.d.js");
+}
+
+#[test]
 fn symlinked_nested_package_reference_fires_when_outer_package_is_not_consumer_ancestor() {
     // Structural shape: type's source path is `<X>/node_modules/<P>/<sub>` and
     // `<X>` is a sibling of (not an ancestor of) the consumer's directory. The
