@@ -284,3 +284,213 @@ const holder: Holder = { node };
         "Imported interface+const merge should use the interface type side in annotations. Got: {relevant:?}. All: {diagnostics:?}"
     );
 }
+
+#[test]
+fn imported_class_type_alias_callback_uses_instance_side() {
+    let node = r#"
+export interface ColumnDefinitionNode {
+  readonly kind: 'ColumnDefinitionNode';
+  readonly column: string;
+}
+
+type ColumnDefinitionNodeFactory = Readonly<{
+  create(column: string): Readonly<ColumnDefinitionNode>;
+}>;
+
+export const ColumnDefinitionNode: ColumnDefinitionNodeFactory = {
+  create(column) {
+    return { kind: 'ColumnDefinitionNode', column };
+  },
+};
+"#;
+    let builder = r#"
+import { ColumnDefinitionNode } from './node.js';
+
+export class ColumnDefinitionBuilder {
+  readonly #node: ColumnDefinitionNode;
+
+  constructor(node: ColumnDefinitionNode) {
+    this.#node = node;
+  }
+
+  toOperationNode(): string {
+    return this.#node.column;
+  }
+}
+
+export type ColumnDefinitionBuilderCallback = (
+  builder: ColumnDefinitionBuilder,
+) => ColumnDefinitionBuilder;
+"#;
+    let usage = r#"
+import {
+  ColumnDefinitionBuilder,
+  type ColumnDefinitionBuilderCallback,
+} from './builder.js';
+import { ColumnDefinitionNode } from './node.js';
+
+const noop = <T>(obj: T): T => obj;
+
+export function useCallback(build: ColumnDefinitionBuilderCallback = noop): string {
+  const builder = build(new ColumnDefinitionBuilder(ColumnDefinitionNode.create('id')));
+  return builder.toOperationNode();
+}
+"#;
+    let lib_files = tsz_checker::test_utils::load_lib_files(&["es5.d.ts"]);
+    let diagnostics = tsz_checker::test_utils::check_multi_file_with_libs(
+        &[
+            ("./node.ts", node),
+            ("./builder.ts", builder),
+            ("./usage.ts", usage),
+        ],
+        "./usage.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &lib_files,
+    )
+    .into_iter()
+    .filter(|d| d.code != 2318)
+    .map(|d| (d.code, d.message_text))
+    .collect::<Vec<_>>();
+    let relevant = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 2322 | 2339 | 2345))
+        .collect::<Vec<_>>();
+    assert!(
+        relevant.is_empty(),
+        "Imported type alias callback should use class instance side, not the constructor side. Got: {relevant:?}. All: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn cross_file_lowering_cache_is_scoped_by_requesting_file() {
+    let a = r#"
+export class Builder {
+  a(): string {
+    return 'a';
+  }
+}
+"#;
+    let bbase = r#"
+export class Builder {
+  b(): string {
+    return 'b';
+  }
+}
+
+export function createBuilder(): Builder {
+  return new Builder();
+}
+"#;
+    let callback = r#"
+import { Builder } from './bbase.js';
+
+export type Callback = (builder: Builder) => Builder;
+"#;
+    let usage = r#"
+import { Builder } from './a.js';
+import { createBuilder } from './bbase.js';
+import type { Callback } from './callback.js';
+
+type CachedInEntryFile = Builder;
+const useCached: CachedInEntryFile = new Builder();
+useCached.a();
+
+const identity: Callback = (builder) => builder;
+const out = identity(createBuilder());
+out.b();
+"#;
+    let lib_files = tsz_checker::test_utils::load_lib_files(&["es5.d.ts"]);
+    let diagnostics = tsz_checker::test_utils::check_multi_file_with_libs(
+        &[
+            ("./a.ts", a),
+            ("./bbase.ts", bbase),
+            ("./callback.ts", callback),
+            ("./usage.ts", usage),
+        ],
+        "./usage.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &lib_files,
+    )
+    .into_iter()
+    .filter(|d| d.code != 2318)
+    .map(|d| (d.code, d.message_text))
+    .collect::<Vec<_>>();
+    let relevant = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 2322 | 2339 | 2345))
+        .collect::<Vec<_>>();
+    assert!(
+        relevant.is_empty(),
+        "Text-based lowering cache entries must not leak between files with same-named imports. Got: {relevant:?}. All: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn imported_interface_const_merge_in_same_file_props_uses_type_side() {
+    let node = r#"
+export interface AlterTableNode {
+  readonly kind: 'AlterTableNode';
+  readonly table: string;
+}
+
+type AlterTableNodeFactory = Readonly<{
+  cloneWithTableProps(node: AlterTableNode, props: { table?: string }): Readonly<AlterTableNode>;
+}>;
+
+export const AlterTableNode: AlterTableNodeFactory = {
+  cloneWithTableProps(node, props) {
+    return { ...node, ...props };
+  },
+};
+"#;
+    let usage = r#"
+import { AlterTableNode } from './node.js';
+
+export interface AlterTableBuilderProps {
+  readonly node: AlterTableNode;
+}
+
+export class AlterTableBuilder {
+  readonly props: AlterTableBuilderProps;
+
+  constructor(props: AlterTableBuilderProps) {
+    this.props = props;
+  }
+
+  renameTo(table: string): Readonly<AlterTableNode> {
+    return AlterTableNode.cloneWithTableProps(this.props.node, { table });
+  }
+}
+"#;
+    let lib_files = tsz_checker::test_utils::load_lib_files(&["es5.d.ts"]);
+    let diagnostics = tsz_checker::test_utils::check_multi_file_with_libs(
+        &[("./node.ts", node), ("./usage.ts", usage)],
+        "./usage.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &lib_files,
+    )
+    .into_iter()
+    .filter(|d| d.code != 2318)
+    .map(|d| (d.code, d.message_text))
+    .collect::<Vec<_>>();
+    let relevant = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 2322 | 2345 | 2739 | 2740))
+        .collect::<Vec<_>>();
+    assert!(
+        relevant.is_empty(),
+        "Imported interface+const merge should keep type-side props as the interface. Got: {relevant:?}. All: {diagnostics:?}"
+    );
+}

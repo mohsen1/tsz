@@ -401,9 +401,9 @@ pub struct CheckerContext<'a> {
     pub nested_namespace_candidates_cache_complete: Cell<bool>,
 
     /// Per-checker cache for text-based entity-name resolution used by lowering.
-    /// Keyed by names like `React.ReactNode` / `JSX.Element` and stores both
-    /// hits and misses to avoid repeatedly walking the same symbol graph during
-    /// declaration-file interface/type lowering.
+    /// Keyed by requesting file plus names like `React.ReactNode` / `JSX.Element`
+    /// and stores both hits and misses to avoid repeatedly walking the same symbol
+    /// graph during declaration-file interface/type lowering.
     pub lowering_entity_name_resolution_cache: RefCell<FxHashMap<String, Option<DefId>>>,
 
     /// Per-checker cache for cross-file namespace export resolution.

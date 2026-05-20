@@ -32,6 +32,70 @@ pub enum TypeSymbolResolution {
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    fn resolve_type_side_export_symbol_in_file(
+        &self,
+        file_idx: usize,
+        name: &str,
+    ) -> Option<SymbolId> {
+        let target_binder = self.ctx.get_binder_for_file(file_idx)?;
+        let target_arena = self.ctx.get_arena_for_file(file_idx as u32);
+        let target_file_name = target_arena.source_files.first()?.file_name.as_str();
+
+        let exported = self
+            .ctx
+            .module_exports_for_module(target_binder, target_file_name)
+            .and_then(|exports| exports.get(name))
+            .or_else(|| {
+                self.ctx
+                    .module_exports_for_module(target_binder, name)
+                    .and_then(|exports| exports.get(name))
+            });
+        if let Some(sym_id) = exported
+            && target_binder.get_symbol(sym_id).is_some_and(|symbol| {
+                symbol.has_any_flags(symbol_flags::TYPE)
+                    && symbol.declarations.iter().any(|decl_idx| {
+                        target_binder
+                            .declaration_arenas
+                            .get(&(sym_id, *decl_idx))
+                            .is_none_or(|arenas| {
+                                arenas.iter().any(|decl_arena| {
+                                    std::ptr::eq(decl_arena.as_ref(), target_arena)
+                                })
+                            })
+                    })
+            })
+        {
+            self.ctx.register_symbol_file_target(sym_id, file_idx);
+            return Some(sym_id);
+        }
+
+        let sym_id = target_binder
+            .get_symbols()
+            .find_all_by_name(name)
+            .iter()
+            .copied()
+            .find(|candidate_id| {
+                let Some(candidate) = target_binder.get_symbol(*candidate_id) else {
+                    return false;
+                };
+                if !candidate.is_exported || !candidate.has_any_flags(symbol_flags::TYPE) {
+                    return false;
+                }
+                candidate.declarations.iter().any(|decl_idx| {
+                    target_binder
+                        .declaration_arenas
+                        .get(&(*candidate_id, *decl_idx))
+                        .is_none_or(|arenas| {
+                            arenas
+                                .iter()
+                                .any(|decl_arena| std::ptr::eq(decl_arena.as_ref(), target_arena))
+                        })
+                })
+            })?;
+        self.ctx.register_symbol_file_target(sym_id, file_idx);
+        Some(sym_id)
+    }
+
     fn resolve_enclosing_type_parameter_symbol(
         &self,
         idx: NodeIndex,
@@ -1063,36 +1127,64 @@ impl<'a> CheckerState<'a> {
                     expected_name,
                     Some(source_file_idx),
                 ) {
-                    let export_surface_meanings = (expected_name != "*")
+                    let target_file_idx = (expected_name != "*")
                         .then(|| {
                             self.ctx
                                 .resolve_import_target_from_file(source_file_idx, module_name)
                         })
-                        .flatten()
-                        .map(|target_file_idx| {
-                            let declarations = self.export_surface_declarations_in_file(
-                                target_file_idx,
-                                expected_name,
-                            );
-                            let has_type_position_meaning =
-                                declarations.iter().any(|(_, flags, _)| {
-                                    (*flags
-                                        & (symbol_flags::TYPE
-                                            | symbol_flags::NAMESPACE_MODULE
-                                            | symbol_flags::VALUE_MODULE))
-                                        != 0
-                                });
-                            let has_runtime_value = declarations
-                                .iter()
-                                .any(|(_, flags, _)| (*flags & symbol_flags::VALUE) != 0);
-                            (has_type_position_meaning, has_runtime_value)
+                        .flatten();
+                    let export_surface_meanings = target_file_idx.map(|target_file_idx| {
+                        let declarations = self
+                            .export_surface_declarations_in_file(target_file_idx, expected_name);
+                        let has_type_position_meaning = declarations.iter().any(|(_, flags, _)| {
+                            (*flags
+                                & (symbol_flags::TYPE
+                                    | symbol_flags::NAMESPACE_MODULE
+                                    | symbol_flags::VALUE_MODULE))
+                                != 0
                         });
+                        let has_runtime_value = declarations
+                            .iter()
+                            .any(|(_, flags, _)| (*flags & symbol_flags::VALUE) != 0);
+                        (has_type_position_meaning, has_runtime_value)
+                    });
                     if let Some((has_type_position_meaning, has_runtime_value)) =
                         export_surface_meanings
-                        && !has_type_position_meaning
-                        && has_runtime_value
                     {
-                        return Some(TypeSymbolResolution::ValueOnly(target_sym_id));
+                        if !has_type_position_meaning && has_runtime_value {
+                            return Some(TypeSymbolResolution::ValueOnly(target_sym_id));
+                        }
+                        if has_type_position_meaning && let Some(target_file_idx) = target_file_idx
+                        {
+                            let target_flags = self
+                                .get_cross_file_symbol(target_sym_id)
+                                .or_else(|| {
+                                    self.ctx
+                                        .get_binder_for_file(target_file_idx)
+                                        .and_then(|binder| binder.get_symbol(target_sym_id))
+                                })
+                                .map_or(0, |symbol| symbol.flags);
+                            let target_is_namespace_module = (target_flags
+                                & (symbol_flags::MODULE
+                                    | symbol_flags::NAMESPACE_MODULE
+                                    | symbol_flags::VALUE_MODULE))
+                                != 0;
+                            let target_has_type = (target_flags
+                                & (symbol_flags::TYPE | symbol_flags::TYPE_ALIAS))
+                                != 0;
+                            let target_has_value = (target_flags & symbol_flags::VALUE) != 0;
+                            if target_has_value
+                                && !target_has_type
+                                && !target_is_namespace_module
+                                && let Some(type_side_target) = self
+                                    .resolve_type_side_export_symbol_in_file(
+                                        target_file_idx,
+                                        expected_name,
+                                    )
+                            {
+                                return Some(TypeSymbolResolution::Type(type_side_target));
+                            }
+                        }
                     }
                     // Use get_cross_file_symbol first, then fall back to
                     // get_symbol_with_libs. When the target comes from a
@@ -1425,11 +1517,12 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        let cache_key = format!("{}:{name}", self.ctx.current_file_idx);
         if let Some(cached) = self
             .ctx
             .lowering_entity_name_resolution_cache
             .borrow()
-            .get(name)
+            .get(&cache_key)
             .copied()
         {
             // A miss recorded before lib contexts were attached is not stable
@@ -1493,7 +1586,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx
                     .lowering_entity_name_resolution_cache
                     .borrow_mut()
-                    .insert(name.to_string(), None);
+                    .insert(cache_key.clone(), None);
                 return None;
             };
 
@@ -1537,7 +1630,7 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .lowering_entity_name_resolution_cache
                 .borrow_mut()
-                .insert(name.to_string(), None);
+                .insert(cache_key.clone(), None);
             return None;
         }
 
@@ -1566,7 +1659,7 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .lowering_entity_name_resolution_cache
             .borrow_mut()
-            .insert(name.to_string(), Some(def_id));
+            .insert(cache_key, Some(def_id));
         Some(def_id)
     }
 
