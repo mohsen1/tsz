@@ -316,7 +316,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 /// template-literal interner expansion to `"false" | "true"`, matching tsc's
 /// `${boolean}` cross-product behaviour.
 pub(crate) fn canonicalize_string_intrinsic_arg(
-    interner: &dyn crate::TypeDatabase,
+    interner: &dyn crate::construction::TypeDatabase,
     type_id: TypeId,
 ) -> TypeId {
     use crate::types::{IntrinsicKind, TemplateSpan};

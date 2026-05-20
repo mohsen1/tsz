@@ -5,18 +5,26 @@ use std::path::{Component, Path, PathBuf};
 use crate::config::{ModuleResolutionKind, PathMapping, ResolvedCompilerOptions};
 use crate::fs::{is_valid_module_file, is_valid_module_or_js_file};
 use tsz::emitter::ModuleKind;
-use tsz::module_resolver::{PackageType, is_path_relative};
+use tsz::module_resolver::{ImportKind, ImportingModuleKind, PackageType, is_path_relative};
 use tsz::parser::NodeIndex;
 use tsz::parser::ParserState;
 use tsz::parser::node::{NodeAccess, NodeArena};
 use tsz::scanner::SyntaxKind;
+use tsz::scanner::scanner_impl::ScannerState;
 
-type CollectedModuleSpecifier = (
-    String,
-    NodeIndex,
-    tsz::module_resolver::ImportKind,
-    Option<tsz::module_resolver::ImportingModuleKind>,
-);
+type CollectedModuleSpecifier = (String, NodeIndex, ImportKind, Option<ImportingModuleKind>);
+
+type SourceDiscoveryModuleRequest = (String, ImportKind, Option<ImportingModuleKind>, bool);
+
+#[derive(Clone, Copy)]
+enum AmbientModuleDeclarationSpecifierPolicy {
+    #[cfg(test)]
+    All,
+    SourceDiscovery,
+    Check {
+        is_external_module: bool,
+    },
+}
 
 // ─────────────────────────────────────────────────────────────────────────
 // Counting filesystem probes (`PERFORMANCE_PLAN.md` §4.T0.3 follow-up)
@@ -79,6 +87,7 @@ fn count_read_package_json() {
 pub(crate) struct ModuleResolutionCache {
     package_type_by_dir: FxHashMap<PathBuf, Option<PackageType>>,
     package_json_by_path: FxHashMap<PathBuf, Option<PackageJson>>,
+    file_exists_by_path: FxHashMap<PathBuf, bool>,
     node_modules_dir_by_path: FxHashMap<PathBuf, bool>,
     package_root_dir_by_path: FxHashMap<PathBuf, bool>,
     // Per-compiler-options cache. A compile uses one resolved `paths` table, so
@@ -100,6 +109,16 @@ fn package_relative_target_path(package_root: &Path, target: &str) -> Option<Pat
 }
 
 impl ModuleResolutionCache {
+    fn file_exists(&mut self, path: &Path) -> bool {
+        if let Some(&exists) = self.file_exists_by_path.get(path) {
+            return exists;
+        }
+
+        let exists = count_is_file(path);
+        self.file_exists_by_path.insert(path.to_path_buf(), exists);
+        exists
+    }
+
     fn read_package_json(&mut self, path: &Path) -> Option<PackageJson> {
         if let Some(cached) = self.package_json_by_path.get(path) {
             return cached.clone();
@@ -550,7 +569,7 @@ pub(crate) fn resolve_type_package_entry_with_cache(
             let path = package_root.join(entry_name);
             for ext in restricted_extensions {
                 let candidate = path.with_extension(ext);
-                if count_is_file(&candidate) && is_declaration_file(&candidate) {
+                if resolution_cache.file_exists(&candidate) && is_declaration_file(&candidate) {
                     return Some(normalize_resolved_path(&candidate, options));
                 }
             }
@@ -618,12 +637,12 @@ pub(crate) fn resolve_type_package_entry_with_mode_and_cache(
         // Try to find a declaration file at the target
         let package_type = package_type_from_json(Some(package_json));
         for candidate in expand_module_path_candidates(&target_path, options, package_type) {
-            if count_is_file(&candidate) && is_declaration_file(&candidate) {
+            if resolution_cache.file_exists(&candidate) && is_declaration_file(&candidate) {
                 return Some(normalize_resolved_path(&candidate, options));
             }
         }
         // Try exact path
-        if count_is_file(&target_path) && is_declaration_file(&target_path) {
+        if resolution_cache.file_exists(&target_path) && is_declaration_file(&target_path) {
             return Some(normalize_resolved_path(&target_path, options));
         }
     }
@@ -670,22 +689,20 @@ pub(crate) fn collect_module_specifiers_from_text(path: &Path, text: &str) -> Ve
 pub(crate) fn collect_module_requests_from_text(
     path: &Path,
     text: &str,
-) -> Vec<(
-    String,
-    tsz::module_resolver::ImportKind,
-    Option<tsz::module_resolver::ImportingModuleKind>,
-    bool,
-)> {
+) -> Vec<SourceDiscoveryModuleRequest> {
     // Fast path: skip the full parse if the text cannot contain any module specifiers.
     // This avoids a redundant parse for files that will be parsed again in build_program.
     if !text_may_contain_module_specifiers(text) {
         return Vec::new();
     }
+    if let Some(requests) = collect_simple_module_requests_from_text(text) {
+        return requests;
+    }
     let file_name = path.to_string_lossy().into_owned();
     let mut parser = ParserState::new(file_name, text.to_string());
     let source_file = parser.parse_source_file();
     let (arena, _diagnostics) = parser.into_parts();
-    let mut requests: Vec<_> = collect_module_specifiers(&arena, source_file)
+    let mut requests: Vec<_> = collect_module_specifiers_for_source_discovery(&arena, source_file)
         .into_iter()
         .map(
             |(specifier, specifier_idx, import_kind, resolution_mode_override)| {
@@ -721,6 +738,258 @@ fn text_may_contain_module_specifiers(text: &str) -> bool {
         || text.contains("from '")
         || text.contains("from \"")
         || text.contains("declare module")
+}
+
+#[derive(Debug)]
+struct DiscoveryToken {
+    kind: SyntaxKind,
+    text: Option<String>,
+}
+
+fn collect_simple_module_requests_from_text(
+    text: &str,
+) -> Option<Vec<SourceDiscoveryModuleRequest>> {
+    if text.contains("@import") {
+        return None;
+    }
+
+    let mut scanner = ScannerState::new(text.to_string(), true);
+    let mut tokens = Vec::new();
+    loop {
+        let kind = scanner.scan();
+        if kind == SyntaxKind::EndOfFileToken {
+            break;
+        }
+        let token_text = if kind == SyntaxKind::StringLiteral {
+            Some(strip_scanned_string_literal(scanner.get_token_text_ref())?)
+        } else {
+            None
+        };
+        tokens.push(DiscoveryToken {
+            kind,
+            text: token_text,
+        });
+    }
+
+    let mut requests = Vec::new();
+    let mut brace_depth = 0usize;
+    let mut i = 0usize;
+    while i < tokens.len() {
+        match tokens[i].kind {
+            SyntaxKind::OpenBraceToken => {
+                brace_depth += 1;
+                i += 1;
+            }
+            SyntaxKind::CloseBraceToken => {
+                brace_depth = brace_depth.saturating_sub(1);
+                i += 1;
+            }
+            SyntaxKind::DeclareKeyword if brace_depth == 0 => {
+                if tokens
+                    .get(i + 1)
+                    .is_some_and(|t| t.kind == SyntaxKind::ModuleKeyword)
+                {
+                    let module_name = tokens.get(i + 2).and_then(|t| t.text.as_ref())?;
+                    if is_path_relative(module_name) {
+                        requests.push((module_name.clone(), ImportKind::EsmImport, None, false));
+                    }
+                    if tokens
+                        .get(i + 3)
+                        .is_some_and(|t| t.kind == SyntaxKind::OpenBraceToken)
+                    {
+                        i = skip_ambient_module_body_without_dependencies(&tokens, i + 3)?;
+                        continue;
+                    }
+                    i += 3;
+                    continue;
+                }
+                i += 1;
+            }
+            SyntaxKind::ModuleKeyword if brace_depth == 0 => return None,
+            SyntaxKind::ImportKeyword => {
+                if brace_depth != 0 {
+                    return None;
+                }
+                let (request, next_i) = collect_simple_import_request(&tokens, i)?;
+                requests.push((request, ImportKind::EsmImport, None, false));
+                i = next_i;
+            }
+            SyntaxKind::ExportKeyword => {
+                if brace_depth != 0 {
+                    return None;
+                }
+                if let Some((request, next_i)) = collect_simple_export_request(&tokens, i)? {
+                    requests.push((request, ImportKind::EsmReExport, None, false));
+                    i = next_i;
+                } else {
+                    i += 1;
+                }
+            }
+            SyntaxKind::RequireKeyword => return None,
+            _ => {
+                i += 1;
+            }
+        }
+    }
+
+    Some(requests)
+}
+
+fn strip_scanned_string_literal(text: &str) -> Option<String> {
+    let quote = text.as_bytes().first().copied()?;
+    if quote != b'"' && quote != b'\'' {
+        return None;
+    }
+    if text.as_bytes().last().copied() != Some(quote) || text.len() < 2 {
+        return None;
+    }
+
+    let value = &text[1..text.len() - 1];
+    if value.contains('\\') {
+        return None;
+    }
+    Some(value.to_string())
+}
+
+fn skip_ambient_module_body_without_dependencies(
+    tokens: &[DiscoveryToken],
+    open_brace: usize,
+) -> Option<usize> {
+    let mut depth = 1usize;
+    let mut i = open_brace + 1;
+    while i < tokens.len() {
+        match tokens[i].kind {
+            SyntaxKind::OpenBraceToken => depth += 1,
+            SyntaxKind::CloseBraceToken => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(i + 1);
+                }
+            }
+            SyntaxKind::ImportKeyword | SyntaxKind::RequireKeyword => return None,
+            SyntaxKind::FromKeyword
+                if tokens
+                    .get(i + 1)
+                    .is_some_and(|token| token.kind == SyntaxKind::StringLiteral) =>
+            {
+                return None;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+fn collect_simple_import_request(
+    tokens: &[DiscoveryToken],
+    import_idx: usize,
+) -> Option<(String, usize)> {
+    let next = tokens.get(import_idx + 1)?;
+    match next.kind {
+        SyntaxKind::StringLiteral => {
+            reject_import_attributes_after_string(tokens, import_idx + 2)?;
+            Some((next.text.clone()?, import_idx + 2))
+        }
+        SyntaxKind::OpenParenToken | SyntaxKind::DotToken => None,
+        _ => {
+            let mut i = import_idx + 1;
+            while i < tokens.len() {
+                match tokens[i].kind {
+                    SyntaxKind::SemicolonToken
+                    | SyntaxKind::EqualsToken
+                    | SyntaxKind::RequireKeyword
+                    | SyntaxKind::CloseBraceToken => return None,
+                    SyntaxKind::OpenBraceToken => {
+                        let close = matching_brace(tokens, i)?;
+                        i = close + 1;
+                        continue;
+                    }
+                    SyntaxKind::FromKeyword
+                        if tokens
+                            .get(i + 1)
+                            .is_some_and(|token| token.kind == SyntaxKind::StringLiteral) =>
+                    {
+                        reject_import_attributes_after_string(tokens, i + 2)?;
+                        return Some((tokens[i + 1].text.clone()?, i + 2));
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+            None
+        }
+    }
+}
+
+fn collect_simple_export_request(
+    tokens: &[DiscoveryToken],
+    export_idx: usize,
+) -> Option<Option<(String, usize)>> {
+    let mut i = export_idx + 1;
+    if tokens
+        .get(i)
+        .is_some_and(|token| token.kind == SyntaxKind::TypeKeyword)
+    {
+        i += 1;
+    }
+
+    match tokens.get(i).map(|token| token.kind) {
+        Some(SyntaxKind::AsteriskToken | SyntaxKind::OpenBraceToken) => {}
+        _ => return Some(None),
+    }
+
+    while i < tokens.len() {
+        match tokens[i].kind {
+            SyntaxKind::SemicolonToken => return Some(None),
+            SyntaxKind::OpenBraceToken => {
+                let close = matching_brace(tokens, i)?;
+                i = close + 1;
+                continue;
+            }
+            SyntaxKind::FromKeyword
+                if tokens
+                    .get(i + 1)
+                    .is_some_and(|token| token.kind == SyntaxKind::StringLiteral) =>
+            {
+                reject_import_attributes_after_string(tokens, i + 2)?;
+                return Some(Some((tokens[i + 1].text.clone()?, i + 2)));
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    Some(None)
+}
+
+fn matching_brace(tokens: &[DiscoveryToken], open_brace: usize) -> Option<usize> {
+    let mut depth = 1usize;
+    let mut i = open_brace + 1;
+    while i < tokens.len() {
+        match tokens[i].kind {
+            SyntaxKind::OpenBraceToken => depth += 1,
+            SyntaxKind::CloseBraceToken => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+fn reject_import_attributes_after_string(
+    tokens: &[DiscoveryToken],
+    after_string: usize,
+) -> Option<()> {
+    match tokens.get(after_string).map(|token| token.kind) {
+        Some(SyntaxKind::WithKeyword | SyntaxKind::AssertKeyword) => None,
+        _ => Some(()),
+    }
 }
 
 fn collect_jsdoc_import_requests(
@@ -858,9 +1127,45 @@ const fn is_jsdoc_import_keyword_part(ch: char) -> bool {
     ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
 }
 
+#[cfg(test)]
 pub(crate) fn collect_module_specifiers(
     arena: &NodeArena,
     source_file: NodeIndex,
+) -> Vec<CollectedModuleSpecifier> {
+    collect_module_specifiers_impl(
+        arena,
+        source_file,
+        AmbientModuleDeclarationSpecifierPolicy::All,
+    )
+}
+
+pub(crate) fn collect_module_specifiers_for_check(
+    arena: &NodeArena,
+    source_file: NodeIndex,
+    is_external_module: bool,
+) -> Vec<CollectedModuleSpecifier> {
+    collect_module_specifiers_impl(
+        arena,
+        source_file,
+        AmbientModuleDeclarationSpecifierPolicy::Check { is_external_module },
+    )
+}
+
+fn collect_module_specifiers_for_source_discovery(
+    arena: &NodeArena,
+    source_file: NodeIndex,
+) -> Vec<CollectedModuleSpecifier> {
+    collect_module_specifiers_impl(
+        arena,
+        source_file,
+        AmbientModuleDeclarationSpecifierPolicy::SourceDiscovery,
+    )
+}
+
+fn collect_module_specifiers_impl(
+    arena: &NodeArena,
+    source_file: NodeIndex,
+    ambient_declaration_policy: AmbientModuleDeclarationSpecifierPolicy,
 ) -> Vec<CollectedModuleSpecifier> {
     use tsz::module_resolver::ImportKind;
 
@@ -966,12 +1271,22 @@ pub(crate) fn collect_module_specifiers(
                 })
             });
             if has_declare && let Some(text) = arena.get_literal_text(module_decl.name) {
-                specifiers.push((
-                    strip_quotes(text),
-                    module_decl.name,
-                    ImportKind::EsmImport,
-                    None,
-                ));
+                let specifier = strip_quotes(text);
+                // Relative names can be module augmentations of concrete sibling
+                // files. Non-relative names only need driver resolution in
+                // non-declaration external modules, where the lookup proves
+                // whether a bare augmentation target exists for TS2664.
+                let include_non_relative = match ambient_declaration_policy {
+                    #[cfg(test)]
+                    AmbientModuleDeclarationSpecifierPolicy::All => true,
+                    AmbientModuleDeclarationSpecifierPolicy::SourceDiscovery => false,
+                    AmbientModuleDeclarationSpecifierPolicy::Check { is_external_module } => {
+                        is_external_module && !source.is_declaration_file
+                    }
+                };
+                if include_non_relative || tsz::module_resolver::is_path_relative(&specifier) {
+                    specifiers.push((specifier, module_decl.name, ImportKind::EsmImport, None));
+                }
             }
             if let Some(body_node) = arena.get(module_decl.body)
                 && let Some(block) = arena.get_module_block(body_node)
@@ -1737,7 +2052,7 @@ pub(crate) fn resolve_module_specifier(
     for candidate in candidates {
         // Check if candidate exists in known files (for virtual test files) or on filesystem
         let exists = known_files.contains(&candidate)
-            || (count_is_file(&candidate) && is_valid_module_or_js_file(&candidate));
+            || (resolution_cache.file_exists(&candidate) && is_valid_module_or_js_file(&candidate));
         if debug {
             tracing::debug!("candidate={candidate:?} exists={exists}");
         }
@@ -1757,7 +2072,8 @@ pub(crate) fn resolve_module_specifier(
                 expand_module_path_candidates(&current.join(&specifier), options, package_type)
             {
                 let exists = known_files.contains(&candidate)
-                    || (count_is_file(&candidate) && is_valid_module_or_js_file(&candidate));
+                    || (resolution_cache.file_exists(&candidate)
+                        && is_valid_module_or_js_file(&candidate));
                 if debug {
                     tracing::debug!("classic-fallback candidate={candidate:?} exists={exists}");
                 }
@@ -2449,9 +2765,13 @@ fn resolve_node_module_specifier(
                             &subpath_key,
                             &conditions,
                             types_versions_compiler_version(options),
-                        ) && let Some(resolved) =
-                            try_remap_output_to_source(dir, &target, from_file, options)
-                        {
+                        ) && let Some(resolved) = try_remap_output_to_source(
+                            dir,
+                            &target,
+                            from_file,
+                            options,
+                            resolution_cache,
+                        ) {
                             return Some(resolved);
                         }
                     }
@@ -2508,7 +2828,9 @@ fn resolve_node_module_specifier(
             {
                 let candidates = expand_module_path_candidates(&package_root, options, None);
                 for candidate in candidates {
-                    if count_is_file(&candidate) && is_valid_module_or_js_file(&candidate) {
+                    if resolution_cache.file_exists(&candidate)
+                        && is_valid_module_or_js_file(&candidate)
+                    {
                         return Some(normalize_resolved_path(&candidate, options));
                     }
                 }
@@ -2615,9 +2937,13 @@ fn resolve_package_imports_specifier(
                 // When outDir/declarationDir is set, import targets like "./dist/index.js"
                 // point to the output directory which doesn't exist at compile time.
                 // Remap back to source files (e.g., "./index.ts").
-                if let Some(resolved) =
-                    try_remap_output_to_source(current, target, from_file, options)
-                {
+                if let Some(resolved) = try_remap_output_to_source(
+                    current,
+                    target,
+                    from_file,
+                    options,
+                    resolution_cache,
+                ) {
                     return Some(resolved);
                 }
             }
@@ -2673,9 +2999,13 @@ fn resolve_package_specifier(
                 &subpath_key,
                 conditions,
                 types_versions_compiler_version(options),
-            ) && let Some(resolved) =
-                resolve_export_entry(package_root, &target, options, package_type)
-            {
+            ) && let Some(resolved) = resolve_export_entry(
+                package_root,
+                &target,
+                options,
+                package_type,
+                resolution_cache,
+            ) {
                 return Some(resolved);
             }
             if let Some(types_versions) = package_json.types_versions.as_ref() {
@@ -2793,7 +3123,8 @@ fn resolve_package_root(
         .unwrap_or(false);
     let has_package_json = package_json.is_some();
     if (!is_symlinked_package_root || !has_package_json)
-        && let Some(resolved) = resolve_package_index_fallback(package_root, options)
+        && let Some(resolved) =
+            resolve_package_index_fallback(package_root, options, resolution_cache)
     {
         return Some(resolved);
     }
@@ -2804,6 +3135,7 @@ fn resolve_package_root(
 fn resolve_package_index_fallback(
     package_root: &Path,
     options: &ResolvedCompilerOptions,
+    resolution_cache: &mut ModuleResolutionCache,
 ) -> Option<PathBuf> {
     let extensions = if options.allow_js {
         PACKAGE_INDEX_FALLBACK_ALLOW_JS_EXTENSIONS.as_slice()
@@ -2821,7 +3153,7 @@ fn resolve_package_index_fallback(
 
     for ext in extensions {
         for candidate in candidates_with_suffixes_and_extension(&index, ext, suffixes) {
-            if count_is_file(&candidate) && is_valid_module_or_js_file(&candidate) {
+            if resolution_cache.file_exists(&candidate) && is_valid_module_or_js_file(&candidate) {
                 return Some(normalize_resolved_path(&candidate, options));
             }
         }
@@ -2849,12 +3181,12 @@ fn resolve_declaration_package_entry(
     };
 
     for candidate in expand_module_path_candidates(&path, options, package_type) {
-        if count_is_file(&candidate) && is_declaration_file(&candidate) {
+        if resolution_cache.file_exists(&candidate) && is_declaration_file(&candidate) {
             return Some(normalize_resolved_path(&candidate, options));
         }
     }
 
-    if count_is_file(&path) && is_declaration_file(&path) {
+    if resolution_cache.file_exists(&path) && is_declaration_file(&path) {
         return Some(normalize_resolved_path(&path, options));
     }
 
@@ -2916,7 +3248,7 @@ fn resolve_package_entry(
         {
             continue;
         }
-        if count_is_file(&candidate) && is_valid_module_or_js_file(&candidate) {
+        if resolution_cache.file_exists(&candidate) && is_valid_module_or_js_file(&candidate) {
             return Some(normalize_resolved_path(&candidate, options));
         }
     }
@@ -2942,7 +3274,9 @@ fn resolve_package_entry(
         if let Some(main) = &pj.main {
             let main_path = path.join(main);
             for candidate in expand_module_path_candidates(&main_path, options, sub_type) {
-                if count_is_file(&candidate) && is_valid_module_or_js_file(&candidate) {
+                if resolution_cache.file_exists(&candidate)
+                    && is_valid_module_or_js_file(&candidate)
+                {
                     return Some(normalize_resolved_path(&candidate, options));
                 }
             }
@@ -2957,6 +3291,7 @@ fn resolve_export_entry(
     entry: &str,
     options: &ResolvedCompilerOptions,
     package_type: Option<PackageType>,
+    resolution_cache: &mut ModuleResolutionCache,
 ) -> Option<PathBuf> {
     let entry = entry.trim();
     if !is_valid_relative_package_target(entry) {
@@ -2969,7 +3304,7 @@ fn resolve_export_entry(
     let path = package_relative_target_path(package_root, entry)?;
 
     for candidate in expand_export_path_candidates(&path, options, package_type) {
-        if count_is_file(&candidate) && is_valid_module_file(&candidate) {
+        if resolution_cache.file_exists(&candidate) && is_valid_module_file(&candidate) {
             return Some(normalize_resolved_path(&candidate, options));
         }
     }
@@ -2991,6 +3326,7 @@ fn try_remap_output_to_source(
     target: &str,
     _from_file: &Path,
     options: &ResolvedCompilerOptions,
+    resolution_cache: &mut ModuleResolutionCache,
 ) -> Option<PathBuf> {
     fn resolve_configured_path_against_package_root(
         configured: &Path,
@@ -3108,7 +3444,7 @@ fn try_remap_output_to_source(
                 if let Some(base) = source_str.strip_suffix(out_ext) {
                     for src_ext in *src_exts {
                         let candidate = PathBuf::from(format!("{base}{src_ext}"));
-                        if count_is_file(&candidate) {
+                        if resolution_cache.file_exists(&candidate) {
                             return Some(normalize_resolved_path(&candidate, options));
                         }
                     }
@@ -3116,7 +3452,7 @@ fn try_remap_output_to_source(
             }
 
             // Also try the path as-is (it might be a .ts file already)
-            if count_is_file(&source_base) {
+            if resolution_cache.file_exists(&source_base) {
                 return Some(normalize_resolved_path(&source_base, options));
             }
         }

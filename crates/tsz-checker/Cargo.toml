@@ -74,6 +74,10 @@ name = "object_literal_getter_widening_tests"
 path = "tests/object_literal_getter_widening_tests.rs"
 
 [[test]]
+name = "object_union_assignability_fast_path_tests"
+path = "tests/object_union_assignability_fast_path_tests.rs"
+
+[[test]]
 name = "optional_chain_literal_nullish_ts2339_tests"
 path = "tests/optional_chain_literal_nullish_ts2339_tests.rs"
 
@@ -662,6 +666,10 @@ name = "signature_assignability_regression_tests"
 path = "tests/signature_assignability_regression_tests.rs"
 
 [[test]]
+name = "global_function_intrinsic_assignability_tests"
+path = "tests/global_function_intrinsic_assignability_tests.rs"
+
+[[test]]
 name = "element_access_structural_codes_tests"
 path = "tests/element_access_structural_codes_tests.rs"
 
@@ -672,6 +680,10 @@ path = "tests/enum_recursion_tests.rs"
 [[test]]
 name = "enum_nominality_tests"
 path = "tests/enum_nominality_tests.rs"
+
+[[test]]
+name = "ts2367_comparison_overlap_tests"
+path = "tests/ts2367_comparison_overlap_tests.rs"
 
 [[test]]
 name = "enum_indexed_access_tests"
@@ -1020,6 +1032,10 @@ path = "tests/ts2352_paren_alias_display_tests.rs"
 [[test]]
 name = "generic_inference_ordering_tests"
 path = "tests/generic_inference_ordering_tests.rs"
+
+[[test]]
+name = "jsx_multi_construct_overload_tests"
+path = "tests/jsx_multi_construct_overload_tests.rs"
 
 [[test]]
 name = "jsx_overload_anchor_literal_attr_tests"
@@ -1404,6 +1420,30 @@ path = "tests/public_package_unique_symbol_emit_tests.rs"
 [[test]]
 name = "ts2536_keyof_string_index_signature_tests"
 path = "tests/ts2536_keyof_string_index_signature_tests.rs"
+
+[[test]]
+name = "recovery_any_sites_tests"
+path = "tests/recovery_any_sites_tests.rs"
+
+[[test]]
+name = "arbitrary_ext_decl_module_resolution_tests"
+path = "tests/arbitrary_ext_decl_module_resolution_tests.rs"
+
+[[test]]
+name = "mixin_any_base_index_sig_tests"
+path = "tests/mixin_any_base_index_sig_tests.rs"
+
+[[test]]
+name = "stage3_lib_namespace_resolution_tests"
+path = "tests/stage3_lib_namespace_resolution_tests.rs"
+
+[[test]]
+name = "ts2321_ts2859_tests"
+path = "tests/ts2321_ts2859_tests.rs"
+
+[[test]]
+name = "deeply_nested_conditional_mapped_recursion_tests"
+path = "tests/deeply_nested_conditional_mapped_recursion_tests.rs"
 
 [lints]
 workspace = true

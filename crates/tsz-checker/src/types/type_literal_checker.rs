@@ -270,7 +270,11 @@ impl<'a> CheckerState<'a> {
                             {
                                 let type_arg =
                                     self.get_type_from_type_node_in_type_literal(first_arg);
-                                return self.ctx.types.string_intrinsic_by_name(name, type_arg);
+                                return crate::query_boundaries::type_construction::string_intrinsic_by_name(
+                                    self.ctx.types,
+                                    name,
+                                    type_arg,
+                                );
                             }
                             return TypeId::ERROR;
                         }
@@ -314,7 +318,7 @@ impl<'a> CheckerState<'a> {
                 if !self.ctx.compiler_options.no_lib
                     && type_param.is_none()
                     && sym_id.is_none()
-                    && self.is_promise_like_name(name)
+                    && matches!(name, "Promise" | "PromiseLike")
                     && let Some(args) = &type_ref.type_arguments
                 {
                     let type_args: Vec<TypeId> = args

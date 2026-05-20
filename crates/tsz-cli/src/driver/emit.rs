@@ -33,14 +33,24 @@ struct DeclarationBundleChunk {
     contents: String,
 }
 
+#[derive(Debug, Clone)]
+struct JsBundleChunk {
+    path_key: String,
+    referenced_path_keys: Vec<String>,
+    contents: String,
+}
+
 pub(crate) struct EmitOutputsContext<'a> {
     pub(crate) program: &'a MergedProgram,
     pub(crate) options: &'a ResolvedCompilerOptions,
     pub(crate) base_dir: &'a Path,
+    pub(crate) root_file_paths: &'a [PathBuf],
     pub(crate) root_dir: Option<&'a Path>,
     pub(crate) out_dir: Option<&'a Path>,
     pub(crate) declaration_dir: Option<&'a Path>,
     pub(crate) dirty_paths: Option<&'a FxHashSet<PathBuf>>,
+    pub(crate) outfile_bundle_paths: Option<&'a FxHashSet<PathBuf>>,
+    pub(crate) outfile_bundle_dependencies: Option<&'a FxHashMap<PathBuf, FxHashSet<PathBuf>>>,
     pub(crate) type_caches: &'a FxHashMap<std::path::PathBuf, tsz::checker::TypeCache>,
 }
 
@@ -70,7 +80,13 @@ pub(crate) fn emit_outputs(
             context.base_dir.join(out_file)
         }
     });
-    let mut js_bundle_chunks: Vec<String> = Vec::new();
+    let mut js_bundle_chunks: Vec<JsBundleChunk> = Vec::new();
+    // AMD factory-parameter counters accumulated across files in the same
+    // outFile bundle.  Each file's printer seeds its counter map from here and
+    // returns updated counters so the next file uses unique names (e.g.
+    // `m1_1` in the first file, `m1_2` in the second), matching tsc behavior.
+    let mut bundle_amd_counters: rustc_hash::FxHashMap<String, u32> =
+        rustc_hash::FxHashMap::default();
     let duplicate_global_var_names = if declaration_bundle_path.is_some() {
         build_duplicate_global_var_names(context.program)
     } else {
@@ -97,6 +113,12 @@ pub(crate) fn emit_outputs(
         .iter()
         .enumerate()
         .map(|(idx, file)| (idx as u32, file.file_name.clone()))
+        .collect();
+    let root_file_paths: FxHashSet<String> = context
+        .root_file_paths
+        .iter()
+        .map(|path| std::fs::canonicalize(path).unwrap_or_else(|_| path.clone()))
+        .map(|path| path.to_string_lossy().replace('\\', "/"))
         .collect();
     let file_lookup = build_program_file_lookup(context.program);
 
@@ -189,6 +211,15 @@ pub(crate) fn emit_outputs(
                 &input_path,
             )
         {
+            if js_bundle_path.is_some()
+                && matches!(context.options.printer.module, ModuleKind::None)
+                && context
+                    .outfile_bundle_paths
+                    .is_some_and(|paths| !paths.contains(&input_path))
+            {
+                continue;
+            }
+
             if is_js_input
                 && js_input_skipped_by_node_modules_depth(
                     &input_path,
@@ -199,7 +230,14 @@ pub(crate) fn emit_outputs(
                     format!("failed to read skipped JS source {}", input_path.display())
                 })?;
                 if js_bundle_path.is_some() {
-                    js_bundle_chunks.push(contents);
+                    js_bundle_chunks.push(JsBundleChunk {
+                        path_key: normalized_path_key(&input_path),
+                        referenced_path_keys: js_bundle_reference_path_keys(
+                            &input_path,
+                            context.outfile_bundle_dependencies,
+                        ),
+                        contents,
+                    });
                 } else {
                     outputs.push(OutputFile {
                         path: js_path,
@@ -305,11 +343,12 @@ pub(crate) fn emit_outputs(
                 printer_options.module = ModuleKind::ESNext;
             }
 
-            if js_bundle_path.is_some()
-                && matches!(printer_options.module, ModuleKind::AMD | ModuleKind::System)
-            {
+            let is_amd_system_bundle = js_bundle_path.is_some()
+                && matches!(printer_options.module, ModuleKind::AMD | ModuleKind::System);
+            if is_amd_system_bundle {
                 printer_options.bundled_module_name =
                     bundled_module_name(context.base_dir, context.root_dir, &input_path);
+                printer_options.bundle_module_counters = bundle_amd_counters.clone();
             }
 
             // tsc's isFileForcedToBeModuleByFormat: .cjs/.cts/.mjs/.mts files are
@@ -368,6 +407,11 @@ pub(crate) fn emit_outputs(
             }
 
             printer.emit(file.source_file);
+            // Capture AMD counters before consuming printer output so the next
+            // file in this bundle starts numbering where this file left off.
+            if is_amd_system_bundle {
+                bundle_amd_counters = printer.bundle_module_counters().clone();
+            }
             let map_json = map_info
                 .as_ref()
                 .and_then(|_| printer.generate_source_map_json());
@@ -391,7 +435,14 @@ pub(crate) fn emit_outputs(
 
             // When --outFile is set, collect content for bundling.
             if js_bundle_path.is_some() {
-                js_bundle_chunks.push(contents);
+                js_bundle_chunks.push(JsBundleChunk {
+                    path_key: normalized_path_key(&input_path),
+                    referenced_path_keys: js_bundle_reference_path_keys(
+                        &input_path,
+                        context.outfile_bundle_dependencies,
+                    ),
+                    contents,
+                });
             } else {
                 outputs.push(OutputFile {
                     path: js_path,
@@ -442,6 +493,7 @@ pub(crate) fn emit_outputs(
                     // Set arena to path mapping for module resolution
                     emitter.set_arena_to_path(arena_to_path.clone());
                     emitter.set_file_idx_to_path(file_idx_to_path.clone());
+                    emitter.set_root_file_paths(root_file_paths.clone());
                     emitter.set_global_symbol_arenas(global_symbol_arenas.clone());
                     emitter.set_remove_comments(context.options.printer.remove_comments);
                     emitter.set_strip_internal(context.options.strip_internal);
@@ -452,10 +504,16 @@ pub(crate) fn emit_outputs(
                     emitter
                 } else {
                     let mut emitter = DeclarationEmitter::new(&file.arena);
-                    // Still set binder even without cache for consistency
+                    // Still set binder and current file context without cache for
+                    // declaration paths that consult program-level export facts.
                     emitter.set_binder(Some(&binder));
+                    emitter.set_current_arena(
+                        std::sync::Arc::clone(&file.arena),
+                        file.file_name.clone(),
+                    );
                     emitter.set_arena_to_path(arena_to_path.clone());
                     emitter.set_file_idx_to_path(file_idx_to_path.clone());
+                    emitter.set_root_file_paths(root_file_paths.clone());
                     emitter.set_global_symbol_arenas(global_symbol_arenas.clone());
                     emitter.set_remove_comments(context.options.printer.remove_comments);
                     emitter.set_strip_internal(context.options.strip_internal);
@@ -628,8 +686,12 @@ pub(crate) fn emit_outputs(
         && !js_bundle_chunks.is_empty()
     {
         let mut bundled = String::new();
-        for (i, chunk) in js_bundle_chunks.iter().enumerate() {
-            let mut trimmed = chunk.trim_end_matches(['\r', '\n']);
+        for (i, chunk) in js_bundle_chunk_order(&js_bundle_chunks)
+            .into_iter()
+            .filter_map(|idx| js_bundle_chunks.get(idx))
+            .enumerate()
+        {
+            let mut trimmed = chunk.contents.trim_end_matches(['\r', '\n']);
             // Strip duplicate "use strict" directives from non-first files.
             // In bundled output, only the first file's prologue is kept.
             if i > 0 {
@@ -661,7 +723,7 @@ pub(crate) fn emit_outputs(
             // and emits its own `"use strict";` inside the callback —
             // tsc does not add a second one at the top of the bundle.
             let any_script_chunk = js_bundle_chunks.iter().any(|chunk| {
-                let trimmed = chunk.trim_start();
+                let trimmed = chunk.contents.trim_start();
                 !(trimmed.starts_with("define(") || trimmed.starts_with("System.register("))
             });
             if any_script_chunk {
@@ -1297,6 +1359,10 @@ fn normalized_file_key(file_name: &str) -> String {
         .replace('\\', "/")
 }
 
+fn normalized_path_key(path: &Path) -> String {
+    normalize_path(path).to_string_lossy().replace('\\', "/")
+}
+
 fn resolve_relative_module_file(
     containing_file: &str,
     module_spec: &str,
@@ -1356,6 +1422,21 @@ fn declaration_bundle_reference_path_keys(
         .filter_map(|(reference_path, _, _)| {
             resolve_declaration_reference_path_file(containing_file, &reference_path, file_lookup)
         })
+        .collect()
+}
+
+fn js_bundle_reference_path_keys(
+    input_path: &Path,
+    outfile_bundle_dependencies: Option<&FxHashMap<PathBuf, FxHashSet<PathBuf>>>,
+) -> Vec<String> {
+    let Some(dependencies) = outfile_bundle_dependencies.and_then(|deps| deps.get(input_path))
+    else {
+        return Vec::new();
+    };
+
+    dependencies
+        .iter()
+        .map(|path| normalized_path_key(path))
         .collect()
 }
 
@@ -1703,18 +1784,50 @@ fn join_declaration_bundle_chunks(chunks: &[DeclarationBundleChunk], new_line: &
 }
 
 fn declaration_bundle_chunk_order(chunks: &[DeclarationBundleChunk]) -> Vec<usize> {
-    let by_path: FxHashMap<&str, usize> = chunks
-        .iter()
-        .enumerate()
-        .map(|(idx, chunk)| (chunk.path_key.as_str(), idx))
-        .collect();
-    let mut ordered = Vec::with_capacity(chunks.len());
+    bundle_chunk_order(
+        chunks.len(),
+        chunks.iter().enumerate().map(|(idx, chunk)| {
+            (
+                idx,
+                chunk.path_key.as_str(),
+                chunk.referenced_path_keys.as_slice(),
+            )
+        }),
+    )
+}
+
+fn js_bundle_chunk_order(chunks: &[JsBundleChunk]) -> Vec<usize> {
+    bundle_chunk_order(
+        chunks.len(),
+        chunks.iter().enumerate().map(|(idx, chunk)| {
+            (
+                idx,
+                chunk.path_key.as_str(),
+                chunk.referenced_path_keys.as_slice(),
+            )
+        }),
+    )
+}
+
+fn bundle_chunk_order<'a, I>(len: usize, chunk_refs: I) -> Vec<usize>
+where
+    I: IntoIterator<Item = (usize, &'a str, &'a [String])>,
+{
+    let mut references_by_idx: Vec<&'a [String]> = vec![&[]; len];
+    let mut by_path: FxHashMap<&'a str, usize> = FxHashMap::default();
+    for (idx, path_key, referenced_path_keys) in chunk_refs {
+        if idx < len {
+            references_by_idx[idx] = referenced_path_keys;
+            by_path.insert(path_key, idx);
+        }
+    }
+    let mut ordered = Vec::with_capacity(len);
     let mut emitted = FxHashSet::default();
     let mut visiting = FxHashSet::default();
 
     fn visit(
         idx: usize,
-        chunks: &[DeclarationBundleChunk],
+        references_by_idx: &[&[String]],
         by_path: &FxHashMap<&str, usize>,
         emitted: &mut FxHashSet<usize>,
         visiting: &mut FxHashSet<usize>,
@@ -1724,9 +1837,19 @@ fn declaration_bundle_chunk_order(chunks: &[DeclarationBundleChunk]) -> Vec<usiz
             return;
         }
 
-        for referenced_path in &chunks[idx].referenced_path_keys {
+        let Some(references) = references_by_idx.get(idx) else {
+            return;
+        };
+        for referenced_path in *references {
             if let Some(&referenced_idx) = by_path.get(referenced_path.as_str()) {
-                visit(referenced_idx, chunks, by_path, emitted, visiting, ordered);
+                visit(
+                    referenced_idx,
+                    references_by_idx,
+                    by_path,
+                    emitted,
+                    visiting,
+                    ordered,
+                );
             }
         }
 
@@ -1736,10 +1859,10 @@ fn declaration_bundle_chunk_order(chunks: &[DeclarationBundleChunk]) -> Vec<usiz
         }
     }
 
-    for idx in 0..chunks.len() {
+    for idx in 0..len {
         visit(
             idx,
-            chunks,
+            &references_by_idx,
             &by_path,
             &mut emitted,
             &mut visiting,

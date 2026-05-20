@@ -32,6 +32,7 @@ type CrossFileQueryCacheKey = (u8, u32, u32, u32, u64);
 type CrossFileQueryCacheValue = (TypeId, Arc<Vec<TypeParamInfo>>);
 type DefDashMap<K, V> = DashMap<K, V, FxBuildHasher>;
 type DefDashSet<K> = DashSet<K, FxBuildHasher>;
+type SymbolMappingsSnapshot = Arc<[(u32, DefId)]>;
 
 // =============================================================================
 // DefId - Solver-Owned Definition Identifier
@@ -573,6 +574,13 @@ pub struct DefinitionStore {
     /// Replaces the O(N) linear scan in the previous `find_def_by_symbol`.
     symbol_only_index: DefDashMap<u32, DefId>,
 
+    /// Generation-keyed immutable snapshot of `symbol_only_index`.
+    ///
+    /// Project checking warms many per-file checker contexts from the same shared
+    /// store. Caching this snapshot avoids collecting the same `DashMap` into a
+    /// fresh `Vec` for every checker while preserving generation-based invalidation.
+    symbol_mappings_snapshot: Mutex<Option<(u64, SymbolMappingsSnapshot)>>,
+
     /// Reverse index: body `TypeId` -> `DefId` for non-generic type aliases.
     ///
     /// Populated by `set_body` when the definition is a `TypeAlias` with no type
@@ -821,6 +829,7 @@ impl DefinitionStore {
                 id_capacity,
                 Default::default(),
             ),
+            symbol_mappings_snapshot: Mutex::new(None),
             body_to_alias: DefDashMap::default(),
             computed_alias_bodies: DefDashSet::default(),
             shape_to_def: DefDashMap::default(),
@@ -1355,10 +1364,57 @@ impl DefinitionStore {
     /// collected into a `Vec` to avoid holding `DashMap` read locks across the
     /// caller's mutation of its own maps.
     pub fn all_symbol_mappings(&self) -> Vec<(u32, DefId)> {
-        self.symbol_only_index
-            .iter()
-            .map(|entry| (*entry.key(), *entry.value()))
-            .collect()
+        self.all_symbol_mappings_snapshot().to_vec()
+    }
+
+    /// Return a generation-keyed immutable snapshot of all `(raw_symbol_id, DefId)`
+    /// pairs from the symbol-only index.
+    ///
+    /// The snapshot is rebuilt only when the store generation changes. If a writer
+    /// mutates the store while we are collecting, we retry so the cached generation
+    /// cannot point at a partially stale snapshot.
+    pub fn all_symbol_mappings_snapshot(&self) -> SymbolMappingsSnapshot {
+        loop {
+            let generation_before = self.generation();
+            if let Some(snapshot) = self.cached_symbol_mappings_snapshot(generation_before) {
+                return snapshot;
+            }
+
+            let mappings: SymbolMappingsSnapshot = self
+                .symbol_only_index
+                .iter()
+                .map(|entry| (*entry.key(), *entry.value()))
+                .collect::<Vec<_>>()
+                .into();
+
+            let generation_after = self.generation();
+            if generation_before != generation_after {
+                continue;
+            }
+
+            let mut cached = self
+                .symbol_mappings_snapshot
+                .lock()
+                .expect("symbol mappings snapshot lock poisoned");
+            if let Some((cached_generation, snapshot)) = cached.as_ref()
+                && *cached_generation == generation_after
+            {
+                return Arc::clone(snapshot);
+            }
+
+            *cached = Some((generation_after, Arc::clone(&mappings)));
+            return mappings;
+        }
+    }
+
+    fn cached_symbol_mappings_snapshot(&self, generation: u64) -> Option<SymbolMappingsSnapshot> {
+        let cached = self
+            .symbol_mappings_snapshot
+            .lock()
+            .expect("symbol mappings snapshot lock poisoned");
+        cached.as_ref().and_then(|(cached_generation, snapshot)| {
+            (*cached_generation == generation).then(|| Arc::clone(snapshot))
+        })
     }
 
     /// Find a type alias `DefId` whose body matches the given `TypeId`.
@@ -1432,7 +1488,7 @@ impl DefinitionStore {
             _ => return Vec::new(),
         };
 
-        let mut resolved = Vec::new();
+        let mut resolved = Vec::with_capacity(heritage_names.len());
         for name_str in &heritage_names {
             let name_atom = intern_fn(name_str);
             if let Some(candidates) = self.name_to_defs.get(&name_atom) {
@@ -1932,7 +1988,7 @@ impl DefinitionStore {
 
             // Resolve implements_names → DefinitionInfo.implements
             if !entry.implements_names.is_empty() {
-                let mut resolved_implements = Vec::new();
+                let mut resolved_implements = Vec::with_capacity(entry.implements_names.len());
                 for name_str in &entry.implements_names {
                     if name_str.contains('.') {
                         continue;

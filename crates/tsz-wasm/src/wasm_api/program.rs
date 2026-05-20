@@ -15,7 +15,7 @@ use tsz::parallel::{
 };
 use tsz::parser::ParserState;
 use tsz_checker::diagnostics::DiagnosticCategory;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 use super::options::{module_kind_from_u8, target_kind_from_u8};
 use super::source_file::TsSourceFile;
@@ -106,6 +106,9 @@ impl TsCompilerOptions {
             allow_unused_labels: None,
             no_property_access_from_index_signature: false,
             sound_mode: self.sound_mode.unwrap_or(false),
+            sound_check_declarations: false,
+            sound_report_only: false,
+            sound_pedantic: false,
             experimental_decorators: false,
             no_unused_locals: false,
             no_unused_parameters: false,

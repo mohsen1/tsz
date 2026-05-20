@@ -5,6 +5,11 @@
 
 ## Doc Status
 
+`docs/plan/ROADMAP.md` owns project sequencing and active priorities. This file
+is a Sound Mode appendix under that roadmap: it can define the product contract,
+implementation facts, and future design notes, but it does not make Sound Mode
+active critical-path work unless an issue/PR is explicitly assigned.
+
 This file currently mixes four jobs:
 
 1. current implementation status
@@ -1767,7 +1772,26 @@ Caching is the hidden complexity of gradual soundness. Because Sound Mode is a p
 - **Boundary Projection Caches:** projected declaration views should live in a cache separate from the base symbol/type caches. File identity/hash is only part of the invalidation story; the actual cache key will also need to reflect the observed symbol/type, polarity, and relevant instantiation context. This matters especially for project references, where downstream rebuild decisions already track the freshness of emitted `.d.ts` files.
 - **Overlay Object Cache:** the persistent overlay object store should stay separate from projected boundary caches. They may share low-level freshness inputs such as declaration-closure hashes, but they should not share one invalidation table or one storage model because they serve different layers of the system.
 
-> **Current state:** `RelationCacheKey` and `RelationPolicy::cache_config()` already carry more sound-relevant state than an earlier version of this doc claimed: method-bivariance disablement is represented in packed relation flags, strict subtype and strict-any policy have dedicated bits, and `any_mode` differentiates `any` propagation modes. `RelationPolicy::from_flags()` no longer derives strict-`any` behavior from `FLAG_STRICT_FUNCTION_TYPES`. The remaining cache risk is more specific: audit every relation entrypoint and helper path to prove each behavior-affecting policy knob reaches the canonical cache config, and require future sound knobs to add cache-partition tests before they ship.
+> **Current state (audited 2026-05-19):** `RelationCacheKey` and `RelationPolicy::cache_config()` carry all sound-relevant policy state. Every `RelationFlags` bit — including `ALLOW_ERASED_GENERIC_SIGNATURE_RETRY`, `IN_CALLBACK_PARAM_CHECK`, and `STRICT_READONLY_IDENTITY` — produces a distinct cache slot. The three live sound policy knobs (`STRICT_SUBTYPE_CHECKING`, `STRICT_ANY_PROPAGATION`, `DISABLE_METHOD_BIVARIANCE`) have per-knob partition tests and slot-isolation tests in `crates/tsz-solver/tests/relation_cache_config_tests.rs` confirming that a non-sound cached result cannot be served to a sound-mode lookup for the same type pair.
+
+### Sound Policy Knob Checklist
+
+Every new sound-mode behavioral knob that changes relation outcomes **must** follow these steps before shipping:
+
+1. **Add a `RelationFlags` bit.** Choose the next unused bit in `RelationFlags` (declared in `crates/tsz-solver/src/types.rs`) and document its semantics.
+2. **Reflect it in `RelationPolicy`.** Either add a typed field and wire it in `cache_config()`, or ensure `cache_flags_from_packed()` handles the bit when it arrives via packed `u16` flags.
+3. **Add a `*_partitions_cache_entries` test** in `relation_cache_config_tests.rs` (use the existing `in_callback_param_check_partitions_cache_entries` shape).
+4. **Add a `*_slot_does_not_collide_with_non_sound_slot` isolation test** (use the `strict_any_propagation_slot_does_not_collide_with_non_sound_slot` shape). This proves that a result cached under the non-sound policy cannot be served to a sound-mode lookup.
+5. **Wire it through every checker call site.** Search all `RelationPolicy::from_flags` + `with_*` chains in `crates/tsz-checker/src/query_boundaries/assignability.rs` and ensure the new knob is set wherever sound mode is active.
+6. **Update this checklist** with the new knob name and the PR that introduced it.
+
+**Live sound knobs and their tests** (as of the audit above):
+
+| Knob | `RelationFlags` bit | Partition test | Isolation test |
+|---|---|---|---|
+| `STRICT_ANY_PROPAGATION` | bit 10 | `strict_any_propagation_partitions_cache_entries` | `strict_any_propagation_slot_does_not_collide_with_non_sound_slot` |
+| `STRICT_SUBTYPE_CHECKING` | bit 9 | `strict_subtype_checking_partitions_cache_entries` | `strict_subtype_checking_slot_does_not_collide_with_non_sound_slot` |
+| `DISABLE_METHOD_BIVARIANCE` | bit 4 | covered by `each_relation_flag_bit_produces_a_distinct_key` | `disable_method_bivariance_slot_does_not_collide_with_bivariant_slot` |
 
 ### Compatibility & Performance
 

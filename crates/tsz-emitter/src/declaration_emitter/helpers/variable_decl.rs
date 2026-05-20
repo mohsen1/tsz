@@ -85,9 +85,12 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(jsdoc) = self.function_like_jsdoc_for_node(decl_idx) else {
             return false;
         };
-        let Some(enum_type) = Self::parse_jsdoc_enum_type_text(&jsdoc) else {
+        let Some(raw_enum_type) = Self::parse_jsdoc_enum_type_text(&jsdoc) else {
             return false;
         };
+        let enum_type = self.jsdoc_type_text_for_declaration_emit(&raw_enum_type);
+        let enum_uses_bare_module_import_surface =
+            raw_enum_type != enum_type && Self::type_text_starts_with_import_type(&raw_enum_type);
 
         self.suppress_current_statement_jsdoc_comments = true;
         self.write_indent();
@@ -100,6 +103,24 @@ impl<'a> DeclarationEmitter<'a> {
         self.write(&enum_type);
         self.write(";");
         self.write_line();
+
+        if enum_uses_bare_module_import_surface {
+            if let Some(decl_node) = self.arena.get(decl_idx) {
+                let chain = self.leading_jsdoc_comment_chain_for_pos(decl_node.pos);
+                self.emit_jsdoc_comment_chain(&chain);
+            }
+            self.write_indent();
+            if is_exported {
+                self.write("export ");
+            } else if self.should_emit_declare_keyword(false) {
+                self.write("declare ");
+            }
+            self.write("const ");
+            self.emit_node(decl_name);
+            self.write(": {};");
+            self.write_line();
+            return true;
+        }
 
         self.write_indent();
         if is_exported {
@@ -419,6 +440,14 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(&type_text);
             } else if has_initializer
                 && self.initializer_is_new_expression(initializer)
+                && let Some(type_text) = self.construct_return_new_expression_type_text(initializer)
+            {
+                self.write(": ");
+                let type_text = Self::expand_parameters_utility_tuple_type_text(&type_text)
+                    .unwrap_or(type_text);
+                self.write(&type_text);
+            } else if has_initializer
+                && self.initializer_is_new_expression(initializer)
                 && self.new_expression_constructor_is_class_like(initializer)
                 && !(self.source_is_js_file && self.inside_non_ambient_namespace)
                 && let Some(type_text) = self.nameable_new_expression_type_text(initializer)
@@ -582,7 +611,12 @@ impl<'a> DeclarationEmitter<'a> {
                     || self.function_initializer_is_self_returning_for(initializer, decl_name)
                     || self.function_initializer_returns_unique_identifier(initializer)
                     || self.function_initializer_has_typeof_in_param_annotations(initializer)
-                    || self.function_initializer_has_destructured_parameters(initializer))
+                    || self.function_initializer_has_destructured_parameters(initializer)
+                    || self.function_initializer_has_inferred_return_via_symbol(
+                        decl_idx,
+                        decl_name,
+                        initializer,
+                    ))
                     && {
                         self.maybe_emit_non_portable_function_return_diagnostic(
                             decl_name,
@@ -1356,7 +1390,7 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     fn enum_member_literal_initializer_value(
-        interner: &tsz_solver::TypeInterner,
+        interner: &tsz_solver::construction::TypeInterner,
         type_id: tsz_solver::types::TypeId,
     ) -> Option<tsz_solver::types::LiteralValue> {
         let (_def_id, member_type) = tsz_solver::visitor::enum_components(interner, type_id)?;

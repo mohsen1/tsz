@@ -1,8 +1,8 @@
+use crate::construction::{QueryCache, QueryCacheStatistics, RelationCacheProbe};
 use crate::relations::relation_queries::RelationPolicy;
 use crate::{
-    LiteralValue, ObjectFlags, PropertyInfo, QueryCache, QueryCacheStatistics, QueryDatabase,
-    RelationCacheConfig, RelationCacheKey, RelationCacheProbe, TupleElement, TypeData,
-    TypeDatabase, TypeId, TypeInterner, Visibility,
+    LiteralValue, ObjectFlags, PropertyInfo, QueryDatabase, RelationCacheConfig, RelationCacheKey,
+    TupleElement, TypeData, TypeDatabase, TypeId, TypeInterner, Visibility,
 };
 
 impl<'a> QueryCache<'a> {
@@ -283,7 +283,9 @@ fn type_interner_element_access_respects_no_unchecked_indexed_access() {
     db.set_no_unchecked_indexed_access(true);
     let with_flag = db.resolve_element_access_type(array, TypeId::NUMBER, None);
     assert_ne!(with_flag, TypeId::STRING);
-    assert!(crate::type_contains_undefined(&interner, with_flag));
+    assert!(crate::narrowing::type_contains_undefined(
+        &interner, with_flag
+    ));
 }
 
 #[test]

@@ -35,6 +35,7 @@ pub mod extended_constructors;
 pub mod flow;
 pub mod iterable;
 pub mod mapped;
+pub mod shape_queries;
 pub mod traversal;
 
 // Re-export shared predicates from visitor_predicates to avoid duplication.
@@ -89,6 +90,7 @@ pub use data::*;
 pub use flow::*;
 pub use iterable::*;
 pub use mapped::*;
+pub use shape_queries::*;
 pub use traversal::*;
 
 // Re-export core implementation

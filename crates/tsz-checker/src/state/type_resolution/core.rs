@@ -374,17 +374,21 @@ impl<'a> CheckerState<'a> {
                             let _ = self.resolve_and_insert_def_type(base_def_id);
                         }
 
+                        // Clear both overflow flags before probing so earlier
+                        // evaluations from this file cannot bleed into this check.
+                        self.ctx.types.take_tuple_too_large();
                         self.ctx.depth_exceeded.set(false);
                         // Use the regular evaluator for ordinary type-reference
                         // probes. The TS2589-specific evaluator treats any repeated
                         // Application cycle as overflow, which is too aggressive for
                         // bounded recursive conditional aliases.
-                        let exceeded = {
-                            let _ = self.evaluate_type_with_env_uncached(type_id);
-                            self.ctx.depth_exceeded.get()
+                        let (exceeded, tuple_too_large) = {
+                            self.evaluate_type_with_env_uncached(type_id);
+                            (
+                                self.ctx.depth_exceeded.get(),
+                                self.ctx.types.take_tuple_too_large(),
+                            )
                         };
-
-                        // TS2589: emit at the type reference node if depth was exceeded
 
                         // Also detect circular mapped-type aliases that the evaluator
                         // can't expand: if the alias body is a mapped type that
@@ -410,11 +414,12 @@ impl<'a> CheckerState<'a> {
                                     })
                                 });
 
-                        if exceeded || circular_mapped {
+                        if exceeded || circular_mapped || tuple_too_large {
                             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                            let (message, code) = if exceeded
-                                && is_type_alias
-                                && self.type_alias_is_unconditional_tuple_spread(sym_id)
+                            let (message, code) = if tuple_too_large
+                                || (exceeded
+                                    && is_type_alias
+                                    && self.type_alias_is_unconditional_tuple_spread(sym_id))
                             {
                                 (
                                     diagnostic_messages::TYPE_PRODUCES_A_TUPLE_TYPE_THAT_IS_TOO_LARGE_TO_REPRESENT,
@@ -1196,18 +1201,20 @@ impl<'a> CheckerState<'a> {
                                 },
                             );
                         if !args_have_type_params {
-                            // Reset depth_exceeded before evaluation so we detect fresh depth exceedance
+                            // Clear overflow flags before probing.
+                            self.ctx.types.take_tuple_too_large();
                             self.ctx.depth_exceeded.set(false);
                             // Use the regular evaluator for ordinary type-reference
                             // probes. The TS2589-specific evaluator treats any repeated
                             // Application cycle as overflow, which is too aggressive for
                             // bounded recursive conditional aliases.
-                            let exceeded = {
-                                let _ = self.evaluate_type_with_env_uncached(result);
-                                self.ctx.depth_exceeded.get()
+                            let (exceeded, tuple_too_large) = {
+                                self.evaluate_type_with_env_uncached(result);
+                                (
+                                    self.ctx.depth_exceeded.get(),
+                                    self.ctx.types.take_tuple_too_large(),
+                                )
                             };
-
-                            // TS2589: emit at the type reference node if depth was exceeded
 
                             // Also detect circular mapped-type aliases that the evaluator
                             // can't expand: if the alias body is a mapped type that
@@ -1223,8 +1230,6 @@ impl<'a> CheckerState<'a> {
                                     })
                                     .and_then(|def_id| self.ctx.def_to_symbol_id(def_id));
                             let circular_mapped = application_alias_symbol.is_some_and(|ref_sym| {
-                                // The base is a type alias whose body is a mapped
-                                // type that references itself in its template
                                 self.ctx.binder.get_symbol(ref_sym).is_some_and(|symbol| {
                                     symbol.has_any_flags(symbol_flags::TYPE_ALIAS)
                                         && symbol.declarations.iter().any(|&decl_idx| {
@@ -1239,9 +1244,11 @@ impl<'a> CheckerState<'a> {
                                     self.type_alias_is_unconditional_tuple_spread(ref_sym)
                                 });
 
-                            if exceeded || circular_mapped {
+                            if exceeded || circular_mapped || tuple_too_large {
                                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                                let (message, code) = if exceeded && tuple_spread_alias {
+                                let (message, code) = if tuple_too_large
+                                    || (exceeded && tuple_spread_alias)
+                                {
                                     (
                                         diagnostic_messages::TYPE_PRODUCES_A_TUPLE_TYPE_THAT_IS_TOO_LARGE_TO_REPRESENT,
                                         diagnostic_codes::TYPE_PRODUCES_A_TUPLE_TYPE_THAT_IS_TOO_LARGE_TO_REPRESENT,
@@ -1524,7 +1531,7 @@ impl<'a> CheckerState<'a> {
         self.report_missing_lib_type_name(name, type_name_idx);
 
         if !self.ctx.compiler_options.no_lib
-            && self.is_promise_like_name(name)
+            && matches!(name, "Promise" | "PromiseLike")
             && let Some(args) = &type_ref.type_arguments
         {
             let type_args: Vec<TypeId> = args

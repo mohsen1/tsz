@@ -79,7 +79,7 @@ impl<'a> DeclarationEmitter<'a> {
     fn should_preserve_named_application_for_emit(
         &self,
         type_id: tsz_solver::types::TypeId,
-        interner: &tsz_solver::TypeInterner,
+        interner: &tsz_solver::construction::TypeInterner,
     ) -> bool {
         let Some(app_id) = tsz_solver::visitor::application_id(interner, type_id) else {
             return false;
@@ -108,7 +108,7 @@ impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn should_preserve_named_application_for_inferred_emit(
         &self,
         type_id: tsz_solver::types::TypeId,
-        interner: &tsz_solver::TypeInterner,
+        interner: &tsz_solver::construction::TypeInterner,
     ) -> bool {
         if !self.should_preserve_named_application_for_emit(type_id, interner) {
             return false;
@@ -185,7 +185,7 @@ impl<'a> DeclarationEmitter<'a> {
     fn type_contains_mapped_type_for_inferred_emit(
         &self,
         type_id: tsz_solver::types::TypeId,
-        interner: &tsz_solver::TypeInterner,
+        interner: &tsz_solver::construction::TypeInterner,
         depth: usize,
     ) -> bool {
         if depth > 16 {
@@ -237,7 +237,7 @@ impl<'a> DeclarationEmitter<'a> {
     fn display_alias_for_declaration_emit(
         &self,
         type_id: tsz_solver::types::TypeId,
-        interner: &tsz_solver::TypeInterner,
+        interner: &tsz_solver::construction::TypeInterner,
     ) -> tsz_solver::types::TypeId {
         self.display_alias_for_policy(
             type_id,
@@ -249,11 +249,11 @@ impl<'a> DeclarationEmitter<'a> {
     fn display_alias_for_policy(
         &self,
         type_id: tsz_solver::types::TypeId,
-        interner: &tsz_solver::TypeInterner,
+        interner: &tsz_solver::construction::TypeInterner,
         preserve_named_application: fn(
             &Self,
             tsz_solver::types::TypeId,
-            &tsz_solver::TypeInterner,
+            &tsz_solver::construction::TypeInterner,
         ) -> bool,
     ) -> tsz_solver::types::TypeId {
         interner
@@ -265,11 +265,11 @@ impl<'a> DeclarationEmitter<'a> {
     fn apply_display_aliases_to_preserved_application_args(
         &self,
         type_id: tsz_solver::types::TypeId,
-        interner: &tsz_solver::TypeInterner,
+        interner: &tsz_solver::construction::TypeInterner,
         preserve_named_application: fn(
             &Self,
             tsz_solver::types::TypeId,
-            &tsz_solver::TypeInterner,
+            &tsz_solver::construction::TypeInterner,
         ) -> bool,
     ) -> tsz_solver::types::TypeId {
         let Some(app_id) = tsz_solver::visitor::application_id(interner, type_id) else {
@@ -289,12 +289,12 @@ impl<'a> DeclarationEmitter<'a> {
                 let evaluated = if let Some(cache) = &self.type_cache {
                     let resolver = DtsCacheResolver { cache };
                     let mut evaluator =
-                        tsz_solver::TypeEvaluator::with_resolver(interner, &resolver)
+                        tsz_solver::computation::TypeEvaluator::with_resolver(interner, &resolver)
                             .with_expanded_application_display_alias_args();
                     evaluator.set_max_mapped_keys(1_024);
                     evaluator.evaluate(arg)
                 } else {
-                    let mut evaluator = tsz_solver::TypeEvaluator::new(interner)
+                    let mut evaluator = tsz_solver::computation::TypeEvaluator::new(interner)
                         .with_expanded_application_display_alias_args();
                     evaluator.set_max_mapped_keys(1_024);
                     evaluator.evaluate(arg)
@@ -329,7 +329,8 @@ impl<'a> DeclarationEmitter<'a> {
         let instantiated =
             tsz_solver::computation::instantiate_generic(interner, body, type_params, &app.args);
         let resolver = DtsCacheResolver { cache };
-        let mut evaluator = tsz_solver::TypeEvaluator::with_resolver(interner, &resolver);
+        let mut evaluator =
+            tsz_solver::computation::TypeEvaluator::with_resolver(interner, &resolver);
         evaluator.set_max_mapped_keys(1_024);
         Some(evaluator.evaluate(instantiated))
     }
@@ -441,11 +442,11 @@ impl<'a> DeclarationEmitter<'a> {
                 let evaluated = if let Some(cache) = &self.type_cache {
                     let resolver = DtsCacheResolver { cache };
                     let mut evaluator =
-                        tsz_solver::TypeEvaluator::with_resolver(interner, &resolver);
+                        tsz_solver::computation::TypeEvaluator::with_resolver(interner, &resolver);
                     evaluator.set_max_mapped_keys(1_024);
                     evaluator.evaluate(reduced_cond)
                 } else {
-                    let mut evaluator = tsz_solver::TypeEvaluator::new(interner);
+                    let mut evaluator = tsz_solver::computation::TypeEvaluator::new(interner);
                     evaluator.set_max_mapped_keys(1_024);
                     evaluator.evaluate(reduced_cond)
                 };
@@ -587,6 +588,13 @@ impl<'a> DeclarationEmitter<'a> {
                 }
                 tsz_solver::type_queries::get_return_type(interner, callee_type)
             }
+            k if k == syntax_kind_ext::NEW_EXPRESSION => {
+                let new_expr = self.arena.get_call_expr(node)?;
+                let callee_type = self
+                    .get_node_type_or_names(&[new_expr.expression])
+                    .or_else(|| self.get_type_via_symbol(new_expr.expression))?;
+                tsz_solver::type_queries::construct_return_type_for_type(interner, callee_type)
+            }
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION
                 || k == syntax_kind_ext::AWAIT_EXPRESSION =>
             {
@@ -678,7 +686,7 @@ impl<'a> DeclarationEmitter<'a> {
         preserve_named_application: fn(
             &Self,
             tsz_solver::types::TypeId,
-            &tsz_solver::TypeInterner,
+            &tsz_solver::construction::TypeInterner,
         ) -> bool,
     ) -> String {
         if let Some(interner) = self.type_interner {
@@ -692,12 +700,12 @@ impl<'a> DeclarationEmitter<'a> {
                 let evaluated = if let Some(cache) = &self.type_cache {
                     let resolver = DtsCacheResolver { cache };
                     let mut evaluator =
-                        tsz_solver::TypeEvaluator::with_resolver(interner, &resolver)
+                        tsz_solver::computation::TypeEvaluator::with_resolver(interner, &resolver)
                             .with_expanded_application_display_alias_args();
                     evaluator.set_max_mapped_keys(1_024);
                     evaluator.evaluate(type_id)
                 } else {
-                    let mut evaluator = tsz_solver::TypeEvaluator::new(interner)
+                    let mut evaluator = tsz_solver::computation::TypeEvaluator::new(interner)
                         .with_expanded_application_display_alias_args();
                     evaluator.set_max_mapped_keys(1_024);
                     evaluator.evaluate(type_id)
@@ -716,12 +724,13 @@ impl<'a> DeclarationEmitter<'a> {
                 )
             } else if let Some(cache) = &self.type_cache {
                 let resolver = DtsCacheResolver { cache };
-                let mut evaluator = tsz_solver::TypeEvaluator::with_resolver(interner, &resolver);
+                let mut evaluator =
+                    tsz_solver::computation::TypeEvaluator::with_resolver(interner, &resolver);
                 evaluator.set_max_mapped_keys(1_024);
                 let evaluated = evaluator.evaluate(type_id);
                 self.display_alias_for_policy(evaluated, interner, preserve_named_application)
             } else {
-                let mut evaluator = tsz_solver::TypeEvaluator::new(interner);
+                let mut evaluator = tsz_solver::computation::TypeEvaluator::new(interner);
                 evaluator.set_max_mapped_keys(1_024);
                 let evaluated = evaluator.evaluate(type_id);
                 self.display_alias_for_policy(evaluated, interner, preserve_named_application)
@@ -1166,6 +1175,18 @@ impl<'a> DeclarationEmitter<'a> {
         type_id: tsz_solver::types::TypeId,
         outer_type_params: &NodeList,
     ) -> String {
+        self.print_type_id_with_outer_type_param_nodes(type_id, &outer_type_params.nodes)
+    }
+
+    /// Like [`print_type_id_with_outer_type_params`] but accepts a flat slice of `NodeIndex`
+    /// values, enabling callers to combine type parameter lists from multiple scopes (e.g.
+    /// a class's type parameters together with a method's type parameters) without building
+    /// an intermediate `NodeList`.
+    pub(crate) fn print_type_id_with_outer_type_param_nodes(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+        param_nodes: &[NodeIndex],
+    ) -> String {
         let elided_alias_names = self.function_local_type_alias_application_names(type_id);
         let Some(interner) = self.type_interner else {
             return "any".to_string();
@@ -1175,18 +1196,19 @@ impl<'a> DeclarationEmitter<'a> {
             type_id
         } else if let Some(cache) = &self.type_cache {
             let resolver = DtsCacheResolver { cache };
-            let mut evaluator = tsz_solver::TypeEvaluator::with_resolver(interner, &resolver);
+            let mut evaluator =
+                tsz_solver::computation::TypeEvaluator::with_resolver(interner, &resolver);
             evaluator.set_max_mapped_keys(1_024);
             let evaluated = evaluator.evaluate(type_id);
             self.display_alias_for_declaration_emit(evaluated, interner)
         } else {
-            let mut evaluator = tsz_solver::TypeEvaluator::new(interner);
+            let mut evaluator = tsz_solver::computation::TypeEvaluator::new(interner);
             evaluator.set_max_mapped_keys(1_024);
             let evaluated = evaluator.evaluate(type_id);
             self.display_alias_for_declaration_emit(evaluated, interner)
         };
         let mut outer_names = Vec::new();
-        for &param_idx in &outer_type_params.nodes {
+        for &param_idx in param_nodes {
             if let Some(param_node) = self.arena.get(param_idx)
                 && let Some(param) = self.arena.get_type_parameter(param_node)
                 && let Some(name_text) = self.get_identifier_text(param.name)

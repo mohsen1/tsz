@@ -147,7 +147,7 @@ impl<'a> CodeActionProvider<'a> {
         let call_text = format!("{body_indent}{call_expr}");
 
         // 11. Build text edits
-        let mut edits = Vec::new();
+        let mut edits = Vec::with_capacity(2);
 
         // a) Replace the selected statements with the function call
         let replace_start = self
@@ -277,7 +277,7 @@ impl<'a> CodeActionProvider<'a> {
         start: u32,
         end: u32,
     ) -> Vec<NodeIndex> {
-        let mut result = Vec::new();
+        let mut result = Vec::with_capacity(stmts.len());
         for &stmt_idx in stmts {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;

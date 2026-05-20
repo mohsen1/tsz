@@ -6,7 +6,6 @@ crates/tsz-emitter/src/declaration_emitter/core/js_emit.rs|dts-output-surgery|2|
 crates/tsz-emitter/src/declaration_emitter/helpers/computed_declarations.rs|dts-output-surgery|1|computed declaration text patch; migrate to structured declaration node emission
 crates/tsz-emitter/src/declaration_emitter/helpers/jsdoc.rs|dts-output-surgery|1|legacy JSDoc type text normalization; migrate to structured JSDoc parser facts
 crates/tsz-emitter/src/declaration_emitter/helpers/type_inference.rs|dts-output-surgery|1|inferred type text parameter rewrite; migrate to declaration display request facts
-crates/tsz-emitter/src/declaration_emitter/helpers/type_inference_class_expression.rs|dts-output-surgery|2|class-expression declaration shape patch; migrate to structured class-expression declaration plan
 crates/tsz-emitter/src/declaration_emitter/helpers/type_inference_imported_calls.rs|dts-output-surgery|1|imported-call inferred text indentation patch; migrate to structured type display formatting
 crates/tsz-emitter/src/declaration_emitter/helpers/type_inference_object_rewrites.rs|dts-output-surgery|4|object member inferred text rewrites; migrate to declaration summary member facts
 crates/tsz-emitter/src/declaration_emitter/helpers/type_inference_return_normalization.rs|dts-output-surgery|3|return type text normalization rewrites; migrate to structured return declaration display

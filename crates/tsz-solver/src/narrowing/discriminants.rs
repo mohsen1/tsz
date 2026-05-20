@@ -87,7 +87,7 @@ impl<'a> NarrowingContext<'a> {
         // Collect all property names from all members
         let mut all_properties: Vec<Atom> = Vec::new();
         let mut seen_properties: FxHashSet<Atom> = FxHashSet::default();
-        let mut member_props: Vec<Vec<(Atom, TypeId)>> = Vec::new();
+        let mut member_props: Vec<Vec<(Atom, TypeId)>> = Vec::with_capacity(members.len());
 
         for &member in members.iter() {
             if let Some(shape_id) = object_shape_id(self.db, member) {
@@ -112,11 +112,11 @@ impl<'a> NarrowingContext<'a> {
         }
 
         // Check each property to see if it's a valid discriminant
-        let mut discriminants = Vec::new();
+        let mut discriminants = Vec::with_capacity(all_properties.len());
 
         for prop_name in &all_properties {
             let mut is_discriminant = true;
-            let mut variants: Vec<(TypeId, TypeId)> = Vec::new();
+            let mut variants: Vec<(TypeId, TypeId)> = Vec::with_capacity(members.len());
             let mut seen_literals: FxHashSet<TypeId> = FxHashSet::default();
 
             for (i, props) in member_props.iter().enumerate() {
@@ -558,7 +558,7 @@ impl<'a> NarrowingContext<'a> {
         } else {
             // Build the discriminant index: literal_value → Vec<matching_members>
             let mut index_map: FxHashMap<TypeId, Vec<TypeId>> = FxHashMap::default();
-            let mut any_unknown_members: Vec<TypeId> = Vec::new();
+            let mut any_unknown_members: Vec<TypeId> = Vec::with_capacity(members.len());
             let mut has_non_indexable = false;
 
             for &member in members {
@@ -1154,7 +1154,7 @@ impl<'a> NarrowingContext<'a> {
             members.len()
         );
 
-        let mut remaining: Vec<TypeId> = Vec::new();
+        let mut remaining: Vec<TypeId> = Vec::with_capacity(members.len());
 
         for &member in &members {
             // Special case: any and unknown always kept (could have any property value)
@@ -1311,7 +1311,7 @@ impl<'a> NarrowingContext<'a> {
         // Put excluded values into a HashSet for O(1) lookup
         let excluded_set: FxHashSet<TypeId> = excluded_values.iter().copied().collect();
 
-        let mut remaining: Vec<TypeId> = Vec::new();
+        let mut remaining: Vec<TypeId> = Vec::with_capacity(members.len());
 
         for &member in &members {
             if member.is_any_or_unknown() {

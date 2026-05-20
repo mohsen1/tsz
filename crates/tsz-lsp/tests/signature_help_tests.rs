@@ -5,7 +5,7 @@ use tsz_binder::BinderState;
 use tsz_common::position::LineMap;
 use tsz_parser::ParserState;
 use tsz_parser::syntax_kind_ext;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::NodeIndex) {
     let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -787,6 +787,61 @@ fn setup_provider(
     let interner = TypeInterner::new();
     let line_map = LineMap::build(source);
     (parser, binder, interner, line_map, root)
+}
+
+fn signature_help_at_marker(source_with_marker: &str) -> SignatureHelp {
+    let marker = source_with_marker.find('|').expect("expected marker");
+    let source = source_with_marker.replace('|', "");
+    let (parser, binder, interner, line_map, root) = setup_provider(&source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        &source,
+        "test.ts".to_string(),
+    );
+    let position = line_map.offset_to_position(marker as u32, &source);
+    let mut cache = None;
+    provider
+        .get_signature_help(root, position, &mut cache)
+        .expect("expected signature help at marker")
+}
+
+#[test]
+fn test_signature_help_spread_argument_in_rest_slot() {
+    let help = signature_help_at_marker(
+        "declare function f(a: string, ...rest: number[]): void;\nf(\"x\", ...|);",
+    );
+
+    assert_eq!(
+        help.active_parameter, 1,
+        "spread argument should select the rest parameter slot"
+    );
+}
+
+#[test]
+fn test_signature_help_spread_argument_before_last_fixed_slot() {
+    let help = signature_help_at_marker(
+        "declare function f(a: string, b: number, c: boolean): void;\nf(\"x\", ...|rest, true);",
+    );
+
+    assert_eq!(
+        help.active_parameter, 1,
+        "spread argument should keep its fixed argument tuple index"
+    );
+}
+
+#[test]
+fn test_signature_help_trailing_comma_after_spread_uses_rest_slot() {
+    let help = signature_help_at_marker(
+        "declare function f(a: string, ...rest: number[]): void;\nf(\"x\", ...rest, |);",
+    );
+
+    assert_eq!(
+        help.active_parameter, 1,
+        "empty slot after a spread into rest should stay on the rest parameter"
+    );
 }
 
 #[test]

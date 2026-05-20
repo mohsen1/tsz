@@ -9,9 +9,9 @@
 //! - Deep recursive substitution through nested types
 //! - Handling of constraints and defaults
 
-use crate::TypeDatabase;
 use crate::caches::db::QueryDatabase;
 use crate::caches::instantiation_cache::{CanonicalSubst, InstantiationCacheKey};
+use crate::construction::TypeDatabase;
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{
@@ -208,38 +208,13 @@ impl TypeSubstitution {
         self.map.len()
     }
 
-    /// Check if this substitution is an identity mapping (every type parameter maps to itself).
-    ///
-    /// **WARNING**: This check only verifies name equality, which is insufficient when
-    /// different type parameters share the same name (e.g., alias `T` vs function
-    /// `T extends object`). Callers that have access to the original `TypeParamInfo`
-    /// (like `instantiate_generic`) should use `is_identity_for` instead.
-    pub fn is_identity(&self, interner: &dyn TypeDatabase) -> bool {
-        self.map.iter().all(|(&name, &type_id)| {
-            // Check that the substitution maps a name to the UNCONSTRAINED
-            // TypeParameter with that name. If the target has a constraint or
-            // default, it may differ from the TypeParameter in the body being
-            // instantiated, so the substitution is NOT identity.
-            //
-            // This prevents false identity when a type alias's unconstrained `T`
-            // (the body) would be substituted with a constrained `T extends C`
-            // (from the caller). Without this check, `{ "T" → T_constrained }`
-            // would be treated as identity, leaving the body's unconstrained T
-            // unsubstituted.
-            if let Some(TypeData::TypeParameter(info)) = interner.lookup(type_id) {
-                info.name == name && info.constraint.is_none() && info.default.is_none()
-            } else {
-                false
-            }
-        })
-    }
-
     /// Check if this substitution is an identity mapping against specific type parameters.
     ///
-    /// Unlike `is_identity`, this correctly handles same-name type parameters by
-    /// comparing the interned TypeId of each declared type parameter against the
-    /// substituted value. This is the only correct identity check when the body
-    /// being instantiated may use different type parameters than the substitution source.
+    /// Compares the interned `TypeId` of each declared type parameter against
+    /// its substituted value, which is the only sound identity check when the
+    /// body being instantiated may use different `TypeId`s for same-named
+    /// `TypeParameter`s (declaration-scoped fresh params share name but not
+    /// `TypeId`).
     pub fn is_identity_for(
         &self,
         interner: &dyn TypeDatabase,
@@ -898,8 +873,15 @@ impl<'a> TypeInstantiator<'a> {
             // elements `A, B, C` (matching tsc's instantiateMappedTupleType
             // behavior for variadic tuple types).
             TypeData::Tuple(elements) => {
+                use tsz_common::limits::MAX_REPRESENTABLE_TUPLE_LENGTH;
                 let elements = self.interner.tuple_list(*elements);
                 let mut instantiated: Vec<TupleElement> = Vec::with_capacity(elements.len());
+                // Tracks the semantic (represented) cardinality — sum of each
+                // spread arm's inner element count, not the physical slot count.
+                // Needed to catch the case where a large spread is kept as a
+                // single physical rest element by the soft gate but the total
+                // represented length still exceeds `MAX_REPRESENTABLE_TUPLE_LENGTH`.
+                let mut represented_len: usize = 0;
                 for e in elements.iter() {
                     let inst_type = self.instantiate(e.type_id);
                     if e.rest {
@@ -908,9 +890,18 @@ impl<'a> TypeInstantiator<'a> {
                         if let Some(TypeData::Tuple(inner_elems)) = self.interner.lookup(inst_type)
                         {
                             let inner = self.interner.tuple_list(inner_elems);
-                            if instantiated.len().saturating_add(inner.len())
-                                > MAX_TUPLE_SPREAD_FLATTEN_ELEMENTS
-                            {
+                            let represented_after =
+                                represented_len.saturating_add(inner.len());
+                            // Hard gate: refuse to materialize tuples wider than
+                            // MAX_REPRESENTABLE_TUPLE_LENGTH. Fires before the soft gate
+                            // so the unbounded Vec is never allocated.
+                            if represented_after > MAX_REPRESENTABLE_TUPLE_LENGTH {
+                                self.interner.mark_tuple_too_large();
+                                return TypeId::ERROR;
+                            }
+                            // Soft gate: keep very large spreads as a single rest
+                            // element to avoid exponential physical slot growth.
+                            if represented_after > MAX_TUPLE_SPREAD_FLATTEN_ELEMENTS {
                                 instantiated.push(TupleElement {
                                     type_id: inst_type,
                                     name: e.name,
@@ -927,6 +918,7 @@ impl<'a> TypeInstantiator<'a> {
                                     });
                                 }
                             }
+                            represented_len = represented_after;
                         } else {
                             instantiated.push(TupleElement {
                                 type_id: inst_type,
@@ -934,6 +926,7 @@ impl<'a> TypeInstantiator<'a> {
                                 optional: e.optional,
                                 rest: true,
                             });
+                            represented_len = represented_len.saturating_add(1);
                         }
                     } else {
                         instantiated.push(TupleElement {
@@ -942,6 +935,7 @@ impl<'a> TypeInstantiator<'a> {
                             optional: e.optional,
                             rest: false,
                         });
+                        represented_len = represented_len.saturating_add(1);
                     }
                 }
                 self.interner.tuple(instantiated)
@@ -2027,7 +2021,7 @@ pub(crate) fn instantiate_type_with_shadowed(
     if type_id.is_intrinsic() {
         return type_id;
     }
-    if substitution.is_empty() || substitution.is_identity(interner) {
+    if substitution.is_empty() {
         return type_id;
     }
     let mut instantiator = TypeInstantiator::new(interner, substitution);
@@ -2082,7 +2076,7 @@ pub fn instantiate_type_cached(
     }
 
     // Empty/identity short-circuit — no cache key construction needed.
-    if substitution.is_empty() || substitution.is_identity(interner) {
+    if substitution.is_empty() {
         return type_id;
     }
 
@@ -2203,7 +2197,7 @@ pub fn instantiate_type_preserving_cached(
     if type_id.is_intrinsic() {
         return type_id;
     }
-    if substitution.is_empty() || substitution.is_identity(interner) {
+    if substitution.is_empty() {
         return type_id;
     }
     if let Some(db) = query_db {
@@ -2252,7 +2246,7 @@ pub fn instantiate_type_with_depth_status(
     if type_id.is_intrinsic() {
         return (type_id, false);
     }
-    if substitution.is_empty() || substitution.is_identity(interner) {
+    if substitution.is_empty() {
         return (type_id, false);
     }
     let mut instantiator = TypeInstantiator::new(interner, substitution);
@@ -2292,7 +2286,7 @@ pub fn instantiate_type_preserving_meta_cached(
     if type_id.is_intrinsic() {
         return type_id;
     }
-    if substitution.is_empty() || substitution.is_identity(interner) {
+    if substitution.is_empty() {
         return type_id;
     }
     if let Some(db) = query_db {
@@ -2347,7 +2341,7 @@ pub fn instantiate_type_with_infer_cached(
     if type_id.is_intrinsic() {
         return type_id;
     }
-    if substitution.is_empty() || substitution.is_identity(interner) {
+    if substitution.is_empty() {
         return type_id;
     }
     if let Some(db) = query_db {

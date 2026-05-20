@@ -283,44 +283,14 @@ pub(in crate::emitter) fn check_loop_needs_capture(
     if info.needs_capture { Some(info) } else { None }
 }
 
+pub(in crate::emitter) enum ConditionLoopKind {
+    While,
+    DoWhile,
+}
+
 impl<'a> Printer<'a> {
     /// Check if a for-statement initializer declares let/const variables
     pub(in crate::emitter) fn collect_for_initializer_let_const_vars(
-        &self,
-        initializer: NodeIndex,
-    ) -> Vec<String> {
-        let Some(node) = self.arena.get(initializer) else {
-            return Vec::new();
-        };
-
-        if node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-            return Vec::new();
-        }
-
-        let flags = node.flags as u32;
-        let is_block_scoped = (flags & node_flags::LET != 0) || (flags & node_flags::CONST != 0);
-
-        if !is_block_scoped {
-            return Vec::new();
-        }
-
-        let Some(decl_list) = self.arena.get_variable(node) else {
-            return Vec::new();
-        };
-
-        let mut vars = Vec::new();
-        for &decl_idx in &decl_list.declarations.nodes {
-            if let Some(decl_node) = self.arena.get(decl_idx)
-                && let Some(decl) = self.arena.get_variable_declaration(decl_node)
-            {
-                collect_binding_names(self.arena, decl.name, &mut vars, false);
-            }
-        }
-        vars
-    }
-
-    /// Collect iteration variable names from a for-of/for-in initializer.
-    pub(in crate::emitter) fn collect_for_of_iteration_var_names(
         &self,
         initializer: NodeIndex,
     ) -> Vec<String> {
@@ -376,7 +346,6 @@ impl<'a> Printer<'a> {
             .cloned()
             .collect();
 
-        // Emit: var _loop_1 = function (param1, param2) { ... };
         self.emit_loop_function(
             &loop_fn_name,
             &param_vars,
@@ -385,21 +354,8 @@ impl<'a> Printer<'a> {
             init_vars,
         );
         self.write_line();
+        self.emit_hoisted_loop_var_decls(body_info);
 
-        // Emit hoisted var declarations for var-scoped variables in the body
-        if !body_info.var_decl_names.is_empty() {
-            self.write("var ");
-            for (i, name) in body_info.var_decl_names.iter().enumerate() {
-                if i > 0 {
-                    self.write(", ");
-                }
-                self.write(name);
-            }
-            self.write(";");
-            self.write_line();
-        }
-
-        // Emit the for loop with _loop_1(args) as body
         self.write("for (");
         self.emit_for_initializer_as_var(loop_stmt.initializer);
         self.write(";");
@@ -422,97 +378,48 @@ impl<'a> Printer<'a> {
         self.write("}");
     }
 
-    /// Emit a do-while statement with the _`loop_N` IIFE capture pattern
-    pub(in crate::emitter) fn emit_do_statement_with_capture(
+    pub(in crate::emitter) fn emit_condition_loop_with_capture(
         &mut self,
-        _node: &Node,
         loop_stmt: &tsz_parser::parser::node::LoopData,
-        _capture_info: &LoopCaptureInfo,
         body_info: &LoopBodyVarInfo,
+        kind: ConditionLoopKind,
     ) {
         let loop_fn_name = self.ctx.block_scope_state.next_loop_function_name();
-
-        // Do/while loops have no init vars — body vars get fresh scope inside IIFE
-        let empty_params: Vec<String> = Vec::new();
-
-        self.emit_loop_function(
-            &loop_fn_name,
-            &empty_params,
-            loop_stmt.statement,
-            body_info,
-            &[],
-        );
+        self.emit_loop_function(&loop_fn_name, &[], loop_stmt.statement, body_info, &[]);
         self.write_line();
+        self.emit_hoisted_loop_var_decls(body_info);
 
-        // Emit hoisted var declarations
-        if !body_info.var_decl_names.is_empty() {
-            self.write("var ");
-            for (i, name) in body_info.var_decl_names.iter().enumerate() {
-                if i > 0 {
-                    self.write(", ");
-                }
-                self.write(name);
+        match kind {
+            ConditionLoopKind::DoWhile => {
+                self.write("do {");
+                self.write_line();
+                self.increase_indent();
+                self.emit_loop_call(&loop_fn_name, &[], body_info);
+                self.decrease_indent();
+                self.write("} while (");
+                self.emit(loop_stmt.condition);
+                self.write(");");
             }
-            self.write(";");
-            self.write_line();
+            ConditionLoopKind::While => {
+                self.write("while (");
+                self.emit(loop_stmt.condition);
+                self.write(") {");
+                self.write_line();
+                self.increase_indent();
+                self.emit_loop_call(&loop_fn_name, &[], body_info);
+                self.decrease_indent();
+                self.write("}");
+            }
         }
-
-        // Emit: do { _loop_1(); } while (condition);
-        self.write("do {");
-        self.write_line();
-        self.increase_indent();
-
-        self.emit_loop_call(&loop_fn_name, &empty_params, body_info);
-
-        self.decrease_indent();
-        self.write("} while (");
-        self.emit(loop_stmt.condition);
-        self.write(");");
     }
 
-    /// Emit a while statement with the _`loop_N` IIFE capture pattern
-    pub(in crate::emitter) fn emit_while_statement_with_capture(
-        &mut self,
-        _node: &Node,
-        loop_stmt: &tsz_parser::parser::node::LoopData,
-        capture_info: &LoopCaptureInfo,
-        body_info: &LoopBodyVarInfo,
-    ) {
-        let loop_fn_name = self.ctx.block_scope_state.next_loop_function_name();
-
-        self.emit_loop_function(
-            &loop_fn_name,
-            &capture_info.captured_vars,
-            loop_stmt.statement,
-            body_info,
-            &[],
-        );
-        self.write_line();
-
-        // Emit hoisted var declarations
+    fn emit_hoisted_loop_var_decls(&mut self, body_info: &LoopBodyVarInfo) {
         if !body_info.var_decl_names.is_empty() {
             self.write("var ");
-            for (i, name) in body_info.var_decl_names.iter().enumerate() {
-                if i > 0 {
-                    self.write(", ");
-                }
-                self.write(name);
-            }
+            self.write(&body_info.var_decl_names.join(", "));
             self.write(";");
             self.write_line();
         }
-
-        // Emit: while (condition) { _loop_1(); }
-        self.write("while (");
-        self.emit(loop_stmt.condition);
-        self.write(") {");
-        self.write_line();
-        self.increase_indent();
-
-        self.emit_loop_call(&loop_fn_name, &capture_info.captured_vars, body_info);
-
-        self.decrease_indent();
-        self.write("}");
     }
 
     /// Emit the _`loop_N` function definition
@@ -548,12 +455,12 @@ impl<'a> Printer<'a> {
         let block_scoped_temp_line = self.writer.current_line();
 
         // Emit the body statements inside the IIFE
-        let prev_loop_body_missing_initializer_function_depth =
-            self.loop_body_missing_initializer_function_depth;
-        self.loop_body_missing_initializer_function_depth = Some(self.function_scope_depth);
+        let prev_lexical_block_missing_initializer_function_depth =
+            self.lexical_block_missing_initializer_function_depth;
+        self.lexical_block_missing_initializer_function_depth = Some(self.function_scope_depth);
         self.emit_loop_body_for_iife(body_idx, body_info, captured_vars, _init_vars);
-        self.loop_body_missing_initializer_function_depth =
-            prev_loop_body_missing_initializer_function_depth;
+        self.lexical_block_missing_initializer_function_depth =
+            prev_lexical_block_missing_initializer_function_depth;
 
         if !self.block_scoped_private_temps.is_empty() {
             let indent = " ".repeat(self.writer.indent_width() as usize);
@@ -1086,10 +993,11 @@ for (; ;) {\n\
     }
 
     #[test]
-    fn initializerless_lexical_declarations_only_reset_in_loop_bodies() {
+    fn initializerless_lexical_declarations_reset_in_nested_es5_blocks() {
         let source = "function plain() {\n\
     let x;\n\
     { let y; }\n\
+    if (true) { let q; }\n\
 }\n\
 while (true) {\n\
     let z;\n\
@@ -1099,12 +1007,17 @@ while (true) {\n\
         let output = emit_es5(source);
 
         assert!(
-            output.contains("function plain() {\n    var x;\n    {\n        var y;\n    }\n}"),
-            "Initializerless lexical declarations outside loop bodies should stay bare declarations.\nOutput:\n{output}"
+            output
+                .contains("function plain() {\n    var x;\n    {\n        var y = void 0;\n    }"),
+            "Initializerless lexical declarations in nested ES5 blocks should reset on entry.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("if (true) {\n        var q = void 0;\n    }"),
+            "Control-flow blocks should use the same ES5 lexical reset policy.\nOutput:\n{output}"
         );
         assert!(
             output.contains("while (true) {\n    var z = void 0;"),
-            "Initializerless lexical declarations in loop bodies should reset each iteration.\nOutput:\n{output}"
+            "Loop body blocks should keep resetting initializerless lexical declarations.\nOutput:\n{output}"
         );
         assert!(
             output.contains("function nested() { var w; }"),

@@ -1699,7 +1699,7 @@ impl ParserState {
                 self.parse_error_at_current_token("')' expected.", diagnostic_codes::EXPECTED);
             }
             self.parse_semicolon();
-            let end_pos = self.token_end();
+            let end_pos = self.token_full_start();
             return self.arena.add_import_decl(
                 syntax_kind_ext::IMPORT_EQUALS_DECLARATION,
                 start_pos,
@@ -1724,7 +1724,7 @@ impl ParserState {
         };
 
         self.parse_semicolon();
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         // Use ImportDeclData with import_clause as the name and module_specifier as reference
         // This is a simplified representation
@@ -1956,7 +1956,7 @@ impl ParserState {
         let start_pos = override_start_pos.unwrap_or_else(|| self.token_pos());
         let declaration_list = self.parse_variable_declaration_list();
         self.parse_semicolon();
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         self.arena.add_variable(
             syntax_kind_ext::VARIABLE_STATEMENT,
@@ -2062,6 +2062,8 @@ impl ParserState {
                 break;
             }
 
+            let decl_started_at_numeric_literal_follow_error =
+                self.current_token_has_numeric_literal_follow_error();
             let diag_count_before_decl = self.parse_diagnostics.len();
             let decl = self.parse_variable_declaration_with_flags(flags);
             let decl_had_error = self.parse_diagnostics.len() > diag_count_before_decl;
@@ -2245,29 +2247,22 @@ impl ParserState {
                     }
                 }
 
-                // `var x = 2.toString();` leaves `toString` in the token stream after the
-                // scanner reports TS1351 on the identifier. tsc recovers by treating that
-                // identifier as the malformed start of a second declaration, which shifts
-                // the follow-up diagnostics onto the call tail: TS1005 at `(` and TS1109
-                // at `)`. Mirror that recovery shape here instead of emitting a stray
-                // comma error at the identifier itself.
-                if self.current_token_has_numeric_literal_follow_error() {
+                if decl_started_at_numeric_literal_follow_error
+                    && self.is_token(SyntaxKind::OpenParenToken)
+                {
+                    self.parse_error_at_current_token("',' expected.", diagnostic_codes::EXPECTED);
+
+                    let snapshot = self.scanner.save_state();
+                    let saved_token = self.current_token;
                     self.next_token();
-
-                    if self.is_token(SyntaxKind::OpenParenToken) {
-                        self.error_comma_expected();
-                        self.next_token();
-
-                        if self.is_token(SyntaxKind::CloseParenToken) {
-                            let saved_error_pos = self.last_error_pos;
-                            self.last_error_pos = 0;
-                            self.error_expression_expected();
-                            if self.last_error_pos == 0 {
-                                self.last_error_pos = saved_error_pos;
-                            }
-                            self.next_token();
-                        }
+                    if self.is_token(SyntaxKind::CloseParenToken) {
+                        self.parse_error_at_current_token(
+                            "Expression expected.",
+                            diagnostic_codes::EXPRESSION_EXPECTED,
+                        );
                     }
+                    self.scanner.restore_state(snapshot);
+                    self.current_token = saved_token;
                     break;
                 }
 

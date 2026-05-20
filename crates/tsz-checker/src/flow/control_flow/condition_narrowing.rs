@@ -9,7 +9,8 @@ use tsz_binder::{FlowNodeId, SymbolId, symbol_flags};
 use tsz_parser::parser::node::BinaryExprData;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{GuardSense, NarrowingContext, TypeGuard, TypeId, TypeofKind};
+use tsz_solver::TypeId;
+use tsz_solver::narrowing::{GuardSense, NarrowingContext, TypeGuard, TypeofKind};
 
 impl<'a> FlowAnalyzer<'a> {
     fn union_logical_condition_branches(&self, types: Vec<TypeId>) -> TypeId {
@@ -1845,7 +1846,9 @@ impl<'a> FlowAnalyzer<'a> {
         // - RHS (y): For &&= only, the TRUE branch also guarantees y is truthy,
         //   because &&= evaluates y only when x is truthy, and the result IS y.
         //   For ||= and ??=, the TRUE branch doesn't guarantee y was evaluated.
-        if crate::query_boundaries::common::is_logical_compound_assignment_operator(operator) {
+        if crate::query_boundaries::operator_wrappers::is_logical_compound_assignment_operator(
+            operator,
+        ) {
             let matches_lhs = self.is_matching_reference(bin.left, target);
             let matches_rhs = operator == SyntaxKind::AmpersandAmpersandEqualsToken as u16
                 && self.is_matching_reference(bin.right, target);

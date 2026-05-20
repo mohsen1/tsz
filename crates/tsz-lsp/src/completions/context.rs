@@ -692,7 +692,7 @@ impl<'a> Completions<'a> {
         use tsz_binder::symbol_flags;
         use tsz_parser::parser::flags::node_flags;
 
-        let mut mods = Vec::new();
+        let mut mods = Vec::with_capacity(7);
         if symbol.has_any_flags(symbol_flags::EXPORT_VALUE) {
             mods.push("export");
         }

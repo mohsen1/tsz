@@ -295,17 +295,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         .checker
                         .is_this_in_nested_function_without_own_this_binding(idx)
                 {
-                    // `this` in a class or object literal member but enclosing_class
-                    // not yet set. Suppress TS2683 - `this` is contextually typed.
-                    //
-                    // Robustness audit (PR #J, item 10): emit a structured trace
-                    // so the rate of unresolved-`this` ANY fallbacks is visible.
-                    tracing::debug!(
-                        site = "dispatch::this_unresolved_class_or_object_literal_member",
-                        idx = idx.0,
-                        "TypeId::ANY fallback (unresolved enclosing this scope)"
-                    );
-                    TypeId::ANY
+                    self.checker.ctx.recover_any(
+                        idx,
+                        crate::recovery::RecoveryReason::ThisUnresolvedClassOrObjectLiteralMember,
+                    )
                 } else if self.checker.ctx.no_implicit_this()
                     && !self.checker.is_js_file()
                     && !self.checker.ctx.binder.is_external_module()
@@ -491,16 +484,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             .get_class_constructor_type_with_request(idx, &class, request)
                     }
                 } else {
-                    // Return ANY to prevent cascading TS2571 errors.
-                    //
-                    // Robustness audit (PR #J, item 10): emit a structured trace
-                    // so the rate of class-target-resolution ANY fallbacks is visible.
-                    tracing::debug!(
-                        site = "dispatch::class_constructor_target_unresolved",
-                        idx = idx.0,
-                        "TypeId::ANY fallback (cascading-TS2571 suppression)"
-                    );
-                    TypeId::ANY
+                    self.checker.ctx.recover_any(
+                        idx,
+                        crate::recovery::RecoveryReason::ClassConstructorTargetUnresolved,
+                    )
                 }
             }
             // Property access
@@ -911,7 +898,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             &request.read().normal_origin().contextual_opt(None),
                         );
                         self.checker.ctx.in_const_assertion = prev_in_const_assertion;
-                        crate::query_boundaries::common::apply_const_assertion(
+                        crate::query_boundaries::widening::apply_const_assertion(
                             self.checker.ctx.types,
                             expr_type,
                         )
@@ -1059,7 +1046,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             // For unconstrained type parameters (no `extends`), skip —
                             // T could be anything.
                             let (should_check, effective_asserted) = if should_check {
-                                if crate::query_boundaries::common::is_this_type(
+                                if crate::query_boundaries::type_predicates::is_this_type(
                                     self.checker.ctx.types,
                                     asserted_type,
                                 ) {

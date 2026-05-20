@@ -10,7 +10,9 @@
 
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::diagnostics::Diagnostic;
-use tsz_checker::test_utils::{check_source, check_source_with_libs, load_lib_files};
+use tsz_checker::test_utils::{
+    check_source, check_source_with_libs, diagnostic_count, load_lib_files,
+};
 use tsz_common::common::ScriptTarget;
 
 const LIB_NAMES: &[&str] = &[
@@ -2174,6 +2176,195 @@ thing({
                 && !d.message_text.contains("type '\"bar\"'"),
             "Dynamic discriminator (`type: foo1`) must not collapse the union to a \
              single arm in diagnostics; got: {d:?}"
+        );
+    }
+}
+
+// Structural rule: when a function expression is contextually typed by an
+// intersection that includes a callable constituent, the callable constituent's
+// parameter types must flow into the function — regardless of parameter name or
+// mapped-type iteration-variable spelling.
+
+/// Direct assignment to a `((x: T) => R) & { prop: P }` variable: parameter
+/// is contextually typed from the callable constituent.
+///
+/// TS2322 fires (bare arrow lacks the object constituent) but no TS7006:
+/// the parameter IS contextually typed.
+#[test]
+fn test_direct_assign_function_object_intersection_types_parameter() {
+    // Two different parameter names confirm the rule is not name-dependent.
+    for source in [
+        r#"
+const f: ((x: number) => void) & { tag: string } = (x) => { x; };
+"#,
+        r#"
+const f: ((value: number) => void) & { tag: string } = (value) => { value; };
+"#,
+    ] {
+        let diagnostics = check_default(source);
+        assert_eq!(
+            diagnostic_count(&diagnostics, 7006),
+            0,
+            "Arrow parameter must not be implicitly any when contextual type is \
+             function-object intersection"
+        );
+        assert_eq!(
+            diagnostic_count(&diagnostics, 2322),
+            1,
+            "Expected exactly one TS2322 for the missing object constituent"
+        );
+    }
+}
+
+// Hybrid interface (callable + optional named property): unannotated parameter must be
+// contextually typed from the call signature, not left as implicit any.
+// Optional extra property makes the plain lambda assignable to the hybrid interface.
+#[test]
+fn test_hybrid_interface_contextual_types_callback_parameter() {
+    for source in [
+        r#"
+interface Handler {
+  (evt: string): void;
+  name?: string;
+}
+declare function register(h: Handler): void;
+register((evt) => { evt.toLowerCase(); });
+"#,
+        r#"
+interface Processor {
+  (item: number): boolean;
+  version?: number;
+}
+declare function process(p: Processor): void;
+process((item) => item > 0);
+"#,
+    ] {
+        let diagnostics = check_default(source);
+        assert_eq!(
+            diagnostic_count(&diagnostics, 7006),
+            0,
+            "Hybrid interface callable constituent must flow parameter type to unannotated lambda — \
+             TS7006 fires when contextual typing fails"
+        );
+    }
+}
+
+// Generic `((arg: T) => void) & { label?: string }`: unannotated parameter must inherit T
+// from the explicit type argument. Optional extra property keeps the lambda assignable.
+// Two iteration-variable names prove the rule is not tied to a specific spelling.
+#[test]
+fn test_generic_function_object_intersection_types_callback_parameter() {
+    for source in [
+        r#"
+declare function wrap<T>(fn: ((arg: T) => void) & { label?: string }): T;
+wrap<number>((arg) => { arg.toFixed(); });
+"#,
+        r#"
+declare function wrap<U>(fn: ((item: U) => boolean) & { id?: number }): U;
+wrap<string>((item) => item.length > 0);
+"#,
+    ] {
+        let diagnostics = check_default(source);
+        assert_eq!(
+            diagnostic_count(&diagnostics, 7006),
+            0,
+            "Generic intersection callable constituent must flow T to unannotated lambda parameter — \
+             TS7006 fires when contextual typing fails"
+        );
+    }
+}
+
+/// React-like `FC<P>` hybrid interface: props parameter flows from call signature.
+#[test]
+fn test_fc_like_intersection_types_props_parameter() {
+    for source in [
+        r#"
+interface FC<P> {
+  (props: P): null;
+  displayName?: string;
+}
+declare function createFC<P>(fc: FC<P>): FC<P>;
+createFC<{ name: string }>((props) => {
+  props.name;
+  return null;
+});
+"#,
+        r#"
+interface Component<Props> {
+  (properties: Props): null;
+  key?: string;
+}
+declare function define<Props>(c: Component<Props>): Component<Props>;
+define<{ id: number }>((properties) => {
+  properties.id;
+  return null;
+});
+"#,
+    ] {
+        let diagnostics = check_default(source);
+        assert_eq!(
+            diagnostic_count(&diagnostics, 7006),
+            0,
+            "FC-like intersection props must not be implicitly any"
+        );
+    }
+}
+
+/// Mapped-type intersection: uppercase keys get contextually typed callbacks;
+/// the excess lowercase key gets TS2353 + TS7006.
+///
+/// Reproduces the core of `contextualTypeFunctionObjectPropertyIntersection.ts`.
+/// Two field-name / wildcard-key combinations prove the rule is structural.
+#[test]
+fn test_mapped_intersection_valid_keys_contextual_excess_key_ts7006() {
+    for source in [
+        r#"
+type Cb<E extends { type: string }> = (ev: E) => void;
+interface Config<E extends { type: string }> {
+  schema: { events: E; };
+  on?: {
+    [K in E["type"] as K extends Uppercase<string> ? K : never]?: Cb<E extends { type: K } ? E : never>;
+  } & { "*"?: Cb<E>; };
+}
+declare function build<E extends { type: string }>(c: Config<E>): void;
+build({
+  schema: { events: {} as { type: "A" } | { type: "b" } },
+  on: {
+    A: (ev) => { ev.type; },
+    "*": (ev) => { ev.type; },
+    b: (ev) => { ev; },
+  },
+});
+"#,
+        r#"
+type Handler<E extends { kind: string }> = (e: E) => void;
+interface Router<E extends { kind: string }> {
+  schema: { events: E; };
+  routes?: {
+    [K in E["kind"] as K extends Uppercase<string> ? K : never]?: Handler<E extends { kind: K } ? E : never>;
+  } & { DEFAULT?: Handler<E>; };
+}
+declare function createRouter<E extends { kind: string }>(r: Router<E>): void;
+createRouter({
+  schema: { events: {} as { kind: "GET" } | { kind: "post" } },
+  routes: {
+    GET: (e) => { e.kind; },
+    DEFAULT: (e) => { e.kind; },
+    post: (e) => { e; },
+  },
+});
+"#,
+    ] {
+        let diagnostics = check_default(source);
+        assert_eq!(
+            diagnostic_count(&diagnostics, 7006),
+            1,
+            "Expected exactly one TS7006 for the excess lowercase key"
+        );
+        assert_eq!(
+            diagnostic_count(&diagnostics, 2353),
+            1,
+            "Expected exactly one TS2353 for the excess lowercase key"
         );
     }
 }

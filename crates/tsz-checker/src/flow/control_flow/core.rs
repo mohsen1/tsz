@@ -14,7 +14,8 @@ use tsz_parser::parser::node::{CallExprData, NodeArena};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::computation::TypeEnvironment;
-use tsz_solver::{GuardSense, ParamInfo, TupleElement, TypeId, TypePredicate};
+use tsz_solver::narrowing::{GuardSense, NarrowingCache, NarrowingContext};
+use tsz_solver::{ParamInfo, TupleElement, TypeId, TypePredicate};
 
 type FlowCache = FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>;
 type ReferenceMatchCache = RefCell<FxHashMap<(u32, u32), bool>>;
@@ -53,6 +54,43 @@ pub(crate) fn reference_symbol_cache_entries(cache: &ReferenceSymbolCache) -> us
 pub(crate) fn reference_symbol_cache_estimated_size_bytes(cache: &ReferenceSymbolCache) -> usize {
     let cache = cache.borrow();
     cache.capacity() * (std::mem::size_of::<u32>() + std::mem::size_of::<Option<SymbolId>>() + 8)
+}
+
+#[must_use]
+pub(crate) fn switch_reference_cache_entries(cache: &ReferenceMatchCache) -> usize {
+    reference_match_cache_entries(cache)
+}
+
+#[must_use]
+pub(crate) fn switch_reference_cache_estimated_size_bytes(cache: &ReferenceMatchCache) -> usize {
+    reference_match_cache_estimated_size_bytes(cache)
+}
+
+#[must_use]
+pub(crate) fn numeric_atom_cache_entries(cache: &RefCell<FxHashMap<u64, Atom>>) -> usize {
+    cache.borrow().len()
+}
+
+#[must_use]
+pub(crate) fn numeric_atom_cache_estimated_size_bytes(
+    cache: &RefCell<FxHashMap<u64, Atom>>,
+) -> usize {
+    let cache = cache.borrow();
+    cache.capacity() * (std::mem::size_of::<u64>() + std::mem::size_of::<Atom>() + 8)
+}
+
+#[must_use]
+pub(crate) fn shared_numeric_atom_cache_entries(
+    cache: Option<&RefCell<FxHashMap<u64, Atom>>>,
+) -> usize {
+    cache.map(numeric_atom_cache_entries).unwrap_or(0)
+}
+
+#[must_use]
+pub(crate) const fn shared_numeric_atom_cache_estimated_size_bytes(
+    _cache: Option<&RefCell<FxHashMap<u64, Atom>>>,
+) -> usize {
+    0
 }
 
 /// Instantiated type predicates from generic call resolutions, keyed by call node index.
@@ -161,11 +199,17 @@ mod tests {
     };
     use super::{
         FlowCache, ReferenceMatchCache, ReferenceSymbolCache, flow_cache_entries,
-        flow_cache_estimated_size_bytes, reference_match_cache_entries,
+        flow_cache_estimated_size_bytes, numeric_atom_cache_entries,
+        numeric_atom_cache_estimated_size_bytes, reference_match_cache_entries,
         reference_match_cache_estimated_size_bytes, reference_symbol_cache_entries,
-        reference_symbol_cache_estimated_size_bytes,
+        reference_symbol_cache_estimated_size_bytes, shared_numeric_atom_cache_entries,
+        shared_numeric_atom_cache_estimated_size_bytes, switch_reference_cache_entries,
+        switch_reference_cache_estimated_size_bytes,
     };
+    use rustc_hash::FxHashMap;
+    use std::cell::RefCell;
     use tsz_binder::{FlowNodeId, SymbolId};
+    use tsz_common::interner::Atom;
     use tsz_solver::TypeId;
 
     #[test]
@@ -243,6 +287,58 @@ mod tests {
         assert!(
             reference_symbol_cache_estimated_size_bytes(&cache)
                 >= 2 * (std::mem::size_of::<u32>() + std::mem::size_of::<Option<SymbolId>>())
+        );
+    }
+
+    #[test]
+    fn switch_reference_cache_statistics_report_entries_and_size() {
+        let cache = ReferenceMatchCache::default();
+        assert_eq!(switch_reference_cache_entries(&cache), 0);
+        assert_eq!(switch_reference_cache_estimated_size_bytes(&cache), 0);
+
+        cache.borrow_mut().insert((1, 2), true);
+        cache.borrow_mut().insert((3, 4), false);
+
+        assert_eq!(switch_reference_cache_entries(&cache), 2);
+        assert!(
+            switch_reference_cache_estimated_size_bytes(&cache)
+                >= 2 * (std::mem::size_of::<(u32, u32)>() + std::mem::size_of::<bool>())
+        );
+    }
+
+    #[test]
+    fn numeric_atom_cache_statistics_report_entries_and_size() {
+        let cache = RefCell::new(FxHashMap::default());
+        assert_eq!(numeric_atom_cache_entries(&cache), 0);
+        assert_eq!(numeric_atom_cache_estimated_size_bytes(&cache), 0);
+
+        cache.borrow_mut().insert(1, Atom(2));
+        cache.borrow_mut().insert(3, Atom(4));
+
+        assert_eq!(numeric_atom_cache_entries(&cache), 2);
+        assert!(
+            numeric_atom_cache_estimated_size_bytes(&cache)
+                >= 2 * (std::mem::size_of::<u64>() + std::mem::size_of::<Atom>())
+        );
+    }
+
+    #[test]
+    fn shared_numeric_atom_cache_statistics_report_borrowed_entries_and_zero_owned_size() {
+        let cache = RefCell::new(FxHashMap::default());
+        assert_eq!(shared_numeric_atom_cache_entries(Some(&cache)), 0);
+        assert_eq!(
+            shared_numeric_atom_cache_estimated_size_bytes(Some(&cache)),
+            0
+        );
+        assert_eq!(shared_numeric_atom_cache_entries(None), 0);
+        assert_eq!(shared_numeric_atom_cache_estimated_size_bytes(None), 0);
+
+        cache.borrow_mut().insert(1, Atom(2));
+
+        assert_eq!(shared_numeric_atom_cache_entries(Some(&cache)), 1);
+        assert_eq!(
+            shared_numeric_atom_cache_estimated_size_bytes(Some(&cache)),
+            0
         );
     }
 }
@@ -338,7 +434,7 @@ pub struct FlowAnalyzer<'a> {
     /// Optional shared numeric atom cache.
     pub(crate) shared_numeric_atom_cache: Option<&'a RefCell<FxHashMap<u64, Atom>>>,
     /// Optional shared narrowing cache.
-    pub(crate) narrowing_cache: Option<&'a tsz_solver::NarrowingCache>,
+    pub(crate) narrowing_cache: Option<&'a NarrowingCache>,
     /// Instantiated type predicates from generic call resolutions.
     /// Keyed by call expression node index.
     pub(crate) call_type_predicates: Option<&'a CallPredicateMap>,
@@ -622,7 +718,7 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     /// Set a shared narrowing cache.
-    pub const fn with_narrowing_cache(mut self, cache: &'a tsz_solver::NarrowingCache) -> Self {
+    pub const fn with_narrowing_cache(mut self, cache: &'a NarrowingCache) -> Self {
         self.narrowing_cache = Some(cache);
         self
     }
@@ -704,11 +800,11 @@ impl<'a> FlowAnalyzer<'a> {
 
     /// Create a `NarrowingContext`, sharing the pre-allocated cache when available.
     /// This avoids 7 `FxHashMap` allocations per narrowing operation on the hot path.
-    pub(super) fn make_narrowing_context(&self) -> tsz_solver::NarrowingContext<'_> {
+    pub(super) fn make_narrowing_context(&self) -> NarrowingContext<'_> {
         if let Some(cache) = self.narrowing_cache {
-            tsz_solver::NarrowingContext::with_cache(self.interner, cache)
+            NarrowingContext::with_cache(self.interner, cache)
         } else {
-            tsz_solver::NarrowingContext::new(self.interner)
+            NarrowingContext::new(self.interner)
         }
     }
 

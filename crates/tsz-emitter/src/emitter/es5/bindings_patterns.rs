@@ -1,6 +1,7 @@
 //! ES5 destructuring - binding element patterns and parameter bindings.
 
 use super::super::{ParamTransformPlan, Printer};
+use crate::transforms::emit_utils;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{BindingElementData, ForInOfData, Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
@@ -1140,6 +1141,7 @@ impl<'a> Printer<'a> {
         for param in &transforms.params {
             if let Some(initializer) = param.initializer {
                 if let Some(pattern) = param.pattern {
+                    let has_object_rest = self.binding_target_contains_object_rest(pattern);
                     // Special case: rest-only array pattern `[...r] = null`.
                     // When the default is `null` (a keyword literal), tsc inlines:
                     //   `var r = (param === void 0 ? null : param).slice(0)`
@@ -1165,7 +1167,19 @@ impl<'a> Printer<'a> {
                             self.write(";");
                             self.write_line();
                         }
-                    } else if self.binding_target_contains_object_rest(pattern) {
+                    } else if !self.ctx.target_es5 && !has_object_rest {
+                        // Non-ES5 with native destructuring: keep the binding
+                        // pattern intact in the body prologue so the output
+                        // matches tsc's `var <pattern> = <param> === void 0 ? <init> : <param>;`
+                        // instead of allocating an extra pattern temp and
+                        // walking the pattern out into property-access
+                        // assignments.
+                        self.emit_native_param_binding_prologue(
+                            &param.name,
+                            pattern,
+                            Some(initializer),
+                        );
+                    } else if has_object_rest {
                         self.emit_param_default_assignment(&param.name, initializer);
                         let mut started = false;
                         self.emit_param_binding_assignments(pattern, &param.name, &mut started);
@@ -1174,8 +1188,7 @@ impl<'a> Printer<'a> {
                             self.write_line();
                         }
                     } else {
-                        // Has both default and binding pattern: use ternary in a single var statement.
-                        // TypeScript: var _b = _a === void 0 ? default : _a, _c = _b[1], ...
+                        // ES5: var _b = _a === void 0 ? default : _a, _c = _b[1], ...
                         let hoisted_start = self.hoisted_assignment_temps.len();
                         let hoist_offset = self.writer.len();
                         let hoist_line = self.writer.current_line();
@@ -1206,18 +1219,59 @@ impl<'a> Printer<'a> {
                     self.emit_param_default_assignment(&param.name, initializer);
                 }
             } else if let Some(pattern) = param.pattern {
-                let hoisted_start = self.hoisted_assignment_temps.len();
-                let hoist_offset = self.writer.len();
-                let hoist_line = self.writer.current_line();
-                let mut started = false;
-                self.emit_param_binding_assignments(pattern, &param.name, &mut started);
-                if started {
-                    self.write(";");
-                    self.write_line();
+                if self.pattern_eligible_for_native_param_prologue(pattern) {
+                    self.emit_native_param_binding_prologue(&param.name, pattern, None);
+                } else {
+                    let hoisted_start = self.hoisted_assignment_temps.len();
+                    let hoist_offset = self.writer.len();
+                    let hoist_line = self.writer.current_line();
+                    let mut started = false;
+                    self.emit_param_binding_assignments(pattern, &param.name, &mut started);
+                    if started {
+                        self.write(";");
+                        self.write_line();
+                    }
+                    self.insert_param_binding_hoisted_temps(
+                        hoisted_start,
+                        hoist_offset,
+                        hoist_line,
+                    );
                 }
-                self.insert_param_binding_hoisted_temps(hoisted_start, hoist_offset, hoist_line);
             }
         }
+    }
+
+    /// At ES2015+ the body prologue can keep binding patterns native unless
+    /// the pattern contains an object rest, which still needs the `__rest`
+    /// helper below ES2018 and forces the legacy lowering path.
+    fn pattern_eligible_for_native_param_prologue(&self, pattern: NodeIndex) -> bool {
+        !self.ctx.target_es5 && !self.binding_target_contains_object_rest(pattern)
+    }
+
+    fn emit_native_param_binding_prologue(
+        &mut self,
+        param_name: &str,
+        pattern: NodeIndex,
+        initializer: Option<NodeIndex>,
+    ) {
+        let hoisted_start = self.hoisted_assignment_temps.len();
+        let hoist_offset = self.writer.len();
+        let hoist_line = self.writer.current_line();
+        self.write("var ");
+        self.emit_decl_name(pattern);
+        self.write(" = ");
+        if let Some(initializer) = initializer {
+            self.write(param_name);
+            self.write(" === void 0 ? ");
+            self.emit_expression(initializer);
+            self.write(" : ");
+            self.write(param_name);
+        } else {
+            self.write(param_name);
+        }
+        self.write(";");
+        self.write_line();
+        self.insert_param_binding_hoisted_temps(hoisted_start, hoist_offset, hoist_line);
     }
 
     fn insert_param_binding_hoisted_temps(
@@ -1528,6 +1582,9 @@ impl<'a> Printer<'a> {
         {
             let has_inner_class_temp =
                 self.reserve_es5_computed_key_inner_class_temps(computed.expression);
+            let expression_text = self
+                .computed_key_expression_generates_downlevel_temp(computed.expression)
+                .then(|| self.capture_emit(computed.expression));
             let temp_name = if has_inner_class_temp {
                 self.make_unique_name_fresh()
             } else {
@@ -1536,11 +1593,23 @@ impl<'a> Printer<'a> {
             self.emit_param_assignment_prefix(started);
             self.write(&temp_name);
             self.write(" = ");
-            self.emit(computed.expression);
+            if let Some(expression_text) = expression_text {
+                self.write(&expression_text);
+            } else {
+                self.emit(computed.expression);
+            }
             return Some(temp_name);
         }
 
         None
+    }
+
+    fn computed_key_expression_generates_downlevel_temp(&self, idx: NodeIndex) -> bool {
+        emit_utils::parameter_expression_generates_downlevel_temp(
+            self.arena,
+            self.ctx.needs_es2020_lowering,
+            idx,
+        )
     }
 
     pub(in crate::emitter) fn emit_param_array_binding_element(

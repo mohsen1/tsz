@@ -940,7 +940,10 @@ impl ParserState {
         start_pos: u32,
         base_type: NodeIndex,
     ) -> NodeIndex {
-        if self.is_token(SyntaxKind::OpenBracketToken) && !self.scanner.has_preceding_line_break() {
+        if self.is_token(SyntaxKind::OpenBracketToken) {
+            if self.look_ahead_is_computed_type_member_boundary() {
+                return base_type;
+            }
             return self.parse_array_type(start_pos, base_type);
         }
 
@@ -2506,45 +2509,59 @@ impl ParserState {
         }
 
         let mut args = Vec::new();
-        let mut depth = 1;
+        let mut expecting_argument = true;
+        let mut closed_type_arguments = false;
+        let mut has_trailing_comma = false;
 
-        // Parse type arguments
-        while depth > 0 && !self.is_token(SyntaxKind::EndOfFileToken) {
-            // Try to parse a type
-            if args.is_empty() || self.is_token(SyntaxKind::CommaToken) {
-                if !args.is_empty() {
-                    self.next_token(); // consume comma
-                }
-
-                // Check for nested < (generic types within type arguments)
-                let type_node = self.parse_type_argument_in_type_arguments();
-                args.push(type_node);
+        while !self.is_token(SyntaxKind::EndOfFileToken) {
+            if self.is_plain_greater_than_for_expression_type_arguments() {
+                closed_type_arguments = true;
+                break;
             }
 
-            if self.is_plain_greater_than_for_expression_type_arguments() {
-                depth -= 1;
-            } else if self.is_token(SyntaxKind::CommaToken) {
-                // Comma indicates another type argument follows.
-            } else if self.is_token(SyntaxKind::SemicolonToken)
+            if self.is_token(SyntaxKind::CommaToken) {
+                let comma_can_be_trailing = !expecting_argument;
+                if expecting_argument {
+                    self.error_type_expected();
+                    args.push(self.error_node());
+                }
+
+                self.next_token();
+                if comma_can_be_trailing
+                    && self.is_plain_greater_than_for_expression_type_arguments()
+                {
+                    has_trailing_comma = true;
+                }
+                expecting_argument = true;
+                continue;
+            }
+
+            if !expecting_argument {
+                break;
+            }
+
+            if self.is_token(SyntaxKind::SemicolonToken)
                 || self.is_token(SyntaxKind::CloseBraceToken)
                 || self.is_token(SyntaxKind::EndOfFileToken)
             {
-                // Invalid - not type arguments
-                break;
-            } else {
-                // Something unexpected - might not be type arguments
                 break;
             }
+
+            let type_node = self.parse_type_argument_in_type_arguments();
+            args.push(type_node);
+            expecting_argument = false;
         }
 
-        if depth == 0 {
+        if closed_type_arguments {
             // Successfully parsed type arguments, now consume >
             self.parse_expected_greater_than();
 
             // Check if the following token indicates these were type arguments
             // (call, tagged template, or instantiation expression)
             if self.can_follow_type_arguments_in_expression() {
-                return Some(self.make_node_list(args));
+                let mut list = self.make_node_list(args);
+                list.has_trailing_comma = has_trailing_comma;
+                return Some(list);
             }
         }
 
@@ -2614,6 +2631,9 @@ impl ParserState {
         let mut current = element_type;
 
         while self.is_token(SyntaxKind::OpenBracketToken) {
+            if self.look_ahead_is_computed_type_member_boundary() {
+                break;
+            }
             if self.look_ahead_is_index_signature() {
                 break;
             }
@@ -2662,6 +2682,66 @@ impl ParserState {
         }
 
         current
+    }
+
+    fn look_ahead_is_computed_type_member_boundary(&mut self) -> bool {
+        if !self.scanner.has_preceding_line_break() || !self.is_token(SyntaxKind::OpenBracketToken)
+        {
+            return false;
+        }
+
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+
+        self.next_token(); // skip `[`
+        let empty_brackets = self.is_token(SyntaxKind::CloseBracketToken);
+        let mut bracket_depth = 1_u32;
+        while bracket_depth > 0 && !self.is_token(SyntaxKind::EndOfFileToken) {
+            match self.token() {
+                SyntaxKind::OpenBracketToken => {
+                    bracket_depth += 1;
+                    self.next_token();
+                }
+                SyntaxKind::CloseBracketToken => {
+                    bracket_depth -= 1;
+                    self.next_token();
+                }
+                _ => {
+                    self.next_token();
+                }
+            }
+        }
+
+        let is_boundary = if bracket_depth == 0 {
+            match self.token() {
+                SyntaxKind::ColonToken | SyntaxKind::OpenParenToken | SyntaxKind::LessThanToken => {
+                    true
+                }
+                SyntaxKind::SemicolonToken
+                | SyntaxKind::CommaToken
+                | SyntaxKind::CloseBraceToken
+                    if empty_brackets =>
+                {
+                    true
+                }
+                SyntaxKind::QuestionToken => {
+                    self.next_token();
+                    matches!(
+                        self.token(),
+                        SyntaxKind::ColonToken
+                            | SyntaxKind::OpenParenToken
+                            | SyntaxKind::LessThanToken
+                    )
+                }
+                _ => false,
+            }
+        } else {
+            false
+        };
+
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        is_boundary
     }
 
     /// Check if current keyword can be used as a property name

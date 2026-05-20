@@ -2,17 +2,166 @@
 import pathlib
 import re
 import argparse
+import importlib.util
 import json
 import shlex
 import subprocess
 import sys
-import tomllib
 from collections import Counter
 from pathlib import Path
-from typing import Optional
+from typing import BinaryIO, Iterable, Optional
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - exercised on Python < 3.11.
+    tomllib = None
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 POLICY_PATH = pathlib.Path(__file__).resolve().parent / "arch_guard_policy.toml"
+
+
+def _strip_toml_comment(line: str) -> str:
+    in_basic = False
+    in_literal = False
+    escaped = False
+
+    for index, char in enumerate(line):
+        if in_basic:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_basic = False
+            continue
+        if in_literal:
+            if char == "'":
+                in_literal = False
+            continue
+        if char == '"':
+            in_basic = True
+        elif char == "'":
+            in_literal = True
+        elif char == "#":
+            return line[:index]
+    return line
+
+
+def _parse_toml_string(value: str) -> str:
+    value = value.strip()
+    if value.startswith("'") and value.endswith("'"):
+        return value[1:-1]
+    if value.startswith('"') and value.endswith('"'):
+        return json.loads(value)
+    raise ValueError(f"unsupported TOML string value: {value!r}")
+
+
+def _parse_toml_string_array(lines: list[str]) -> list[str]:
+    text = "\n".join(_strip_toml_comment(line) for line in lines)
+    start = text.find("[")
+    end = text.rfind("]")
+    if start == -1 or end == -1 or end < start:
+        raise ValueError(f"unsupported TOML array value: {text!r}")
+
+    items: list[str] = []
+    index = start + 1
+    while index < end:
+        while index < end and text[index] in " \t\r\n,":
+            index += 1
+        if index >= end:
+            break
+
+        quote = text[index]
+        if quote not in {"'", '"'}:
+            raise ValueError(f"unsupported TOML array item near: {text[index:end]!r}")
+        index += 1
+        item_start = index
+        if quote == "'":
+            while index < end and text[index] != "'":
+                index += 1
+            if index >= end:
+                raise ValueError("unterminated TOML literal string in array")
+            items.append(text[item_start:index])
+            index += 1
+            continue
+
+        escaped = False
+        buffer: list[str] = []
+        while index < end:
+            char = text[index]
+            if escaped:
+                buffer.append("\\" + char)
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                break
+            else:
+                buffer.append(char)
+            index += 1
+        if index >= end:
+            raise ValueError("unterminated TOML basic string in array")
+        items.append(json.loads(f'"{"".join(buffer)}"'))
+        index += 1
+
+    return items
+
+
+def _parse_toml_value(value: str, array_lines: list[str]) -> object:
+    value = _strip_toml_comment(value).strip()
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    if value.startswith("["):
+        return _parse_toml_string_array(array_lines)
+    return _parse_toml_string(value)
+
+
+def _parse_arch_guard_policy_toml(text: str) -> dict:
+    """Parse the arch guard policy subset when stdlib `tomllib` is unavailable."""
+    data: dict[str, list[dict]] = {"pattern_checks": [], "manifest_checks": []}
+    current: Optional[dict] = None
+    lines = text.splitlines()
+    index = 0
+
+    while index < len(lines):
+        raw_line = lines[index]
+        line = _strip_toml_comment(raw_line).strip()
+        index += 1
+
+        if not line:
+            continue
+        if line.startswith("[[") and line.endswith("]]"):
+            table_name = line[2:-2].strip()
+            if table_name not in data:
+                raise ValueError(f"unsupported TOML table: {table_name!r}")
+            current = {}
+            data[table_name].append(current)
+            continue
+        if current is None or "=" not in line:
+            raise ValueError(f"unsupported TOML line: {raw_line!r}")
+
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        array_lines = [raw_line]
+        if value.startswith("[") and "]" not in _strip_toml_comment(value):
+            while index < len(lines):
+                array_lines.append(lines[index])
+                if "]" in _strip_toml_comment(lines[index]):
+                    index += 1
+                    break
+                index += 1
+        current[key] = _parse_toml_value(value, array_lines)
+
+    return data
+
+
+def _load_policy_toml(file: BinaryIO) -> dict:
+    if tomllib is not None:
+        return tomllib.load(file)
+    return _parse_arch_guard_policy_toml(file.read().decode("utf-8"))
 
 
 def _build_excludes(entry: dict) -> dict:
@@ -47,7 +196,7 @@ def _load_pattern_checks(
 ) -> list[tuple[str, pathlib.Path, re.Pattern, dict]]:
     """Load [[pattern_checks]] entries from the declarative policy TOML."""
     with policy_path.open("rb") as f:
-        return _parse_pattern_checks(tomllib.load(f))
+        return _parse_pattern_checks(_load_policy_toml(f))
 
 
 def _load_manifest_checks(
@@ -59,7 +208,7 @@ def _load_manifest_checks(
     at line boundaries within Cargo.toml files.
     """
     with policy_path.open("rb") as f:
-        return _parse_manifest_checks(tomllib.load(f))
+        return _parse_manifest_checks(_load_policy_toml(f))
 
 
 def _load_all_checks(
@@ -67,7 +216,7 @@ def _load_all_checks(
 ) -> tuple[list[tuple[str, pathlib.Path, re.Pattern, dict]], list[tuple[str, pathlib.Path, re.Pattern]]]:
     """Parse the policy TOML once and return both check lists."""
     with policy_path.open("rb") as f:
-        data = tomllib.load(f)
+        data = _load_policy_toml(f)
     return _parse_pattern_checks(data), _parse_manifest_checks(data)
 
 
@@ -130,13 +279,18 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/types/utilities/enum_utils.rs",
         },
     ),
+    (
+        "Checker computation boundary: type-computation monoliths must stay below 3100 LOC (#8226)",
+        ROOT / "crates" / "tsz-checker" / "src" / "types" / "computation",
+        3100,
+    ),
 ]
 
 FILE_LINE_LIMIT_CHECKS = [
     (
-        "Core boundary: tsz-core lib facade must stay under 500 LOC",
+        "Core boundary: tsz-core lib facade must stay at current 365 LOC baseline",
         ROOT / "crates" / "tsz-core" / "src" / "lib.rs",
-        500,
+        365,
     ),
     (
         "Checker query boundary: common quarantine must not grow (#8225)",
@@ -146,7 +300,32 @@ FILE_LINE_LIMIT_CHECKS = [
         / "src"
         / "query_boundaries"
         / "common.rs",
-        1996,
+        1920,
+    ),
+    (
+        "Solver engine boundary: generic call resolver must stay at current 3381 LOC baseline (#8209)",
+        ROOT
+        / "crates"
+        / "tsz-solver"
+        / "src"
+        / "operations"
+        / "generic_call"
+        / "resolve.rs",
+        3381,
+    ),
+    # Pin the async ES5 IR transformer file size while #8277 splits the
+    # monolith into staged lowering modules. The cap should ratchet down
+    # as more phases (helper scheduling, temp/hoist planning, suspended
+    # target lowering, ...) are extracted into sibling submodules.
+    (
+        "Emitter boundary: async ES5 IR engine size ratchet (#8277)",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "transforms"
+        / "async_es5_ir.rs",
+        5150,
     ),
 ]
 
@@ -163,7 +342,7 @@ STRUCT_FIELD_COUNT_CHECKS = [
         "Checker boundary: CheckerContext field count (architecture health metric 1)",
         ROOT / "crates" / "tsz-checker" / "src" / "context" / "mod.rs",
         "CheckerContext",
-        235,
+        236,
     ),
 ]
 
@@ -178,7 +357,7 @@ TRAIT_METHOD_COUNT_CHECKS = [
         "Solver boundary: TypeDatabase method count (#8205)",
         ROOT / "crates" / "tsz-solver" / "src" / "caches" / "db.rs",
         "TypeDatabase",
-        97,
+        78,
     ),
 ]
 
@@ -189,6 +368,17 @@ VALID_CHECKER_CONTEXT_LIFETIMES = {
     "SpeculationScoped",
     "DiagnosticsOnly",
     "LspPersistent",
+}
+
+VALID_CHECKER_CONTEXT_CAPABILITIES = {
+    "CheckerInputs",
+    "DiagnosticState",
+    "EmitSummaryState",
+    "FileTypeCache",
+    "FlowSessionState",
+    "ProgramLookupContext",
+    "RelationSessionState",
+    "SpeculationState",
 }
 
 CHECKER_CONTEXT_LIFETIME_MANIFEST_CHECKS = [
@@ -279,6 +469,35 @@ ROOT_SOLVER_COMPUTATION_IMPORT_COUNT_CHECKS = [
     ),
 ]
 
+# Pin the producer-side compatibility surface that still re-exports solver
+# computation/construction APIs from the crate root. The zero wildcard guard
+# below prevents broad `pub use module::*` growth; this count makes explicit
+# root re-export growth visible too.
+#
+# Each entry:
+#   (description, file_path, root_module_prefixes, max_reexports).
+ROOT_SOLVER_EXPLICIT_REEXPORT_COUNT_CHECKS = [
+    (
+        "Solver API boundary: flat root explicit computation re-exports (#8204)",
+        ROOT / "crates" / "tsz-solver" / "src" / "lib.rs",
+        (
+            "caches",
+            "canonicalize",
+            "classes",
+            "contextual",
+            "evaluation",
+            "instantiation",
+            "intern",
+            "narrowing",
+            "objects",
+            "operations",
+            "relations",
+            "widening",
+        ),
+        0,
+    ),
+]
+
 # Pin direct checker call sites into `query_boundaries::common`, the broad
 # compatibility/quarantine barrel tracked by #8225. Existing sites are
 # tolerated as migration debt; new checker code should prefer a narrower
@@ -291,7 +510,19 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         "Checker query boundary: direct common quarantine references outside query_boundaries (#8225)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         ("crates/tsz-checker/src/query_boundaries/",),
-        3428,
+        3397,
+    ),
+]
+
+# Pin root-level lint allowance entries in the query-boundary module map. #8225
+# tracks turning this layer from migration quarantine into narrower APIs, and
+# broad module-level allowances are part of that quarantine debt. The cap should
+# ratchet down as modules no longer need blanket suppressions.
+QUERY_BOUNDARY_MODULE_ALLOWANCE_COUNT_CHECKS = [
+    (
+        "Checker query boundary: module-level lint allowances must not grow (#8225)",
+        ROOT / "crates" / "tsz-checker" / "src" / "query_boundaries" / "mod.rs",
+        104,
     ),
 ]
 
@@ -300,7 +531,7 @@ SNAPSHOT_ROLLBACK_FILE_COUNT_CHECKS = [
         "Checker speculation boundary: snapshot-rollback call sites outside speculation.rs (architecture health metric 5)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         ("crates/tsz-checker/src/context/speculation.rs",),
-        8,
+        6,
     ),
 ]
 
@@ -322,6 +553,25 @@ SPECULATION_GUARD_NAME_CHECKS = [
         "Checker speculation boundary: number of `…Guard` structs in speculation.rs (architecture health metric 6)",
         ROOT / "crates" / "tsz-checker" / "src" / "context" / "speculation.rs",
         0,
+    ),
+]
+
+DEBUG_PRINT_REPORT_PATH = ROOT / "scripts" / "perf" / "debug-print-report.py"
+DEBUG_PRINT_MACRO_CHECKS = [
+    (
+        "Performance boundary: compiler-internal debug print macros (Track 10)",
+        ROOT,
+        (
+            "crates/tsz-binder/src",
+            "crates/tsz-checker/src",
+            "crates/tsz-common/src",
+            "crates/tsz-core/src",
+            "crates/tsz-emitter/src",
+            "crates/tsz-lowering/src",
+            "crates/tsz-parser/src",
+            "crates/tsz-scanner/src",
+            "crates/tsz-solver/src",
+        ),
     ),
 ]
 
@@ -349,7 +599,7 @@ REGEX_LINE_COUNT_CHECKS = [
         "Checker diagnostic boundary: file-name/path substring decisions (Track 10)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         re.compile(r"\b(?:\w+\.)?file_name\.contains\s*\(|\bsource_path\.contains\s*\("),
-        9,
+        1,
     ),
     (
         "Checker diagnostic boundary: rendered type strings as semantic input (Track 10)",
@@ -358,7 +608,21 @@ REGEX_LINE_COUNT_CHECKS = [
             r"\bformat_type(?:_diagnostic)?\s*\([^\n]*"
             r"(?:\.contains\s*\(|\.starts_with\s*\(|\.ends_with\s*\(|\.as_str\s*\(\))"
         ),
-        3,
+        0,
+    ),
+    (
+        "Checker diagnostic boundary: rendered message predicates (Track 10)",
+        [
+            ROOT / "crates" / "tsz-checker" / "src" / "checkers" / "jsx",
+            ROOT / "crates" / "tsz-checker" / "src" / "checkers" / "call_checker",
+            ROOT / "crates" / "tsz-checker" / "src" / "types" / "type_checking",
+        ],
+        re.compile(
+            r"\b(?:display|source_display|target_display|stripped_display|"
+            r"diagnostic\.message_text|raw|evaluated)"
+            r"\.(?:contains|starts_with|ends_with|as_str)\s*\("
+        ),
+        14,
     ),
     (
         "Emitter boundary: source_text.contains recovery decisions (Track 9/10)",
@@ -370,7 +634,17 @@ REGEX_LINE_COUNT_CHECKS = [
         "Solver API boundary: flat root wildcard compatibility re-exports (#8204)",
         [ROOT / "crates" / "tsz-solver" / "src" / "lib.rs"],
         re.compile(r"^pub use (?:[A-Za-z_][A-Za-z0-9_]*::)+\*;"),
-        12,
+        0,
+    ),
+    (
+        "Solver relation boundary: legacy relation flag bridge surface (#8207)",
+        [ROOT / "crates" / "tsz-solver" / "src"],
+        re.compile(
+            r"\b(?:from_checker_flags_u16|from_legacy_u8|to_legacy_u8|"
+            r"subtype_cache_config_from_legacy_flags|"
+            r"assignability_cache_config_from_legacy_flags)\b"
+        ),
+        0,
     ),
     (
         "Checker relation boundary: raw diagnostic assignability predicates (#8227)",
@@ -388,7 +662,25 @@ REGEX_LINE_COUNT_CHECKS = [
             r"\b(?:self|self\.ctx\.types|self\.interner)"
             r"\.is_assignable_to(?:_[A-Za-z0-9_]+)?\s*\("
         ),
-        136,
+        94,
+    ),
+    (
+        "Checker residency boundary: with_parent_cache_attributed migration callsites (Track 10)",
+        [ROOT / "crates" / "tsz-checker" / "src"],
+        re.compile(
+            r"^(?!\s*(?:pub(?:\([^)]*\))?\s+)?fn\b)"
+            r".*\bwith_parent_cache_attributed\s*\("
+        ),
+        33,
+    ),
+    (
+        "Checker residency boundary: copy_symbol_file_targets_to_attributed migration callsites (Track 10)",
+        [ROOT / "crates" / "tsz-checker" / "src"],
+        re.compile(
+            r"^(?!\s*(?:pub(?:\([^)]*\))?\s+)?fn\b)"
+            r".*\bcopy_symbol_file_targets_to_attributed\s*\("
+        ),
+        23,
     ),
     (
         "Checker relation boundary: diagnostic-local RelationRequest constructors (#8227)",
@@ -417,7 +709,34 @@ REGEX_LINE_COUNT_CHECKS = [
             r"RelationFlags::from_bits_truncate\s*\(|"
             r"CachedAnyMode::from_legacy_u8\s*\()"
         ),
-        1,
+        0,
+    ),
+    (
+        "Solver relation boundary: query cache uses relation facade (#8207)",
+        [ROOT / "crates" / "tsz-solver" / "src" / "caches" / "query_cache.rs"],
+        re.compile(r"\b(?:configured_compat_checker|configured_subtype_checker)\s*\("),
+        0,
+    ),
+    (
+        "Solver relation boundary: query cache trace labels use typed policy names (#8207)",
+        [ROOT / "crates" / "tsz-solver" / "src" / "caches" / "query_cache.rs"],
+        re.compile(r'"is_(?:subtype_of|assignable_to)_with_flags"'),
+        0,
+    ),
+    (
+        "Solver relation boundary: query cache legacy flag overrides (#8207)",
+        [ROOT / "crates" / "tsz-solver" / "src" / "caches" / "query_cache.rs"],
+        re.compile(r"\bfn\s+is_(?:subtype_of|assignable_to)_with_flags\s*\("),
+        0,
+    ),
+    (
+        "Solver relation boundary: query database legacy flag methods (#8207)",
+        [
+            ROOT / "crates" / "tsz-solver" / "src" / "caches" / "db.rs",
+            ROOT / "crates" / "tsz-solver" / "src" / "caches" / "query_cache.rs",
+        ],
+        re.compile(r"\bfn\s+is_(?:subtype_of|assignable_to)_with_flags\s*\("),
+        0,
     ),
 ]
 
@@ -432,6 +751,7 @@ BRANCH_LOCAL_VISITED_CLONE_CHECKS = [
         [
             ROOT / "crates" / "tsz-checker" / "src",
             ROOT / "crates" / "tsz-lsp" / "src",
+            ROOT / "crates" / "tsz-solver" / "src",
         ],
         (
             (
@@ -453,6 +773,14 @@ BRANCH_LOCAL_VISITED_CLONE_CHECKS = [
             (
                 "crates/tsz-lsp/src/completions/member.rs",
                 "let mut member_visited = visited.clone();",
+            ),
+            (
+                "crates/tsz-solver/src/evaluation/evaluate_rules/infer_pattern.rs",
+                "let mut alias_visited = visited.clone();",
+            ),
+            (
+                "crates/tsz-solver/src/evaluation/evaluate_rules/infer_pattern_helpers.rs",
+                "let mut alias_visited = visited.clone();",
             ),
         ),
     ),
@@ -533,10 +861,7 @@ GENERATED_PROJECT_ROWS_WITHOUT_PINNED_SOURCE = {
 }
 
 COMPILE_GUARD_ONLY_PROJECT_ROWS = {
-    "type-challenges-project",
     "type-challenges-solutions-project",
-    "type-challenges-assertion-candidates",
-    "type-challenges-assertions-tsc-clean",
 }
 
 BENCHMARK_ONLY_PROJECT_ROWS = {
@@ -690,8 +1015,15 @@ ROOT_SOLVER_COMPUTATION_API_SYMBOLS = (
     "CallEvaluator",
     "CallResult",
     "CompatChecker",
+    "apply_contextual_type",
     "ContextualTypeContext",
+    "evaluate_conditional",
+    "evaluate_index_access",
+    "evaluate_index_access_with_options",
+    "evaluate_keyof",
+    "evaluate_mapped",
     "evaluate_type",
+    "evaluate_type_with_request",
     "get_contextual_signature",
     "get_contextual_signature_cached",
     "get_contextual_signature_cached_with_compat_checker",
@@ -721,6 +1053,7 @@ ROOT_SOLVER_COMPUTATION_API_SYMBOLS = (
     "substitute_this_type_at_return_position",
     "substitute_this_type_cached",
     "TypeEnvironment",
+    "TypeEvaluator",
     "TypeInstantiator",
     "TypeResolver",
     "TypeSubstitution",
@@ -883,6 +1216,99 @@ def scan_root_solver_computation_import_count(
     return []
 
 
+def _iter_root_pub_use_statements(text: str) -> Iterable[tuple[int, str]]:
+    """Yield top-level `pub use` statements from a Rust module text.
+
+    The solver `lib.rs` compatibility exports are plain top-level statements.
+    Nested tiered-module re-exports are intentionally ignored because their
+    lines are indented and represent the preferred facade modules.
+    """
+    lines = text.splitlines()
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if not line.startswith("pub use "):
+            index += 1
+            continue
+
+        start_line = index + 1
+        statement_lines = [line.strip()]
+        while ";" not in lines[index] and index + 1 < len(lines):
+            index += 1
+            statement_lines.append(lines[index].strip())
+        yield start_line, " ".join(statement_lines)
+        index += 1
+
+
+def _root_pub_use_export_names(statement: str) -> list[str]:
+    """Return exported leaf names from a top-level `pub use` statement."""
+    body = statement.removeprefix("pub use ").removesuffix(";").strip()
+    if "*" in body:
+        return ["*"]
+
+    if "{" not in body:
+        return [body.rsplit("::", 1)[-1].strip()]
+
+    inner = body.split("{", 1)[1].rsplit("}", 1)[0]
+    names: list[str] = []
+    for part in inner.split(","):
+        item = part.strip()
+        if not item:
+            continue
+        item = item.split(" as ", 1)[0].strip()
+        names.append(item.rsplit("::", 1)[-1])
+    return names
+
+
+def scan_solver_root_explicit_reexport_count(
+    file_path: pathlib.Path,
+    root_module_prefixes: tuple[str, ...],
+    max_reexports: int,
+) -> list[str]:
+    """Count explicit high-risk solver root compatibility re-exports.
+
+    #8204 is retiring the flat `tsz_solver` root surface in favor of tiered
+    facades. Wildcard exports are already forbidden; this guard pins the
+    remaining explicit root exports from computation/construction-heavy
+    modules so new compatibility surface must be an intentional cap change.
+    """
+    if not file_path.exists():
+        return []
+
+    try:
+        text = file_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return []
+
+    prefix_set = set(root_module_prefixes)
+    matches: list[tuple[int, str]] = []
+    for line_no, statement in _iter_root_pub_use_statements(text):
+        body = statement.removeprefix("pub use ").strip()
+        root_prefix = body.split("::", 1)[0]
+        if root_prefix not in prefix_set:
+            continue
+        for name in _root_pub_use_export_names(statement):
+            matches.append((line_no, name))
+
+    if len(matches) > max_reexports:
+        try:
+            rel_path = file_path.relative_to(ROOT).as_posix()
+        except ValueError:
+            rel_path = str(file_path)
+        hits = [
+            f"flat solver root explicit re-export #{i + 1}: {rel_path}:{line_no} {name}"
+            for i, (line_no, name) in enumerate(matches)
+        ]
+        hits.append(
+            f"total flat solver root explicit computation re-exports: "
+            f"{len(matches)} (cap {max_reexports}; bump cap intentionally, "
+            f"or move the API behind a named facade / checker query-boundary "
+            f"helper — #8204)"
+        )
+        return hits
+    return []
+
+
 def scan_query_boundary_common_reference_count(
     search_roots: list[pathlib.Path],
     exclude_path_prefixes: tuple[str, ...],
@@ -935,6 +1361,54 @@ def scan_query_boundary_common_reference_count(
             f"query_boundaries: {len(matching_lines)} (cap {max_references}; "
             f"bump cap intentionally, or route the new site through a narrower "
             f"request-shaped boundary - #8225)"
+        )
+        return hits
+    return []
+
+
+_QUERY_BOUNDARY_ALLOWANCE_TOKEN_PATTERN = re.compile(
+    r"\b(?:dead_code|private_interfaces|clippy::[A-Za-z0-9_]+)\b"
+)
+
+
+def scan_query_boundary_module_allowance_count(
+    file_path: pathlib.Path,
+    max_allowances: int,
+) -> list[str]:
+    """Count root-level lint allowance entries in `query_boundaries/mod.rs`.
+
+    The module map historically carried broad `#[allow(...)]` blocks for many
+    boundary modules. Existing suppressions are tolerated as migration debt, but
+    new blanket entries should be scoped to the item that needs them or ratchet
+    this cap intentionally.
+    """
+    try:
+        text = file_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return []
+
+    matches: list[tuple[int, str]] = []
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        stripped = line.lstrip()
+        if stripped.startswith("//"):
+            continue
+        for match in _QUERY_BOUNDARY_ALLOWANCE_TOKEN_PATTERN.finditer(line):
+            matches.append((line_no, match.group(0)))
+
+    if len(matches) > max_allowances:
+        try:
+            rel_path = file_path.relative_to(ROOT).as_posix()
+        except ValueError:
+            rel_path = str(file_path)
+        hits = [
+            f"query_boundaries module lint allowance #{i + 1}: "
+            f"{rel_path}:{line_no} {name}"
+            for i, (line_no, name) in enumerate(matches)
+        ]
+        hits.append(
+            f"total query_boundaries module-level lint allowance entries: "
+            f"{len(matches)} (cap {max_allowances}; scope the allowance to the "
+            f"item that needs it or intentionally bump the #8225 cap)"
         )
         return hits
     return []
@@ -1141,6 +1615,33 @@ def scan_speculation_guard_struct_count(
         )
         return hits
     return []
+
+
+_DEBUG_PRINT_REPORT_MODULE = None
+
+
+def _load_debug_print_report_module():
+    """Load the debug-print scanner that owns comment/string parsing."""
+    global _DEBUG_PRINT_REPORT_MODULE
+    if _DEBUG_PRINT_REPORT_MODULE is not None:
+        return _DEBUG_PRINT_REPORT_MODULE
+    spec = importlib.util.spec_from_file_location(
+        "debug_print_report", DEBUG_PRINT_REPORT_PATH
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"could not load {DEBUG_PRINT_REPORT_PATH}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    _DEBUG_PRINT_REPORT_MODULE = module
+    return module
+
+
+def scan_debug_print_macros(root: pathlib.Path, scan_dirs: tuple[str, ...]) -> list[str]:
+    """Report non-test compiler-internal `println!`, `eprintln!`, and `dbg!`."""
+    report = _load_debug_print_report_module()
+    hits = report.scan(root, scan_dirs)
+    return [f"{hit.path}:{hit.line} {hit.macro}: {hit.text}" for hit in hits]
 
 
 def extract_js_array_strings(text: str, const_name: str) -> Optional[list[str]]:
@@ -1394,9 +1895,8 @@ def scan_project_fixture_sources(
         hits.append(f"{fixture_rel}:0 missing tsz_project_fixture_sources function")
         source_cases = []
 
-    expected_rows = sorted(
-        (set(required) | set(canary)) - GENERATED_PROJECT_ROWS_WITHOUT_PINNED_SOURCE,
-    )
+    registered_rows = set(required) | set(canary)
+    expected_rows = sorted(registered_rows - GENERATED_PROJECT_ROWS_WITHOUT_PINNED_SOURCE)
     expected_set = set(expected_rows)
     source_set = set(source_cases)
 
@@ -1408,7 +1908,7 @@ def scan_project_fixture_sources(
         if error is not None:
             hits.append(f"{fixture_rel}:0 {error}")
 
-    for name in sorted(source_set - expected_set):
+    for name in sorted(source_set - registered_rows):
         hits.append(f"{fixture_rel}:0 stale fixture source metadata for {name}")
 
     duplicates = sorted({name for name in source_cases if source_cases.count(name) > 1})
@@ -1809,6 +2309,7 @@ def parse_checker_context_lifetime_manifest(
     inline_entry_pattern = re.compile(
         r'^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\{\s*'
         r'lifetime\s*=\s*"([^"]*)"\s*,\s*'
+        r'capability\s*=\s*"([^"]*)"\s*,\s*'
         r'reason\s*=\s*"([^"]*)"\s*'
         r'\}\s*(?:#.*)?$'
     )
@@ -1826,13 +2327,14 @@ def parse_checker_context_lifetime_manifest(
 
         inline_entry_match = inline_entry_pattern.match(line)
         if inline_entry_match and current is None:
-            field, lifetime, reason = inline_entry_match.groups()
+            field, lifetime, capability, reason = inline_entry_match.groups()
             if field in entries:
                 errors.append(f"{rel}:{line_no} duplicate manifest entry [{field}]")
             else:
                 entries[field] = {
                     "line": line_no,
                     "lifetime": lifetime,
+                    "capability": capability,
                     "reason": reason,
                 }
             continue
@@ -1896,6 +2398,7 @@ def scan_checker_context_lifetime_manifest(
     ):
         line = entry.get("line", 0)
         lifetime = entry.get("lifetime")
+        capability = entry.get("capability")
         reason = entry.get("reason")
         if lifetime is None:
             hits.append(f"{manifest_rel}:{line} [{field}] missing lifetime")
@@ -1904,6 +2407,14 @@ def scan_checker_context_lifetime_manifest(
         elif lifetime not in VALID_CHECKER_CONTEXT_LIFETIMES:
             hits.append(
                 f"{manifest_rel}:{line} [{field}] invalid lifetime {lifetime!r}"
+            )
+        if capability is None:
+            hits.append(f"{manifest_rel}:{line} [{field}] missing capability")
+        elif capability == "Unknown":
+            hits.append(f"{manifest_rel}:{line} [{field}] capability must not be Unknown")
+        elif capability not in VALID_CHECKER_CONTEXT_CAPABILITIES:
+            hits.append(
+                f"{manifest_rel}:{line} [{field}] invalid capability {capability!r}"
             )
         if not isinstance(reason, str) or not reason.strip():
             hits.append(f"{manifest_rel}:{line} [{field}] missing reason")
@@ -1923,14 +2434,15 @@ def checker_context_lifetime_markdown(
     fields = extract_struct_field_names(struct_path, struct_name)
     entries, _errors = parse_checker_context_lifetime_manifest(manifest_path)
     lines = [
-        "| Field | Lifetime | Reason |",
-        "| --- | --- | --- |",
+        "| Field | Lifetime | Capability | Reason |",
+        "| --- | --- | --- | --- |",
     ]
     for field in fields:
         entry = entries.get(field, {})
         lifetime = escape_markdown_cell(entry.get("lifetime", "MISSING"))
+        capability = escape_markdown_cell(entry.get("capability", "MISSING"))
         reason = escape_markdown_cell(entry.get("reason", "MISSING"))
-        lines.append(f"| `{field}` | `{lifetime}` | {reason} |")
+        lines.append(f"| `{field}` | `{lifetime}` | `{capability}` | {reason} |")
     return "\n".join(lines)
 
 
@@ -2259,6 +2771,19 @@ def main() -> int:
 
     for (
         name,
+        file_path,
+        root_module_prefixes,
+        max_reexports,
+    ) in ROOT_SOLVER_EXPLICIT_REEXPORT_COUNT_CHECKS:
+        hits = scan_solver_root_explicit_reexport_count(
+            file_path, root_module_prefixes, max_reexports
+        )
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for (
+        name,
         search_roots,
         exclude_path_prefixes,
         max_references,
@@ -2266,6 +2791,16 @@ def main() -> int:
         hits = scan_query_boundary_common_reference_count(
             search_roots, exclude_path_prefixes, max_references
         )
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for (
+        name,
+        file_path,
+        max_allowances,
+    ) in QUERY_BOUNDARY_MODULE_ALLOWANCE_COUNT_CHECKS:
+        hits = scan_query_boundary_module_allowance_count(file_path, max_allowances)
         total_hits += len(hits)
         if hits:
             failures.append((name, hits))
@@ -2291,6 +2826,12 @@ def main() -> int:
 
     for name, file_path, max_guard_count in SPECULATION_GUARD_NAME_CHECKS:
         hits = scan_speculation_guard_struct_count(file_path, max_guard_count)
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for name, root, scan_dirs in DEBUG_PRINT_MACRO_CHECKS:
+        hits = scan_debug_print_macros(root, scan_dirs)
         total_hits += len(hits)
         if hits:
             failures.append((name, hits))

@@ -41,6 +41,194 @@ impl<'a> LoweringPass<'a> {
         // don't have the `export` keyword directly.
         if self.commonjs_mode {
             self.collect_re_exported_names(&source.statements);
+            self.collect_all_export_aliases_in_order(&source.statements);
+        }
+    }
+
+    /// Walk source-order statements once and record every export alias
+    /// attached to a local **enum** binding so the emitter can fold every
+    /// alias into the enum's IIFE tail.
+    ///
+    /// Only enums are recorded here today: the enum IIFE printer chains
+    /// every alias (`exports.EE = exports.E = E = {}`), so pre-populating
+    /// `iife_exported_bindings` for those aliases correctly suppresses the
+    /// stand-alone `exports.X = E;` lines that the re-export handler would
+    /// otherwise emit. Namespaces are intentionally skipped because the
+    /// namespace IIFE printer still folds only one alias, so recording every
+    /// namespace alias would over-suppress the trailing
+    /// `exports.secondAlias = m;` lines that tsz needs to keep.
+    fn collect_all_export_aliases_in_order(&mut self, statements: &tsz_parser::parser::NodeList) {
+        let mut foldable_locals: rustc_hash::FxHashSet<String> = rustc_hash::FxHashSet::default();
+        for &stmt_idx in &statements.nodes {
+            let Some(node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            let foldable_enum_idx = if node.kind == syntax_kind_ext::ENUM_DECLARATION {
+                Some(stmt_idx)
+            } else if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                self.export_decl_wraps_foldable_enum(node)
+            } else {
+                None
+            };
+            if let Some(enum_idx) = foldable_enum_idx
+                && let Some(enum_node) = self.arena.get(enum_idx)
+                && let Some(enum_decl) = self.arena.get_enum(enum_node)
+                && !self.arena.is_declare(&enum_decl.modifiers)
+                && !self.has_const_modifier(&enum_decl.modifiers)
+                && let Some(local) = self.get_identifier_text_ref(enum_decl.name)
+            {
+                foldable_locals.insert(local.to_string());
+            }
+        }
+
+        if foldable_locals.is_empty() {
+            return;
+        }
+
+        self.collect_foldable_export_aliases(statements, &foldable_locals);
+    }
+
+    /// Return the inner `EnumData` and its `NodeIndex` when `export_decl_node`
+    /// is a non-default, non-type-only `EXPORT_DECLARATION` wrapping a
+    /// non-ambient, non-`const` enum (`export enum E { ... }`). Returns the
+    /// inner enum node index so callers can resolve names through the same
+    /// arena path the rest of lowering uses.
+    fn export_decl_wraps_foldable_enum(
+        &self,
+        export_decl_node: &tsz_parser::parser::node::Node,
+    ) -> Option<NodeIndex> {
+        let export_decl = self.arena.get_export_decl(export_decl_node)?;
+        if export_decl.module_specifier.is_some()
+            || export_decl.is_type_only
+            || export_decl.is_default_export
+        {
+            return None;
+        }
+        let inner_node = self.arena.get(export_decl.export_clause)?;
+        if inner_node.kind != syntax_kind_ext::ENUM_DECLARATION {
+            return None;
+        }
+        let enum_decl = self.arena.get_enum(inner_node)?;
+        if self.arena.is_declare(&enum_decl.modifiers)
+            || self.has_const_modifier(&enum_decl.modifiers)
+        {
+            return None;
+        }
+        Some(export_decl.export_clause)
+    }
+
+    fn collect_foldable_export_aliases(
+        &mut self,
+        statements: &tsz_parser::parser::NodeList,
+        foldable_locals: &rustc_hash::FxHashSet<String>,
+    ) {
+        for &stmt_idx in &statements.nodes {
+            let Some(node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+
+            match node.kind {
+                k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                    let Some(enum_decl) = self.arena.get_enum(node) else {
+                        continue;
+                    };
+                    if self.arena.is_declare(&enum_decl.modifiers) {
+                        continue;
+                    }
+                    if !self
+                        .arena
+                        .has_modifier(&enum_decl.modifiers, SyntaxKind::ExportKeyword)
+                    {
+                        continue;
+                    }
+                    if let Some(name_id) = self.get_identifier_id(enum_decl.name)
+                        && let Some(local_name) = self.get_identifier_text_ref(enum_decl.name)
+                    {
+                        let entry = self
+                            .all_export_aliases_in_order
+                            .entry(local_name.to_string())
+                            .or_default();
+                        if !entry.contains(&name_id) {
+                            entry.push(name_id);
+                        }
+                    }
+                }
+                k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                    let Some(export_decl) = self.arena.get_export_decl(node) else {
+                        continue;
+                    };
+                    if export_decl.is_type_only {
+                        continue;
+                    }
+                    if let Some(inner_enum_idx) = self.export_decl_wraps_foldable_enum(node) {
+                        if let Some(inner_node) = self.arena.get(inner_enum_idx)
+                            && let Some(enum_decl) = self.arena.get_enum(inner_node)
+                            && let Some(name_id) = self.get_identifier_id(enum_decl.name)
+                            && let Some(local_name) = self.get_identifier_text_ref(enum_decl.name)
+                        {
+                            let entry = self
+                                .all_export_aliases_in_order
+                                .entry(local_name.to_string())
+                                .or_default();
+                            if !entry.contains(&name_id) {
+                                entry.push(name_id);
+                            }
+                        }
+                        continue;
+                    }
+                    if export_decl.module_specifier.is_some() {
+                        continue;
+                    }
+                    let Some(clause_node) = self.arena.get(export_decl.export_clause) else {
+                        continue;
+                    };
+                    let Some(named) = self.arena.get_named_imports(clause_node) else {
+                        continue;
+                    };
+                    for &spec_idx in &named.elements.nodes {
+                        let Some(spec_node) = self.arena.get(spec_idx) else {
+                            continue;
+                        };
+                        let Some(spec) = self.arena.get_specifier(spec_node) else {
+                            continue;
+                        };
+                        if spec.is_type_only {
+                            continue;
+                        }
+                        // Local name is property_name when aliased, otherwise name.
+                        let local_name_idx = if spec.property_name.is_some() {
+                            spec.property_name
+                        } else {
+                            spec.name
+                        };
+                        let Some(local_name) = self
+                            .get_identifier_text_ref(local_name_idx)
+                            .map(str::to_string)
+                        else {
+                            continue;
+                        };
+                        // Only record this alias when `local_name` actually
+                        // names a foldable enum/namespace — `export { x as y }`
+                        // for a `const x` must still emit the regular
+                        // `exports.y = x;` line, not be folded into a
+                        // (non-existent) IIFE tail.
+                        if !foldable_locals.contains(&local_name) {
+                            continue;
+                        }
+                        let Some(export_name_id) = self.get_identifier_id(spec.name) else {
+                            continue;
+                        };
+                        let entry = self
+                            .all_export_aliases_in_order
+                            .entry(local_name)
+                            .or_default();
+                        if !entry.contains(&export_name_id) {
+                            entry.push(export_name_id);
+                        }
+                    }
+                }
+                _ => {}
+            }
         }
     }
 
@@ -97,16 +285,24 @@ impl<'a> LoweringPass<'a> {
         }
     }
 
+    /// Every CommonJS export alias attached to `local_name` in source order,
+    /// falling back to `[fallback_name]` when nothing has been recorded.
     pub(super) fn commonjs_export_names_for_local(
         &self,
         local_name: Option<&str>,
         fallback_name: IdentifierId,
     ) -> Arc<[IdentifierId]> {
-        if let Some(local_name) = local_name
-            && let Some(export_names) = self.re_exported_export_names.get(local_name)
-            && !export_names.is_empty()
-        {
-            return Arc::from(export_names.clone());
+        if let Some(local_name) = local_name {
+            if let Some(all_aliases) = self.all_export_aliases_in_order.get(local_name)
+                && !all_aliases.is_empty()
+            {
+                return Arc::from(all_aliases.clone());
+            }
+            if let Some(re_exports) = self.re_exported_export_names.get(local_name)
+                && !re_exports.is_empty()
+            {
+                return Arc::from(re_exports.clone());
+            }
         }
 
         Arc::from(vec![fallback_name])
@@ -684,7 +880,9 @@ impl<'a> LoweringPass<'a> {
                     let Some(bin) = self.arena.get_binary_expr(n) else {
                         continue;
                     };
-                    if !tsz_solver::is_assignment_operator(bin.operator_token) {
+                    if !tsz_solver::operations::compound_assignment::is_assignment_operator(
+                        bin.operator_token,
+                    ) {
                         continue;
                     }
                     let left = self.unwrap_parens_and_types(bin.left);
@@ -808,7 +1006,9 @@ impl<'a> LoweringPass<'a> {
                 }
                 if n.kind == syntax_kind_ext::BINARY_EXPRESSION
                     && let Some(bin) = self.arena.get_binary_expr(n)
-                    && tsz_solver::is_assignment_operator(bin.operator_token)
+                    && tsz_solver::operations::compound_assignment::is_assignment_operator(
+                        bin.operator_token,
+                    )
                 {
                     let left = self.unwrap_parens(bin.left);
                     if self.is_private_field_access(left) {
@@ -839,7 +1039,9 @@ impl<'a> LoweringPass<'a> {
                 // Check for binary expressions with private field on LHS
                 if n.kind == syntax_kind_ext::BINARY_EXPRESSION
                     && let Some(bin) = self.arena.get_binary_expr(n)
-                    && tsz_solver::is_assignment_operator(bin.operator_token)
+                    && tsz_solver::operations::compound_assignment::is_assignment_operator(
+                        bin.operator_token,
+                    )
                 {
                     let left = self.unwrap_parens(bin.left);
                     if self.is_private_field_access(left) {
@@ -872,7 +1074,9 @@ impl<'a> LoweringPass<'a> {
                 // skip those — they're already handled.
                 if n.kind == syntax_kind_ext::BINARY_EXPRESSION
                     && let Some(bin) = self.arena.get_binary_expr(n)
-                    && !tsz_solver::is_assignment_operator(bin.operator_token)
+                    && !tsz_solver::operations::compound_assignment::is_assignment_operator(
+                        bin.operator_token,
+                    )
                 {
                     // Check if either side has a private field access
                     let left = self.unwrap_parens(bin.left);

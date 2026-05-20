@@ -174,6 +174,9 @@ pub enum IRNode {
     /// Multiple variable declarations: `var a = 1, b = 2;`
     VarDeclList(Vec<Self>),
 
+    /// `var _newTarget = ...;` capture emitted before parameter/body prologues.
+    NewTargetCapture { initializer: Box<Self> },
+
     /// Internal async-transform marker: start a new hoisted `var` statement group.
     HoistedVarGroupBreak,
 
@@ -431,6 +434,13 @@ pub enum IRNode {
     GeneratorTryPushFinally {
         start_label: u32,
         finally_label: u32,
+        end_label: u32,
+    },
+
+    /// `_a.trys.push([start, catch, , end])`
+    GeneratorTryPushCatch {
+        start_label: u32,
+        catch_label: u32,
         end_label: u32,
     },
 
@@ -909,6 +919,7 @@ impl IRNode {
             | Self::StaticBlockIIFE { statements: nodes } => {
                 nodes.iter().any(|node| node.contains_identifier(name))
             }
+            Self::NewTargetCapture { initializer } => initializer.contains_identifier(name),
             Self::ObjectLiteral { properties, .. } => properties
                 .iter()
                 .any(|property| property.contains_identifier(name)),
@@ -1158,6 +1169,7 @@ impl IRNode {
             | Self::GeneratorLabel
             | Self::GeneratorTryPush { .. }
             | Self::GeneratorTryPushFinally { .. }
+            | Self::GeneratorTryPushCatch { .. }
             | Self::Raw(_)
             | Self::Comment { .. }
             | Self::TrailingComment(_)
@@ -1223,6 +1235,9 @@ impl IRNode {
             | Self::Sequence(nodes)
             | Self::StaticBlockIIFE { statements: nodes } => {
                 nodes.iter().any(Self::contains_captured_this_reference)
+            }
+            Self::NewTargetCapture { initializer } => {
+                initializer.contains_captured_this_reference()
             }
             Self::ObjectLiteral { properties, .. } => properties
                 .iter()
@@ -1347,6 +1362,39 @@ impl IRNode {
             left: Box::new(target),
             operator: Cow::Borrowed("="),
             right: Box::new(value),
+        }
+    }
+
+    /// Create the `_a.trys.push([...])` IR for a state-machine try region.
+    /// Picks the variant that matches the sparse-slot shape expected by tsc:
+    /// `[s, c, f, e]`, `[s, c, , e]`, or `[s, , f, e]`.
+    pub fn generator_try_push(
+        start_label: u32,
+        catch_label: Option<u32>,
+        finally_label: Option<u32>,
+        end_label: u32,
+    ) -> Self {
+        match (catch_label, finally_label) {
+            (Some(catch_label), Some(finally_label)) => Self::GeneratorTryPush {
+                start_label,
+                catch_label,
+                finally_label,
+                end_label,
+            },
+            (Some(catch_label), None) => Self::GeneratorTryPushCatch {
+                start_label,
+                catch_label,
+                end_label,
+            },
+            (None, Some(finally_label)) => Self::GeneratorTryPushFinally {
+                start_label,
+                finally_label,
+                end_label,
+            },
+            (None, None) => panic!(
+                "generator_try_push requires at least one handler (catch or finally); \
+                 a handler-less try has no runtime entry"
+            ),
         }
     }
 

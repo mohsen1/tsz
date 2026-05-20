@@ -336,6 +336,46 @@ type B7 = [...B6, ...B6];
     );
 }
 
+/// When a rest element in a tuple type evaluates to a union of tuples, the
+/// solver distributes it into per-alternative extensions. The cardinality guard
+/// must apply to the union-spread path, not only the concrete-tuple path.
+///
+/// Structural rule: if the largest distributed alternative (prefix length +
+/// largest union-member tuple length) exceeds `MAX_REPRESENTABLE_TUPLE_LENGTH`,
+/// the solver sets `tuple_too_large` and the checker emits TS2799.
+#[test]
+fn union_spread_arm_crossing_limit_emits_ts2799() {
+    // P12 = 2^12 = 4096 elements; P13 = 2^13 = 8192 elements.
+    // Distributing `[...P12, ...(P13 | P12)]`:
+    //   largest arm = P12-prefix + P13-arm = 4096 + 8192 = 12288 > 10000 → TS2799
+    let source = r#"
+type P0 = [any];
+type P1 = [...P0, ...P0];
+type P2 = [...P1, ...P1];
+type P3 = [...P2, ...P2];
+type P4 = [...P3, ...P3];
+type P5 = [...P4, ...P4];
+type P6 = [...P5, ...P5];
+type P7 = [...P6, ...P6];
+type P8 = [...P7, ...P7];
+type P9 = [...P8, ...P8];
+type P10 = [...P9, ...P9];
+type P11 = [...P10, ...P10];
+type P12 = [...P11, ...P11];
+type P13 = [...P12, ...P12];
+type UnionSpreadLarge = [...P12, ...(P13 | P12)];
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2799),
+        "union spread with 12288-element arm must emit TS2799: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().all(|d| d.code != 2589),
+        "union spread overflow must not surface as TS2589: {diagnostics:?}"
+    );
+}
+
 /// Aliases whose body is not a tuple spread (e.g. a type reference to a
 /// too-large alias, or a non-tuple type) must NOT inherit TS2799.
 ///
@@ -650,14 +690,20 @@ function foo(arg: Circular<tup>): tup {
     return arg;
 }
 "#;
-    let diags = get_diagnostics(source);
+    let diags = check_source_diagnostics(source);
+    let ts2589 = diags
+        .iter()
+        .find(|d| d.code == 2589)
+        .expect("Should emit TS2589 for Circular<tup> vs tup");
     assert!(
-        diags.iter().any(|d| d.0 == 2589),
-        "Should emit TS2589 for Circular<tup> vs tup; got: {diags:?}"
-    );
-    assert!(
-        !diags.iter().any(|d| d.0 == 2322),
+        !diags.iter().any(|d| d.code == 2322),
         "Should NOT emit TS2322 when TS2589 fires; got: {diags:?}"
+    );
+    let start = ts2589.start as usize;
+    assert_eq!(
+        &source[start..start + "Circular<tup>".len()],
+        "Circular<tup>",
+        "Should emit TS2589 for Circular<tup> vs tup; got: {diags:?}"
     );
 }
 
@@ -672,14 +718,20 @@ function bar(arg: Loop<Pair>): Pair {
     return arg;
 }
 "#;
-    let diags = get_diagnostics(source);
+    let diags = check_source_diagnostics(source);
+    let ts2589 = diags
+        .iter()
+        .find(|d| d.code == 2589)
+        .expect("Should emit TS2589 for Loop<Pair> vs Pair regardless of alias name");
     assert!(
-        diags.iter().any(|d| d.0 == 2589),
-        "Should emit TS2589 for Loop<Pair> vs Pair regardless of alias name; got: {diags:?}"
-    );
-    assert!(
-        !diags.iter().any(|d| d.0 == 2322),
+        !diags.iter().any(|d| d.code == 2322),
         "Should NOT emit TS2322 when TS2589 fires; got: {diags:?}"
+    );
+    let start = ts2589.start as usize;
+    assert_eq!(
+        &source[start..start + "Loop<Pair>".len()],
+        "Loop<Pair>",
+        "TS2589 should anchor at the explicit source type annotation; got: {ts2589:?}"
     );
 }
 
@@ -1355,6 +1407,71 @@ type Y = Forever<42>;
     assert!(
         diags_u.iter().any(|d| d.0 == 2589),
         "Must emit TS2589 for infinite tail-recursive alias (renamed param). Got: {diags_u:?}"
+    );
+}
+
+/// A conditional recursive alias whose accumulator is a tuple spread doubles
+/// in length each step. When instantiated with args that make termination
+/// impossible (e.g. a length that isn't a power of 2), the accumulated tuple
+/// exceeds `MAX_REPRESENTABLE_TUPLE_LENGTH` before the recursion depth limit,
+/// so tsc emits TS2799 rather than TS2589.
+///
+/// Structural rule: when a generic alias application triggers the tuple-too-large
+/// sentinel (solver emits `TypeId::ERROR` from `visit_tuple`), the checker emits
+/// TS2799 regardless of whether the alias body is conditional or unconditional.
+#[test]
+fn conditional_tuple_accumulator_alias_emits_ts2799_not_ts2589() {
+    // Canonical BuildTuple from excessivelyLargeTupleSpread.ts (TypeScript#41771).
+    // T['length'] extends L ? T : BuildTuple<L, [...T, ...T]>
+    // L=3 is not a power of 2 so the accumulator doubles unboundedly.
+    let source_build = r#"
+type BuildTuple<L extends number, T extends any[] = [any]> =
+    T['length'] extends L ? T : BuildTuple<L, [...T, ...T]>;
+type A = BuildTuple<3>
+"#;
+    let diags = check_source_diagnostics(source_build);
+    assert!(
+        diags.iter().any(|d| d.code == 2799),
+        "BuildTuple<3> must emit TS2799 (tuple too large): {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 2589),
+        "BuildTuple<3> must NOT emit TS2589: {diags:?}"
+    );
+
+    // Same pattern, renamed alias and type-parameter names — rule must not
+    // be tied to 'BuildTuple', 'L', or 'T'.
+    let source_grow = r#"
+type GrowArr<N extends number, Acc extends any[] = [any]> =
+    Acc['length'] extends N ? Acc : GrowArr<N, [...Acc, ...Acc]>;
+type G = GrowArr<5>
+"#;
+    let diags_grow = check_source_diagnostics(source_grow);
+    assert!(
+        diags_grow.iter().any(|d| d.code == 2799),
+        "GrowArr<5> must emit TS2799 (tuple too large): {diags_grow:?}"
+    );
+    assert!(
+        !diags_grow.iter().any(|d| d.code == 2589),
+        "GrowArr<5> must NOT emit TS2589: {diags_grow:?}"
+    );
+
+    // Third variant: three type parameters, different alias and param names.
+    // `Bag` doubles each step: 1, 2, 4, 8, 16, ... — 11 never appears in this
+    // sequence so the recursion never terminates and Bag exceeds 10,000 elements.
+    let source_triple = r#"
+type Twice<Size extends number, Bag extends any[] = [any], Tag extends any[] = []> =
+    Bag['length'] extends Size ? Bag : Twice<Size, [...Bag, ...Bag], [...Tag, any]>;
+type T3 = Twice<11>
+"#;
+    let diags_triple = check_source_diagnostics(source_triple);
+    assert!(
+        diags_triple.iter().any(|d| d.code == 2799),
+        "Twice<11> must emit TS2799 (tuple too large): {diags_triple:?}"
+    );
+    assert!(
+        !diags_triple.iter().any(|d| d.code == 2589),
+        "Twice<11> must NOT emit TS2589: {diags_triple:?}"
     );
 }
 

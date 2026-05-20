@@ -7,8 +7,36 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::type_queries;
+use tsz_solver::types::TypeId;
 
 impl<'a> DeclarationEmitter<'a> {
+    pub(in crate::declaration_emitter) fn construct_return_new_expression_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::NEW_EXPRESSION {
+            return None;
+        }
+
+        let new_expr = self.arena.get_call_expr(expr_node)?;
+        let constructor_type = self
+            .get_node_type_or_names(&[new_expr.expression])
+            .or_else(|| self.get_type_via_symbol(new_expr.expression))?;
+        let return_type =
+            type_queries::construct_return_type_for_type(self.type_interner?, constructor_type)?;
+        if matches!(return_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) {
+            return None;
+        }
+
+        let type_text = self.print_type_id_for_inferred_declaration(return_type);
+        if type_text.is_empty() || matches!(type_text.as_str(), "any" | "unknown") {
+            return None;
+        }
+
+        Some(self.rewrite_exported_import_equals_type_text(type_text))
+    }
+
     pub(in crate::declaration_emitter) fn call_expression_source_return_type_text(
         &self,
         expr_idx: NodeIndex,
@@ -45,18 +73,12 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             };
             if func.type_annotation.is_some() {
-                if let Some(type_text) =
-                    self.source_slice_from_arena(source_arena, func.type_annotation)
-                    && self.source_return_type_annotation_is_reusable(
-                        source_arena,
-                        func.type_annotation,
-                    )
+                if let Some(type_text) = self.source_type_annotation_text_for_declaration_reuse(
+                    source_arena,
+                    func.type_annotation,
+                ) && self
+                    .source_return_type_annotation_is_reusable(source_arena, func.type_annotation)
                 {
-                    let type_text = type_text
-                        .trim_end()
-                        .trim_end_matches(';')
-                        .trim_end()
-                        .to_string();
                     if call.type_arguments.is_none()
                         && self.source_return_type_mentions_type_parameter(
                             source_arena,
@@ -74,6 +96,14 @@ impl<'a> DeclarationEmitter<'a> {
                         {
                             return Some(evaluated);
                         }
+                        if let Some(substituted) = self.substitute_source_call_type_parameters(
+                            source_arena,
+                            func,
+                            call,
+                            type_text,
+                        ) {
+                            return Some(substituted);
+                        }
                         continue;
                     }
                     return self.substitute_source_call_type_parameters(
@@ -89,7 +119,22 @@ impl<'a> DeclarationEmitter<'a> {
                     func,
                     &symbol.escaped_name,
                 )
-                && let Some(type_text) = {
+            {
+                // Text-based reconstruction loses call-site refinements (e.g. index signatures
+                // derived from abstract constructor constraints). Prefer the checker's computed
+                // TypeId when it is non-trivial.
+                if self.type_interner.is_some()
+                    && self.type_cache.is_some()
+                    && let Some(call_type_id) = self.get_node_type_or_names(&[expr_idx])
+                    && !matches!(call_type_id, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
+                {
+                    let type_text = self.print_type_id_for_inferred_declaration(call_type_id);
+                    if !type_text.is_empty() && !matches!(type_text.as_str(), "any" | "unknown") {
+                        return Some(Self::strip_synthetic_anonymous_object_members(&type_text));
+                    }
+                }
+
+                if let Some(type_text) = {
                     let mut scratch = if std::ptr::eq(source_arena, self.arena)
                         && let (Some(type_cache), Some(type_interner), Some(binder)) =
                             (&self.type_cache, self.type_interner, self.binder)
@@ -145,13 +190,57 @@ impl<'a> DeclarationEmitter<'a> {
                             .expand_inexact_optional_alias_reference_text(source_arena, &type_text)
                             .unwrap_or(type_text),
                     )
+                } {
+                    return Some(Self::strip_synthetic_anonymous_object_members(&type_text));
                 }
-            {
-                return Some(Self::strip_synthetic_anonymous_object_members(&type_text));
             }
         }
 
         None
+    }
+
+    pub(in crate::declaration_emitter) fn source_type_annotation_text_for_declaration_reuse(
+        &self,
+        source_arena: &NodeArena,
+        type_idx: NodeIndex,
+    ) -> Option<String> {
+        let type_node = source_arena.get(type_idx)?;
+        if type_node.kind == syntax_kind_ext::INTERSECTION_TYPE
+            && let Some(intersection) = source_arena.get_composite_type(type_node)
+        {
+            let mut parts = Vec::with_capacity(intersection.types.nodes.len());
+            for member_idx in intersection.types.nodes.iter().copied() {
+                parts.push(self.source_type_annotation_part_text_for_declaration_reuse(
+                    source_arena,
+                    member_idx,
+                )?);
+            }
+            return Some(parts.join(" & "));
+        }
+
+        self.source_type_annotation_part_text_for_declaration_reuse(source_arena, type_idx)
+    }
+
+    pub(in crate::declaration_emitter) fn source_type_annotation_part_text_for_declaration_reuse(
+        &self,
+        source_arena: &NodeArena,
+        type_idx: NodeIndex,
+    ) -> Option<String> {
+        let type_node = source_arena.get(type_idx)?;
+        if type_node.kind == syntax_kind_ext::TYPE_LITERAL
+            && let Some(type_text) = self.emit_type_node_text_from_arena(source_arena, type_idx)
+        {
+            return Some(type_text.trim().to_string());
+        }
+
+        self.source_slice_from_arena(source_arena, type_idx)
+            .map(|type_text| {
+                type_text
+                    .trim_end()
+                    .trim_end_matches(';')
+                    .trim_end()
+                    .to_string()
+            })
     }
 
     pub(in crate::declaration_emitter) fn callable_function_from_symbol_decl<'b>(
@@ -218,9 +307,7 @@ impl<'a> DeclarationEmitter<'a> {
         let return_type_id = type_queries::get_return_type(interner, func_type_id)?;
         if matches!(
             return_type_id,
-            tsz_solver::types::TypeId::ANY
-                | tsz_solver::types::TypeId::UNKNOWN
-                | tsz_solver::types::TypeId::ERROR
+            TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR
         ) {
             return None;
         }

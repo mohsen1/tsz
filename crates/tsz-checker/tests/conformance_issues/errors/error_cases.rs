@@ -456,6 +456,90 @@ function foo<T>() {
 }
 
 #[test]
+fn test_write_target_strips_empty_object_from_intersection_receiver_display() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type Errors<T> = { [K in keyof T]: string };
+
+function foo<T>(obj: Errors<T> & {}, x: keyof T) {
+    obj[x] = undefined;
+}
+"#,
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, msg)| *code == 2322 && msg.contains("'Errors<T>[keyof T]'")),
+        "Expected TS2322 with display 'Errors<T>[keyof T]' (not '(Errors<T> & {{}})[keyof T]').\nActual: {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(code, msg)| *code == 2322 && msg.contains("(Errors<T> & {})[keyof T]")),
+        "Display must not include the empty-object intersection suffix.\nActual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_write_target_strips_empty_object_from_intersection_receiver_renamed_alias() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type FieldMap<U> = { [P in keyof U]: string };
+
+function bar<U>(fields: FieldMap<U> & {}, key: keyof U) {
+    fields[key] = undefined;
+}
+"#,
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, msg)| *code == 2322 && msg.contains("'FieldMap<U>[keyof U]'")),
+        "Expected TS2322 with display 'FieldMap<U>[keyof U]'.\nActual: {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(code, msg)| *code == 2322 && msg.contains("(FieldMap<U> & {})[keyof U]")),
+        "Display must not include the empty-object intersection suffix.\nActual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_write_target_two_meaningful_intersection_members_kept_intact() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type A<T> = { [K in keyof T]: string };
+type B<T> = { all: string };
+
+function baz<T>(obj: A<T> & B<T>, x: keyof T) {
+    obj[x] = undefined;
+}
+"#,
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    // Two meaningful members: the rule preserves all members, not just strips `{}`.
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2322),
+        "Expected at least one TS2322 for undefined write through intersection.\nActual: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_readonly_generic_write_with_concrete_keyof_reports_ts2862_not_ts2536() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"

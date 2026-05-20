@@ -639,11 +639,7 @@ impl Project {
             return Vec::new();
         };
 
-        let base_url = compiler_options
-            .get("baseUrl")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or(".");
-        let base_dir = normalize_path(&config_dir.join(base_url));
+        let base_dir = base_dir_for_compiler_options(&config_dir, &compiler_options);
         let normalized_target_file = path_to_string(&strip_js_ts_extension(&normalize_path(
             Path::new(target_file),
         )))
@@ -662,20 +658,11 @@ impl Project {
                 let Some(mapped_target) = mapped_target.as_str() else {
                     continue;
                 };
-                let mapped_target = mapped_target.replace('\\', "/");
-                let mapped_target = if let Some(rest) = mapped_target.strip_prefix("${configDir}/")
-                {
-                    path_to_string(&normalize_path(&config_dir.join(rest))).replace('\\', "/")
-                } else {
-                    path_to_string(&normalize_path(&base_dir.join(&mapped_target)))
-                        .replace('\\', "/")
-                };
-                let mapped_target =
-                    path_to_string(&strip_js_ts_extension(Path::new(&mapped_target)))
-                        .replace('\\', "/");
+                let resolved_mapped_target =
+                    resolve_path_mapping_target(mapped_target, &base_dir, &config_dir);
 
                 let Some(capture) = target_candidates.iter().find_map(|candidate| {
-                    wildcard_capture_case_insensitive(&mapped_target, candidate)
+                    wildcard_capture_case_insensitive(&resolved_mapped_target, candidate)
                 }) else {
                     continue;
                 };
@@ -689,6 +676,83 @@ impl Project {
         let mut seen = FxHashSet::default();
         specifiers.retain(|specifier| seen.insert(specifier.clone()));
         specifiers
+    }
+
+    /// Compute the new module specifier for a path-aliased import when a file is
+    /// renamed.
+    ///
+    /// Returns `Some(new_specifier)` if `current_specifier` is a `paths`-alias
+    /// import in the importer's nearest tsconfig that resolves to `old_target`
+    /// and the same alias pattern can be applied to `new_target`.
+    ///
+    /// Returns `None` if the specifier is not path-mapped to `old_target`, or if
+    /// the alias pattern cannot accommodate `new_target` (e.g. the file moved
+    /// outside the alias root, or the alias has no wildcard and the target is
+    /// pinned). Callers should fall back to other rewrite strategies (e.g. a
+    /// relative specifier) in those cases.
+    pub(crate) fn rename_path_alias_specifier(
+        &self,
+        from_file: &str,
+        current_specifier: &str,
+        old_target: &str,
+        new_target: &str,
+    ) -> Option<String> {
+        let (config_dir, compiler_options) = self.nearest_compiler_options_for_file(from_file)?;
+        let paths = compiler_options
+            .get("paths")
+            .and_then(serde_json::Value::as_object)?;
+
+        let base_dir = base_dir_for_compiler_options(&config_dir, &compiler_options);
+        let old_normalized = path_to_string(&strip_js_ts_extension(&normalize_path(Path::new(
+            old_target,
+        ))))
+        .replace('\\', "/");
+        let new_normalized = path_to_string(&strip_js_ts_extension(&normalize_path(Path::new(
+            new_target,
+        ))))
+        .replace('\\', "/");
+
+        for (alias_pattern, mapped_targets) in paths {
+            let Some(mapped_targets) = mapped_targets.as_array() else {
+                continue;
+            };
+            // Capture the wildcard portion of `current_specifier` under this
+            // alias. If the alias has no wildcard, an exact match yields `""`.
+            let Some(current_capture) =
+                wildcard_capture_case_insensitive(alias_pattern, current_specifier)
+            else {
+                continue;
+            };
+
+            let resolved_targets: Vec<String> = mapped_targets
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(|t| resolve_path_mapping_target(t, &base_dir, &config_dir))
+                .collect();
+
+            // Confirm the alias actually resolves `current_specifier` to
+            // `old_target`. Without this an unrelated alias that happens to
+            // share a prefix could incorrectly claim the import.
+            let points_at_old_target = resolved_targets.iter().any(|resolved| {
+                apply_wildcard_capture(resolved, &current_capture)
+                    .is_some_and(|substituted| substituted.eq_ignore_ascii_case(&old_normalized))
+            });
+            if !points_at_old_target {
+                continue;
+            }
+
+            // Find a `mapped_target` under the same alias that can host
+            // `new_target`, preserving the alias pattern the user chose. If
+            // none can, the alias is no longer valid for the new path; return
+            // `None` so the caller can fall back to a relative rewrite.
+            return resolved_targets.iter().find_map(|resolved| {
+                let new_capture = wildcard_capture_case_insensitive(resolved, &new_normalized)?;
+                apply_wildcard_capture(alias_pattern, &new_capture)
+                    .map(|s| normalize_path_mapping_specifier(&s))
+            });
+        }
+
+        None
     }
 
     fn root_dirs_relative_specifier_from_files(
@@ -2316,6 +2380,27 @@ fn prefix_capture_case_insensitive(prefix_pattern: &str, target: &str) -> Option
                 .zip(target.strip_prefix('/'))
                 .and_then(|(p, t)| capture(p, t))
         })
+}
+
+fn base_dir_for_compiler_options(
+    config_dir: &Path,
+    compiler_options: &serde_json::Map<String, serde_json::Value>,
+) -> PathBuf {
+    let base_url = compiler_options
+        .get("baseUrl")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or(".");
+    normalize_path(&config_dir.join(base_url))
+}
+
+fn resolve_path_mapping_target(mapped_target: &str, base_dir: &Path, config_dir: &Path) -> String {
+    let mapped_target = mapped_target.replace('\\', "/");
+    let resolved = if let Some(rest) = mapped_target.strip_prefix("${configDir}/") {
+        path_to_string(&normalize_path(&config_dir.join(rest))).replace('\\', "/")
+    } else {
+        path_to_string(&normalize_path(&base_dir.join(&mapped_target))).replace('\\', "/")
+    };
+    path_to_string(&strip_js_ts_extension(Path::new(&resolved))).replace('\\', "/")
 }
 
 fn strip_js_ts_extension(path: &Path) -> PathBuf {

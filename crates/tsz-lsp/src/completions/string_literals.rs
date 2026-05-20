@@ -87,7 +87,9 @@ impl<'a> Completions<'a> {
         if labels.is_empty() {
             return None;
         }
-        let mut items: Vec<_> = labels
+        let mut labels: Vec<_> = labels.into_iter().collect();
+        labels.sort();
+        let items = labels
             .into_iter()
             .map(|label| {
                 let mut item =
@@ -96,7 +98,6 @@ impl<'a> Completions<'a> {
                 item
             })
             .collect();
-        items.sort_by(|a, b| a.label.cmp(&b.label));
         Some(items)
     }
 
@@ -557,7 +558,9 @@ impl<'a> Completions<'a> {
             (start, end)
         });
 
-        let mut items: Vec<_> = labels
+        let mut labels: Vec<_> = labels.into_iter().collect();
+        labels.sort();
+        let items = labels
             .into_iter()
             .map(|label| {
                 let mut item = CompletionItem::new(label, CompletionItemKind::Variable);
@@ -568,7 +571,6 @@ impl<'a> Completions<'a> {
                 item
             })
             .collect();
-        items.sort_by(|a, b| a.label.cmp(&b.label));
         Some(items)
     }
 

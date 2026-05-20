@@ -22,6 +22,15 @@ The goal is a correct, fast, drop-in replacement for `tsc`, with both native and
 TypeScript is intentionally unsound. `tsz` keeps a sound core solver and layers a compatibility
 engine on top to match TypeScript behavior while preserving correctness where possible.
 
+## Performance
+
+`tsz` is **2.21x faster** across 49 successful micro benchmark cases. Large-project performance work is still underway.
+
+```
+tsz:  [█████████░░░░░░░░░░░] 3s
+tsgo: [████████████████████] 7s
+```
+
 ## Install
 
 > [!WARNING]

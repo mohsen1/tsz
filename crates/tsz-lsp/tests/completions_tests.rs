@@ -5,7 +5,7 @@ use tsz_binder::lib_loader::LibFile;
 use tsz_checker::context::LibContext;
 use tsz_common::position::LineMap;
 use tsz_parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::NodeIndex) {
     let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -3723,6 +3723,28 @@ fn test_completions_suppressed_after_numeric_dot_with_jsdoc_trivia() {
 
 /// Helper that returns the member-completion names for `<source><suffix>`
 /// where the cursor is right after the suffix (at the end of the file).
+fn items_at_end(source: &str) -> Vec<CompletionItem> {
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let interner = TypeInterner::new();
+    let completions = Completions::new_with_types(
+        arena,
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let position = line_map.offset_to_position(source.len() as u32, source);
+    let mut cache = None;
+    completions
+        .get_completions_with_cache(root, position, &mut cache)
+        .unwrap_or_default()
+}
+
 fn member_names_at_end(source: &str) -> Vec<String> {
     let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
@@ -4284,6 +4306,153 @@ fn test_completions_symbol_excludes_object_prototype_members() {
     }
 }
 
+// ── Lib-context completion tests ─────────────────────────────────────────────
+
+const MINIMAL_BOOLEAN_LIB: &str = concat!(
+    "interface Boolean { valueOf(): boolean; }\n",
+    "interface Object { constructor: Function; hasOwnProperty(v: PropertyKey): boolean; ",
+    "isPrototypeOf(v: Object): boolean; propertyIsEnumerable(v: PropertyKey): boolean; ",
+    "toString(): string; toLocaleString(): string; valueOf(): Object; }\n",
+    "type PropertyKey = string | number | symbol;"
+);
+
+const MINIMAL_NUMBER_LIB: &str = concat!(
+    "interface Number { toString(radix?: number): string; toFixed(fractionDigits?: number): string; ",
+    "toExponential(fractionDigits?: number): string; toPrecision(precision?: number): string; ",
+    "valueOf(): number; toLocaleString(): string; }\n",
+    "interface Object { constructor: Function; hasOwnProperty(v: string): boolean; ",
+    "isPrototypeOf(v: Object): boolean; propertyIsEnumerable(v: string): boolean; }"
+);
+
+const MINIMAL_STRING_LIB: &str = concat!(
+    "interface String { charAt(pos: number): string; charCodeAt(index: number): number; ",
+    "indexOf(searchString: string, position?: number): number; slice(start?: number, end?: number): string; ",
+    "toUpperCase(): string; toLowerCase(): string; trim(): string; valueOf(): string; ",
+    "toString(): string; readonly length: number; }\n",
+    "interface Object { constructor: Function; hasOwnProperty(v: string): boolean; ",
+    "isPrototypeOf(v: Object): boolean; propertyIsEnumerable(v: string): boolean; }"
+);
+
+fn member_names_at_end_with_full_lib(source: &str) -> Vec<String> {
+    let lib_source = include_str!("../../../crates/tsz-website/src/lib/lib.es5.d.ts");
+    member_names_at_end_with_lib(source, lib_source)
+}
+
+// These four Object.prototype members are never overridden by Boolean, Number, or String
+// boxed interfaces, so they must not appear in any primitive type's completions.
+const OBJECT_PROTOTYPE_MEMBERS: &[&str] = &[
+    "constructor",
+    "hasOwnProperty",
+    "isPrototypeOf",
+    "propertyIsEnumerable",
+];
+
+fn assert_primitive_members(label: &str, names: &[String], expected: &[&str], ctx: &str) {
+    for name in expected {
+        assert!(
+            names.iter().any(|n| n == *name),
+            "{label} completions must include '{name}'; got: {names:?} ({ctx})"
+        );
+    }
+    for excluded in OBJECT_PROTOTYPE_MEMBERS {
+        assert!(
+            !names.iter().any(|n| n == *excluded),
+            "{label} completions must not include Object.prototype member '{excluded}'; got: {names:?} ({ctx})"
+        );
+    }
+}
+
+fn assert_boolean_primitive_members(names: &[String], ctx: &str) {
+    assert_primitive_members("Boolean", names, &["valueOf"], ctx);
+}
+
+fn assert_number_primitive_members(names: &[String], ctx: &str) {
+    assert_primitive_members(
+        "Number",
+        names,
+        &[
+            "toString",
+            "toFixed",
+            "toExponential",
+            "toPrecision",
+            "valueOf",
+        ],
+        ctx,
+    );
+}
+
+fn assert_string_primitive_members(names: &[String], ctx: &str) {
+    assert_primitive_members(
+        "String",
+        names,
+        &[
+            "charAt",
+            "indexOf",
+            "toUpperCase",
+            "toLowerCase",
+            "valueOf",
+            "length",
+        ],
+        ctx,
+    );
+}
+
+#[test]
+fn test_completions_boolean_no_constructor_with_lib() {
+    for source in [
+        "const b = true;\nb.",
+        "const b: boolean = false;\nb.",
+        "const flag = false;\nflag.",
+    ] {
+        let names = member_names_at_end_with_lib(source, MINIMAL_BOOLEAN_LIB);
+        assert_boolean_primitive_members(&names, source);
+    }
+}
+
+#[test]
+fn test_completions_boolean_no_constructor_with_full_lib() {
+    for source in [
+        "const b = true;\nb.",
+        "const b: boolean = false;\nb.",
+        "const flag = false;\nflag.",
+    ] {
+        let names = member_names_at_end_with_full_lib(source);
+        assert_boolean_primitive_members(&names, source);
+    }
+}
+
+#[test]
+fn test_completions_number_with_lib() {
+    for source in ["const n = 42;\nn.", "const n: number = 0;\nn.", "(3.14)."] {
+        let names = member_names_at_end_with_lib(source, MINIMAL_NUMBER_LIB);
+        assert_number_primitive_members(&names, source);
+    }
+}
+
+#[test]
+fn test_completions_string_with_lib() {
+    for source in ["const s = \"hello\";\ns.", "const s: string = \"\";\ns."] {
+        let names = member_names_at_end_with_lib(source, MINIMAL_STRING_LIB);
+        assert_string_primitive_members(&names, source);
+    }
+}
+
+#[test]
+fn test_completions_number_with_full_lib() {
+    for source in ["const n = 42;\nn.", "const n: number = 0;\nn."] {
+        let names = member_names_at_end_with_full_lib(source);
+        assert_number_primitive_members(&names, source);
+    }
+}
+
+#[test]
+fn test_completions_string_with_full_lib() {
+    for source in ["const s = \"hello\";\ns.", "const s: string = \"\";\ns."] {
+        let names = member_names_at_end_with_full_lib(source);
+        assert_string_primitive_members(&names, source);
+    }
+}
+
 // ── Tuple member completions ─────────────────────────────────────────────────
 //
 // Structural rule: a tuple type `[T, U, ...]` exposes ALL Array.prototype members
@@ -4693,4 +4862,215 @@ fn test_completions_ecma_private_field_different_names_and_types() {
         this_names.contains(&"#items".to_string()),
         "Expected `#items` in `this.` completions; got: {this_names:?}"
     );
+}
+
+/// `this.` inside a class method must show colon-notation detail for methods and
+/// the correct type for properties. The `node_type_detail` path uses the semantic
+/// checker, not source-text slicing, so these assertions pin the exact strings
+/// produced by `checker.format_type()` after `arrow_to_colon` conversion.
+#[test]
+fn test_completions_this_method_detail_uses_colon_notation() {
+    // Method detail must be `(msg: string): void`, NOT `(msg: string) => void`.
+    // Property detail must be `string[]`.
+    let items =
+        items_at_end("class Logger {\n  lines: string[] = [];\n  write(msg: string): void { this.");
+    let write_item = items.iter().find(|i| i.label == "write");
+    assert!(
+        write_item.is_some(),
+        "Expected `write` in `this.` completions"
+    );
+    let detail = write_item.unwrap().detail.as_deref().unwrap_or("");
+    assert!(
+        detail.contains(':') && !detail.contains("=>"),
+        "Method detail must use colon notation `(msg: string): void`, got: {detail:?}"
+    );
+    let lines_item = items.iter().find(|i| i.label == "lines");
+    assert!(
+        lines_item.is_some(),
+        "Expected `lines` in `this.` completions"
+    );
+    let lines_detail = lines_item.unwrap().detail.as_deref().unwrap_or("");
+    assert_eq!(
+        lines_detail, "string[]",
+        "Property detail must be the type, got: {lines_detail:?}"
+    );
+}
+
+/// Properties whose types are inferred from initializers must show the inferred
+/// type as the completion detail, not a raw source excerpt.
+#[test]
+fn test_completions_type_literal_inferred_property_detail() {
+    // `x: 42` → inferred type is `number`; `msg: "hi"` → inferred type is `string`.
+    // Both should appear as that primitive type in the completion detail, proving
+    // the semantic path (not source slicing) is used.
+    let items =
+        items_at_end("const obj: { x: number; msg: string } = { x: 42, msg: \"hi\" };\nobj.");
+    let x_item = items.iter().find(|i| i.label == "x");
+    assert!(x_item.is_some(), "Expected `x` in completions");
+    let x_detail = x_item.unwrap().detail.as_deref().unwrap_or("");
+    assert_eq!(
+        x_detail, "number",
+        "Inferred numeric property detail must be `number`, got: {x_detail:?}"
+    );
+
+    let msg_item = items.iter().find(|i| i.label == "msg");
+    assert!(msg_item.is_some(), "Expected `msg` in completions");
+    let msg_detail = msg_item.unwrap().detail.as_deref().unwrap_or("");
+    assert_eq!(
+        msg_detail, "string",
+        "Inferred string property detail must be `string`, got: {msg_detail:?}"
+    );
+}
+
+/// Quoted type-literal properties must be offered as completions with the correct
+/// detail. A different property-name spelling (`"my-prop"` vs `myProp`) must
+/// produce the same structural result, proving the fix is not keyed to a specific
+/// identifier spelling.
+#[test]
+fn test_completions_quoted_type_literal_property_detail() {
+    // `"my-prop"` and `"other-key"` are quoted properties — they require bracket
+    // access and must appear with the correct type detail.
+    let items = items_at_end(
+        "const obj: { \"my-prop\": number; \"other-key\": string } = { \"my-prop\": 1, \"other-key\": \"x\" };\nobj.",
+    );
+    let prop1 = items.iter().find(|i| i.label == "my-prop");
+    assert!(
+        prop1.is_some(),
+        "Expected `my-prop` in completions; got labels: {:?}",
+        items.iter().map(|i| &i.label).collect::<Vec<_>>()
+    );
+    let prop1_detail = prop1.unwrap().detail.as_deref().unwrap_or("");
+    assert_eq!(
+        prop1_detail, "number",
+        "Quoted property detail must be `number`, got: {prop1_detail:?}"
+    );
+
+    let prop2 = items.iter().find(|i| i.label == "other-key");
+    assert!(prop2.is_some(), "Expected `other-key` in completions");
+    let prop2_detail = prop2.unwrap().detail.as_deref().unwrap_or("");
+    assert_eq!(
+        prop2_detail, "string",
+        "Quoted property detail must be `string`, got: {prop2_detail:?}"
+    );
+}
+
+// ─── auto-import sort-text tests ─────────────────────────────────────────────
+
+/// Auto-import completions from regular code (outside any import clause) must
+/// use `AUTO_IMPORT` sort text ("16"), matching TypeScript's
+/// `SortText.AutoImportSuggestions`.
+#[test]
+fn test_auto_import_sort_text_regular_code() {
+    let mut project = crate::Project::new();
+    project.set_file(
+        "/src/utils.ts".to_string(),
+        "export function helperAlpha() {}\nexport function helperBeta() {}".to_string(),
+    );
+    // Cursor at end of empty file — regular code position, not inside import clause.
+    project.set_file("/src/main.ts".to_string(), "helperA".to_string());
+
+    let completions = project
+        .get_completions("/src/main.ts", Position::new(0, 7))
+        .unwrap_or_default();
+
+    let helper = completions
+        .iter()
+        .find(|i| i.label == "helperAlpha" || i.label == "helperBeta");
+    assert!(
+        helper.is_some(),
+        "Expected auto-import candidate; got labels: {:?}",
+        completions.iter().map(|i| &i.label).collect::<Vec<_>>()
+    );
+    let sort = helper.unwrap().effective_sort_text();
+    assert_eq!(
+        sort,
+        crate::completions::sort_priority::AUTO_IMPORT,
+        "Regular-code auto-import must use AUTO_IMPORT sort text; got {sort:?}"
+    );
+}
+
+/// Auto-import completions offered inside `import {{ | }} from '…'` (named
+/// bindings clause) must use `LOCATION_PRIORITY` sort text ("11"), matching
+/// TypeScript's `SortText.LocationPriority` for `importStatementCompletion`.
+#[test]
+fn test_auto_import_sort_text_inside_named_import_clause() {
+    let mut project = crate::Project::new();
+    project.set_file(
+        "/src/widgets.ts".to_string(),
+        "export function widgetOne() {}\nexport function widgetTwo() {}".to_string(),
+    );
+    // Cursor is inside `import { | }` — the named-bindings list.
+    // Position (0, 9) lands between the braces.
+    project.set_file(
+        "/src/app.ts".to_string(),
+        "import {  } from './widgets';".to_string(),
+    );
+
+    let completions = project
+        .get_completions("/src/app.ts", Position::new(0, 9))
+        .unwrap_or_default();
+
+    let widget = completions
+        .iter()
+        .find(|i| i.label == "widgetOne" || i.label == "widgetTwo");
+    assert!(
+        widget.is_some(),
+        "Expected widget candidate inside import clause; got labels: {:?}",
+        completions.iter().map(|i| &i.label).collect::<Vec<_>>()
+    );
+    let sort = widget.unwrap().effective_sort_text();
+    assert_eq!(
+        sort,
+        crate::completions::sort_priority::LOCATION_PRIORITY,
+        "Import-clause auto-import must use LOCATION_PRIORITY sort text; got {sort:?}"
+    );
+}
+
+/// Verify that the import-clause sort text ("11") lexicographically precedes the
+/// regular-code auto-import sort text ("16"). Editors sort completion items by
+/// `sortText` as a string, so lexicographic ordering is exactly what matters.
+#[test]
+fn test_auto_import_import_clause_sorts_before_regular_auto_import() {
+    use crate::completions::sort_priority;
+    // String comparison is intentional — `sortText` is compared lexicographically
+    // by editors, matching TypeScript's own SortText design.
+    assert!(
+        sort_priority::LOCATION_PRIORITY < sort_priority::AUTO_IMPORT,
+        "LOCATION_PRIORITY ({}) must sort before AUTO_IMPORT ({})",
+        sort_priority::LOCATION_PRIORITY,
+        sort_priority::AUTO_IMPORT
+    );
+}
+
+/// Different names for bound variables (`K` vs `X`, `Widget` vs `Component`)
+/// must not affect whether the import-clause sort text applies.  The rule is
+/// structural (cursor is inside `NAMED_IMPORTS`), not spelling-dependent.
+#[test]
+fn test_auto_import_import_clause_sort_text_name_independent() {
+    for export_name in &["alphaExport", "betaExport", "gammaExport"] {
+        let mut project = crate::Project::new();
+        project.set_file(
+            "/src/lib.ts".to_string(),
+            format!("export function {export_name}() {{}}"),
+        );
+        project.set_file(
+            "/src/consumer.ts".to_string(),
+            "import {  } from './lib';".to_string(),
+        );
+        let completions = project
+            .get_completions("/src/consumer.ts", Position::new(0, 9))
+            .unwrap_or_default();
+
+        let item = completions.iter().find(|i| i.label == *export_name);
+        assert!(
+            item.is_some(),
+            "Expected `{export_name}` inside import clause; got: {:?}",
+            completions.iter().map(|i| &i.label).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            item.unwrap().effective_sort_text(),
+            crate::completions::sort_priority::LOCATION_PRIORITY,
+            "`{export_name}` inside import clause must get LOCATION_PRIORITY sort text"
+        );
+    }
 }

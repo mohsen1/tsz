@@ -501,7 +501,7 @@ impl<'a> CheckerState<'a> {
     /// without strict null checks all types implicitly include `undefined`.
     pub(crate) fn skip_definite_assignment_for_type(&self, declared_type: TypeId) -> bool {
         use tsz_solver::TypeId;
-        use tsz_solver::type_contains_undefined;
+        use tsz_solver::narrowing::type_contains_undefined;
 
         // tsc gates TS2454 on strictNullChecks. Without it, every type implicitly
         // includes undefined/null, so an uninitialized variable is always valid.
@@ -1402,7 +1402,7 @@ impl<'a> CheckerState<'a> {
         if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
             && let Some(bin) = self.ctx.arena.get_binary_expr(parent_node)
         {
-            return crate::query_boundaries::common::is_compound_assignment_operator(
+            return crate::query_boundaries::operator_wrappers::is_compound_assignment_operator(
                 bin.operator_token,
             ) && bin.left == ident_idx;
         }

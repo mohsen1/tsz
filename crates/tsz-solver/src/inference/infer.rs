@@ -10,7 +10,7 @@
 //! - Best common type calculation
 //! - Efficient unification with path compression
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{InferencePriority, TemplateSpan, TypeData, TypeId};
@@ -233,11 +233,30 @@ pub(crate) const MAX_CONSTRAINT_ITERATIONS: usize = 100;
 #[allow(dead_code)] // Used by conditional type inference (not yet wired up)
 pub(crate) const MAX_TYPE_RECURSION_DEPTH: usize = 100;
 
+/// Operation-local cache statistics for [`InferenceContext`].
+///
+/// Owner: one inference request. The subtype memo is scoped to that request
+/// and is dropped with the context.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct InferenceContextCacheStatistics {
+    /// Entries in the inference subtype memo keyed by source and target `TypeId`.
+    pub(crate) subtype_entries: usize,
+    estimated_size_bytes: usize,
+}
+
+impl InferenceContextCacheStatistics {
+    /// Estimated heap bytes owned by inference memo tables.
+    #[must_use]
+    pub(crate) const fn estimated_size_bytes(self) -> usize {
+        self.estimated_size_bytes
+    }
+}
+
 /// Type inference context for a single function call or expression.
 pub(crate) struct InferenceContext<'a> {
     pub(crate) interner: &'a dyn TypeDatabase,
     /// Type resolver for semantic lookups (e.g., base class queries)
-    pub(crate) resolver: Option<&'a dyn crate::TypeResolver>,
+    pub(crate) resolver: Option<&'a dyn crate::relations::subtype::TypeResolver>,
     /// Memoized subtype checks used by BCT and bound validation.
     pub(crate) subtype_cache: RefCell<FxHashMap<(TypeId, TypeId), bool>>,
     /// Active subtype checks used for coinductive cycle breaking in the
@@ -346,7 +365,7 @@ impl<'a> InferenceContext<'a> {
 
     pub fn with_resolver(
         interner: &'a dyn TypeDatabase,
-        resolver: &'a dyn crate::TypeResolver,
+        resolver: &'a dyn crate::relations::subtype::TypeResolver,
     ) -> Self {
         InferenceContext {
             interner,
@@ -366,6 +385,18 @@ impl<'a> InferenceContext<'a> {
             top_level_in_return_type_unfixed: FxHashSet::default(),
             vars_with_substituted_candidates: FxHashSet::default(),
             in_array_element_context: false,
+        }
+    }
+
+    /// Return entry and size accounting for this context's operation-local caches.
+    #[must_use]
+    pub(crate) fn cache_statistics(&self) -> InferenceContextCacheStatistics {
+        let subtype_entries = self.subtype_cache.borrow().len();
+        let estimated_size_bytes =
+            subtype_entries.saturating_mul(std::mem::size_of::<((TypeId, TypeId), bool)>());
+        InferenceContextCacheStatistics {
+            subtype_entries,
+            estimated_size_bytes,
         }
     }
 
@@ -1456,7 +1487,7 @@ impl<'a> InferenceContext<'a> {
 }
 
 /// Returns `true` when `ty` is or structurally contains an `IndexAccess` type.
-fn type_contains_index_access(db: &dyn crate::TypeDatabase, ty: TypeId) -> bool {
+fn type_contains_index_access(db: &dyn crate::construction::TypeDatabase, ty: TypeId) -> bool {
     if ty.is_intrinsic() {
         return false;
     }

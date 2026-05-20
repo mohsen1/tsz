@@ -1,3 +1,4 @@
+use crate::construction::{QueryDatabase, TypeDatabase};
 use crate::contextual::extractors::extract_param_type_at_for_call;
 use crate::diagnostics::PendingDiagnostic;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type_cached};
@@ -6,7 +7,6 @@ use crate::types::{
     ParamInfo, TypeData, TypeId, TypeListId, TypePredicate,
 };
 use crate::visitor::TypeVisitor;
-use crate::{QueryDatabase, TypeDatabase};
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::cell::{Cell, RefCell};
@@ -80,7 +80,7 @@ pub trait AssignabilityChecker {
     /// This is used during inference constraint collection to compute the variance
     /// of type parameters in type alias Applications. The checker implements this
     /// to provide its full resolver context.
-    fn type_resolver(&self) -> Option<&dyn crate::TypeResolver> {
+    fn type_resolver(&self) -> Option<&dyn crate::relations::subtype::TypeResolver> {
         None
     }
 
@@ -232,6 +232,25 @@ pub struct CallEvaluator<'a, C: AssignabilityChecker> {
     pub(crate) reverse_alias_expansion_visited: RefCell<FxHashSet<(TypeId, TypeId)>>,
 }
 
+/// Operation-local cache statistics for [`CallEvaluator`].
+///
+/// Owner: one call-evaluation request. The contextual-sensitivity memo is
+/// dropped with the evaluator.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CallEvaluatorCacheStatistics {
+    /// Entries in the contextual-sensitivity memo keyed by input `TypeId`.
+    pub contextual_sensitivity_entries: usize,
+    estimated_size_bytes: usize,
+}
+
+impl CallEvaluatorCacheStatistics {
+    /// Estimated heap bytes owned by call evaluator memo tables.
+    #[must_use]
+    pub const fn estimated_size_bytes(self) -> usize {
+        self.estimated_size_bytes
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(super) enum UnionCallSignatureCompatibility {
     Compatible {
@@ -284,6 +303,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             reverse_mapped_depth: Cell::new(0),
             reverse_mapped_visited: RefCell::new(FxHashSet::default()),
             reverse_alias_expansion_visited: RefCell::new(FxHashSet::default()),
+        }
+    }
+
+    /// Return entry and size accounting for this evaluator's operation-local caches.
+    #[must_use]
+    pub fn cache_statistics(&self) -> CallEvaluatorCacheStatistics {
+        let contextual_sensitivity_entries = self.contextual_sensitivity_cache.borrow().len();
+        let estimated_size_bytes =
+            contextual_sensitivity_entries.saturating_mul(std::mem::size_of::<(TypeId, bool)>());
+        CallEvaluatorCacheStatistics {
+            contextual_sensitivity_entries,
+            estimated_size_bytes,
         }
     }
 

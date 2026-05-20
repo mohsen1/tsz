@@ -1150,11 +1150,11 @@ impl<'a> CheckerState<'a> {
         &mut self,
         expr_idx: NodeIndex,
     ) -> TypeId {
-        let snap = self.ctx.snapshot_diagnostics();
+        let snap = crate::context::speculation::DiagnosticSpeculationSnapshot::new(&self.ctx);
 
         let ty = self.compute_type_of_node_with_request(expr_idx, &TypingRequest::NONE);
 
-        self.ctx.rollback_diagnostics(&snap);
+        snap.rollback(&mut self.ctx.diagnostic_state());
         ty
     }
 
@@ -2003,7 +2003,10 @@ impl<'a> CheckerState<'a> {
             || Self::union_has_primitive_members_only(self.ctx.types, evaluated)
     }
 
-    fn union_has_primitive_members_only(types: &dyn tsz_solver::TypeDatabase, ty: TypeId) -> bool {
+    fn union_has_primitive_members_only(
+        types: &dyn tsz_solver::construction::TypeDatabase,
+        ty: TypeId,
+    ) -> bool {
         let Some(members) = query_common::union_members(types, ty) else {
             return false;
         };
@@ -3041,6 +3044,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn types_overlap_for_diagnostic_display(&mut self, left: TypeId, right: TypeId) -> bool {
-        self.is_assignable_to(left, right) || self.is_assignable_to(right, left)
+        self.diagnostic_relation_boolean_guard(left, right)
+            || self.diagnostic_relation_boolean_guard(right, left)
     }
 }

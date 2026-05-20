@@ -1,10 +1,32 @@
 use super::*;
-use crate::TypeInterner;
 use crate::caches::db::QueryDatabase;
+use crate::construction::TypeInterner;
 use crate::types::{
     CallSignature, CallableShape, FunctionShape, MappedModifier, MappedType, ParamInfo,
     PropertyInfo, StringIntrinsicKind, TemplateSpan, TypeParamInfo,
 };
+
+#[test]
+fn type_formatter_cache_statistics_account_for_atom_cache_entries_and_size() {
+    let db = TypeInterner::new();
+    let atom = db.intern_string("cachedName");
+    let mut fmt = TypeFormatter::new(&db);
+
+    let empty_stats = fmt.cache_statistics();
+    assert_eq!(empty_stats.atom_cache_entries, 0);
+    assert!(empty_stats.estimated_size_bytes > 0);
+
+    assert_eq!(&*fmt.atom(atom), "cachedName");
+    let populated_stats = fmt.cache_statistics();
+    assert_eq!(populated_stats.atom_cache_entries, 1);
+    assert!(populated_stats.estimated_size_bytes >= empty_stats.estimated_size_bytes);
+
+    assert_eq!(&*fmt.atom(atom), "cachedName");
+    assert_eq!(
+        fmt.cache_statistics().atom_cache_entries,
+        populated_stats.atom_cache_entries
+    );
+}
 
 #[test]
 fn union_null_at_end() {

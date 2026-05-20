@@ -1,12 +1,14 @@
 use super::*;
 use crate::SubtypeFailureReason;
-use crate::TypeInterner;
 use crate::caches::db::QueryDatabase;
+use crate::computation::TypeEnvironment;
+use crate::construction::TypeInterner;
 use crate::def::DefId;
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::{
     CallSignature, CallableShape, ConditionalType, FunctionShape, IndexSignature, MappedType,
     ObjectFlags, ObjectShape, ParamInfo, PropertyInfo, SymbolRef, TemplateSpan, TupleElement,
-    TypeEnvironment, TypeParamInfo, TypeSubstitution, Visibility, instantiate_type,
+    TypeParamInfo, Visibility,
 };
 
 fn make_animal_dog(interner: &TypeInterner) -> (TypeId, TypeId) {
@@ -115,6 +117,35 @@ fn test_any_assignability() {
 
     assert!(checker.is_assignable(TypeId::ANY, TypeId::STRING));
     assert!(checker.is_assignable(TypeId::STRING, TypeId::ANY));
+}
+
+#[test]
+fn compat_checker_cache_statistics_account_for_relation_entries() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let empty = checker.cache_statistics();
+    assert_eq!(empty.relation_entries, 0);
+    assert_eq!(empty.estimated_size_bytes(), 0);
+
+    assert!(!checker.is_assignable(TypeId::STRING, TypeId::NUMBER));
+    let populated = checker.cache_statistics();
+    assert_eq!(populated.relation_entries, 1);
+    assert!(
+        populated.estimated_size_bytes() > empty.estimated_size_bytes(),
+        "populated compatibility cache should report nonzero estimated residency"
+    );
+
+    assert!(!checker.is_assignable(TypeId::STRING, TypeId::NUMBER));
+    let repeated = checker.cache_statistics();
+    assert_eq!(repeated.relation_entries, populated.relation_entries);
+    assert_eq!(
+        repeated.estimated_size_bytes(),
+        populated.estimated_size_bytes()
+    );
+
+    checker.set_strict_function_types(true);
+    assert_eq!(checker.cache_statistics().relation_entries, 0);
 }
 
 #[test]
@@ -3373,6 +3404,91 @@ fn test_intersection_of_all_weak_types_is_still_weak() {
         checker.explain_failure(source, intersection),
         Some(SubtypeFailureReason::NoCommonProperties { .. })
     ));
+}
+
+#[test]
+fn test_intersection_weak_type_source_matching_second_member_not_violation() {
+    // Source has a property that matches the SECOND weak intersection member.
+    // The weak-type check must consider all members' properties, not just the first.
+    // `{ b: boolean } <: { a?: number } & { b?: string }` — b is in the second member,
+    // so source shares a property name with the intersection. Not a weak-type violation.
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let a = interner.intern_string("a");
+    let b = interner.intern_string("b");
+
+    let weak1 = interner.object(vec![PropertyInfo::opt(a, TypeId::NUMBER)]);
+    let weak2 = interner.object(vec![PropertyInfo::opt(b, TypeId::STRING)]);
+
+    let intersection = interner.intersection2(weak1, weak2);
+
+    // Source with property `b` matches weak2 — not a NoCommonProperties violation.
+    // (There may be a type-mismatch for b: boolean vs b?: string, but that is
+    // a different diagnostic, not TS2559.)
+    let source_b = interner.object(vec![PropertyInfo::new(b, TypeId::BOOLEAN)]);
+    assert!(
+        !matches!(
+            checker.explain_failure(source_b, intersection),
+            Some(SubtypeFailureReason::NoCommonProperties { .. })
+        ),
+        "Source with property in second member must not trigger NoCommonProperties"
+    );
+}
+
+#[test]
+fn test_intersection_weak_type_three_members_no_common() {
+    // Three-member weak intersection: source has no property in any member.
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let a = interner.intern_string("a");
+    let b = interner.intern_string("b");
+    let c = interner.intern_string("c");
+    let z = interner.intern_string("z");
+
+    let w1 = interner.object(vec![PropertyInfo::opt(a, TypeId::NUMBER)]);
+    let w2 = interner.object(vec![PropertyInfo::opt(b, TypeId::STRING)]);
+    let w3 = interner.object(vec![PropertyInfo::opt(c, TypeId::BOOLEAN)]);
+
+    let intersection = interner.intersection(vec![w1, w2, w3]);
+
+    let source = interner.object(vec![PropertyInfo::new(z, TypeId::NUMBER)]);
+    assert!(!checker.is_assignable(source, intersection));
+    assert!(matches!(
+        checker.explain_failure(source, intersection),
+        Some(SubtypeFailureReason::NoCommonProperties { .. })
+    ));
+}
+
+#[test]
+fn test_intersection_with_non_weak_member_not_weak_intersection() {
+    // An intersection where at least one member is NOT weak is not a weak intersection.
+    // `string & { a?: number }` is not weak because `string` is not weak.
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let a = interner.intern_string("a");
+    let z = interner.intern_string("z");
+
+    let weak = interner.object(vec![PropertyInfo::opt(a, TypeId::NUMBER)]);
+    // Use a required-property object to make the intersection non-weak.
+    let non_weak = interner.object(vec![PropertyInfo::new(z, TypeId::STRING)]);
+
+    let intersection = interner.intersection2(weak, non_weak);
+
+    let source_unrelated = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
+    // Non-weak intersection should not trigger NoCommonProperties.
+    assert!(
+        !matches!(
+            checker.explain_failure(source_unrelated, intersection),
+            Some(SubtypeFailureReason::NoCommonProperties { .. })
+        ),
+        "Non-weak intersection must not trigger NoCommonProperties"
+    );
 }
 
 #[test]

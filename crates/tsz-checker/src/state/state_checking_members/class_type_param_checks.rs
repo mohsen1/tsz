@@ -683,36 +683,44 @@ impl<'a> CheckerState<'a> {
         let Some(node) = self.ctx.arena.get(member_idx) else {
             return;
         };
-        let modifiers = match node.kind {
-            k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
-                .ctx
-                .arena
-                .get_property_decl(node)
-                .and_then(|p| p.modifiers.clone()),
-            k if k == syntax_kind_ext::METHOD_DECLARATION => self
-                .ctx
-                .arena
-                .get_method_decl(node)
-                .and_then(|m| m.modifiers.clone()),
-            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => self
-                .ctx
-                .arena
-                .get_accessor(node)
-                .and_then(|a| a.modifiers.clone()),
-            _ => None,
+        let kind = node.kind;
+        let invalid_modifiers: Vec<_> = {
+            let modifiers = match kind {
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_property_decl(node)
+                    .and_then(|p| p.modifiers.as_ref()),
+                k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_method_decl(node)
+                    .and_then(|m| m.modifiers.as_ref()),
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    self.ctx
+                        .arena
+                        .get_accessor(node)
+                        .and_then(|a| a.modifiers.as_ref())
+                }
+                _ => None,
+            };
+            let Some(mods) = modifiers else { return };
+            mods.nodes
+                .iter()
+                .filter_map(|&mod_idx| {
+                    let mod_node = self.ctx.arena.get(mod_idx)?;
+                    let text = if mod_node.kind == SyntaxKind::InKeyword as u16 {
+                        "in"
+                    } else if mod_node.kind == SyntaxKind::OutKeyword as u16 {
+                        "out"
+                    } else {
+                        return None;
+                    };
+                    Some((mod_idx, text))
+                })
+                .collect()
         };
-        let Some(mods) = modifiers else { return };
-        for &mod_idx in &mods.nodes {
-            let Some(mod_node) = self.ctx.arena.get(mod_idx) else {
-                continue;
-            };
-            let text = if mod_node.kind == SyntaxKind::InKeyword as u16 {
-                "in"
-            } else if mod_node.kind == SyntaxKind::OutKeyword as u16 {
-                "out"
-            } else {
-                continue;
-            };
+        for (mod_idx, text) in invalid_modifiers {
             self.error_at_node_msg(
                 mod_idx,
                 crate::diagnostics::diagnostic_codes::MODIFIER_CAN_ONLY_APPEAR_ON_A_TYPE_PARAMETER_OF_A_CLASS_INTERFACE_OR_TYPE_ALIAS,

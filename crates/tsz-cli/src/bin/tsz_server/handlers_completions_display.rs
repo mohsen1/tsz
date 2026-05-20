@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use tsz::lsp::position::LineMap;
 use tsz::lsp::signature_help::SignatureHelpProvider;
 use tsz::parser::node::NodeAccess;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 impl Server {
     /// Build rich displayParts for a completion entry, matching TypeScript's format.
@@ -1058,7 +1058,7 @@ impl Server {
                 "argumentCount": sig_help.argument_count,
             }))
         })();
-        self.stub_response(seq, request, result)
+        self.success_response(seq, request, result)
     }
 
     /// Determine the display part kind for a type string.

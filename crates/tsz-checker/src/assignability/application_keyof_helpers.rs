@@ -189,7 +189,7 @@ impl<'a> CheckerState<'a> {
         let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, source_base);
         let variances = def_id.and_then(|d| {
             if let Some(cached) =
-                tsz_solver::QueryDatabase::get_type_param_variance(self.ctx.types, d)
+                tsz_solver::construction::QueryDatabase::get_type_param_variance(self.ctx.types, d)
             {
                 return Some(cached);
             }

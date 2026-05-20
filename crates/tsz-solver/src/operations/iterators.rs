@@ -5,7 +5,7 @@
 //! loop type checking.
 
 use super::property::PropertyAccessEvaluator;
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::types::{PropertyInfo, TypeData, TypeId};
 use crate::visitor::{
     array_element_type, object_shape_id, object_with_index_shape_id, readonly_inner_type,
@@ -301,16 +301,21 @@ fn extract_iterator_result_types(
 ) -> Option<IteratorInfo> {
     use crate::type_queries::is_promise_like;
 
-    // Get the return type and parameter types of next()
-    let (next_return_type, next_params) = match db.lookup(next_method_type) {
+    // Get the return type and first parameter type of next().
+    let (next_return_type, next_type) = match db.lookup(next_method_type) {
         Some(TypeData::Function(shape_id)) => {
             let shape = db.function_shape(shape_id);
-            (shape.return_type, shape.params.clone())
+            let next_type = shape
+                .params
+                .first()
+                .map_or(TypeId::UNDEFINED, |p| p.type_id);
+            (shape.return_type, next_type)
         }
         Some(TypeData::Callable(shape_id)) => {
             let shape = db.callable_shape(shape_id);
             let sig = shape.call_signatures.first()?;
-            (sig.return_type, sig.params.clone())
+            let next_type = sig.params.first().map_or(TypeId::UNDEFINED, |p| p.type_id);
+            (sig.return_type, next_type)
         }
         _ => return None,
     };
@@ -329,9 +334,6 @@ fn extract_iterator_result_types(
     // Extract yield_type and return_type from IteratorResult<T, TReturn>
     // IteratorResult = { value: T, done: false } | { value: TReturn, done: true }
     let (yield_type, return_type) = extract_iterator_result_value_types(db, iterator_result_type);
-
-    // Extract next_type from the first parameter of next()
-    let next_type = next_params.first().map_or(TypeId::UNDEFINED, |p| p.type_id);
 
     Some(IteratorInfo {
         iterator_type,

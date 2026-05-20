@@ -36,6 +36,14 @@
   blocker or active work, and the next owner/action. If a `WIP` label has no
   signed explanatory comment within 30 minutes of the label event, another
   agent may remove the label and add `help wanted` so the work can be picked up.
+- Do not close PRs or GitHub issues prematurely. Stale, dirty, failing,
+  conflicted, or WIP work is still repository knowledge; preserve it with a
+  signed status comment, `help wanted`, draft/WIP state, or a follow-up issue
+  instead of discarding it. Close only when the work merged, the user explicitly
+  asked for closure, it is an exact duplicate, or a newer PR/issue fully
+  supersedes it and links back to the preserved branch/commits and findings.
+  Before closing for duplicate/superseded reasons, leave a signed comment with
+  the evidence, the successor link, and what useful work was carried forward.
 - Draft PRs intentionally run only light CI: lint, dist-fast build, and unit
   tests. Marking a PR ready for review triggers the heavy suites: conformance,
   emit, fourslash, and WASM. See §19.5 for the rules around local vs. CI work.
@@ -277,6 +285,12 @@ them as TSZ repo skills.
   stable across the session.
 - **Sign your work.** Every PR body and GitHub issue you create or comment on
   must include your AgentName so humans (and other agents) can tell who did it.
+- **PR bodies are mandatory coordination state, not paperwork.** Never open or
+  update a PR with `--fill` alone, an empty body, a stale template, or placeholder
+  sections. Use a real body file/heredoc and fill every template section before
+  marking the PR ready. At minimum every PR body must contain:
+  `AgentName`, `Track`, `Invariant`, `Scope`, `Project Corpus Impact`,
+  `Verification`, and `Coordination Notes`.
 - **Comment when changing WIP state.** Adding or re-adding the `WIP` label,
   adding a `[WIP]` title prefix, or converting a PR back to draft because it is
   blocked must be paired with a signed PR comment. Include the reason for the
@@ -290,12 +304,26 @@ them as TSZ repo skills.
   For compiler, benchmark, emit, checker, solver, parser, binder, LSP, WASM, or
   CI changes, name the affected project row when known, name the bug family, and
   cite the local command, CI job, issue, or artifact used as evidence.
+- **Verify the body GitHub actually stored.** Immediately after creating or
+  materially editing a PR, run `gh pr view <number> --json body` (or equivalent)
+  and confirm the required sections are present in the remote body. If any
+  section is missing, update the PR body before pushing more work, rerunning CI,
+  or marking the PR ready. If `project-corpus-pr-body` fails, fix the PR body
+  first; do not rerun failed jobs until the remote body passes this checklist.
 - **Acknowledge code reviews.** When your PR receives a substantive code review,
   especially from `CodeReviewer`, react to the review comment/thread after
   reading it and leave a brief PR comment acknowledging the review with your
   AgentName. If the review requests changes, state whether you will fix it,
   have fixed it, or disagree with reasons; do not treat a reaction as a
   substitute for a response or for doing the requested work.
+- **Do not close work just to tidy queues.** Closing a PR or issue is a
+  destructive coordination action because branch context, investigation notes,
+  and partial fixes can be lost. Do not close because CI is red, the branch is
+  old, the PR is draft/WIP, or the current owner is inactive. Prefer a signed
+  handoff comment plus `help wanted`. If closure is truly warranted because the
+  work is duplicate or superseded, link the successor, summarize what was
+  preserved, and include the exact branch/commit evidence in the closing
+  comment.
 - **Shared GitHub identity.** All agents push as the same GitHub user
   (`mohsen1`). Assume sibling agents are operating concurrently under the same
   account — check draft PRs, open PRs, recent merged PRs, and relevant issues
@@ -361,20 +389,23 @@ recovery. There is no session picker, campaign loop, or random-pick script.
 
 ## 20.75) Memory-Guarded Execution (`scripts/safe-run.sh`)
 - **All long-running or memory-intensive commands MUST be wrapped with `scripts/safe-run.sh`.**
-- This includes: full conformance runs, `cargo nextest run` (full suite), `cargo build --release`, and any multi-worker test runner.
+- This includes: `cargo nextest run` (full suite), `cargo build --release`, and any multi-worker test runner.
+- CI-only full conformance/snapshot jobs are also memory-guarded when run by
+  maintainers, but this section does not override the local "never run full
+  conformance" rule above.
 - The wrapper monitors the process tree's total RSS and kills it if it exceeds the limit (default: 75% of system RAM).
 - Overhead is negligible — one `ps` call every 5 seconds.
 - Quick, filtered runs (`--filter`, `--max`) and `cargo check` generally don't need the wrapper.
 
 ```bash
-# Wrap any heavy command
+# Wrap heavy allowed local commands
 scripts/safe-run.sh cargo nextest run
-scripts/safe-run.sh ./scripts/conformance/conformance.sh run
-scripts/safe-run.sh ./scripts/conformance/conformance.sh snapshot
+scripts/safe-run.sh cargo build --release
+scripts/safe-run.sh ./scripts/conformance/conformance.sh run --filter mappedTypeRelationships --verbose
 
 # Custom limit (absolute MB or percentage of RAM)
 scripts/safe-run.sh --limit 8192 -- cargo nextest run --cargo-profile release
-scripts/safe-run.sh --limit 50% -- ./scripts/conformance/conformance.sh run
+scripts/safe-run.sh --limit 50% -- ./scripts/conformance/conformance.sh run --filter mappedTypeRelationships
 
 # Debug memory usage
 scripts/safe-run.sh --verbose -- cargo build

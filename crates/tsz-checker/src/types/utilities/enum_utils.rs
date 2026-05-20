@@ -977,6 +977,16 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // Needed beyond the top-level `left_narrow != NEVER` check in binary.rs:
+        // `never` can appear as a *member* of a union (e.g. via
+        // `union_or_single_preserve` in narrowing). Without this,
+        // `is_assignable_to(never, x)` returns `true` (bottom-type semantics),
+        // falsely claiming overlap and suppressing TS2367.
+        if left == TypeId::NEVER || right == TypeId::NEVER {
+            tracing::trace!("has NEVER — no overlap");
+            return true;
+        }
+
         // null/undefined are always comparable with any type (TSC's "comparable relation").
         // Even with strictNullChecks enabled, `null === x` and `undefined === x` should
         // never trigger TS2367.

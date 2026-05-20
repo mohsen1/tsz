@@ -2,9 +2,10 @@
 //! property access on types (obj.prop, obj["key"], etc.).
 
 use crate::caches::db::QueryDatabase;
+use crate::construction::TypeDatabase;
+use crate::objects::{ApparentMemberKind, apparent_object_member_kind};
 use crate::relations::subtype::TypeResolver;
 use crate::types::{IntrinsicKind, LiteralValue, ObjectShapeId, TypeData, TypeId};
-use crate::{ApparentMemberKind, TypeDatabase, apparent_object_member_kind};
 use std::cell::{Cell, RefCell};
 use tsz_common::interner::Atom;
 
@@ -254,7 +255,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             // Walking into Label's stored `extend` method here bakes
             // `this -> Label` into Label's stored bodies, poisoning later
             // intersection wrapping (chained `extend({a}).extend({b})`).
-            crate::substitute_this_type_at_return_position(
+            crate::instantiation::instantiate::substitute_this_type_at_return_position(
                 self.interner(),
                 Some(self.db),
                 type_id,
@@ -505,8 +506,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 let members = self.interner().type_list(members);
                 let prop_atom =
                     prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
-                let mut results = Vec::new();
-                let mut write_results = Vec::new();
+                let mut results = Vec::with_capacity(members.len());
+                let mut write_results = Vec::with_capacity(members.len());
                 let mut any_from_index = false;
                 let mut saw_deferred_any_fallback = false;
                 let mut nullable_causes = Vec::new();
@@ -993,7 +994,11 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 // Resolve the lazy type using the resolver
                 if let Some(resolved) = self.resolver().resolve_lazy(def_id, self.interner()) {
                     let resolved = if crate::contains_this_type(self.interner(), resolved) {
-                        crate::substitute_this_type(self.interner(), resolved, obj_type)
+                        crate::instantiation::instantiate::substitute_this_type(
+                            self.interner(),
+                            resolved,
+                            obj_type,
+                        )
                     } else {
                         resolved
                     };

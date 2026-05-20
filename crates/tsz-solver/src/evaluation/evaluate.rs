@@ -11,14 +11,15 @@
 //! - Handles deferred evaluation when type parameters are unknown
 //! - Supports distributivity for naked type parameters in unions
 
-use crate::TypeDatabase;
 use crate::caches::db::QueryDatabase;
+use crate::construction::TypeDatabase;
 use crate::def::{DefId, DefKind};
 use crate::diagnostics::display_provenance::{
     self, AliasApplicationPriority, AliasApplicationProvenance,
     FreshObjectLiteralDisplayProvenance, UnionOriginProvenance,
 };
 use crate::evaluation::request::EvaluationRequest;
+use crate::evaluation::result::EvaluationResult;
 use crate::instantiation::instantiate::instantiate_generic;
 use crate::relations::subtype::{NoopResolver, TypeResolver};
 #[cfg(test)]
@@ -392,8 +393,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Evaluate a normalized request, applying option-sensitive configuration
     /// before consulting this evaluator's local cache.
     pub fn evaluate_request(&mut self, request: EvaluationRequest) -> TypeId {
+        self.evaluate_request_result(request).into_type_id()
+    }
+
+    /// Evaluate a normalized request and return the typed result stage.
+    pub fn evaluate_request_result(&mut self, request: EvaluationRequest) -> EvaluationResult {
         self.set_no_unchecked_indexed_access(request.no_unchecked_indexed_access());
-        self.evaluate(request.type_id())
+        EvaluationResult::new(self.evaluate(request.type_id()))
     }
 
     // =========================================================================
@@ -1051,6 +1057,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         resolved
                     };
 
+                    // Homomorphic mapped-type union distribution: when the alias body is
+                    // `{ [K in keyof T]: ... }` and T's argument resolves to a union,
+                    // distribute over union members here — before calling
+                    // `instantiate_generic` — so that `try_distribute_mapped_over_union_source`
+                    // in mapped.rs can distinguish the post-instantiation constraint from the
+                    // declared constraint. After a standard instantiate_generic call with
+                    // T→(A|B), both `constraint` and `type_param.constraint` collapse to
+                    // `keyof (A|B)`, which causes that guard to treat it as a direct use and
+                    // skip distribution.
                     if let Some(TypeData::Mapped(mapped_id)) = self.interner.lookup(effective_body)
                     {
                         let mapped = self.interner.get_mapped(mapped_id);
@@ -1098,9 +1113,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                         evaluated,
                                     );
                                 }
-                                if let Some(d) = self.def_depth.get_mut(&def_id) {
-                                    *d = d.saturating_sub(1);
-                                }
+                                self.decrement_def_depth(def_id);
                                 return evaluated;
                             }
                         }
@@ -1119,12 +1132,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     if crate::contains_this_type(self.interner, instantiated) {
                         // Use original_type_id as the app_type — it's the same
                         // Application(base, args) that was already interned.
-                        instantiated = crate::substitute_this_type_cached(
-                            self.interner,
-                            self.query_db,
-                            instantiated,
-                            original_type_id,
-                        );
+                        instantiated =
+                            crate::instantiation::instantiate::substitute_this_type_cached(
+                                self.interner,
+                                self.query_db,
+                                instantiated,
+                                original_type_id,
+                            );
                     }
                     // Preserve discriminated object intersections after instantiation.
                     // Re-evaluating them here distributes impossible branches again,
@@ -1196,12 +1210,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         &expanded_args,
                     );
                     if crate::contains_this_type(self.interner, instantiated) {
-                        instantiated = crate::substitute_this_type_cached(
-                            self.interner,
-                            self.query_db,
-                            instantiated,
-                            original_type_id,
-                        );
+                        instantiated =
+                            crate::instantiation::instantiate::substitute_this_type_cached(
+                                self.interner,
+                                self.query_db,
+                                instantiated,
+                                original_type_id,
+                            );
                     }
                     let evaluated = if crate::type_queries::is_discriminated_object_intersection(
                         self.interner,
@@ -1440,8 +1455,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             if self.is_recursive_type_alias_application(original_type_id)
                 && Self::is_structural_display_alias_result(self.interner, evaluated)
             {
-                self.interner
-                    .store_display_alias_preferring_application(evaluated, original_type_id);
+                // Only store the display alias when `evaluated` was freshly produced
+                // by this evaluation (allocated after `original_type_id`). If it
+                // pre-exists, it was already interned by a different alias and
+                // overwriting its alias would corrupt diagnostics for that other alias.
+                // For example, `NestedRecord<"x.y.z", string>` and `Id<...string...>`
+                // can evaluate to the same structural object; the NestedRecord evaluation
+                // must not replace the `Id<...>` alias that was recorded first.
+                let evaluated_is_fresh = match (
+                    self.interner.lookup_alloc_order(evaluated),
+                    self.interner.lookup_alloc_order(original_type_id),
+                ) {
+                    (Some(eval_order), Some(orig_order)) => eval_order > orig_order,
+                    _ => evaluated.0 > original_type_id.0,
+                };
+                if evaluated_is_fresh {
+                    self.interner
+                        .store_display_alias_preferring_application(evaluated, original_type_id);
+                }
             }
             return;
         }
@@ -2679,7 +2710,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let resolved = if !self.suppress_this_binding
                 && crate::contains_this_type(self.interner, resolved)
             {
-                crate::substitute_this_type_cached(
+                crate::instantiation::instantiate::substitute_this_type_cached(
                     self.interner,
                     self.query_db,
                     resolved,
@@ -2806,6 +2837,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// produce tuples.
     fn visit_tuple(&mut self, tuple_list_id: TupleListId, original_type_id: TypeId) -> TypeId {
         use crate::intern::TEMPLATE_LITERAL_EXPANSION_LIMIT;
+        use tsz_common::limits::MAX_REPRESENTABLE_TUPLE_LENGTH;
 
         let elements = self.interner.tuple_list(tuple_list_id);
 
@@ -2855,6 +2887,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 if let Some(TypeData::Tuple(inner_list_id)) = self.interner.lookup(evaluated_inner)
                 {
                     let inner_elements = self.interner.tuple_list(inner_list_id);
+                    let current_len = alternatives.iter().map(|a| a.len()).max().unwrap_or(0);
+                    if current_len.saturating_add(inner_elements.len())
+                        > MAX_REPRESENTABLE_TUPLE_LENGTH
+                    {
+                        self.interner.mark_tuple_too_large();
+                        return TypeId::ERROR;
+                    }
                     for alternative in &mut alternatives {
                         alternative.extend(inner_elements.iter().copied());
                     }
@@ -2912,11 +2951,23 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         return TypeId::ERROR;
                     }
 
+                    let max_prefix = alternatives.iter().map(|p| p.len()).max().unwrap_or(0);
+                    let max_spread = spread_alternatives
+                        .iter()
+                        .map(|s| s.len())
+                        .max()
+                        .unwrap_or(0);
+                    if max_prefix.saturating_add(max_spread) > MAX_REPRESENTABLE_TUPLE_LENGTH {
+                        self.interner.mark_tuple_too_large();
+                        return TypeId::ERROR;
+                    }
+
                     let mut distributed = Vec::with_capacity(alternative_count);
                     for prefix in alternatives {
                         for spread in &spread_alternatives {
-                            let mut next = prefix.clone();
-                            next.extend(spread.iter().copied());
+                            let mut next = Vec::with_capacity(prefix.len() + spread.len());
+                            next.extend_from_slice(&prefix);
+                            next.extend_from_slice(spread);
                             distributed.push(next);
                         }
                     }
@@ -3049,7 +3100,7 @@ pub fn evaluate_type_with_request(
     request: EvaluationRequest,
 ) -> TypeId {
     let mut evaluator = TypeEvaluator::new(interner);
-    evaluator.evaluate_request(request)
+    evaluator.evaluate_request_result(request).into_type_id()
 }
 
 /// Convenience function for evaluating mapped types

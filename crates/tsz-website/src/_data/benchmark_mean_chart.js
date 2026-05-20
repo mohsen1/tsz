@@ -121,21 +121,6 @@ function aggregate(msValues) {
   return msValues.reduce((sum, value) => sum + value, 0);
 }
 
-function geometricMean(values) {
-  if (!values.length) return Number.NaN;
-  return Math.exp(values.reduce((sum, value) => sum + Math.log(value), 0) / values.length);
-}
-
-function formatPerCaseSpeedupLabel(rows) {
-  const ratio = geometricMean(rows.map((row) => row.tsgo_ms / row.tsz_ms));
-  if (!Number.isFinite(ratio) || ratio <= 0) return "";
-
-  if (ratio >= 1) {
-    return `Per-case geomean across the same rows: tsz ${formatRatio(ratio)}x faster.`;
-  }
-  return `Per-case geomean across the same rows: tsgo ${formatRatio(1 / ratio)}x faster.`;
-}
-
 function renderMeanChart(results) {
   if (!results.length) {
     return "";
@@ -152,11 +137,9 @@ function renderMeanChart(results) {
   const tszWidth = Math.max(0.5, (tszTotal / maxMs) * 100);
   const tsgoWidth = Math.max(0.5, (tsgoTotal / maxMs) * 100);
   const speedupLabel = formatSpeedupLabel(tszTotal, tsgoTotal);
-  const perCaseSpeedupLabel = formatPerCaseSpeedupLabel(valid);
 
   return `<section class="benchmark-mean-card">
   <p class="bench-category-desc">Sum across ${fmt(valid.length)} successful <a href="/benchmarks/micro/">micro benchmark cases</a>.</p>
-  ${perCaseSpeedupLabel ? `<p class="bench-category-desc">${perCaseSpeedupLabel}</p>` : ""}
   <div class="bench-bars">
     <div class="bench-bar-row">
       <span class="bench-bar-label">tsz</span>

@@ -1380,11 +1380,9 @@ impl<'a> SignatureHelpProvider<'a> {
             (params, return_type)
         };
 
-        let mut parameters = Vec::new();
-        for (idx, raw) in Self::split_top_level_text(params_text, ',')
-            .into_iter()
-            .enumerate()
-        {
+        let param_parts = Self::split_top_level_text(params_text, ',');
+        let mut parameters = Vec::with_capacity(param_parts.len());
+        for (idx, raw) in param_parts.into_iter().enumerate() {
             let raw = raw.trim();
             if raw.is_empty() {
                 continue;
@@ -2432,6 +2430,10 @@ impl<'a> SignatureHelpProvider<'a> {
             let mut sigs = Vec::new();
             let include_call = call_kind == CallKind::Call || call_kind == CallKind::TaggedTemplate;
             let include_construct = call_kind == CallKind::New;
+            sigs.reserve(
+                usize::from(include_call) * shape.call_signatures.len()
+                    + usize::from(include_construct) * shape.construct_signatures.len(),
+            );
 
             if include_call {
                 // Add call signatures
@@ -2484,7 +2486,7 @@ impl<'a> SignatureHelpProvider<'a> {
         // Union of functions
         if let Some(members) = visitor::union_list_id(self.interner, type_id) {
             let members = self.interner.type_list(members);
-            let mut sigs = Vec::new();
+            let mut sigs = Vec::with_capacity(members.len());
             for &member in members.iter() {
                 sigs.extend(self.get_signatures_from_type(
                     member,
@@ -2627,7 +2629,7 @@ impl<'a> SignatureHelpProvider<'a> {
             return vec![shape.clone()];
         };
 
-        let mut variants = Vec::new();
+        let mut variants = Vec::with_capacity(checker.ctx.types.type_list(list_id).len());
         for &member in checker.ctx.types.type_list(list_id).iter() {
             if !matches!(checker.ctx.types.lookup(member), Some(TypeData::Tuple(_))) {
                 continue;
@@ -3046,7 +3048,7 @@ impl<'a> SignatureHelpProvider<'a> {
             })
             .unwrap_or_else(|| "args".to_string());
 
-        let mut expanded = Vec::new();
+        let mut expanded = Vec::with_capacity(tuple_variants.len());
         for tuple_variant in tuple_variants {
             let Some(expanded_rest_params) =
                 Self::tuple_variant_parameters(&tuple_variant, &base_rest_name)
@@ -3055,7 +3057,8 @@ impl<'a> SignatureHelpProvider<'a> {
             };
             let mut info = base.info.clone();
             let prefix_param_count = rest_param_index.min(base.info.parameters.len());
-            let mut params = base.info.parameters[..prefix_param_count].to_vec();
+            let mut params = Vec::with_capacity(prefix_param_count + expanded_rest_params.len());
+            params.extend_from_slice(&base.info.parameters[..prefix_param_count]);
             params.extend(expanded_rest_params);
             info.parameters = params;
             let labels: Vec<&str> = info
@@ -3096,8 +3099,9 @@ impl<'a> SignatureHelpProvider<'a> {
     }
 
     fn tuple_union_variants(text: &str) -> Vec<String> {
-        let mut out = Vec::new();
-        for part in Self::split_top_level_text(text, '|') {
+        let parts = Self::split_top_level_text(text, '|');
+        let mut out = Vec::with_capacity(parts.len());
+        for part in parts {
             let trimmed = part.trim();
             if trimmed.starts_with('[') && trimmed.ends_with(']') {
                 out.push(trimmed.to_string());
@@ -3119,11 +3123,9 @@ impl<'a> SignatureHelpProvider<'a> {
             return Some(Vec::new());
         }
 
-        let mut params = Vec::new();
-        for (idx, raw) in Self::split_top_level_text(inner, ',')
-            .into_iter()
-            .enumerate()
-        {
+        let parts = Self::split_top_level_text(inner, ',');
+        let mut params = Vec::with_capacity(parts.len());
+        for (idx, raw) in parts.into_iter().enumerate() {
             let raw = raw.trim();
             if raw.is_empty() {
                 continue;
@@ -4499,7 +4501,7 @@ mod signature_help_internal_tests {
     use tsz_binder::BinderState;
     use tsz_common::position::{LineMap, Position};
     use tsz_parser::ParserState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     #[test]
     fn split_top_level_text_keeps_function_type_commas_grouped() {

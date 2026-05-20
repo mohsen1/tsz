@@ -178,14 +178,15 @@ performance question.
 
 ## Conformance Testing
 
+Full conformance is a CI gate, not a normal local command. Local conformance
+work should answer a specific debugging question with a narrow filter, then
+stop once the result informs the fix.
+
 ### Quick Reference
 
 ```bash
 # Build the conformance runner (fast profile)
 cargo build --profile dist-fast -p tsz-conformance
-
-# Run all tests
-.target/dist-fast/tsz-conformance --cache-file scripts/conformance/tsc-cache-full.json
 
 # Run filtered tests (fast iteration)
 .target/dist-fast/tsz-conformance --filter "controlFlow" \
@@ -240,22 +241,59 @@ python3 scripts/conformance/query-conformance.py --close 2
 python3 scripts/conformance/query-conformance.py --code TS2454 --paths-only
 ```
 
-#### `scripts/conformance/conformance.sh`
+#### `scripts/conformance/link-regression-issues.py`
 
-The main conformance test orchestrator. Handles running tests, generating snapshots, and analysis.
+Cross-checks open regression issue titles (or bare test names) against the
+current snapshot artifacts. Emits markdown suitable for pasting into a PR
+or issue comment so a human can decide whether to close, re-scope, or keep
+the regression issue open.
 
 ```bash
-# Run all conformance tests
-./scripts/conformance/conformance.sh run
+# A bare test name from an issue title
+python3 scripts/conformance/link-regression-issues.py tsxGenericAttributesType6
 
-# Run + analyze + save snapshots
-./scripts/conformance/conformance.sh snapshot
+# Several titles at once (each becomes one report row)
+python3 scripts/conformance/link-regression-issues.py \
+    "tsxGenericAttributesType6 wrong codes" \
+    "excessPropertyCheckIntersectionWithRecursiveType regression"
+
+# One title per line from a file (e.g. dumped from issue search)
+python3 scripts/conformance/link-regression-issues.py --from-file open-issues.txt
+
+# JSON instead of markdown
+python3 scripts/conformance/link-regression-issues.py --json tsxGenericAttributesType6
+```
+
+Status taxonomy and the matching closure pattern are documented in the
+helper's module docstring. The helper never re-runs conformance and never
+posts comments on its own — it only reads checked-in artifacts.
+
+**Closure pattern for stale regression issues.** When the helper reports
+`stale: passing in current snapshot`, close the regression issue with
+`not planned (stale)` and paste the helper output as the closing comment.
+When it reports `stale: accepted-regression entry no longer fails`, also
+open a follow-up to drop the entry from
+`scripts/conformance/conformance-accepted-regressions.txt`. When it reports
+`aggregate: no single snapshot row`, reply with the dashboard categories
+the helper points to instead of pretending a single row exists.
+
+#### `scripts/conformance/conformance.sh`
+
+The main conformance test orchestrator. Use it locally only with a narrow
+filter. Full run/snapshot modes are reserved for CI or explicit maintainer
+baseline work.
+
+```bash
+# Run one focused conformance filter
+./scripts/conformance/conformance.sh run --filter "mappedTypeRelationships" --verbose
 
 # Analyze from existing snapshots (no CPU cost)
 ./scripts/conformance/conformance.sh analyze --campaigns
 ./scripts/conformance/conformance.sh analyze --one-missing
 ./scripts/conformance/conformance.sh analyze --close 2
 ```
+
+Use snapshot-writing modes only in CI or explicit baseline-maintainer work.
 
 ### Snapshot Files
 
@@ -264,6 +302,7 @@ The main conformance test orchestrator. Handles running tests, generating snapsh
 | `scripts/conformance/conformance-snapshot.json` | High-level aggregates (summary, areas, top failures) |
 | `scripts/conformance/conformance-detail.json` | Per-test failure data (expected/actual/missing/extra codes) |
 | `scripts/conformance/conformance-baseline.txt` | One-line-per-test pass/fail with code diff |
+| `scripts/conformance/conformance-accepted-regressions.txt` | Failing tests tracked as accepted regressions (the CI budget set) |
 | `scripts/conformance/tsc-cache-full.json` | tsc expected diagnostics for every test |
 
 ### Reading Snapshots Directly
@@ -305,7 +344,7 @@ Memory-guarded command execution. Monitors RSS and kills the process if it excee
 
 ```bash
 # Default limit (75% of system RAM)
-scripts/safe-run.sh cargo test
+scripts/safe-run.sh cargo nextest run
 
 # Custom limit
 scripts/safe-run.sh --limit 8192 -- cargo build --release
@@ -314,7 +353,10 @@ scripts/safe-run.sh --limit 8192 -- cargo build --release
 scripts/safe-run.sh --verbose -- cargo build
 ```
 
-Use for: full conformance runs, `cargo test` (full suite), `cargo build --release`, and any multi-worker test runner.
+Use for long-running or memory-intensive commands such as a full
+`cargo nextest run`, release builds, and multi-worker test runners. This does
+not override the CI-only rule for full conformance, emit, or fourslash suites:
+keep those full suites out of normal local development and let CI run them.
 
 ### `scripts/setup/reset-ts-submodule.sh`
 

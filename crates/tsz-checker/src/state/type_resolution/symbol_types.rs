@@ -433,10 +433,7 @@ impl<'a> CheckerState<'a> {
                 return structural_type;
             }
         }
-        // For ALIAS symbols (e.g., `import b = a.c`), resolve to the target
-        // symbol and re-enter type_reference_symbol_type if the target is a class
-        // or interface. This ensures we get the instance type, not the constructor
-        // type, when the alias is used in a type position like `x: b`.
+        // ALIAS: resolve to target so type position (e.g., `x: b`) gets the instance type.
         if let Some((_, flags, _, _)) = symbol_meta.as_ref()
             && flags & symbol_flags::ALIAS != 0
         {
@@ -718,13 +715,7 @@ impl<'a> CheckerState<'a> {
         (!members.is_empty()).then(|| self.ctx.types.union(members))
     }
 
-    /// Resolve the type meaning of a synthetic default export whose `value_declaration`
-    /// is a property access expression.
-    ///
-    /// For `export default C.B` where `C` is a class/namespace and `B` is both a
-    /// static property and a type (interface/type alias), the default export carries
-    /// the value meaning (`number`).  When the import is used as a type reference,
-    /// we need the type meaning (the interface `C.B`).
+    /// For `export default C.B`, returns the type meaning (interface/alias) of `B`, not its value meaning.
     fn resolve_default_export_property_type_meaning(
         &mut self,
         target_sym_id: SymbolId,
@@ -846,11 +837,7 @@ impl<'a> CheckerState<'a> {
                 .register_symbol_file_target(member_sym_id, file_idx);
         }
 
-        // For cross-file symbols, use delegation to compute the type in the
-        // correct arena context. Calling type_reference_symbol_type directly
-        // would use the current file's arena, causing NodeIndex collisions and,
-        // for class members, can lose the instance-side type and fall back to
-        // the constructor object type.
+        // Cross-file: delegate to ensure the correct arena context; direct calls cause NodeIndex collisions.
         if file_idx.is_some() {
             if member_symbol.has_any_flags(symbol_flags::CLASS)
                 && let Some((instance_type, params)) =
@@ -884,13 +871,7 @@ impl<'a> CheckerState<'a> {
         Some(self.type_reference_symbol_type(member_sym_id))
     }
 
-    /// Resolve an import alias to its target symbol using the cross-file resolution
-    /// infrastructure.
-    ///
-    /// This is used as a fallback when `resolve_alias_symbol` (which relies on the
-    /// binder's `module_exports`) fails for cross-file imports. Uses the checker's
-    /// `resolve_import_alias_and_register` which resolves relative module specifiers
-    /// from the declaring file's perspective.
+    /// Fallback alias resolution for cross-file imports when `resolve_alias_symbol` can't find the target.
     fn resolve_import_alias_cross_file(&self, sym_id: SymbolId) -> Option<SymbolId> {
         let lib_binders: Vec<_> = self
             .ctx
@@ -944,12 +925,8 @@ impl<'a> CheckerState<'a> {
         Some(target_sym_id)
     }
 
-    /// Compute the interface structural type from declarations, bypassing `get_type_of_symbol`.
-    ///
-    /// For merged interface+namespace symbols, `get_type_of_symbol` returns the namespace
-    /// type (via the MODULE branch in `compute_type_of_symbol`). This helper computes the
-    /// interface type directly from the interface declarations, which is needed when the
-    /// symbol is used in type position (e.g., `var f: Foo` where Foo is interface+namespace).
+    /// Bypasses `get_type_of_symbol` to get the interface type directly from declarations.
+    /// Needed for merged interface+namespace symbols where `get_type_of_symbol` returns the namespace type.
     pub(crate) fn compute_interface_type_from_declarations(&mut self, sym_id: SymbolId) -> TypeId {
         use tsz_lowering::TypeLowering;
 
@@ -1010,18 +987,64 @@ impl<'a> CheckerState<'a> {
             return merged;
         }
 
+        // Multi-lib built-ins (Map, Set, WeakMap, …) span several NodeArenas; each declaration
+        // must be lowered with the arena that owns it. collect_lib_decls_with_arenas_in_contexts
+        // always returns ≥1 pair per declaration (falling back to ctx.arena), so we scan for a
+        // pair whose arena ptr differs from ctx.arena before committing to the multi-arena path.
+        // Lifetime note: arena refs inside cross_arena_declarations borrow from lib_ctxs,
+        // so the clone must outlive the Vec.
+        let lib_ctxs = self.ctx.lib_contexts.clone();
+        let cross_arena_declarations =
+            if Self::in_cross_arena_interface_delegation() && !lib_ctxs.is_empty() {
+                let decls_with_arenas =
+                crate::types_domain::queries::lib_decls::collect_lib_decls_with_arenas_in_contexts(
+                    self.ctx.binder,
+                    sym_id,
+                    &declarations,
+                    self.ctx.arena,
+                    &lib_ctxs,
+                    None,
+                );
+                let deduped =
+                    crate::types_domain::queries::lib_decls::dedup_decl_arenas(&decls_with_arenas);
+                let ctx_arena_ptr = self.ctx.arena as *const tsz_parser::parser::NodeArena;
+                if deduped
+                    .iter()
+                    .any(|(_, a)| !std::ptr::eq(*a as *const _, ctx_arena_ptr))
+                {
+                    deduped
+                } else {
+                    Vec::new()
+                }
+            } else {
+                Vec::new()
+            };
+
         // Pre-compute computed property names that the lowering can't resolve from AST alone.
         // This handles cases like `[k]` where k is a `const` unique symbol variable.
-        let computed_names = self.precompute_computed_property_names(&declarations);
-        let computed_symbol_names =
-            self.precompute_symbol_named_computed_property_names(&declarations);
-        let prewarmed_type_params = self.prewarm_member_type_reference_params(&declarations);
+        let computed_names = if cross_arena_declarations.is_empty() {
+            self.precompute_computed_property_names(&declarations)
+        } else {
+            self.precompute_computed_property_names_in_arenas(&cross_arena_declarations)
+        };
+        let computed_symbol_names = if cross_arena_declarations.is_empty() {
+            self.precompute_symbol_named_computed_property_names(&declarations)
+        } else {
+            self.precompute_symbol_named_computed_property_names_in_arenas(
+                &cross_arena_declarations,
+            )
+        };
+        let prewarmed_type_params = if cross_arena_declarations.is_empty() {
+            self.prewarm_member_type_reference_params(&declarations)
+        } else {
+            self.prewarm_member_type_reference_params_in_arenas(&cross_arena_declarations)
+        };
 
-        // Get type parameters from the first interface declaration
         let first_decl = declarations.first().copied().unwrap_or(NodeIndex::NONE);
         let mut params = Vec::new();
         let mut updates = Vec::new();
-        if first_decl.is_some()
+        if cross_arena_declarations.is_empty()
+            && first_decl.is_some()
             && let Some(node) = self.ctx.arena.get(first_decl)
             && let Some(interface) = self.ctx.arena.get_interface(node)
         {
@@ -1030,7 +1053,6 @@ impl<'a> CheckerState<'a> {
 
         let type_param_bindings = self.get_type_param_bindings();
         let type_resolver = |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
-        // Stable-identity helper: prefer Lazy(DefId) over Ref(SymbolRef)
         let def_id_resolver = |node_idx: NodeIndex| self.resolve_def_id_for_lowering(node_idx);
         let value_resolver = |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
         let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
@@ -1050,11 +1072,14 @@ impl<'a> CheckerState<'a> {
                     .map(|sym_id| self.ctx.get_canonical_lib_def_id(type_name, sym_id))
                 })
         };
+        // For the single-arena path all declarations share self.ctx.arena, so
+        // the (NodeIndex, arena_ptr) key always resolves to the same arena.
+        let single_arena_ptr = self.ctx.arena as *const NodeArena as usize;
         let computed_name_resolver = |expr_idx: NodeIndex| -> Option<tsz_common::Atom> {
-            computed_names.get(&expr_idx).copied()
+            computed_names.get(&(expr_idx, single_arena_ptr)).copied()
         };
         let computed_symbol_name_resolver =
-            |expr_idx: NodeIndex| computed_symbol_names.contains(&expr_idx);
+            |expr_idx: NodeIndex| computed_symbol_names.contains(&(expr_idx, single_arena_ptr));
         let lazy_type_params_resolver = |def_id: tsz_solver::def::DefId| {
             prewarmed_type_params
                 .get(&def_id)
@@ -1080,8 +1105,16 @@ impl<'a> CheckerState<'a> {
         } else {
             lowering
         };
-        let interface_type =
-            lowering.lower_interface_declarations_with_symbol(&declarations, sym_id);
+        let interface_type = if cross_arena_declarations.is_empty() {
+            lowering.lower_interface_declarations_with_symbol(&declarations, sym_id)
+        } else {
+            lowering
+                .lower_merged_interface_declarations_with_symbol(
+                    &cross_arena_declarations,
+                    Some(sym_id),
+                )
+                .0
+        };
         // Seed a partial structural interface type before heritage merging so
         // recursive interface/namespace resolution can reuse the current shape
         // instead of re-entering the full lowering + heritage pipeline.
@@ -1101,185 +1134,8 @@ impl<'a> CheckerState<'a> {
         merged
     }
 
-    pub(crate) fn prewarm_member_type_reference_params(
-        &mut self,
-        declarations: &[NodeIndex],
-    ) -> rustc_hash::FxHashMap<tsz_solver::def::DefId, Vec<tsz_solver::TypeParamInfo>> {
-        // PERF: declaration files like react16.d.ts contain extremely large interface
-        // graphs. Walking every descendant of every interface just to prewarm an
-        // optional cache can dominate checker time. The lowering path already falls
-        // back to `ctx.get_def_type_params(def_id)` on demand, so skipping the eager
-        // prewarm here preserves correctness while avoiding repeated full-tree scans.
-        if self.ctx.is_declaration_file() {
-            return rustc_hash::FxHashMap::default();
-        }
-
-        let mut stack = Vec::new();
-        let mut params_by_def = rustc_hash::FxHashMap::default();
-
-        for &decl_idx in declarations {
-            stack.push(decl_idx);
-
-            while let Some(node_idx) = stack.pop() {
-                let Some(node) = self.ctx.arena.get(node_idx) else {
-                    continue;
-                };
-
-                if node.kind == syntax_kind_ext::TYPE_REFERENCE
-                    && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
-                {
-                    let has_type_args = type_ref
-                        .type_arguments
-                        .as_ref()
-                        .is_some_and(|args| !args.nodes.is_empty());
-                    if !has_type_args
-                        && let Some(sym_id_raw) =
-                            self.resolve_type_symbol_for_lowering(type_ref.type_name)
-                    {
-                        let sym_id = tsz_binder::SymbolId(sym_id_raw);
-                        let def_id = self.ctx.get_or_create_def_id(sym_id);
-                        let params = self.get_type_params_for_symbol(sym_id);
-                        if !params.is_empty() {
-                            params_by_def.insert(def_id, params);
-                        }
-                    }
-                }
-
-                stack.extend(self.ctx.arena.get_children(node_idx));
-            }
-        }
-
-        params_by_def
-    }
-
-    /// Pre-compute property names for computed property name expressions in interface members.
-    /// Iterates over all members of all declarations, finds `COMPUTED_PROPERTY_NAME` nodes,
-    /// evaluates the expression type, and builds a map from expression `NodeIndex` to Atom.
-    pub(crate) fn precompute_computed_property_names(
-        &mut self,
-        declarations: &[NodeIndex],
-    ) -> rustc_hash::FxHashMap<NodeIndex, tsz_common::Atom> {
-        use tsz_parser::parser::syntax_kind_ext;
-        let mut map = rustc_hash::FxHashMap::default();
-        for &decl_idx in declarations {
-            let Some(node) = self.ctx.arena.get(decl_idx) else {
-                continue;
-            };
-            let Some(interface) = self.ctx.arena.get_interface(node) else {
-                continue;
-            };
-            for &member_idx in &interface.members.nodes {
-                let Some(member) = self.ctx.arena.get(member_idx) else {
-                    continue;
-                };
-                // Get the name node from signature or accessor
-                let name_idx = if let Some(sig) = self.ctx.arena.get_signature(member) {
-                    sig.name
-                } else if let Some(acc) = self.ctx.arena.get_accessor(member) {
-                    acc.name
-                } else {
-                    continue;
-                };
-                let Some(name_node) = self.ctx.arena.get(name_idx) else {
-                    continue;
-                };
-                if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-                    continue;
-                }
-                let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
-                    continue;
-                };
-                // Set checking_computed_property_name so that TS2467 (type parameter
-                // reference in computed property name) is properly emitted.
-                let prev = self.ctx.checking_computed_property_name;
-                self.ctx.checking_computed_property_name = Some(name_idx);
-                // Preserve literal types so that string literal expressions like
-                // ["computed"] resolve to the literal type "computed" rather than
-                // widening to `string`. Without this, get_literal_property_name
-                // cannot extract the property name from the widened type.
-                let prev_preserve = self.ctx.preserve_literal_types;
-                self.ctx.preserve_literal_types = true;
-                // Evaluate the expression type and get the property name
-                let expr_type = self.get_type_of_node(computed.expression);
-                self.ctx.preserve_literal_types = prev_preserve;
-                self.ctx.checking_computed_property_name = prev;
-                if let Some(name) =
-                    crate::query_boundaries::type_computation::access::literal_property_name(
-                        self.ctx.types,
-                        expr_type,
-                    )
-                {
-                    map.insert(computed.expression, name);
-                } else if let Some(sym_ref) =
-                    crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, expr_type)
-                {
-                    let name = self
-                        .ctx
-                        .types
-                        .intern_string(&format!("__unique_{}", sym_ref.0));
-                    map.insert(computed.expression, name);
-                }
-            }
-        }
-        map
-    }
-
-    pub(crate) fn precompute_symbol_named_computed_property_names(
-        &mut self,
-        declarations: &[NodeIndex],
-    ) -> rustc_hash::FxHashSet<NodeIndex> {
-        use tsz_parser::parser::syntax_kind_ext;
-        let mut set = rustc_hash::FxHashSet::default();
-        for &decl_idx in declarations {
-            let Some(node) = self.ctx.arena.get(decl_idx) else {
-                continue;
-            };
-            let Some(interface) = self.ctx.arena.get_interface(node) else {
-                continue;
-            };
-            for &member_idx in &interface.members.nodes {
-                let Some(member) = self.ctx.arena.get(member_idx) else {
-                    continue;
-                };
-                let name_idx = if let Some(sig) = self.ctx.arena.get_signature(member) {
-                    sig.name
-                } else if let Some(acc) = self.ctx.arena.get_accessor(member) {
-                    acc.name
-                } else {
-                    continue;
-                };
-                let Some(name_node) = self.ctx.arena.get(name_idx) else {
-                    continue;
-                };
-                if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-                    continue;
-                }
-                let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
-                    continue;
-                };
-                let prev = self.ctx.checking_computed_property_name;
-                self.ctx.checking_computed_property_name = Some(name_idx);
-                let prev_preserve = self.ctx.preserve_literal_types;
-                self.ctx.preserve_literal_types = true;
-                let expr_type = self.get_type_of_node(computed.expression);
-                self.ctx.preserve_literal_types = prev_preserve;
-                self.ctx.checking_computed_property_name = prev;
-                if crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, expr_type)
-                    .is_some()
-                {
-                    set.insert(computed.expression);
-                }
-            }
-        }
-        set
-    }
-
     /// Like `type_reference_symbol_type` but also returns the type parameters used.
-    ///
-    /// This is critical for Application type evaluation: when instantiating a generic
-    /// type, we need the body type AND the type parameters to be built from the SAME
-    /// call to `push_type_parameters`, so the `TypeIds` in the body match those in the
-    /// substitution. Otherwise, substitution fails because the `TypeIds` don't match.
+    /// Body and params must come from the SAME `push_type_parameters` call so `TypeId`s match during substitution.
     pub(crate) fn type_reference_symbol_type_with_params(
         &mut self,
         sym_id: SymbolId,
@@ -1535,9 +1391,10 @@ impl<'a> CheckerState<'a> {
                 // current arena. This handles cases like `[FOO_SYMBOL]?: number`
                 // inside `declare global { interface Promise<T> { ... } }`, where
                 // TypeLowering alone can't resolve the computed expression.
-                let computed_names = self.precompute_computed_property_names(&symbol.declarations);
-                let computed_symbol_names =
-                    self.precompute_symbol_named_computed_property_names(&symbol.declarations);
+                let computed_names =
+                    self.precompute_computed_property_names_in_arenas(&decls_with_arenas);
+                let computed_symbol_names = self
+                    .precompute_symbol_named_computed_property_names_in_arenas(&decls_with_arenas);
 
                 // Push type params, lower interface, pop type params.
                 // push_type_parameters uses self.ctx.arena (user arena) to read
@@ -1711,11 +1568,22 @@ impl<'a> CheckerState<'a> {
                         })
                 };
 
-                let computed_name_resolver = |expr_idx: NodeIndex| -> Option<tsz_common::Atom> {
-                    computed_names.get(&expr_idx).copied()
-                };
-                let computed_symbol_name_resolver =
-                    |expr_idx: NodeIndex| computed_symbol_names.contains(&expr_idx);
+                // Arena-aware resolvers: the key is (NodeIndex, arena_ptr). In
+                // lower_merged_interface_declarations_with_symbol, each declaration
+                // is lowered with its own NodeArena via TypeLowering::with_arena(),
+                // so self.arena at resolver call time IS the correct decl_arena.
+                let computed_name_resolver_with_arena =
+                    |expr_idx: NodeIndex,
+                     arena: *const tsz_parser::parser::node::NodeArena|
+                     -> Option<tsz_common::Atom> {
+                        computed_names.get(&(expr_idx, arena as usize)).copied()
+                    };
+                let computed_symbol_name_resolver_with_arena =
+                    |expr_idx: NodeIndex,
+                     arena: *const tsz_parser::parser::node::NodeArena|
+                     -> bool {
+                        computed_symbol_names.contains(&(expr_idx, arena as usize))
+                    };
                 let lazy_type_params_resolver = |def_id: tsz_solver::def::DefId| {
                     prewarmed_lazy_type_params
                         .get(&def_id)
@@ -1732,8 +1600,10 @@ impl<'a> CheckerState<'a> {
                 .with_type_param_bindings(type_param_bindings)
                 .with_lazy_type_params_resolver(&lazy_type_params_resolver)
                 .with_name_def_id_resolver(&name_resolver)
-                .with_computed_name_resolver(&computed_name_resolver)
-                .with_computed_symbol_name_resolver(&computed_symbol_name_resolver)
+                .with_computed_name_resolver_with_arena(&computed_name_resolver_with_arena)
+                .with_computed_symbol_name_resolver_with_arena(
+                    &computed_symbol_name_resolver_with_arena,
+                )
                 .with_preferred_self_reference(
                     symbol.escaped_name.clone(),
                     self.ctx.get_or_create_def_id(sym_id),
