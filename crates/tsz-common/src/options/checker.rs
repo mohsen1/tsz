@@ -68,6 +68,12 @@ pub struct CheckerOptions {
     /// sound diagnostics, per-file pragmas, report-only mode, and the final
     /// config surface are not wired yet.
     pub sound_mode: bool,
+    /// When true, opt first-party declaration files (.d.ts) into sound checking.
+    pub sound_check_declarations: bool,
+    /// When true, report sound diagnostics without failing the build.
+    pub sound_report_only: bool,
+    /// When true, enable pedantic sound heuristics beyond the core sound bundle.
+    pub sound_pedantic: bool,
     /// When true, enables experimental support for decorators (legacy decorators).
     /// This is required for the @experimentalDecorators flag.
     /// When decorators are used, `TypedPropertyDescriptor` must be available.
@@ -218,6 +224,9 @@ impl Default for CheckerOptions {
             allow_unused_labels: None,
             no_property_access_from_index_signature: false,
             sound_mode: false,
+            sound_check_declarations: false,
+            sound_report_only: false,
+            sound_pedantic: false,
             experimental_decorators: false,
             no_unused_locals: false,
             no_unused_parameters: false,
