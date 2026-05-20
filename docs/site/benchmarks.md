@@ -17,6 +17,12 @@ permalink: /benchmarks/index.html
 
 <p class="benchmark-data-link"><a href="/benchmark-data/latest.json">View the raw benchmark artifact</a></p>
 
+Benchmark artifacts are trend-comparable only when runner provenance is
+consistent. Cloud Build timing shards need same-SHA calibration before they are
+treated as the public trend line; calibration readiness requires green timed
+rows across compiler-file, synthetic, solver-stress, project, and large-repo
+families.
+
 <div class="bench-legend">
   <span class="bench-legend-item"><span class="bench-legend-swatch tsz"></span> tsz (Rust compiler)</span>
   <span class="bench-legend-item"><span class="bench-legend-swatch tsgo"></span> tsgo (Go compiler)</span>

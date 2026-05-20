@@ -74,7 +74,7 @@ while [[ $# -gt 0 ]]; do
     --full)    FULL=true; shift ;;
     --quiet)   QUIET=true; shift ;;
     -h|--help) usage; exit 0 ;;
-    *)         echo "Unknown option: $1 (try --help)"; exit 1 ;;
+    *)         echo "Unknown option: $1 (try --help)" >&2; exit 1 ;;
   esac
 done
 
