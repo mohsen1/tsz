@@ -112,8 +112,10 @@ impl<'a> DeclarationEmitter<'a> {
                 .get_conditional_expr(expr_node)
                 .is_some_and(|cond| {
                     self.short_circuit_operand_is_syntactically_truthy(cond.when_true, depth + 1)
-                        && self
-                            .short_circuit_operand_is_syntactically_truthy(cond.when_false, depth + 1)
+                        && self.short_circuit_operand_is_syntactically_truthy(
+                            cond.when_false,
+                            depth + 1,
+                        )
                 }),
             _ => false,
         }
@@ -349,11 +351,13 @@ impl<'a> DeclarationEmitter<'a> {
         }
         let expr_idx = self.skip_parenthesized_expression_via_parent_node(expr_idx)?;
         self.short_circuit_const_literal_reference_type_text(expr_idx)
+            .or_else(|| self.js_literal_type_text(expr_idx))
             .or_else(|| self.preferred_expression_type_text(expr_idx))
             .or_else(|| self.infer_fallback_type_text_at(expr_idx, 0))
             .or_else(|| {
                 let expr_idx = self.skip_parenthesized_expression_via_parent_node(expr_idx)?;
                 self.short_circuit_const_literal_reference_type_text(expr_idx)
+                    .or_else(|| self.js_literal_type_text(expr_idx))
                     .or_else(|| self.preferred_expression_type_text(expr_idx))
                     .or_else(|| self.infer_fallback_type_text_at(expr_idx, 0))
             })
