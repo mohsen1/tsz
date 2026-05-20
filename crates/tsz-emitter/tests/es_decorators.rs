@@ -835,3 +835,59 @@ fn test_iife_closes_properly() {
         "Expected IIFE closing pattern.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn test_access_object_method_shorthand_for_method() {
+    let source = "class Foo {\n    @log\n    greet() { }\n}";
+    let output = emit_decorator(source);
+    assert!(
+        output.contains("has(obj)")
+            && output.contains("get(obj)")
+            && output.contains("set(obj, value)"),
+        "Expected method shorthand access object for decorated method.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("has: obj =>") && !output.contains("get: obj =>"),
+        "Expected method shorthand, not arrow functions.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_access_object_method_shorthand_for_getter() {
+    let source = "class Foo {\n    @log\n    get val() { return 1; }\n}";
+    let output = emit_decorator(source);
+    assert!(
+        output.contains("has(obj)") && output.contains("get(obj)"),
+        "Expected has/get in access object for decorated getter.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("set(obj"),
+        "Getter access object must not include set.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_access_object_method_shorthand_for_setter() {
+    let source = "class Foo {\n    @log\n    set val(v: number) { }\n}";
+    let output = emit_decorator(source);
+    assert!(
+        output.contains("has(obj)") && output.contains("set(obj, value)"),
+        "Expected has/set in access object for decorated setter.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_access_object_method_shorthand_multiple_kinds() {
+    let source = "class Foo {\n    @log\n    greet() { }\n    @log\n    get x() { return 1; }\n    @log\n    set x(v: number) { }\n}";
+    let output = emit_decorator(source);
+    assert!(
+        !output.contains("has: obj =>")
+            && !output.contains("get: obj =>")
+            && !output.contains("set: (obj"),
+        "Expected method shorthand in all access objects, not arrow functions.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("has(obj)"),
+        "Expected method shorthand has(obj).\nOutput:\n{output}"
+    );
+}

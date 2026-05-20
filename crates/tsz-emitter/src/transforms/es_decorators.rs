@@ -2593,19 +2593,16 @@ impl<'a> TC39DecoratorEmitter<'a> {
         };
 
         let has_in = format!("{key_expr} in obj");
+        let has_part = format!("has(obj) {{ return {has_in}; }}");
+        let get_part = format!("get(obj) {{ return {prop_access}; }}");
+        let set_part = format!("set(obj, value) {{ {prop_access} = value; }}");
 
         match member.kind {
-            MemberKind::Method | MemberKind::Getter => {
-                format!("has: obj => {has_in}, get: obj => {prop_access}")
+            MemberKind::Method | MemberKind::Field | MemberKind::Accessor => {
+                format!("{has_part}, {get_part}, {set_part}")
             }
-            MemberKind::Setter => {
-                format!("has: obj => {has_in}, set: (obj, value) => {{ {prop_access} = value; }}")
-            }
-            MemberKind::Field | MemberKind::Accessor => {
-                format!(
-                    "has: obj => {has_in}, get: obj => {prop_access}, set: (obj, value) => {{ {prop_access} = value; }}"
-                )
-            }
+            MemberKind::Getter => format!("{has_part}, {get_part}"),
+            MemberKind::Setter => format!("{has_part}, {set_part}"),
         }
     }
 
