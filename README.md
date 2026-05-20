@@ -24,15 +24,12 @@ engine on top to match TypeScript behavior while preserving correctness where po
 
 ## Performance
 
-Current homepage micro-benchmark headline:
+`tsz` is **2.21x faster** across 49 successful micro benchmark cases. Large-project performance work is still underway.
 
 ```
 tsz:  [█████████░░░░░░░░░░░] 3s
 tsgo: [████████████████████] 7s
 ```
-
-`tsz` is **2.21x faster** across 49 successful micro benchmark cases
-(per-case geomean: 2.37x faster). Large-project performance work is still underway.
 
 ## Install
 
