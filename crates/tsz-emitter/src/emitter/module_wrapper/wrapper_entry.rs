@@ -549,6 +549,7 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.decrease_indent();
         self.write("});");
+        self.write_line();
     }
 
     fn collect_system_hoisted_function_names(
