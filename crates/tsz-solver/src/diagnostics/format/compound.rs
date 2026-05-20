@@ -2442,7 +2442,7 @@ impl<'a> TypeFormatter<'a> {
             }
         }
 
-        Some(self.qualify_namespace_name_if_needed(sym_id, &sym.escaped_name, qualified_name))
+        Some(qualified_name)
     }
 
     /// Resolve a `SymbolRef` (from `TypeQuery` / `ModuleNamespace`) to a display name.
@@ -2520,29 +2520,11 @@ impl<'a> TypeFormatter<'a> {
                 }
             }
 
-            return self.qualify_namespace_name_if_needed(
-                SymbolId(sym_raw),
-                &symbol.escaped_name,
-                qualified_name,
-            );
+            return qualified_name;
         }
 
         // Fallback: use the short (unqualified) definition name.
         def_name
-    }
-
-    #[allow(clippy::missing_const_for_fn)] // Can't be const with &self in stable Rust
-    fn qualify_namespace_name_if_needed(
-        &self,
-        _sym_id: SymbolId,
-        _original_name: &str,
-        current_name: String,
-    ) -> String {
-        // tsc uses SHORT names in general type display, even when multiple types
-        // share the same name across different namespaces. Namespace qualification
-        // is only added in specific contexts (union display with same-name members,
-        // explicit disambiguation messages). Those paths are handled separately.
-        current_name
     }
 
     /// Namespace-qualify a symbol name for contexts where disambiguation is needed
