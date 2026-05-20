@@ -1507,7 +1507,7 @@ impl TypeResolver for ReadonlyArrayDefResolver {
     fn resolve_ref(
         &self,
         _symbol: SymbolRef,
-        _interner: &dyn crate::TypeDatabase,
+        _interner: &dyn crate::construction::TypeDatabase,
     ) -> Option<TypeId> {
         None
     }

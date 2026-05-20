@@ -21,7 +21,7 @@
 use rustc_hash::FxHashSet;
 use std::cell::RefCell;
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::evaluation::evaluate::TypeEvaluator;
 use crate::relations::subtype::TypeResolver;
 use crate::types::{PropertyInfo, TypeData, TypeId};

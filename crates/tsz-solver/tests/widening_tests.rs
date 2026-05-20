@@ -10,7 +10,10 @@ fn test_widen_string_literal() {
     let string_lit = interner.intern(TypeData::Literal(LiteralValue::String(
         interner.intern_string("hello"),
     )));
-    let widened = widen_type(&interner as &dyn crate::TypeDatabase, string_lit);
+    let widened = widen_type(
+        &interner as &dyn crate::construction::TypeDatabase,
+        string_lit,
+    );
     assert_eq!(widened, TypeId::STRING);
 }
 
@@ -18,7 +21,10 @@ fn test_widen_string_literal() {
 fn test_widen_number_literal() {
     let interner = TypeInterner::new();
     let number_lit = interner.intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(42.0))));
-    let widened = widen_type(&interner as &dyn crate::TypeDatabase, number_lit);
+    let widened = widen_type(
+        &interner as &dyn crate::construction::TypeDatabase,
+        number_lit,
+    );
     assert_eq!(widened, TypeId::NUMBER);
 }
 
@@ -26,7 +32,10 @@ fn test_widen_number_literal() {
 fn test_widen_boolean_literal() {
     let interner = TypeInterner::new();
     let bool_lit = interner.intern(TypeData::Literal(LiteralValue::Boolean(true)));
-    let widened = widen_type(&interner as &dyn crate::TypeDatabase, bool_lit);
+    let widened = widen_type(
+        &interner as &dyn crate::construction::TypeDatabase,
+        bool_lit,
+    );
     assert_eq!(widened, TypeId::BOOLEAN);
 }
 
@@ -37,7 +46,7 @@ fn test_widen_union() {
     let lit2 = interner.intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(2.0))));
     let union = interner.union(vec![lit1, lit2]);
 
-    let widened = widen_type(&interner as &dyn crate::TypeDatabase, union);
+    let widened = widen_type(&interner as &dyn crate::construction::TypeDatabase, union);
     // After widening, we get number | number which dedups to number
     assert_eq!(widened, TypeId::NUMBER);
 }

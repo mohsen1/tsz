@@ -5,7 +5,10 @@ use crate::state::CheckerState;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_solver::TypeId;
 
-fn type_has_construct_signature_deep(db: &dyn tsz_solver::TypeDatabase, ty: TypeId) -> bool {
+fn type_has_construct_signature_deep(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    ty: TypeId,
+) -> bool {
     common::has_construct_signatures(db, ty)
         || common::is_constructor_like_type(db, ty)
         || common::union_members(db, ty).is_some_and(|members| {
@@ -17,7 +20,7 @@ fn type_has_construct_signature_deep(db: &dyn tsz_solver::TypeDatabase, ty: Type
 }
 
 fn type_has_call_or_construct_signature_deep(
-    db: &dyn tsz_solver::TypeDatabase,
+    db: &dyn tsz_solver::construction::TypeDatabase,
     ty: TypeId,
 ) -> bool {
     type_has_construct_signature_deep(db, ty)

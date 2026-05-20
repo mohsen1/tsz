@@ -1,4 +1,5 @@
-use crate::{LiteralValue, TemplateSpan, TypeData, TypeDatabase, TypeId};
+use crate::construction::TypeDatabase;
+use crate::{LiteralValue, TemplateSpan, TypeData, TypeId};
 
 /// Match a non-infer template substitution span, such as `${" " | "\t"}`,
 /// against the source string at the current position.

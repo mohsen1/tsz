@@ -1,8 +1,8 @@
 //! Property access resolution (`PropertyAccessEvaluator`) for resolving
 //! property access on types (obj.prop, obj["key"], etc.).
 
-use crate::TypeDatabase;
 use crate::caches::db::QueryDatabase;
+use crate::construction::TypeDatabase;
 use crate::objects::{ApparentMemberKind, apparent_object_member_kind};
 use crate::relations::subtype::TypeResolver;
 use crate::types::{IntrinsicKind, LiteralValue, ObjectShapeId, TypeData, TypeId};

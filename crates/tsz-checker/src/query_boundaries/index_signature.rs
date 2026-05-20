@@ -8,7 +8,8 @@
 
 use tsz_parser::parser::{NodeArena, NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{TypeDatabase, TypeId};
+use tsz_solver::TypeId;
+use tsz_solver::construction::TypeDatabase;
 
 pub(crate) fn index_key_type_satisfies_index_signature(
     db: &dyn TypeDatabase,

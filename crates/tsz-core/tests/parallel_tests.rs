@@ -2069,9 +2069,10 @@ c = d;
                 tsz_solver::visitor::lazy_def_id(&program.type_interner, app.base)
             },
         ) {
-        let variances = tsz_solver::QueryDatabase::get_type_param_variance(&query_cache, def_id)
-            .map(|variances| format!("{variances:?}"))
-            .unwrap_or_else(|| "<none>".to_string());
+        let variances =
+            tsz_solver::construction::QueryDatabase::get_type_param_variance(&query_cache, def_id)
+                .map(|variances| format!("{variances:?}"))
+                .unwrap_or_else(|| "<none>".to_string());
         let params = tsz_solver::relations::subtype::TypeResolver::get_lazy_type_params(
             &query_cache,
             def_id,
@@ -2260,7 +2261,7 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
     let source_type = checker.get_type_of_node(decl.initializer);
     let target_type = checker.get_type_from_type_node(decl.type_annotation);
     let read_constraint_type =
-        |object_type| match tsz_solver::QueryDatabase::resolve_property_access(
+        |object_type| match tsz_solver::construction::QueryDatabase::resolve_property_access(
             &query_cache,
             object_type,
             "constraint",

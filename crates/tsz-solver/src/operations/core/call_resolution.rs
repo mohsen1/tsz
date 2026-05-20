@@ -9,12 +9,12 @@ use super::call_evaluator::{
     AssignabilityChecker, CallEvaluator, CallResult, CallWithCheckerResult, CombinedUnionSignature,
     UnionCallSignatureCompatibility,
 };
+use crate::construction::{QueryDatabase, TypeDatabase};
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::types::{
     CallSignature, CallableShape, FunctionShape, IntrinsicKind, ParamInfo, TupleElement, TypeData,
     TypeId, TypeListId, TypeParamInfo,
 };
-use crate::{QueryDatabase, TypeDatabase};
 use rustc_hash::FxHashSet;
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {

@@ -1,7 +1,7 @@
 //! TypeScript compatibility layer for assignability rules.
 
-use crate::TypeDatabase;
 use crate::caches::db::QueryDatabase;
+use crate::construction::TypeDatabase;
 use crate::diagnostics::SubtypeFailureReason;
 use crate::operations::AssignabilityChecker;
 use crate::relations::lawyer::AnyPropagationRules;

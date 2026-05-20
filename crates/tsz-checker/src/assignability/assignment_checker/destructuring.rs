@@ -1336,7 +1336,8 @@ impl<'a> CheckerState<'a> {
             _ => None,
         };
         if let Some(kind) = kind {
-            tsz_solver::TypeDatabase::get_boxed_type(self.ctx.types, kind).unwrap_or(type_id)
+            tsz_solver::construction::TypeDatabase::get_boxed_type(self.ctx.types, kind)
+                .unwrap_or(type_id)
         } else {
             type_id
         }

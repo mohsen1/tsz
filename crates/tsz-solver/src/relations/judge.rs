@@ -48,7 +48,7 @@
 //! let iterable_kind = judge.classify_iterable(type_id);
 //! ```
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::evaluation::evaluate::TypeEvaluator;
 use crate::objects::index_signatures::IndexKind;
 use crate::relations::subtype::{SubtypeChecker, TypeEnvironment};

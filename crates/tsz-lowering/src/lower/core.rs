@@ -15,12 +15,12 @@ use tsz_parser::parser::base::NodeIndex;
 use tsz_parser::parser::node::{IndexSignatureData, NodeArena, SignatureData, TypeAliasData};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::def::DefId;
 use tsz_solver::types::{
     CallSignature, CallableShape, FunctionShape, IndexSignature, ObjectFlags, ObjectShape,
     ParamInfo, PropertyInfo, TupleElement, TypeId, TypeParamInfo, TypePredicate, Visibility,
 };
-use tsz_solver::{QueryDatabase, TypeDatabase};
 
 /// Maximum number of type lowering operations to prevent infinite loops
 pub const MAX_LOWERING_OPERATIONS: u32 = 100_000;

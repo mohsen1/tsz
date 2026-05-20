@@ -10,7 +10,7 @@
 //! - Best common type calculation
 //! - Efficient unification with path compression
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{InferencePriority, TemplateSpan, TypeData, TypeId};
@@ -1487,7 +1487,7 @@ impl<'a> InferenceContext<'a> {
 }
 
 /// Returns `true` when `ty` is or structurally contains an `IndexAccess` type.
-fn type_contains_index_access(db: &dyn crate::TypeDatabase, ty: TypeId) -> bool {
+fn type_contains_index_access(db: &dyn crate::construction::TypeDatabase, ty: TypeId) -> bool {
     if ty.is_intrinsic() {
         return false;
     }

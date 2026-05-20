@@ -1392,7 +1392,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn recursive_mapped_tuple_spread_may_exceed_depth_in_types(
-        db: &dyn tsz_solver::TypeDatabase,
+        db: &dyn tsz_solver::construction::TypeDatabase,
         spread_type: TypeId,
         expected_type: TypeId,
     ) -> bool {
@@ -1432,7 +1432,7 @@ impl<'a> CheckerState<'a> {
     /// allows readonly literal inference.
     /// Used to propagate const assertion context into call argument expressions.
     fn type_references_const_type_param_requiring_readonly_argument_context(
-        db: &dyn tsz_solver::TypeDatabase,
+        db: &dyn tsz_solver::construction::TypeDatabase,
         type_id: TypeId,
     ) -> bool {
         use crate::query_boundaries::common;
@@ -1450,7 +1450,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn direct_const_type_param_requires_readonly_argument_context(
-        db: &dyn tsz_solver::TypeDatabase,
+        db: &dyn tsz_solver::construction::TypeDatabase,
         type_id: TypeId,
     ) -> bool {
         use crate::query_boundaries::common;
@@ -1467,7 +1467,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(super) fn constraint_allows_mutable_array_like(
-        db: &dyn tsz_solver::TypeDatabase,
+        db: &dyn tsz_solver::construction::TypeDatabase,
         type_id: TypeId,
     ) -> bool {
         crate::query_boundaries::common::constraint_allows_mutable_array_like(db, type_id)

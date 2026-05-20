@@ -184,6 +184,9 @@ pub mod construction {
     pub use crate::intern::type_factory::*;
     pub use crate::intern::{TypeInterner, clear_thread_local_cache};
 }
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use construction::{QueryDatabase, TypeDatabase};
 pub use intern::TypeInterner;
 #[cfg(test)]
 pub(crate) use operations::infer_generic_function;
@@ -213,7 +216,6 @@ pub use visitors::visitor::{
     unwrap_readonly_or_noinfer, walk_referenced_types,
 };
 
-pub use caches::db::{QueryDatabase, TypeDatabase};
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use contextual::{

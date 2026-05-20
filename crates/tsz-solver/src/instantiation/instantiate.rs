@@ -9,9 +9,9 @@
 //! - Deep recursive substitution through nested types
 //! - Handling of constraints and defaults
 
-use crate::TypeDatabase;
 use crate::caches::db::QueryDatabase;
 use crate::caches::instantiation_cache::{CanonicalSubst, InstantiationCacheKey};
+use crate::construction::TypeDatabase;
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{

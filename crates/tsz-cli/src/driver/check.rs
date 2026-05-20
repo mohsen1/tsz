@@ -5800,7 +5800,7 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
         let _source_type = checker.get_type_of_node(decl.initializer);
         let target_type = checker.get_type_from_type_node(decl.type_annotation);
         let _read_constraint_type =
-            |object_type| match tsz_solver::QueryDatabase::resolve_property_access(
+            |object_type| match tsz_solver::construction::QueryDatabase::resolve_property_access(
                 &query_cache,
                 object_type,
                 "constraint",
