@@ -673,7 +673,12 @@ impl<'a> CheckerContext<'a> {
         // Cross-file JSDoc import/typedef resolution spawns nested CheckerStates;
         // if the active typedef set is reset at that boundary, cyclic CommonJS
         // JSDoc graphs can recurse until stack overflow.
-        ctx.jsdoc_typedef_resolving = RefCell::new(parent.jsdoc_typedef_resolving.borrow().clone());
+        {
+            let parent_typedefs = parent.jsdoc_typedef_resolving.borrow();
+            if !parent_typedefs.is_empty() {
+                ctx.jsdoc_typedef_resolving = RefCell::new(parent_typedefs.clone());
+            }
+        }
 
         // Propagate expando-property resolution state so child checkers do not
         // lose recursion protection while resolving CommonJS/JS property reads
@@ -687,8 +692,13 @@ impl<'a> CheckerContext<'a> {
         // cross-arena delegation (replaces thread-local guards).
         ctx.eval_session = Rc::clone(&parent.eval_session);
 
-        ctx.implicit_any_checked_closures = parent.implicit_any_checked_closures.clone();
-        ctx.implicit_any_contextual_closures = parent.implicit_any_contextual_closures.clone();
+        if !parent.implicit_any_checked_closures.is_empty() {
+            ctx.implicit_any_checked_closures = parent.implicit_any_checked_closures.clone();
+        }
+        if !parent.implicit_any_contextual_closures.is_empty() {
+            ctx.implicit_any_contextual_closures =
+                parent.implicit_any_contextual_closures.clone();
+        }
 
         // Propagate depth from parent to prevent infinite recursion across arena boundaries.
         ctx.recursion_depth =
