@@ -600,7 +600,6 @@ fn default_libs_for_target(target: &str) -> Option<Vec<&'static str>> {
             "esnext.regexp",
             "esnext.string",
             "esnext.symbol",
-            "esnext.typedarrays",
         ],
         _ => return None,
     })

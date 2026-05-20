@@ -93,7 +93,7 @@ pub(crate) use super::common::{
 };
 
 /// Whether the AST node at `idx` is a bare type-parameter reference whose
-/// name resolves to a TypeParameter symbol in the current lexical scope.
+/// name resolves to a `TypeParameter` symbol in the current lexical scope.
 /// Used to suppress the "any cannot be used as an index type" check when
 /// our type resolution collapsed the parameter to `any` — tsc keeps the
 /// index syntactically generic and defers rejection to instantiation time.
