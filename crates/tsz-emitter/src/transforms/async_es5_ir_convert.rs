@@ -13,6 +13,22 @@ use tsz_scanner::SyntaxKind;
 use super::async_es5_ir::AsyncES5Transformer;
 
 impl<'a> AsyncES5Transformer<'a> {
+    pub(super) fn extract_hoisted_var_groups(
+        &self,
+        generator_body: &mut IRNode,
+    ) -> Vec<Vec<String>> {
+        let mut groups = Self::extract_and_remove_var_decl_groups(generator_body);
+        let lowering = self
+            .pending_lowering_hoists
+            .borrow_mut()
+            .drain(..)
+            .collect::<Vec<_>>();
+        if !lowering.is_empty() {
+            groups.push(lowering);
+        }
+        groups
+    }
+
     fn class_super_base_ir(&self) -> IRNode {
         if self.class_super_is_static {
             IRNode::id(self.class_super_name.clone())

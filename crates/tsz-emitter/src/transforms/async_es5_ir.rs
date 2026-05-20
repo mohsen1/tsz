@@ -125,7 +125,7 @@ pub struct AsyncES5Transformer<'a> {
     /// (nullish coalescing, optional chaining, etc.) so callers can declare
     /// them in the surrounding state-machine scope. Drained by every
     /// `transform_*` entry point after the generator body is built.
-    pending_lowering_hoists: RefCell<Vec<String>>,
+    pub(super) pending_lowering_hoists: RefCell<Vec<String>>,
     /// Whether this async body is emitted inside a derived ES5 class method.
     pub(super) class_has_super: bool,
     /// Generated super parameter name for the surrounding ES5 class IIFE.
@@ -164,22 +164,6 @@ impl<'a> AsyncES5Transformer<'a> {
     /// declare it alongside the rest of the state-machine var hoists.
     pub(super) fn push_lowering_hoist(&self, name: String) {
         self.pending_lowering_hoists.borrow_mut().push(name);
-    }
-
-    pub(super) fn extract_hoisted_var_groups(
-        &self,
-        generator_body: &mut IRNode,
-    ) -> Vec<Vec<String>> {
-        let mut groups = Self::extract_and_remove_var_decl_groups(generator_body);
-        let lowering = self
-            .pending_lowering_hoists
-            .borrow_mut()
-            .drain(..)
-            .collect::<Vec<_>>();
-        if !lowering.is_empty() {
-            groups.push(lowering);
-        }
-        groups
     }
 
     pub const fn set_source_text(&mut self, source_text: &'a str) {
@@ -3853,32 +3837,6 @@ impl<'a> AsyncES5Transformer<'a> {
         let exit_label = self.state.next_label();
         Self::patch_if_break_target(cases, exit_placeholder, exit_label);
         *current_label = exit_label;
-    }
-
-    /// If `current_statements` contains any statements, finalize them as
-    /// their own state-machine case before opening a new label. tsc emits
-    /// an explicit `_a.label = <next>` at the tail of the prior case so
-    /// fall-through reaches the new case under both initial execution and
-    /// resumed dispatch. The new case label is what the caller will use as
-    /// its "this-region" label (a loop entry, a labeled jump target, …),
-    /// and any later `break-to-this-region` lands on a case that does NOT
-    /// re-execute the preceding statements.
-    fn flush_preceding_case_for_new_label(
-        cases: &mut Vec<IRGeneratorCase>,
-        current_statements: &mut Vec<IRNode>,
-        current_label: &mut u32,
-        state: &mut AsyncTransformState,
-    ) {
-        if current_statements.is_empty() {
-            return;
-        }
-        let new_label = state.next_label();
-        current_statements.push(Self::generator_label_assignment(new_label));
-        cases.push(IRGeneratorCase {
-            label: *current_label,
-            statements: std::mem::take(current_statements),
-        });
-        *current_label = new_label;
     }
 
     /// Process a do-while statement inside an async function body.
