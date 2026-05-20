@@ -1,4 +1,5 @@
-use tsz_solver::{TypeDatabase, TypeId};
+use tsz_solver::TypeId;
+use tsz_solver::construction::TypeDatabase;
 
 pub(crate) use super::common::{
     array_element_type, callable_shape_for_type, construct_signatures_for_type, has_function_shape,

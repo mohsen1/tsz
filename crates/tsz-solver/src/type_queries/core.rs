@@ -3,9 +3,11 @@
 //! This module contains the implementation of type query functions.
 //! The parent `mod.rs` re-exports everything; callers should use `type_queries::*`.
 
+use crate::construction::{QueryDatabase, TypeDatabase};
+use crate::def::DefinitionStore;
 use crate::evaluation::evaluate::evaluate_type;
 use crate::types::{IntrinsicKind, LiteralValue};
-use crate::{QueryDatabase, TypeData, TypeDatabase, TypeId, TypeParamInfo};
+use crate::{TypeData, TypeId, TypeParamInfo};
 
 use super::classifiers::get_lazy_def_id;
 use super::traversal::collect_property_name_atoms_for_diagnostics;
@@ -16,6 +18,26 @@ pub fn get_allowed_keys(db: &dyn TypeDatabase, type_id: TypeId) -> rustc_hash::F
     }
     let atoms = collect_property_name_atoms_for_diagnostics(db, type_id, 10);
     atoms.into_iter().map(|a| db.resolve_atom(a)).collect()
+}
+
+pub fn application_base_has_conditional_alias_body(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+) -> bool {
+    let Some(TypeData::Application(app_id)) = db.lookup(type_id) else {
+        return false;
+    };
+    let app = db.type_application(app_id);
+    let Some(def_id) =
+        get_lazy_def_id(db, app.base).or_else(|| def_store.find_def_for_type(app.base))
+    else {
+        return false;
+    };
+    def_store
+        .get(def_id)
+        .and_then(|def| def.body)
+        .is_some_and(|body| matches!(db.lookup(body), Some(TypeData::Conditional(_))))
 }
 
 // =============================================================================
@@ -37,6 +59,55 @@ pub fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
         db.lookup(type_id),
         Some(TypeData::Callable(_) | TypeData::Function(_))
     )
+}
+
+/// Check whether a constraint is, or evaluates to, a union whose members all
+/// carry call or construct signatures.
+///
+/// Application aliases such as `ComponentType<any>` can evaluate to unions
+/// whose members are still application-shaped. Evaluate both the constraint and
+/// each union member before deciding, so TS2344 callers can treat the
+/// constraint as callable without owning the structural walk in checker code.
+pub fn constraint_expands_to_callable_union(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    let Some(members) = union_members_or_evaluated_union_members(db, type_id) else {
+        return false;
+    };
+    !members.is_empty()
+        && members
+            .iter()
+            .all(|&member| type_has_call_or_construct_signature_after_eval(db, member))
+}
+
+fn union_members_or_evaluated_union_members(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<Vec<TypeId>> {
+    if let Some(TypeData::Union(list_id)) = db.lookup(type_id) {
+        let members = db.type_list(list_id);
+        return (!members.is_empty()).then(|| members.to_vec());
+    }
+
+    let evaluated = evaluate_type(db, type_id);
+    if evaluated == type_id {
+        return None;
+    }
+    let Some(TypeData::Union(list_id)) = db.lookup(evaluated) else {
+        return None;
+    };
+    let members = db.type_list(list_id);
+    (!members.is_empty()).then(|| members.to_vec())
+}
+
+fn type_has_call_or_construct_signature_after_eval(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_has_call_or_construct_signature(db, type_id) {
+        return true;
+    }
+    let evaluated = evaluate_type(db, type_id);
+    evaluated != type_id && type_has_call_or_construct_signature(db, evaluated)
+}
+
+fn type_has_call_or_construct_signature(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    is_callable_type(db, type_id) || super::data::get_callable_shape_for_type(db, type_id).is_some()
 }
 
 /// Check if a type has call signatures (not just construct signatures).

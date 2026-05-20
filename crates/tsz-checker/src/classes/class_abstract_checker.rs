@@ -42,15 +42,7 @@ impl<'a> CheckerState<'a> {
         };
         let heritage_sym_id = self.resolve_heritage_symbol(h_expr_idx);
 
-        // Collect implemented members from the derived class
-        let mut implemented_members = rustc_hash::FxHashSet::default();
-        for &member_idx in &class_data.members.nodes {
-            if let Some(name) = self.get_member_name(member_idx)
-                && !self.member_is_abstract(member_idx)
-            {
-                implemented_members.insert(name);
-            }
-        }
+        let implemented_members = self.collect_concrete_member_names_for_abstract_impl(class_data);
 
         // Prefer the resolved heritage symbol for nominal/merged lib classes like
         // `Iterator`, then fall back to the merged instance type walk for mixins and
@@ -85,28 +77,36 @@ impl<'a> CheckerState<'a> {
         };
 
         // Determine the base class display name from the instance type.
-        // `collect_class_names_from_instance_type` ahead of
-        // `format_symbol_reference_with_type_arguments` handles mixin
-        // intersections like `AbstractBase & Mixin`, but it strips type
-        // arguments from lib classes like `Iterator<number>`. When the
-        // heritage clause carries explicit type arguments, run the
-        // symbol-with-type-arguments formatter first so those render as
+        // `intersection_instance_display_name` recovers expression-based
+        // constructor intersections like `AbstractBase & Mixin` even when the
+        // normalized instance type only preserves one nominal contributor. When
+        // the heritage clause carries explicit type arguments, run the
+        // symbol-with-type-arguments formatter first so lib classes render as
         // `Iterator<number, undefined, unknown>` instead of bare `Iterator`.
         let prefer_symbol_type_args = type_arguments.is_some_and(|ta| !ta.nodes.is_empty());
-        let mut type_base_name =
-            self.format_heritage_class_symbol_reference(heritage_sym_id, type_arguments);
+        let is_actual_lib_iterator = self.heritage_reference_is_actual_lib_iterator(h_expr_idx);
+        let heritage_sym_id_for_display =
+            self.heritage_symbol_id_for_expression_display(heritage_sym_id, is_actual_lib_iterator);
+        let mut type_base_name = if is_actual_lib_iterator {
+            self.format_builtin_iterator_reference_with_type_arguments(type_arguments)
+        } else {
+            None
+        }
+        .or_else(|| {
+            self.format_heritage_class_symbol_reference(heritage_sym_id_for_display, type_arguments)
+        });
         if type_base_name.is_none()
             && prefer_symbol_type_args
-            && let Some(sym_id) = heritage_sym_id
+            && let Some(sym_id) = heritage_sym_id_for_display
         {
             type_base_name =
                 self.format_symbol_reference_with_type_arguments(sym_id, type_arguments);
         }
         if type_base_name.is_none() {
-            type_base_name = self.collect_class_names_from_instance_type(instance_type);
+            type_base_name = self.intersection_instance_display_name(h_expr_idx, type_arguments);
         }
         if type_base_name.is_none() {
-            type_base_name = self.intersection_instance_display_name(h_expr_idx, type_arguments);
+            type_base_name = self.collect_class_names_from_instance_type(instance_type);
         }
         if type_base_name.is_none()
             && let Some(sym_id) = heritage_sym_id
@@ -388,13 +388,6 @@ impl<'a> CheckerState<'a> {
         if name.is_empty() || name == "__type" {
             return None;
         }
-        if name == "Iterator"
-            && let Some(formatted) =
-                self.format_builtin_iterator_reference_with_type_arguments(type_arguments)
-        {
-            return Some(formatted);
-        }
-
         let type_params = self
             .class_type_params_for_symbol(sym_id)
             .filter(|params| !params.is_empty())
@@ -450,7 +443,7 @@ impl<'a> CheckerState<'a> {
         ))
     }
 
-    fn format_builtin_iterator_reference_with_type_arguments(
+    pub(crate) fn format_builtin_iterator_reference_with_type_arguments(
         &mut self,
         type_arguments: Option<&tsz_parser::parser::base::NodeList>,
     ) -> Option<String> {
@@ -689,6 +682,13 @@ impl<'a> CheckerState<'a> {
         let Some(member_sym) = self.get_symbol_globally(member_sym_id) else {
             return false;
         };
+
+        // Check symbol flags first: the binder sets ABSTRACT on methods declared with
+        // the `abstract` keyword. This correctly handles lib-defined abstract members
+        // whose declaration nodes live in a different arena (e.g. esnext.iterator.d.ts).
+        if member_sym.has_any_flags(tsz_binder::symbol_flags::ABSTRACT) {
+            return true;
+        }
 
         member_sym
             .declarations

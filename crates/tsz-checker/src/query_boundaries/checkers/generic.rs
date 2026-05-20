@@ -1,4 +1,5 @@
-use tsz_solver::{TypeDatabase, TypeId};
+use tsz_solver::TypeId;
+use tsz_solver::construction::TypeDatabase;
 
 pub(crate) use super::super::common::{
     callable_shape_for_type, contains_free_type_parameters, contains_generic_type_parameters,
@@ -103,6 +104,12 @@ pub(crate) fn full_conditional_type_components(
 /// Check if a type is callable (Function or Callable shape).
 pub(crate) fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_callable_type(db, type_id)
+}
+
+/// Check whether a constraint is, or evaluates to, a union whose members all
+/// carry call or construct signatures.
+pub(crate) fn constraint_expands_to_callable_union(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::constraint_expands_to_callable_union(db, type_id)
 }
 
 /// Check if a type has construct signatures or is a constructor function.
@@ -287,6 +294,15 @@ pub(crate) use tsz_solver::type_queries::ArrayLikeKind;
 /// Classify whether a type is an array, tuple, or readonly array.
 pub(crate) fn classify_array_like(db: &dyn TypeDatabase, type_id: TypeId) -> ArrayLikeKind {
     tsz_solver::type_queries::classify_array_like(db, type_id)
+}
+
+pub(crate) fn array_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    tsz_solver::type_queries::get_array_element_type(db, type_id)
+}
+
+pub(crate) fn number_index_value_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    tsz_solver::type_queries::get_object_shape(db, type_id)
+        .and_then(|shape| shape.number_index.as_ref().map(|index| index.value_type))
 }
 
 /// Get the object shape of a type (for structural surface checks).

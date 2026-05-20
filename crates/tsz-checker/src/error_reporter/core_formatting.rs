@@ -1,5 +1,4 @@
 //! Type formatting and diagnostic anchor helpers for error reporter.
-
 use crate::state::{CheckerState, MemberAccessLevel};
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
@@ -7,12 +6,14 @@ use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     fn format_type_diagnostic_for_assignability_display(&mut self, type_id: TypeId) -> String {
+        let exact_optional = self.ctx.compiler_options.exact_optional_property_types;
         let mut formatter = self
             .ctx
             .create_diagnostic_type_formatter()
             .with_display_properties()
             .with_expand_scalar_mapped_alias_applications()
-            .with_preserve_optional_parameter_surface_syntax(true);
+            .with_preserve_optional_parameter_surface_syntax(true)
+            .with_exact_optional_property_types(exact_optional);
         formatter.format(type_id).into_owned()
     }
     fn format_type_diagnostic_widened_for_assignability_display(
@@ -26,7 +27,6 @@ impl<'a> CheckerState<'a> {
             .with_preserve_optional_parameter_surface_syntax(true);
         formatter.format(type_id).into_owned()
     }
-
     pub(crate) fn format_type_for_property_receiver_message(&mut self, type_id: TypeId) -> String {
         let mut formatter = self
             .ctx
@@ -205,6 +205,13 @@ impl<'a> CheckerState<'a> {
                     // Match tsc: optional parameters display as `(a?: T)`.
                     .with_preserve_optional_parameter_surface_syntax(true)
                     .with_strict_null_checks(state.ctx.compiler_options.strict_null_checks)
+                    .with_builtin_iterator_return_type(
+                        if state.ctx.compiler_options.strict_builtin_iterator_return {
+                            TypeId::UNDEFINED
+                        } else {
+                            TypeId::ANY
+                        },
+                    )
                     .with_exact_optional_property_types(
                         state.ctx.compiler_options.exact_optional_property_types,
                     );
@@ -241,15 +248,6 @@ impl<'a> CheckerState<'a> {
             return self.ctx.types.resolve_atom_ref(info.name).to_string();
         }
 
-        // For non-generic type alias references (Lazy(DefId)), format the alias name
-        // directly before evaluation resolves it to its body (which loses the alias
-        // identity). tsc preserves alias names like "ExoticAnimal" in error messages
-        // instead of expanding to "CatDog | ManBearPig | Platypus".
-        //
-        // Exceptions:
-        // 1. Computed bodies (intersection reduction, conditional evaluation) → expand.
-        // 2. Aliases wrapping a generic application (e.g. `type Foo = Id<{...}>`) →
-        //    show the inner application.  Detected via display_alias on the evaluated result.
         if let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, ty)
             && let Some(def) = self.ctx.definition_store.get(def_id)
             && def.kind == tsz_solver::def::DefKind::TypeAlias
@@ -267,25 +265,32 @@ impl<'a> CheckerState<'a> {
                             );
                     }
                 }
-                // Only expand computed bodies. For generic function type aliases like
-                // `type bar = <U>(source: ...) => void`, tsc shows the alias name.
                 if self.ctx.definition_store.is_computed_body(body) {
                     let evaluated = self.evaluate_type_with_env(ty);
                     return self.format_type_diagnostic_for_assignability_display(evaluated);
                 }
             }
-            // Evaluate and check if the result wraps a generic application.
-            // tsc shows `Id<{...}>` not `Foo` for `type Foo = Id<{...}>`.
             let evaluated = self.evaluate_type_with_env(ty);
-            if evaluated != ty && self.ctx.types.get_display_alias(evaluated).is_some() {
+            if evaluated != ty
+                && self.ctx.types.get_display_alias(evaluated).is_some()
+                && !crate::query_boundaries::recursive_alias::is_def_non_generic_recursive_alias(
+                    self.ctx.types.as_type_database(),
+                    &self.ctx.definition_store,
+                    def_id,
+                )
+            {
                 return self.format_type_for_assignability_message(evaluated);
             }
             let name = self.ctx.types.resolve_atom_ref(def.name);
             return name.to_string();
         }
 
-        if let Some(collapsed) = self.format_union_with_collapsed_enum_display(ty) {
-            return collapsed;
+        if let Some(keyof_alias) = self.ctx.types.get_display_alias(ty)
+            && let Some(keyof_inner) =
+                crate::query_boundaries::common::keyof_inner_type(self.ctx.types, keyof_alias)
+            && let Some(alias_name) = self.lookup_type_alias_name_for_display(keyof_inner)
+        {
+            return format!("keyof {alias_name}");
         }
 
         if let Some(keyof_inner) =
@@ -302,6 +307,14 @@ impl<'a> CheckerState<'a> {
             {
                 return format!("keyof {}", symbol.escaped_name);
             }
+        }
+
+        if let Some(alias_name) = self.lookup_type_alias_name_for_display(ty) {
+            return alias_name;
+        }
+
+        if let Some(collapsed) = self.format_union_with_collapsed_enum_display(ty) {
+            return collapsed;
         }
 
         if let Some(enum_name) = self.format_qualified_enum_name_for_message(ty) {
@@ -380,14 +393,6 @@ impl<'a> CheckerState<'a> {
             return extract_display;
         }
 
-        // Check for type alias names BEFORE normalization, which transforms the
-        // TypeId and breaks the body_to_alias lookup.  tsc preserves alias names
-        // in assignability messages (e.g. "not assignable to type 'FuncType'"
-        // instead of expanding to the function signature).
-        if let Some(alias_name) = self.lookup_type_alias_name_for_display(ty) {
-            return alias_name;
-        }
-
         let display_ty = self.normalize_assignability_display_type(ty);
         if let Some(alias_name) = self.lookup_type_alias_name_for_display(display_ty) {
             return alias_name;
@@ -409,6 +414,21 @@ impl<'a> CheckerState<'a> {
         if let Some(application_display) = application_display {
             let normalized =
                 self.normalize_property_receiver_application_display_type(application_display);
+            if self
+                .property_receiver_application_base_name(normalized)
+                .is_some_and(|name| name == "merge")
+            {
+                let mut formatter = self
+                    .ctx
+                    .create_diagnostic_type_formatter()
+                    .with_long_property_receiver_display()
+                    .with_display_properties()
+                    .with_skip_application_alias_names()
+                    .with_long_property_receiver_object_elision_end_depth(0);
+                return Self::truncate_property_receiver_display(
+                    formatter.format(normalized).into_owned(),
+                );
+            }
             if normalized != application_display {
                 return self.format_type_diagnostic_widened_for_assignability_display(normalized);
             }
@@ -568,7 +588,7 @@ impl<'a> CheckerState<'a> {
                         };
                         let build_candidates =
                             |predicate: fn(&tsz_solver::PropertyInfo) -> bool,
-                             types: &dyn tsz_solver::TypeDatabase| {
+                             types: &dyn tsz_solver::construction::TypeDatabase| {
                                 let mut candidates: Vec<(String, TypeId)> = shape
                                     .properties
                                     .iter()
@@ -978,16 +998,15 @@ impl<'a> CheckerState<'a> {
         if self.target_preserves_literal_surface(other) {
             return self.format_type_diagnostic_for_assignability_display(ty);
         }
+        if let Some(enum_name) = self.format_disambiguated_enum_name_for_assignment(ty, other) {
+            return enum_name;
+        }
         if crate::query_boundaries::common::literal_value(self.ctx.types, ty).is_some()
             && crate::query_boundaries::common::string_intrinsic_components(self.ctx.types, other)
                 .is_some_and(|(_, type_arg)| type_arg == TypeId::STRING)
         {
             let widened = self.widen_type_for_display(ty);
             return self.format_type_for_assignability_message(widened);
-        }
-
-        if let Some(enum_name) = self.format_disambiguated_enum_name_for_assignment(ty, other) {
-            return enum_name;
         }
         if let Some(display) = self.constrained_variadic_tuple_parameter_display(ty, other) {
             return display;
@@ -1174,39 +1193,17 @@ impl<'a> CheckerState<'a> {
                 .is_some()
     }
 
-    fn format_union_with_collapsed_enum_display(&mut self, ty: TypeId) -> Option<String> {
-        let members = crate::query_boundaries::common::union_members(self.ctx.types, ty)?;
-        if members.len() < 2 {
+    pub(super) fn format_enum_member_name_for_message(&mut self, ty: TypeId) -> Option<String> {
+        let def_id = crate::query_boundaries::common::enum_def_id(self.ctx.types, ty)?;
+        let sym_id = self.ctx.def_to_symbol_id_with_fallback(def_id)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER) {
             return None;
         }
-
-        let mut rendered = Vec::with_capacity(members.len());
-        let mut collapsed_enum = None;
-
-        for member in members {
-            let widened = self.widen_enum_member_type(member);
-            if let Some(name) = self.format_qualified_enum_name_for_message(widened) {
-                match collapsed_enum.as_ref() {
-                    Some(existing) if existing == &name => {}
-                    None => {
-                        collapsed_enum = Some(name.clone());
-                        rendered.push(name);
-                    }
-                    Some(_) => return None,
-                }
-            } else {
-                rendered.push(self.format_type_for_assignability_message(member));
-            }
-        }
-
-        if collapsed_enum.is_some() {
-            Some(rendered.join(" | "))
-        } else {
-            None
-        }
+        self.format_qualified_enum_name_for_message(ty)
     }
 
-    fn format_qualified_enum_name_for_message(&mut self, ty: TypeId) -> Option<String> {
+    pub(super) fn format_qualified_enum_name_for_message(&mut self, ty: TypeId) -> Option<String> {
         let def_id = crate::query_boundaries::common::enum_def_id(self.ctx.types, ty)?;
         let sym_id = self.ctx.def_to_symbol_id_with_fallback(def_id)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
@@ -1257,8 +1254,20 @@ impl<'a> CheckerState<'a> {
     ) -> Option<String> {
         let ty_sym = self.enum_symbol_from_enumish_type(ty)?;
         let other_sym = self.enum_symbol_from_enumish_type(other)?;
+        if ty_sym == other_sym {
+            return None;
+        }
+
         let ty_symbol = self.ctx.binder.get_symbol(ty_sym)?;
         let other_symbol = self.ctx.binder.get_symbol(other_sym)?;
+
+        if crate::query_boundaries::common::enum_def_id(self.ctx.types, ty)
+            .and_then(|def_id| self.ctx.def_to_symbol_id_with_fallback(def_id))
+            .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+            .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER))
+        {
+            return self.format_qualified_enum_name_for_message(ty);
+        }
 
         if ty_symbol.escaped_name != other_symbol.escaped_name {
             return Some(ty_symbol.escaped_name.clone());
@@ -1469,13 +1478,14 @@ impl<'a> CheckerState<'a> {
             return target_str.to_string();
         }
 
-        if target_str.contains('<') || self.ts2820_target_contains_alias_surface(target) {
+        if self.ts2820_target_contains_application_surface(target)
+            || self.ts2820_target_contains_alias_surface(target)
+        {
             Self::widen_numeric_member_literals_in_display_text(target_str)
         } else {
             expanded_target_str
         }
     }
-
     fn widen_numeric_member_literals_in_display_text(display: &str) -> String {
         let bytes = display.as_bytes();
         let mut out = String::with_capacity(display.len());
@@ -1522,23 +1532,52 @@ impl<'a> CheckerState<'a> {
     }
 
     fn ts2820_target_contains_alias_surface(&self, target: TypeId) -> bool {
-        if self.ctx.types.get_display_alias(target).is_some()
-            || self.lookup_type_alias_name_for_display(target).is_some()
-        {
+        self.ts2820_any_in_members(target, &|s, t| {
+            s.ctx.types.get_display_alias(t).is_some()
+                || s.lookup_type_alias_name_for_display(t).is_some()
+        })
+    }
+    fn ts2820_target_contains_application_surface(&self, target: TypeId) -> bool {
+        self.ts2820_any_in_members(target, &|s, t| {
+            s.ts2820_is_named_application_surface(t)
+                || s.ctx
+                    .types
+                    .get_display_alias(t)
+                    .is_some_and(|alias| s.ts2820_is_named_application_surface(alias))
+        })
+    }
+    fn ts2820_any_in_members(
+        &self,
+        target: TypeId,
+        predicate: &dyn Fn(&Self, TypeId) -> bool,
+    ) -> bool {
+        if predicate(self, target) {
             return true;
         }
-
-        if let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, target).or_else(|| {
+        crate::query_boundaries::common::union_members(self.ctx.types, target)
+            .or_else(|| {
                 crate::query_boundaries::common::intersection_members(self.ctx.types, target)
             })
-        {
-            return members
-                .iter()
-                .any(|&member| self.ts2820_target_contains_alias_surface(member));
-        }
-
-        false
+            .is_some_and(|members| {
+                members
+                    .iter()
+                    .any(|&member| self.ts2820_any_in_members(member, predicate))
+            })
+    }
+    fn ts2820_is_named_application_surface(&self, target: TypeId) -> bool {
+        let Some((base, args)) =
+            crate::query_boundaries::common::application_info(self.ctx.types, target)
+        else {
+            return false;
+        };
+        !args.is_empty() && self.ts2820_application_base_has_named_surface(base)
+    }
+    fn ts2820_application_base_has_named_surface(&self, base: TypeId) -> bool {
+        crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)
+            .or_else(|| self.ctx.definition_store.find_def_for_type(base))
+            .is_some()
+            || self.ctx.types.get_display_alias(base).is_some()
+            || self.lookup_type_alias_name_for_display(base).is_some()
     }
 
     pub(super) fn first_nonpublic_constructor_param_property(
@@ -1810,12 +1849,7 @@ impl<'a> CheckerState<'a> {
         Some(missing_required_props[0].name)
     }
 
-    /// Look up a type alias name for a TypeId, returning the alias name if found.
-    ///
-    /// Uses the definition store's `body_to_alias` index to check if the given
-    /// TypeId is the body of a non-generic type alias.  This must be called
-    /// BEFORE `normalize_assignability_display_type`, which creates a new TypeId
-    /// that won't match the stored body.
+    /// Look up a displayable non-generic type alias name for a TypeId.
     pub(crate) fn lookup_type_alias_name_for_display(&self, ty: TypeId) -> Option<String> {
         // Only check composite types — tsc does NOT preserve alias names for
         // primitive types (number, string, etc.) or literal types.
@@ -1847,6 +1881,18 @@ impl<'a> CheckerState<'a> {
         }) {
             return None;
         }
+        if let Some(alias) = self.ctx.types.get_display_alias(ty)
+            && let Some(def_id) =
+                crate::query_boundaries::common::lazy_def_id(self.ctx.types, alias)
+            && let Some(def) = self.ctx.definition_store.get(def_id)
+            && def.kind == tsz_solver::def::DefKind::TypeAlias
+            && def.type_params.is_empty()
+        {
+            let name = self.ctx.types.resolve_atom_ref(def.name);
+            if name.contains('<') {
+                return Some(name.to_string());
+            }
+        }
 
         // For intersection types (e.g., typeof X & Function), expand to the full
         // type representation rather than using the alias name. This matches tsc's
@@ -1858,6 +1904,7 @@ impl<'a> CheckerState<'a> {
         if let Some(def_id) = self.ctx.definition_store.find_def_for_type(ty)
             && let Some(def) = self.ctx.definition_store.get(def_id)
             && def.kind != tsz_solver::def::DefKind::TypeAlias
+            && !is_union
         {
             return None;
         }
@@ -1901,6 +1948,15 @@ impl<'a> CheckerState<'a> {
         let name = self.ctx.types.resolve_atom_ref(def.name);
         Some(name.to_string())
     }
+    pub(crate) fn recursive_non_generic_alias_body_name(&self, ty: TypeId) -> String {
+        crate::query_boundaries::recursive_alias::recursive_non_generic_type_alias_body_name(
+            self.ctx.types.as_type_database(),
+            &self.ctx.definition_store,
+            ty,
+        )
+        .map(|name| self.ctx.types.resolve_atom_ref(name).to_string())
+        .unwrap_or_else(|| self.format_type_diagnostic(ty))
+    }
 
     pub(in crate::error_reporter) fn compute_ambiguous_conditional_display(
         &mut self,
@@ -1940,59 +1996,5 @@ impl<'a> CheckerState<'a> {
         } else {
             None
         }
-    }
-
-    pub(in crate::error_reporter) fn evaluated_literal_alias_source_display(
-        &mut self,
-        declared_type: TypeId,
-    ) -> Option<String> {
-        let (_, args) =
-            crate::query_boundaries::common::application_info(self.ctx.types, declared_type)?;
-        let has_literal_arg = args
-            .iter()
-            .copied()
-            .any(|arg| self.contains_literal_display_candidate(arg));
-        if !has_literal_arg {
-            return None;
-        }
-
-        let evaluated = self.evaluate_type_for_assignability(declared_type);
-        if evaluated == declared_type || matches!(evaluated, TypeId::ERROR | TypeId::UNKNOWN) {
-            return None;
-        }
-
-        let is_literal = |state: &Self, ty| {
-            crate::query_boundaries::common::literal_value(state.ctx.types, ty).is_some()
-        };
-        let literal_only = if is_literal(self, evaluated) {
-            true
-        } else if let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, evaluated)
-        {
-            !members.is_empty() && members.into_iter().all(|member| is_literal(self, member))
-        } else {
-            false
-        };
-
-        literal_only.then(|| self.format_type_for_assignability_message(evaluated))
-    }
-
-    fn contains_literal_display_candidate(&self, ty: TypeId) -> bool {
-        if crate::query_boundaries::common::literal_value(self.ctx.types, ty).is_some() {
-            return true;
-        }
-        if let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, ty) {
-            return members
-                .into_iter()
-                .any(|member| self.contains_literal_display_candidate(member));
-        }
-        false
-    }
-
-    pub(in crate::error_reporter) fn canonicalize_assignment_numeric_literal_union_display(
-        &self,
-        display: String,
-    ) -> String {
-        display.replace("1 | 2", "2 | 1")
     }
 }

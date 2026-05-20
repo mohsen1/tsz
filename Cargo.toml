@@ -24,10 +24,8 @@ tsz-binder = { path = "crates/tsz-binder", version = "0.1.9" }
 tsz-solver = { path = "crates/tsz-solver", version = "0.1.9" }
 tsz-lowering = { path = "crates/tsz-lowering", version = "0.1.9" }
 tsz-checker = { path = "crates/tsz-checker", version = "0.1.9" }
-tsz-emitter = { path = "crates/tsz-emitter", version = "0.1.9" }
+tsz-emitter = { path = "crates/tsz-emitter", version = "0.1.9", default-features = false }
 tsz-lsp = { path = "crates/tsz-lsp", version = "0.1.9" }
-tsz-cli = { path = "crates/tsz-cli", version = "0.1.9" }
-tsz-wasm = { path = "crates/tsz-wasm", version = "0.1.9" }
 
 # External dependencies (shared versions)
 anyhow = "1.0"
@@ -43,7 +41,7 @@ fixedbitset = "0.4"
 globset = "0.4"
 indexmap = "2.6"
 memchr = "2.7"
-notify = "6.1"
+notify = { version = "6.1", default-features = false, features = ["crossbeam-channel", "macos_kqueue"] }
 once_cell = "1.19"
 rayon = "1.10"
 regex = "1.11"
@@ -93,11 +91,20 @@ codegen-units = 16    # Parallel codegen = faster compilation
 strip = false         # Keep symbols for debugging
 
 [profile.dist]
-# Maximum optimization for production binary (use: cargo build --profile dist)
+# Maximum optimization for production binary (use: cargo build --profile dist).
+# This is the profile used to build the binary measured on the public
+# benchmarks page; keep it tuned for steady-state throughput, not build speed.
 inherits = "release"
 lto = "fat"           # Full link-time optimization for smaller, faster binary
 codegen-units = 1     # Single codegen unit for better optimization
 strip = "symbols"     # Strip debug symbols to reduce binary size
+panic = "abort"       # No unwinding: removes landing pads + unwind tables,
+                      # improves icache density on hot paths and shrinks the
+                      # binary. tsz aborts on panic at the CLI boundary anyway
+                      # (`crates/tsz-cli/src/bin/tsz.rs`), and no CLI-linked
+                      # code path catches unwinds — the only catch_unwind
+                      # call sites are `#[cfg(test)]` and the wasm crate,
+                      # neither of which is built with this profile.
 
 [profile.dist-fast]
 # Fast build for CI: correctness over runtime performance.
@@ -146,10 +153,22 @@ lto = "thin"
 # Used by cargo nextest in CI unit suite to cap peak LLVM memory.
 # debug=2 (inherited from dev) × codegen-units × concurrent jobs = OOM on 8-CPU runners.
 # Disabling debug info is the single largest memory win (~3-4× reduction in LLVM backend RSS).
-# CARGO_BUILD_JOBS is also memory-capped via scripts/ci/gcp-full-ci.sh.
+#
+# 2026-05-16: even at CARGO_BUILD_JOBS=1, a single rustc compiling
+# tsz-checker lib-test exceeded 32 GiB RSS during LLVM backend and was
+# SIGKILL'd on the 32 GiB Cloud Run worker. The chain of mitigations:
+#   * codegen-units = 1 (no in-flight LLVM IR sharding; minimum peak)
+#   * opt-level = 0 (no codegen passes that re-materialize IR)
+#   * debug = false (no DWARF emission)
+#   * scripts/ci/gcp-full-ci.sh caps cargo to -j1 via
+#     TSZ_CI_UNIT_CARGO_MB_PER_JOB so two lib-tests cannot share the box.
+# The real fix is the Cloud Build private pool path (PR #7591) which runs
+# the same compile in ~4 min on a 32 vCPU box where memory is not the
+# constraint.
 inherits = "dev"
+opt-level = 0
 debug = false
-codegen-units = 8
+codegen-units = 1
 
 [profile.ci-lint]
 # Used by `cargo clippy` in the CI lint suite. Clippy doesn't ship binaries

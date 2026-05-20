@@ -1,7 +1,7 @@
 //! Tests for callable type (overloaded signatures) subtype checking.
 
 use super::*;
-use crate::TypeInterner;
+use crate::construction::TypeInterner;
 // =============================================================================
 // Callable Subtype Tests
 // =============================================================================

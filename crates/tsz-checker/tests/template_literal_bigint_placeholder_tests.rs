@@ -32,3 +32,23 @@ let negativeBigint: `${bigint}` = "-1";
         "expected only plus-signed bigint assignment to emit TS2322, got codes: {codes:?}"
     );
 }
+
+#[test]
+fn number_template_placeholder_backtracks_before_e_suffix() {
+    let codes = codes_for_template_assignments(
+        r#"
+let em: `${number}em` = "1.5em";
+let ex: `${number}ex` = "1.5ex";
+let upper: `${number}Em` = "1.5Em";
+let rem: `${number}rem` = "1.5rem";
+let sci: `${number}em` = "1.5e2em";
+let invalid: `${number}em` = "1.5e-em";
+"#,
+    );
+
+    let ts2322_count = codes.iter().filter(|code| **code == 2322).count();
+    assert_eq!(
+        ts2322_count, 1,
+        "expected only invalid exponent syntax to emit TS2322, got codes: {codes:?}"
+    );
+}

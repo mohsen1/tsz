@@ -639,11 +639,7 @@ impl Project {
             return Vec::new();
         };
 
-        let base_url = compiler_options
-            .get("baseUrl")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or(".");
-        let base_dir = normalize_path(&config_dir.join(base_url));
+        let base_dir = base_dir_for_compiler_options(&config_dir, &compiler_options);
         let normalized_target_file = path_to_string(&strip_js_ts_extension(&normalize_path(
             Path::new(target_file),
         )))
@@ -662,20 +658,11 @@ impl Project {
                 let Some(mapped_target) = mapped_target.as_str() else {
                     continue;
                 };
-                let mapped_target = mapped_target.replace('\\', "/");
-                let mapped_target = if let Some(rest) = mapped_target.strip_prefix("${configDir}/")
-                {
-                    path_to_string(&normalize_path(&config_dir.join(rest))).replace('\\', "/")
-                } else {
-                    path_to_string(&normalize_path(&base_dir.join(&mapped_target)))
-                        .replace('\\', "/")
-                };
-                let mapped_target =
-                    path_to_string(&strip_js_ts_extension(Path::new(&mapped_target)))
-                        .replace('\\', "/");
+                let resolved_mapped_target =
+                    resolve_path_mapping_target(mapped_target, &base_dir, &config_dir);
 
                 let Some(capture) = target_candidates.iter().find_map(|candidate| {
-                    wildcard_capture_case_insensitive(&mapped_target, candidate)
+                    wildcard_capture_case_insensitive(&resolved_mapped_target, candidate)
                 }) else {
                     continue;
                 };
@@ -689,6 +676,83 @@ impl Project {
         let mut seen = FxHashSet::default();
         specifiers.retain(|specifier| seen.insert(specifier.clone()));
         specifiers
+    }
+
+    /// Compute the new module specifier for a path-aliased import when a file is
+    /// renamed.
+    ///
+    /// Returns `Some(new_specifier)` if `current_specifier` is a `paths`-alias
+    /// import in the importer's nearest tsconfig that resolves to `old_target`
+    /// and the same alias pattern can be applied to `new_target`.
+    ///
+    /// Returns `None` if the specifier is not path-mapped to `old_target`, or if
+    /// the alias pattern cannot accommodate `new_target` (e.g. the file moved
+    /// outside the alias root, or the alias has no wildcard and the target is
+    /// pinned). Callers should fall back to other rewrite strategies (e.g. a
+    /// relative specifier) in those cases.
+    pub(crate) fn rename_path_alias_specifier(
+        &self,
+        from_file: &str,
+        current_specifier: &str,
+        old_target: &str,
+        new_target: &str,
+    ) -> Option<String> {
+        let (config_dir, compiler_options) = self.nearest_compiler_options_for_file(from_file)?;
+        let paths = compiler_options
+            .get("paths")
+            .and_then(serde_json::Value::as_object)?;
+
+        let base_dir = base_dir_for_compiler_options(&config_dir, &compiler_options);
+        let old_normalized = path_to_string(&strip_js_ts_extension(&normalize_path(Path::new(
+            old_target,
+        ))))
+        .replace('\\', "/");
+        let new_normalized = path_to_string(&strip_js_ts_extension(&normalize_path(Path::new(
+            new_target,
+        ))))
+        .replace('\\', "/");
+
+        for (alias_pattern, mapped_targets) in paths {
+            let Some(mapped_targets) = mapped_targets.as_array() else {
+                continue;
+            };
+            // Capture the wildcard portion of `current_specifier` under this
+            // alias. If the alias has no wildcard, an exact match yields `""`.
+            let Some(current_capture) =
+                wildcard_capture_case_insensitive(alias_pattern, current_specifier)
+            else {
+                continue;
+            };
+
+            let resolved_targets: Vec<String> = mapped_targets
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(|t| resolve_path_mapping_target(t, &base_dir, &config_dir))
+                .collect();
+
+            // Confirm the alias actually resolves `current_specifier` to
+            // `old_target`. Without this an unrelated alias that happens to
+            // share a prefix could incorrectly claim the import.
+            let points_at_old_target = resolved_targets.iter().any(|resolved| {
+                apply_wildcard_capture(resolved, &current_capture)
+                    .is_some_and(|substituted| substituted.eq_ignore_ascii_case(&old_normalized))
+            });
+            if !points_at_old_target {
+                continue;
+            }
+
+            // Find a `mapped_target` under the same alias that can host
+            // `new_target`, preserving the alias pattern the user chose. If
+            // none can, the alias is no longer valid for the new path; return
+            // `None` so the caller can fall back to a relative rewrite.
+            return resolved_targets.iter().find_map(|resolved| {
+                let new_capture = wildcard_capture_case_insensitive(resolved, &new_normalized)?;
+                apply_wildcard_capture(alias_pattern, &new_capture)
+                    .map(|s| normalize_path_mapping_specifier(&s))
+            });
+        }
+
+        None
     }
 
     fn root_dirs_relative_specifier_from_files(
@@ -1384,7 +1448,7 @@ impl Project {
                 .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
 
             if let Some(package_json) = package_json
-                && let Some(package_name) = package_json
+                && let Some(manifest_package_name) = package_json
                     .get("name")
                     .and_then(serde_json::Value::as_str)
                     .map(str::trim)
@@ -1393,6 +1457,11 @@ impl Project {
                     .filter(|name| !name.is_empty())
                     .or_else(|| Self::infer_package_name_from_node_modules_dir(&dir_normalized))
             {
+                let package_name = Self::package_name_for_node_modules_manifest(
+                    &dir_normalized,
+                    &manifest_package_name,
+                )
+                .unwrap_or(manifest_package_name);
                 if supports_package_exports && let Some(exports_value) = package_json.get("exports")
                 {
                     return self.package_specifier_from_package_exports_value(
@@ -1437,6 +1506,41 @@ impl Project {
         }
 
         None
+    }
+
+    fn package_name_for_node_modules_manifest(
+        dir_normalized: &str,
+        manifest_package_name: &str,
+    ) -> Option<String> {
+        let marker = "/node_modules/";
+        let marker_idx = dir_normalized.rfind(marker)?;
+        let package_path = &dir_normalized[marker_idx + marker.len()..];
+        let (package_root, package_suffix) = split_node_modules_package_path(package_path)?;
+        if package_suffix.is_empty() {
+            return None;
+        }
+
+        let package_root = normalize_node_modules_package_specifier(&package_root);
+        if package_root == ".store" {
+            return None;
+        }
+
+        let manifest_package_name = normalize_node_modules_package_specifier(manifest_package_name);
+        if manifest_package_name == package_root
+            || manifest_package_name
+                .strip_prefix(&package_root)
+                .is_some_and(|rest| rest.starts_with('/'))
+        {
+            return None;
+        }
+
+        let package_path_name =
+            normalize_node_modules_package_specifier(&format!("{package_root}/{package_suffix}"));
+        if package_path_name.is_empty() {
+            None
+        } else {
+            Some(package_path_name)
+        }
     }
 
     fn infer_package_name_from_node_modules_dir(dir_normalized: &str) -> Option<String> {
@@ -2278,6 +2382,27 @@ fn prefix_capture_case_insensitive(prefix_pattern: &str, target: &str) -> Option
         })
 }
 
+fn base_dir_for_compiler_options(
+    config_dir: &Path,
+    compiler_options: &serde_json::Map<String, serde_json::Value>,
+) -> PathBuf {
+    let base_url = compiler_options
+        .get("baseUrl")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or(".");
+    normalize_path(&config_dir.join(base_url))
+}
+
+fn resolve_path_mapping_target(mapped_target: &str, base_dir: &Path, config_dir: &Path) -> String {
+    let mapped_target = mapped_target.replace('\\', "/");
+    let resolved = if let Some(rest) = mapped_target.strip_prefix("${configDir}/") {
+        path_to_string(&normalize_path(&config_dir.join(rest))).replace('\\', "/")
+    } else {
+        path_to_string(&normalize_path(&base_dir.join(&mapped_target))).replace('\\', "/")
+    };
+    path_to_string(&strip_js_ts_extension(Path::new(&resolved))).replace('\\', "/")
+}
+
 fn strip_js_ts_extension(path: &Path) -> PathBuf {
     const SOURCE_SUFFIXES: [&str; 11] = [
         ".d.ts", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs",
@@ -2794,6 +2919,26 @@ mod tests {
                 "/repo/node_modules/.pnpm/@scope+pkg@1.0.0/node_modules/@scope/pkg/sub/path/file.d.ts"
             ),
             Some("@scope/pkg/sub/path/file".to_string())
+        );
+    }
+
+    #[test]
+    fn nested_package_manifest_inside_package_keeps_parent_subpath_specifier() {
+        let mut project = Project::new();
+        project.set_file(
+            "/project/node_modules/preact/hooks/package.json".to_string(),
+            r#"{ "name": "hooks", "version": "0.1.0", "types": "src/index.d.ts" }"#.to_string(),
+        );
+        project.set_file(
+            "/project/node_modules/preact/hooks/src/index.d.ts".to_string(),
+            "export declare function useMemo<T>(factory: () => T): T;".to_string(),
+        );
+
+        assert_eq!(
+            project.package_specifier_from_node_modules(
+                "/project/node_modules/preact/hooks/src/index.d.ts"
+            ),
+            Some("preact/hooks".to_string())
         );
     }
 

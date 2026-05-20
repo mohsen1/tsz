@@ -63,6 +63,7 @@ impl<'a> CheckerContext<'a> {
             name_resolution_diagnostics: crate::context::NameResolutionDiagnostics::default(),
             no_implicit_override: false,
             types_extending_array: FxHashSet::default(),
+            recovery_sites: RefCell::new(crate::recovery::RecoverySites::default()),
             symbol_types: crate::context::SymbolTypeCache::with_capacity(binder.symbols.len()),
             symbol_instance_types: crate::context::SymbolTypeCache::with_capacity(
                 binder.symbols.len(),
@@ -70,7 +71,7 @@ impl<'a> CheckerContext<'a> {
             enum_namespace_types: FxHashMap::default(),
             var_decl_types: FxHashMap::default(),
             lib_type_resolution_cache: FxHashMap::default(),
-            lib_delegation_cache: FxHashMap::default(),
+            lib_delegation_cache: crate::context::CrossFileDelegationCache::default(),
             namespace_member_resolution_cache: RefCell::new(FxHashMap::default()),
             export_equals_named_cache: RefCell::new(FxHashMap::default()),
             nested_namespace_candidates_cache: RefCell::new(FxHashMap::default()),
@@ -79,6 +80,7 @@ impl<'a> CheckerContext<'a> {
             lowering_entity_name_resolution_cache: RefCell::new(FxHashMap::default()),
             namespace_exports_cache: RefCell::new(FxHashMap::default()),
             shared_lib_type_cache: None,
+            cross_file_type_params_cache: None,
             skip_lib_type_resolution: false,
             lib_heritage_in_progress: FxHashSet::default(),
             node_types: crate::context::NodeTypeCache::with_capacity(arena.nodes.len()),
@@ -107,7 +109,7 @@ impl<'a> CheckerContext<'a> {
             flow_reference_match_cache: RefCell::new(FxHashMap::default()),
             symbol_last_assignment_pos: RefCell::new(FxHashMap::default()),
             symbol_flow_confirmed: RefCell::new(FxHashMap::default()),
-            narrowing_cache: tsz_solver::NarrowingCache::new(),
+            narrowing_cache: tsz_solver::narrowing::NarrowingCache::new(),
             call_type_predicates: crate::control_flow::CallPredicateMap::default(),
             daa_error_nodes: FxHashSet::default(),
             deferred_ts2454_errors: Vec::new(),
@@ -166,6 +168,7 @@ impl<'a> CheckerContext<'a> {
             import_conflict_names: FxHashSet::default(),
             module_namespace_resolution_set: FxHashSet::default(),
             import_type_alias_types: FxHashMap::default(),
+            merged_value_types: FxHashMap::default(),
             symbol_resolution_depth: Cell::new(0),
             max_symbol_resolution_depth: super::MAX_SYMBOL_RESOLUTION_DEPTH,
             class_instance_resolution_set: FxHashSet::default(),
@@ -187,6 +190,8 @@ impl<'a> CheckerContext<'a> {
             checked_classes: FxHashSet::default(),
             checking_computed_property_name: None,
             type_parameter_scope: FxHashMap::default(),
+            type_reference_validation_caches:
+                crate::context::TypeReferenceValidationCaches::default(),
             in_conditional_extends_depth: 0,
             typeof_param_scope: FxHashMap::default(),
             type_param_constraint_excluded_params: FxHashSet::default(),
@@ -199,9 +204,9 @@ impl<'a> CheckerContext<'a> {
             skip_flow_narrowing: false,
             instantiation_depth: Cell::new(0),
             depth_exceeded: Cell::new(false),
-            relation_depth_exceeded: Cell::new(false),
+            relation_overflow: Cell::new(crate::context::RelationOverflowFlags::default()),
             skip_callable_type_param_suppression: Cell::new(false),
-            eval_session: Rc::new(tsz_solver::EvaluationSession::new()),
+            eval_session: Rc::new(tsz_solver::evaluation::session::EvaluationSession::new()),
             recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CheckerRecursion,
             )),
@@ -275,6 +280,7 @@ impl<'a> CheckerContext<'a> {
             async_depth: 0,
             inside_closure_depth: 0,
             in_const_assertion: false,
+            in_satisfies_operand: false,
             preserve_literal_types: false,
             use_declared_type_for_identifier: false,
             skip_array_contextual_supertype_collapse: false,
@@ -409,7 +415,7 @@ impl<'a> CheckerContext<'a> {
     /// `DefinitionStore` and the local-cache warm-up.
     ///
     /// **Invariant**: the caller MUST install a populated store before use,
-    /// typically via `ProjectEnv::apply_to` (which assigns
+    /// typically via `ProgramContext::apply_to` (which assigns
     /// `ctx.definition_store` from a project-wide shared store and then
     /// runs `warm_local_caches_from_shared_store`). Using the returned
     /// context without that follow-up yields an empty store and mysterious
@@ -618,18 +624,42 @@ impl<'a> CheckerContext<'a> {
         ctx.enum_namespace_types = parent.enum_namespace_types.clone();
 
         ctx.lib_delegation_cache = parent.lib_delegation_cache.clone();
-        *ctx.namespace_member_resolution_cache.borrow_mut() =
-            parent.namespace_member_resolution_cache.borrow().clone();
-        *ctx.export_equals_named_cache.borrow_mut() =
-            parent.export_equals_named_cache.borrow().clone();
-        *ctx.nested_namespace_candidates_cache.borrow_mut() =
-            parent.nested_namespace_candidates_cache.borrow().clone();
+        // Skip the deep `HashMap::clone` for caches that are empty on the
+        // parent: `ctx` was just constructed via `Self::base(...)` so its
+        // matching cache is already an empty HashMap, and cloning an empty
+        // parent into it would be wasted allocation. On the scale-cliff
+        // fixtures, `with_parent_cache` fires 6,735 times per run — even a
+        // single saved allocation per call is meaningful, and these four
+        // caches are typically empty at construction time for the
+        // `TypeEnvironmentCore` / `AliasResolution` /
+        // `DelegateCrossArenaSymbol` child checkers that dominate the call
+        // graph (see #5632's `by_reason` data on monorepo-006).
+        {
+            let parent_cache = parent.namespace_member_resolution_cache.borrow();
+            if !parent_cache.is_empty() {
+                *ctx.namespace_member_resolution_cache.borrow_mut() = parent_cache.clone();
+            }
+        }
+        {
+            let parent_cache = parent.export_equals_named_cache.borrow();
+            if !parent_cache.is_empty() {
+                *ctx.export_equals_named_cache.borrow_mut() = parent_cache.clone();
+            }
+        }
+        {
+            let parent_cache = parent.nested_namespace_candidates_cache.borrow();
+            if !parent_cache.is_empty() {
+                *ctx.nested_namespace_candidates_cache.borrow_mut() = parent_cache.clone();
+            }
+        }
         ctx.nested_namespace_candidates_cache_complete =
             Cell::new(parent.nested_namespace_candidates_cache_complete.get());
-        *ctx.lowering_entity_name_resolution_cache.borrow_mut() = parent
-            .lowering_entity_name_resolution_cache
-            .borrow()
-            .clone();
+        {
+            let parent_cache = parent.lowering_entity_name_resolution_cache.borrow();
+            if !parent_cache.is_empty() {
+                *ctx.lowering_entity_name_resolution_cache.borrow_mut() = parent_cache.clone();
+            }
+        }
         ctx.skip_lib_type_resolution = parent.skip_lib_type_resolution;
 
         // CRITICAL: Propagate in-progress set from parent to prevent re-entrant
@@ -643,7 +673,12 @@ impl<'a> CheckerContext<'a> {
         // Cross-file JSDoc import/typedef resolution spawns nested CheckerStates;
         // if the active typedef set is reset at that boundary, cyclic CommonJS
         // JSDoc graphs can recurse until stack overflow.
-        ctx.jsdoc_typedef_resolving = RefCell::new(parent.jsdoc_typedef_resolving.borrow().clone());
+        {
+            let parent_typedefs = parent.jsdoc_typedef_resolving.borrow();
+            if !parent_typedefs.is_empty() {
+                ctx.jsdoc_typedef_resolving = RefCell::new(parent_typedefs.clone());
+            }
+        }
 
         // Propagate expando-property resolution state so child checkers do not
         // lose recursion protection while resolving CommonJS/JS property reads
@@ -657,8 +692,12 @@ impl<'a> CheckerContext<'a> {
         // cross-arena delegation (replaces thread-local guards).
         ctx.eval_session = Rc::clone(&parent.eval_session);
 
-        ctx.implicit_any_checked_closures = parent.implicit_any_checked_closures.clone();
-        ctx.implicit_any_contextual_closures = parent.implicit_any_contextual_closures.clone();
+        if !parent.implicit_any_checked_closures.is_empty() {
+            ctx.implicit_any_checked_closures = parent.implicit_any_checked_closures.clone();
+        }
+        if !parent.implicit_any_contextual_closures.is_empty() {
+            ctx.implicit_any_contextual_closures = parent.implicit_any_contextual_closures.clone();
+        }
 
         // Propagate depth from parent to prevent infinite recursion across arena boundaries.
         ctx.recursion_depth =
@@ -675,5 +714,23 @@ impl<'a> CheckerContext<'a> {
         ctx.share_owner_symbol_type_results = parent.share_owner_symbol_type_results;
 
         ctx
+    }
+
+    /// Attributed variant of [`Self::with_parent_cache`].
+    ///
+    /// Use this for child `CheckerContext` construction sites that do not wrap
+    /// the context in `CheckerState::with_parent_cache_attributed`, so
+    /// `TSZ_PERF_COUNTERS` can still report the construction reason.
+    pub fn with_parent_cache_attributed(
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
+        types: &'a dyn QueryDatabase,
+        file_name: String,
+        compiler_options: CheckerOptions,
+        parent: &Self,
+        reason: tsz_common::perf_counters::CheckerCreationReason,
+    ) -> Self {
+        tsz_common::perf_counters::record_with_parent_cache(reason);
+        Self::with_parent_cache(arena, binder, types, file_name, compiler_options, parent)
     }
 }

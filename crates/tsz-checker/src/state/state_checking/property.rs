@@ -8,6 +8,72 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn target_index_signature_accepts_source_property_with_env(
+        &self,
+        target: TypeId,
+        source_prop: &tsz_solver::PropertyInfo,
+    ) -> bool {
+        if crate::query_boundaries::assignability::target_index_signature_accepts_source_property(
+            self.ctx.types,
+            target,
+            source_prop,
+        ) {
+            return true;
+        }
+        if !source_prop.is_symbol_named {
+            return false;
+        }
+
+        if let Some(shape) = crate::query_boundaries::common::get_merged_object_shape_for_type(
+            self.ctx.types,
+            target,
+        ) {
+            return shape.string_index.as_ref().is_some_and(|idx| {
+                let key_type = self.resolve_index_signature_key_type_via_env(idx.key_type);
+                key_type != idx.key_type
+                    && crate::query_boundaries::assignability::index_signature_key_type_accepts_symbol(
+                        self.ctx.types,
+                        key_type,
+                    )
+            });
+        }
+
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, target)
+        {
+            return members.iter().any(|&member| {
+                self.target_index_signature_accepts_source_property_with_env(member, source_prop)
+            });
+        }
+
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, target)
+        {
+            return members.iter().any(|&member| {
+                self.target_index_signature_accepts_source_property_with_env(member, source_prop)
+            });
+        }
+
+        false
+    }
+
+    fn resolve_index_signature_key_type_via_env(&self, key_type: TypeId) -> TypeId {
+        let mut current = key_type;
+        for _ in 0..8 {
+            let Some(def_id) =
+                crate::query_boundaries::common::lazy_def_id(self.ctx.types, current)
+            else {
+                break;
+            };
+            let resolved = self.ctx.type_env.borrow().get_def(def_id);
+            match resolved {
+                Some(next) if next != current => current = next,
+                _ => break,
+            }
+        }
+        current
+    }
+
     fn report_excess_function_like_implicit_any(&mut self, func_idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(func_idx) else {
             return false;
@@ -149,6 +215,32 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn string_index_key_accepts_property_name(
+        &mut self,
+        key_type: TypeId,
+        prop_name: &str,
+        is_symbol_named: bool,
+    ) -> bool {
+        if key_type == TypeId::SYMBOL {
+            return is_symbol_named
+                || prop_name.starts_with("[Symbol.")
+                || prop_name.starts_with("__unique_")
+                || prop_name.starts_with("__@");
+        }
+
+        if key_type == TypeId::STRING {
+            return true;
+        }
+
+        if is_symbol_named {
+            return false;
+        }
+
+        let prop_literal =
+            crate::query_boundaries::common::create_string_literal_type(self.ctx.types, prop_name);
+        self.is_assignable_to(prop_literal, key_type)
+    }
+
     fn union_member_has_type_parameter_for_excess_display(&self, member: TypeId) -> bool {
         query::is_type_parameter_like(self.ctx.types, member)
             || crate::query_boundaries::common::contains_generic_type_parameters(
@@ -167,14 +259,26 @@ impl<'a> CheckerState<'a> {
 
         self.ensure_relation_input_ready(target);
 
+        let const_assertion_object_literal = self.const_assertion_object_literal_expression(idx);
+        let object_literal_idx = const_assertion_object_literal.unwrap_or(idx);
         let evaluated_target = self.evaluate_type_with_env(target);
+
+        if crate::query_boundaries::common::type_is_conditional_type_result_with_unresolved_inference(
+            self.ctx.types,
+            target,
+        ) || crate::query_boundaries::common::type_is_conditional_type_result_with_unresolved_inference(
+            self.ctx.types,
+            evaluated_target,
+        ) {
+            return;
+        }
 
         // Run named-property value checks before excess-property reporting. When
         // a known property is already invalid, tsc reports that assignability
         // error instead of additionally reporting an excess property from the
         // same object literal.
-        let emitted_named_property_value_error =
-            self.check_object_literal_named_property_values_against_target(idx, target);
+        let emitted_named_property_value_error = self
+            .check_object_literal_named_property_values_against_target(object_literal_idx, target);
         if emitted_named_property_value_error {
             return;
         }
@@ -188,8 +292,10 @@ impl<'a> CheckerState<'a> {
         let is_fresh_source = freshness_query::is_fresh_object_type(self.ctx.types, source);
         let explicit_property_names = if is_fresh_source {
             None
+        } else if const_assertion_object_literal.is_some() {
+            self.explicit_object_literal_property_names(object_literal_idx)
         } else {
-            self.explicit_object_literal_property_names_for_spread(idx)
+            self.explicit_object_literal_property_names_for_spread(object_literal_idx)
         };
         // Non-fresh object literals should be exempt from excess-property checks
         // unless they use spread, in which case we still check explicit properties.
@@ -232,9 +338,21 @@ impl<'a> CheckerState<'a> {
             }
 
             let prop_name = self.ctx.types.resolve_atom(source_prop.name);
+            // Only mark a property as excess when EVERY normalized view of the
+            // target reports it as missing. The original `target` may still be
+            // an alias-displayed Application/Mapped whose constraint isn't
+            // fully evaluated (e.g. `Omit<P, "x">`'s body uses `Exclude<keyof P,
+            // "x">` which `extract_string_literal_keys` can't reduce to literals
+            // without full evaluation). When `effective_target` or
+            // `resolved_target` has been reduced to a concrete object whose
+            // shape contains the property, we must trust those verdicts —
+            // otherwise we emit TS2353 false positives for valid Pick/Omit
+            // assignments like `const p: Omit<Person, "email"> = { name, age }`.
+            // Structural rule: a generic mapped receiver "lacks property X"
+            // only when no normalized form can locate X.
             if [target, effective_target, resolved_target]
                 .into_iter()
-                .any(|candidate| {
+                .all(|candidate| {
                     self.generic_mapped_receiver_lacks_explicit_property(
                         candidate,
                         prop_name.as_ref(),
@@ -242,8 +360,8 @@ impl<'a> CheckerState<'a> {
                 })
             {
                 let report_idx = self
-                    .find_object_literal_property_element(idx, source_prop.name)
-                    .unwrap_or(idx);
+                    .find_object_literal_property_element(object_literal_idx, source_prop.name)
+                    .unwrap_or(object_literal_idx);
                 self.track_earliest_excess(
                     &mut generic_mapped_excess,
                     source_prop.name,
@@ -274,6 +392,13 @@ impl<'a> CheckerState<'a> {
 
                 for &member in &members {
                     let resolved_member = self.resolve_type_for_property_access(member);
+                    if self.target_index_signature_accepts_source_property_with_env(
+                        resolved_member,
+                        source_prop,
+                    ) {
+                        accepted = true;
+                        break;
+                    }
                     if self
                         .generic_mapped_receiver_lacks_explicit_property(member, prop_name.as_ref())
                         || self.generic_mapped_receiver_lacks_explicit_property(
@@ -324,8 +449,8 @@ impl<'a> CheckerState<'a> {
 
                 if !accepted && checked_any_member && !uncertain {
                     let report_idx = self
-                        .find_object_literal_property_element(idx, source_prop.name)
-                        .unwrap_or(idx);
+                        .find_object_literal_property_element(object_literal_idx, source_prop.name)
+                        .unwrap_or(object_literal_idx);
                     self.track_earliest_excess(&mut first_excess, source_prop.name, report_idx);
                 }
             }
@@ -363,7 +488,10 @@ impl<'a> CheckerState<'a> {
                     // let the diagnostic display use the concrete arm if it is the
                     // only EPC-relevant member.
                     if resolved_member == TypeId::ANY
-                        && !self.format_type_diagnostic(target).contains("any")
+                        && !crate::query_boundaries::assignability::contains_any_type(
+                            self.ctx.types,
+                            target,
+                        )
                     {
                         has_unresolved_member = true;
                         continue;
@@ -537,8 +665,8 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                     let report_idx = self
-                        .find_object_literal_property_element(idx, source_prop.name)
-                        .unwrap_or(idx);
+                        .find_object_literal_property_element(object_literal_idx, source_prop.name)
+                        .unwrap_or(object_literal_idx);
                     let concrete_diagnostic_members = effective_members
                         .iter()
                         .filter(|(member, _)| {
@@ -724,8 +852,8 @@ impl<'a> CheckerState<'a> {
 
                 if !is_known {
                     let report_idx = self
-                        .find_object_literal_property_element(idx, source_prop.name)
-                        .unwrap_or(idx);
+                        .find_object_literal_property_element(object_literal_idx, source_prop.name)
+                        .unwrap_or(object_literal_idx);
                     self.track_earliest_excess(&mut first_excess, source_prop.name, report_idx);
                 } else {
                     // Combine named property types with index signature value types
@@ -787,15 +915,15 @@ impl<'a> CheckerState<'a> {
                         type_id,
                         ..
                     } => {
-                        if self.check_object_literal_named_property_value(
+                        // Check this property but continue iterating — tsc reports all
+                        // mismatching properties, not just the first one found.
+                        self.check_object_literal_named_property_value(
                             idx,
                             source_prop.name,
                             source_prop.type_id,
                             effective_target,
                             type_id,
-                        ) {
-                            return;
-                        }
+                        );
                         let nested_target = self.nested_property_target_type(
                             effective_target,
                             source_prop.name,
@@ -813,8 +941,11 @@ impl<'a> CheckerState<'a> {
                         ..
                     } => {
                         let report_idx = self
-                            .find_object_literal_property_element(idx, source_prop.name)
-                            .unwrap_or(idx);
+                            .find_object_literal_property_element(
+                                object_literal_idx,
+                                source_prop.name,
+                            )
+                            .unwrap_or(object_literal_idx);
                         self.track_earliest_excess(&mut first_excess, source_prop.name, report_idx);
                     }
                     _ => return,
@@ -839,10 +970,11 @@ impl<'a> CheckerState<'a> {
                 });
 
             // When the target has a string index signature, outer property names are
-            // all valid (any string key is accepted). But we still need to check
-            // nested object literals against the index signature VALUE type for excess
-            // properties. E.g., for target `{ [k: string]: { a: 0 } & { b: 0 } }`,
-            // a nested `{ a: 0, b: 0, c: 0 }` should flag `c` as excess.
+            // valid only when they are accepted by the index key type. Broad
+            // `[k: string]` accepts every string key, while template-literal
+            // index keys such as `` `data-${string}` `` only accept matching
+            // property names. We still check nested object literals against the
+            // applicable index signature VALUE type for excess properties.
             if let Some(ref idx_sig) = target_shape.string_index {
                 if self.try_union_index_signature_value_check(
                     source_props,
@@ -854,6 +986,8 @@ impl<'a> CheckerState<'a> {
                 }
 
                 let idx_value_type = idx_sig.value_type;
+                let idx_key_type = idx_sig.key_type;
+                let mut first_excess: Option<(Atom, NodeIndex, u32)> = None;
                 for source_prop in source_props {
                     if explicit_property_names.is_some()
                         && !explicit_property_names
@@ -862,21 +996,44 @@ impl<'a> CheckerState<'a> {
                     {
                         continue;
                     }
-                    // Combine with any named property type (if the property also exists explicitly)
-                    let mut nested_types = vec![idx_value_type];
-                    if let Some(target_prop) =
-                        target_props.iter().find(|p| p.name == source_prop.name)
-                    {
-                        if self.check_object_literal_named_property_value(
+
+                    let prop_name = self.ctx.types.resolve_atom(source_prop.name);
+                    let matches_index = self.string_index_key_accepts_property_name(
+                        idx_key_type,
+                        prop_name.as_ref(),
+                        source_prop.is_symbol_named,
+                    );
+                    let target_prop = target_props.iter().find(|p| p.name == source_prop.name);
+
+                    if !matches_index && target_prop.is_none() {
+                        let report_idx = self
+                            .find_object_literal_property_element(
+                                object_literal_idx,
+                                source_prop.name,
+                            )
+                            .unwrap_or(object_literal_idx);
+                        self.track_earliest_excess(&mut first_excess, source_prop.name, report_idx);
+                        continue;
+                    }
+
+                    let mut nested_types = Vec::new();
+                    if matches_index {
+                        nested_types.push(idx_value_type);
+                    }
+                    if let Some(target_prop) = target_prop {
+                        // Continue iterating after a mismatch — tsc reports all mismatching
+                        // properties, not just the first one.
+                        self.check_object_literal_named_property_value(
                             idx,
                             source_prop.name,
                             source_prop.type_id,
                             effective_target,
                             target_prop.type_id,
-                        ) {
-                            return;
-                        }
+                        );
                         nested_types.push(target_prop.type_id);
+                    }
+                    if nested_types.is_empty() {
+                        continue;
                     }
                     let nested_target =
                         tsz_solver::utils::intersection_or_single(self.ctx.types, nested_types);
@@ -893,6 +1050,7 @@ impl<'a> CheckerState<'a> {
                         return;
                     }
                 }
+                self.emit_tracked_excess_property(first_excess, target);
                 return;
             }
 
@@ -906,10 +1064,12 @@ impl<'a> CheckerState<'a> {
                 // Boundary-driven early exits: empty object, index signatures,
                 // global Object/Function, type parameters.
                 if cls.target_is_empty_object
-                    || cls.target_has_index_signature
                     || cls.target_is_global_object_or_function
                     || cls.target_is_type_parameter
                 {
+                    return;
+                }
+                if cls.target_has_index_signature && cls.excess_properties.is_empty() {
                     return;
                 }
             }
@@ -962,6 +1122,14 @@ impl<'a> CheckerState<'a> {
                 let boundary_marks_excess = classification
                     .as_ref()
                     .is_some_and(|cls| cls.excess_properties.contains(&source_prop.name));
+                if boundary_marks_excess
+                    && self.target_index_signature_accepts_source_property_with_env(
+                        resolved_target,
+                        source_prop,
+                    )
+                {
+                    continue;
+                }
                 let boundary_excess_is_authoritative = classification
                     .as_ref()
                     .is_some_and(|cls| cls.trimmed_source_assignable);
@@ -969,8 +1137,8 @@ impl<'a> CheckerState<'a> {
                     && (boundary_excess_is_authoritative || dynamic_target_prop_type.is_none());
                 if is_excess {
                     let report_idx = self
-                        .find_object_literal_property_element(idx, source_prop.name)
-                        .unwrap_or(idx);
+                        .find_object_literal_property_element(object_literal_idx, source_prop.name)
+                        .unwrap_or(object_literal_idx);
                     self.track_earliest_excess(&mut first_excess, source_prop.name, report_idx);
                 } else {
                     // Property exists in target — check nested object literals.
@@ -980,16 +1148,17 @@ impl<'a> CheckerState<'a> {
                         .map(|prop| prop.type_id)
                         .or(dynamic_target_prop_type);
                     if let Some(target_prop_type) = target_prop_type {
-                        if should_check_named_values
-                            && self.check_object_literal_named_property_value(
+                        // Check each property value independently: do not return early when
+                        // a mismatch is found. tsc reports all mismatching properties, so we
+                        // must continue iterating after the first error.
+                        if should_check_named_values {
+                            self.check_object_literal_named_property_value(
                                 idx,
                                 source_prop.name,
                                 source_prop.type_id,
                                 effective_target,
                                 target_prop_type,
-                            )
-                        {
-                            return;
+                            );
                         }
                         let nested_target = self.nested_property_target_type(
                             effective_target,
@@ -1576,6 +1745,13 @@ impl<'a> CheckerState<'a> {
 
             for shape in union_shapes {
                 if let Some(string_index) = &shape.string_index {
+                    if !self.string_index_key_accepts_property_name(
+                        string_index.key_type,
+                        prop_name.as_ref(),
+                        source_prop.is_symbol_named,
+                    ) {
+                        continue;
+                    }
                     if Self::index_value_type_is_deferred(self.ctx.types, string_index.value_type) {
                         has_deferred_index_value_type = true;
                         continue;
@@ -1609,6 +1785,16 @@ impl<'a> CheckerState<'a> {
 
             let target_value_type =
                 tsz_solver::utils::union_or_single(self.ctx.types, applicable_index_value_types);
+            let evaluated_target_value_type = self.evaluate_type_with_env(target_value_type);
+            if crate::query_boundaries::common::type_is_conditional_type_result_with_unresolved_inference(
+                self.ctx.types,
+                target_value_type,
+            ) || crate::query_boundaries::common::type_is_conditional_type_result_with_unresolved_inference(
+                self.ctx.types,
+                evaluated_target_value_type,
+            ) {
+                continue;
+            }
             if self.is_assignable_to(source_prop.type_id, target_value_type) {
                 continue;
             }
@@ -1694,7 +1880,10 @@ impl<'a> CheckerState<'a> {
         self.ctx.diagnostics.len() > diag_count_before
     }
 
-    fn index_value_type_is_deferred(types: &dyn tsz_solver::TypeDatabase, type_id: TypeId) -> bool {
+    fn index_value_type_is_deferred(
+        types: &dyn tsz_solver::construction::TypeDatabase,
+        type_id: TypeId,
+    ) -> bool {
         crate::query_boundaries::common::is_index_access_type(types, type_id)
             || crate::query_boundaries::common::contains_type_parameters(types, type_id)
     }
@@ -2002,6 +2191,20 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        self.explicit_object_literal_property_names(obj_literal_idx)
+    }
+
+    fn explicit_object_literal_property_names(
+        &self,
+        obj_literal_idx: NodeIndex,
+    ) -> Option<HashSet<Atom>> {
+        let obj_node = self.ctx.arena.get(obj_literal_idx)?;
+        if obj_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+
+        let obj_lit = self.ctx.arena.get_literal_expr(obj_node)?;
+
         let mut explicit_names = HashSet::new();
         for &elem_idx in &obj_lit.elements.nodes {
             let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
@@ -2038,6 +2241,26 @@ impl<'a> CheckerState<'a> {
         }
 
         Some(explicit_names)
+    }
+
+    fn const_assertion_object_literal_expression(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        let idx = self.ctx.arena.skip_parenthesized(idx);
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind != syntax_kind_ext::AS_EXPRESSION
+            && node.kind != syntax_kind_ext::TYPE_ASSERTION
+        {
+            return None;
+        }
+        let assertion = self.ctx.arena.get_type_assertion(node)?;
+        if !self.is_const_assertion_type_node(assertion.type_node) {
+            return None;
+        }
+        let expression_idx = self.ctx.arena.skip_parenthesized(assertion.expression);
+        let expression = self.ctx.arena.get(expression_idx)?;
+        if expression.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return Some(expression_idx);
+        }
+        None
     }
 
     /// Check nested object literal properties for excess properties.

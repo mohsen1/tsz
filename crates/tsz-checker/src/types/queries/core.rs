@@ -3,11 +3,12 @@
 use crate::query_boundaries::common::contains_type_parameters;
 use crate::state::{CheckerState, MemberAccessLevel};
 use tsz_binder::symbol_flags;
+use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::NodeArena;
+use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::{SyntaxKind, keyword_to_text_static};
-use tsz_solver::TypeId;
+use tsz_solver::{SymbolRef, TypeId};
 
 /// Extract a property name from a non-computed property name node.
 ///
@@ -120,28 +121,38 @@ pub(crate) fn get_literal_or_well_known_property_name(
     None
 }
 
-/// Check if a property name node is syntactically a string key (not numeric).
-/// Handles direct string literals and computed property names with string literal expressions.
-pub(crate) fn is_string_property_name_node(arena: &NodeArena, name_idx: NodeIndex) -> bool {
-    let Some(name_node) = arena.get(name_idx) else {
-        return false;
-    };
-    // Direct string literal property name: { "404": value }
-    if name_node.kind == SyntaxKind::StringLiteral as u16 {
-        return true;
-    }
-    // Computed property name with string literal: { ["404"]: value }
-    if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
-        && let Some(computed) = arena.get_computed_property(name_node)
-        && let Some(expr_node) = arena.get(computed.expression)
-        && expr_node.kind == SyntaxKind::StringLiteral as u16
-    {
-        return true;
-    }
-    false
-}
-
 impl<'a> CheckerState<'a> {
+    pub(crate) fn symbol_valued_binding_property_name(
+        &self,
+        expr_idx: NodeIndex,
+        expr_type: TypeId,
+    ) -> Option<String> {
+        if expr_type != TypeId::SYMBOL {
+            return None;
+        }
+
+        let expr_node = self.ctx.arena.get(expr_idx)?;
+        self.ctx.arena.get_identifier(expr_node)?;
+
+        let local_sym_id = self.resolve_identifier_symbol(expr_idx)?;
+        let sym_id = self
+            .ctx
+            .resolve_import_alias_and_register(local_sym_id)
+            .unwrap_or(local_sym_id);
+        let symbol = self.get_cross_file_symbol(sym_id)?;
+        let file_idx = self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .unwrap_or(symbol.decl_file_idx as usize);
+        let value_decl = symbol.value_declaration;
+        let decl_arena = self.ctx.get_arena_for_file(file_idx as u32);
+        if value_decl.is_none() || !decl_arena.is_const_variable_declaration(value_decl) {
+            return None;
+        }
+
+        Some(format!("__symbol_{}_{}", file_idx, sym_id.0))
+    }
+
     // =========================================================================
     // Section 27: Modifier and Member Access Utilities
     // =========================================================================
@@ -229,6 +240,18 @@ impl<'a> CheckerState<'a> {
         modifiers: &Option<tsz_parser::parser::NodeList>,
     ) -> bool {
         self.has_modifier_kind(modifiers, SyntaxKind::AccessorKeyword)
+    }
+
+    /// Like [`Self::has_accessor_modifier`] but accepts a borrowed
+    /// `Option<&NodeList>` — used at call sites that already hold the
+    /// modifier list as a reference.
+    pub(crate) fn has_accessor_modifier_ref(
+        &self,
+        modifiers: Option<&tsz_parser::parser::NodeList>,
+    ) -> bool {
+        self.ctx
+            .arena
+            .has_modifier_ref(modifiers, SyntaxKind::AccessorKeyword)
     }
 
     /// Check if modifiers include the 'override' keyword.
@@ -1114,11 +1137,21 @@ impl<'a> CheckerState<'a> {
             {
                 return None;
             }
+            if name.starts_with("[Symbol.")
+                && let Some(symbol_ref) = self.resolve_well_known_symbol_ref_from_name(&name)
+            {
+                self.register_well_known_symbol_name_mapping(&name, symbol_ref);
+            }
             return Some(name);
         }
 
         if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
             let computed = self.ctx.arena.get_computed_property(name_node)?;
+            if let Some(sym_ref) =
+                self.computed_identifier_unique_symbol_property_ref(computed.expression)
+            {
+                return Some(format!("__unique_{}", sym_ref.0));
+            }
             // Preserve literal types so that `const k = 'foo'` (no `as const`)
             // still resolves to the literal `"foo"` rather than widening to `string`.
             let prev = self.ctx.preserve_literal_types;
@@ -1140,6 +1173,11 @@ impl<'a> CheckerState<'a> {
                 self.evaluate_application_type(resolved_prop_name_type);
             let assignability_prop_name_type = self.evaluate_type_for_assignability(prop_name_type);
 
+            if let Some(sym_id) = self.resolve_computed_unique_symbol_property(computed.expression)
+            {
+                return Some(format!("__unique_{}", sym_id.0));
+            }
+
             // Fallback: when the computed expression is an identifier referencing a
             // variable initialized with or annotated as `Symbol.xxx`, resolve to the
             // canonical `[Symbol.xxx]` property name.  This handles patterns like:
@@ -1150,7 +1188,16 @@ impl<'a> CheckerState<'a> {
                 && let Some(well_known) =
                     self.resolve_computed_symbol_property_name(computed.expression)
             {
+                if let Some(symbol_ref) = self.resolve_well_known_symbol_ref_from_name(&well_known)
+                {
+                    self.register_well_known_symbol_name_mapping(&well_known, symbol_ref);
+                }
                 return Some(well_known);
+            }
+            if let Some(symbol_name) =
+                self.symbol_valued_binding_property_name(computed.expression, prop_name_type)
+            {
+                return Some(symbol_name);
             }
             // When the computed property type resolves to a unique symbol (e.g.
             // `typeof Symbol.obs`), map it to the canonical `[Symbol.xxx]` format
@@ -1175,9 +1222,12 @@ impl<'a> CheckerState<'a> {
                             && let Some(parent_sym) = self.ctx.binder.get_symbol(symbol.parent)
                             && parent_sym.escaped_name == "Symbol"
                         {
-                            return Some(format!("[Symbol.{sym_name}]"));
+                            let well_known = format!("[Symbol.{sym_name}]");
+                            self.register_well_known_symbol_name_mapping(&well_known, sym_ref);
+                            return Some(well_known);
                         }
                     }
+                    return Some(format!("__unique_{}", sym_ref.0));
                 }
             }
 
@@ -1253,6 +1303,209 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    pub(crate) fn computed_property_expression_name_atom(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<Atom> {
+        if let Some(symbol_name) = self.get_symbol_property_name_from_expr(expr_idx) {
+            return Some(self.ctx.types.intern_string(&symbol_name));
+        }
+
+        let sym_ref = self.computed_identifier_unique_symbol_property_ref(expr_idx)?;
+        Some(
+            self.ctx
+                .types
+                .intern_string(&format!("__unique_{}", sym_ref.0)),
+        )
+    }
+
+    pub(crate) fn computed_property_expression_is_symbol_named(&self, expr_idx: NodeIndex) -> bool {
+        self.get_symbol_property_name_from_expr(expr_idx).is_some()
+            || self
+                .computed_identifier_unique_symbol_property_ref(expr_idx)
+                .is_some()
+    }
+
+    pub(crate) fn computed_property_expression_unique_symbol_type(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let sym_ref = self.computed_identifier_unique_symbol_property_ref(expr_idx)?;
+        Some(self.ctx.types.unique_symbol(sym_ref))
+    }
+
+    fn computed_identifier_unique_symbol_property_ref(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<SymbolRef> {
+        let expr_node = self.ctx.arena.get(expr_idx)?;
+        if expr_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            let paren = self.ctx.arena.get_parenthesized(expr_node)?;
+            return self.computed_identifier_unique_symbol_property_ref(paren.expression);
+        }
+
+        let mut sym_id = if let Some(ident) = self.ctx.arena.get_identifier(expr_node) {
+            self.ctx
+                .binder
+                .resolve_identifier(self.ctx.arena, expr_idx)
+                .or_else(|| self.ctx.binder.file_locals.get(&ident.escaped_text))?
+        } else {
+            self.resolve_qualified_symbol(expr_idx)?
+        };
+        let mut hops = 0usize;
+        while hops < 32 {
+            hops += 1;
+            let Some(next) = self.ctx.binder.resolve_import_symbol(sym_id) else {
+                break;
+            };
+            if next == sym_id {
+                break;
+            }
+            sym_id = next;
+        }
+
+        self.symbol_has_declared_unique_symbol_property_ref(sym_id)
+            .then_some(SymbolRef(sym_id.0))
+    }
+
+    fn symbol_has_declared_unique_symbol_property_ref(&self, sym_id: tsz_binder::SymbolId) -> bool {
+        let Some(symbol) = self.get_symbol_from_any_binder(sym_id) else {
+            return false;
+        };
+        let file_idx = symbol.decl_file_idx;
+        let owner_binder = self
+            .ctx
+            .get_binder_for_file(file_idx as usize)
+            .unwrap_or(self.ctx.binder);
+
+        symbol.all_declarations().into_iter().any(|decl_idx| {
+            let mut candidate_arenas: Vec<&NodeArena> = Vec::new();
+            if let Some(arenas) = owner_binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+                candidate_arenas.extend(arenas.iter().map(std::convert::AsRef::as_ref));
+            }
+            if let Some(symbol_arena) = owner_binder.symbol_arenas.get(&sym_id) {
+                candidate_arenas.push(symbol_arena.as_ref());
+            }
+            if std::ptr::eq(owner_binder, self.ctx.binder) {
+                candidate_arenas.push(self.ctx.arena);
+            }
+
+            candidate_arenas.into_iter().any(|arena| {
+                self.declaration_has_declared_unique_symbol_property_ref(arena, decl_idx)
+            })
+        })
+    }
+
+    fn declaration_has_declared_unique_symbol_property_ref(
+        &self,
+        arena: &NodeArena,
+        mut decl_idx: NodeIndex,
+    ) -> bool {
+        let Some(mut node) = arena.get(decl_idx) else {
+            return false;
+        };
+        if node.kind == SyntaxKind::Identifier as u16 {
+            let parent = arena.get_extended(decl_idx).map(|ext| ext.parent);
+            if let Some(parent_node) = parent.and_then(|idx| arena.get(idx))
+                && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+            {
+                decl_idx = parent.unwrap_or(NodeIndex::NONE);
+                node = parent_node;
+            } else if let Some(parent_node) = parent.and_then(|idx| arena.get(idx))
+                && parent_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+            {
+                decl_idx = parent.unwrap_or(NodeIndex::NONE);
+                node = parent_node;
+            }
+        }
+
+        if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            let Some(var_decl) = arena.get_variable_declaration(node) else {
+                return false;
+            };
+            if !arena.is_const_variable_declaration(decl_idx) {
+                return false;
+            }
+            return (var_decl.type_annotation.is_some()
+                && crate::types_domain::unique_symbol_arena::is_unique_symbol_type_annotation_unwrapped(
+                    arena,
+                    var_decl.type_annotation,
+                ))
+                || self.is_global_symbol_factory_call_initializer(arena, var_decl.initializer);
+        }
+
+        if node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+            let Some(prop) = arena.get_property_decl(node) else {
+                return false;
+            };
+            return prop.type_annotation.is_some()
+                && crate::types_domain::unique_symbol_arena::is_unique_symbol_type_annotation_unwrapped(
+                    arena,
+                    prop.type_annotation,
+                )
+                && crate::types_domain::unique_symbol_arena::has_declared_unique_symbol_owner(
+                    arena,
+                    prop.type_annotation,
+                );
+        }
+
+        false
+    }
+
+    fn is_global_symbol_factory_call_initializer(
+        &self,
+        arena: &NodeArena,
+        init_idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = arena.get(init_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return false;
+        }
+        let Some(call) = arena.get_call_expr(node) else {
+            return false;
+        };
+        self.is_global_symbol_factory_callee(arena, call.expression)
+    }
+
+    fn is_global_symbol_factory_callee(&self, arena: &NodeArena, callee_idx: NodeIndex) -> bool {
+        let Some(callee_node) = arena.get(callee_idx) else {
+            return false;
+        };
+        if let Some(ident) = arena.get_identifier(callee_node) {
+            if ident.escaped_text != "Symbol" || !std::ptr::eq(arena, self.ctx.arena) {
+                return false;
+            }
+            return self
+                .ctx
+                .binder
+                .resolve_identifier(self.ctx.arena, callee_idx)
+                .or_else(|| self.ctx.binder.file_locals.get("Symbol"))
+                .or_else(|| {
+                    self.ctx
+                        .lib_contexts
+                        .iter()
+                        .find_map(|ctx| ctx.binder.file_locals.get("Symbol"))
+                })
+                .is_some_and(|sym_id| {
+                    self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+                        || self.ctx.symbol_is_from_lib(sym_id)
+                });
+        }
+
+        if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = arena.get_access_expr(callee_node) else {
+            return false;
+        };
+        let Some(name) = arena.get_identifier_text(access.name_or_argument) else {
+            return false;
+        };
+        name == "for" && self.is_global_symbol_factory_callee(arena, access.expression)
+    }
+
     pub(crate) fn is_symbol_property_name(&mut self, name_idx: NodeIndex) -> bool {
         let Some(name_node) = self.ctx.arena.get(name_idx) else {
             return false;
@@ -1260,8 +1513,61 @@ impl<'a> CheckerState<'a> {
         if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
             return false;
         }
-        self.get_property_name_resolved(name_idx)
-            .is_some_and(|name| name.starts_with("[Symbol.") || name.starts_with("__unique_"))
+        if self
+            .get_property_name_resolved(name_idx)
+            .is_some_and(|name| name.starts_with("[Symbol."))
+        {
+            return true;
+        }
+
+        let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
+            return false;
+        };
+
+        let prev_checking = self.ctx.checking_computed_property_name;
+        self.ctx.checking_computed_property_name = Some(name_idx);
+        let prev_preserve = self.ctx.preserve_literal_types;
+        self.ctx.preserve_literal_types = true;
+        let expr_type = self.get_type_of_node(computed.expression);
+        self.ctx.preserve_literal_types = prev_preserve;
+        self.ctx.checking_computed_property_name = prev_checking;
+
+        crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, expr_type).is_some()
+    }
+
+    fn resolve_computed_unique_symbol_property(
+        &mut self,
+        expr_idx: NodeIndex,
+    ) -> Option<tsz_binder::SymbolId> {
+        let sym_id = self
+            .ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, expr_idx)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let decl = if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else {
+            symbol.primary_declaration()?
+        };
+        let mut decl_idx = decl;
+        let mut decl_node = self.ctx.arena.get(decl_idx)?;
+        if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            decl_idx = self.ctx.arena.get_extended(decl_idx)?.parent;
+            decl_node = self.ctx.arena.get(decl_idx)?;
+        }
+        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION
+            || !self.ctx.arena.is_const_variable_declaration(decl_idx)
+        {
+            return None;
+        }
+        let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        let has_unique_annotation = var_decl.type_annotation.is_some()
+            && self.is_unique_symbol_type_annotation(var_decl.type_annotation);
+        let has_symbol_initializer = var_decl.initializer.is_some()
+            && (self.is_symbol_call_initializer(var_decl.initializer)
+                || self.is_symbol_for_call_initializer(var_decl.initializer));
+
+        (has_unique_annotation || has_symbol_initializer).then_some(sym_id)
     }
 
     /// For an identifier expression, trace back to the variable's declaration
@@ -1306,6 +1612,46 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn register_well_known_symbol_name_mapping(
+        &self,
+        name: &str,
+        symbol_ref: tsz_solver::SymbolRef,
+    ) {
+        if !name.starts_with("[Symbol.") {
+            return;
+        }
+        let name_key = name.to_string();
+
+        if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+            env.register_well_known_symbol_name(name_key.clone(), symbol_ref);
+        }
+        if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
+            env.register_well_known_symbol_name(name_key, symbol_ref);
+        }
+    }
+
+    fn resolve_well_known_symbol_ref_from_name(&self, name: &str) -> Option<tsz_solver::SymbolRef> {
+        let member_name = name.strip_prefix("[Symbol.")?.strip_suffix(']')?;
+        let symbol_ctor = self.resolve_global_value_symbol("Symbol")?;
+        let lib_binders = self.get_lib_binders();
+        let symbol_ctor_sym = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(symbol_ctor, &lib_binders)?;
+        let member_sym = symbol_ctor_sym
+            .members
+            .as_ref()
+            .and_then(|members| members.get(member_name))
+            .or_else(|| {
+                symbol_ctor_sym
+                    .exports
+                    .as_ref()
+                    .and_then(|exports| exports.get(member_name))
+            })?;
+
+        Some(tsz_solver::SymbolRef(member_sym.0))
     }
 
     pub(crate) fn get_bound_class_name_from_decl(&self, class_idx: NodeIndex) -> Option<String> {
@@ -1353,6 +1699,24 @@ impl<'a> CheckerState<'a> {
             && let Some(class_idx) = self.get_class_declaration_from_symbol(sym_id)
         {
             return Some((class_idx, true));
+        }
+
+        // Generic instance types like `C<number>` appear as
+        // `TypeData::Application(base, args)`. The preceding brand and
+        // `class_instance_type_to_decl` paths only see uninstantiated
+        // instances, so walk the application chain to its underlying base
+        // and resolve that. The `current != type_id` guard ensures we only
+        // recurse when an application was actually unwrapped.
+        let mut current = type_id;
+        while let Some(app_base) =
+            crate::query_boundaries::common::get_application_base(self.ctx.types, current)
+        {
+            current = app_base;
+        }
+        if current != type_id
+            && let Some((class_idx, _)) = self.get_class_decl_for_display_type(current)
+        {
+            return Some((class_idx, false));
         }
 
         if let Some((&class_idx, _)) = self
@@ -1419,17 +1783,12 @@ impl<'a> CheckerState<'a> {
             return "<anonymous>".to_string();
         };
 
-        if class.name.is_some()
-            && let Some(name_node) = self.ctx.arena.get(class.name)
-            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-        {
-            let mut name = ident.escaped_text.clone();
+        if let Some(mut name) = self.get_bound_class_name_from_decl(class_idx) {
             self.append_type_param_names(&mut name, &class.type_parameters);
             return name;
         }
 
-        self.get_bound_class_name_from_decl(class_idx)
-            .unwrap_or_else(|| "<anonymous>".to_string())
+        "<anonymous>".to_string()
     }
 
     /// Get the name of a class member (property, method, or accessor).

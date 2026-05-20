@@ -1,5 +1,5 @@
 use serde_json::Value;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 use crate::wasm_api::diagnostics::{
     diagnostic_category_name, flatten_diagnostic_message_text, format_ts_diagnostic,
@@ -141,6 +141,40 @@ fn test_ts_program_semantic_diagnostics_contract() {
             .iter()
             .any(|diag| diag.get("code").and_then(|v| v.as_u64()) == Some(2322)),
         "Expected TS2322 diagnostics in {semantic}"
+    );
+}
+
+#[test]
+fn ts_program_accepts_nested_anonymous_object_literal_assignment() {
+    let mut program = TsProgram::new();
+    program.set_compiler_options("{\"strict\":true}").unwrap();
+    program.add_source_file(
+        "input.ts".to_string(),
+        r#"
+interface User {
+  id: string,
+  profile: {
+    name: string,
+    admin: boolean
+  }
+}
+
+const user: User = {
+  id: "u1",
+  profile: {
+    name: "ada",
+    admin: true
+  }
+}
+"#
+        .to_string(),
+    );
+
+    let semantic = program.get_semantic_diagnostics_json(None);
+    let semantic_json: Vec<Value> = serde_json::from_str(&semantic).unwrap();
+    assert!(
+        semantic_json.is_empty(),
+        "expected nested anonymous object literal assignment to be diagnostic-free, got {semantic}"
     );
 }
 
@@ -387,6 +421,35 @@ fn test_transpile_module_omits_source_map_when_not_requested() {
         !output.contains("//# sourceMappingURL"),
         "no sourceMappingURL should be emitted without sourceMap option: {output:?}"
     );
+}
+
+#[test]
+fn test_transpile_module_declaration_respects_dts_feature_gate() {
+    let json = transpile_module(
+        "export const value: number = 1;\n",
+        r#"{"declaration":true,"fileName":"input.ts"}"#,
+    );
+    let parsed: Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed["diagnostics"].as_array().unwrap().len(), 0);
+
+    #[cfg(feature = "dts")]
+    {
+        let declaration_text = parsed["declarationText"]
+            .as_str()
+            .expect("declarationText should be emitted when the dts feature is enabled");
+        assert!(
+            declaration_text.contains("value"),
+            "declaration output should mention the exported binding: {declaration_text:?}"
+        );
+    }
+
+    #[cfg(not(feature = "dts"))]
+    {
+        assert!(
+            parsed["declarationText"].is_null(),
+            "lean WASM build should not emit declarations without the dts feature"
+        );
+    }
 }
 
 #[test]
@@ -795,5 +858,83 @@ fn test_ts_program_emit_json_threads_declaration_and_source_map_flags() {
     for file in parsed_off["emittedFiles"].as_array().unwrap() {
         assert_eq!(file["declaration"], Value::Bool(false));
         assert_eq!(file["sourceMap"], Value::Bool(false));
+    }
+}
+
+fn completion_labels_at(source: &str, line: u32, character: u32) -> Vec<String> {
+    let service = TsLanguageService::new("mod.ts".to_string(), source.to_string());
+    let json = service.get_completions_at_position(line, character);
+    let items: Vec<Value> = serde_json::from_str(&json).unwrap();
+    items
+        .into_iter()
+        .filter_map(|item| item["label"].as_str().map(str::to_string))
+        .collect()
+}
+
+#[test]
+fn test_wasm_language_service_function_member_completions() {
+    let cases: &[(&str, u32, u32, &str)] = &[
+        (
+            "function add(a, b) { return a + b; }\nadd.",
+            1,
+            4,
+            "named-function",
+        ),
+        (
+            "const fn = (x: number) => x * 2;\nfn.",
+            1,
+            3,
+            "arrow-function",
+        ),
+        (
+            "const mul = function(a: number, b: number) { return a * b; };\nmul.",
+            1,
+            4,
+            "function-expression",
+        ),
+    ];
+    for (source, line, character, desc) in cases {
+        let labels = completion_labels_at(source, *line, *character);
+        for expected in ["apply", "bind", "call", "length", "name"] {
+            assert!(
+                labels.iter().any(|l| l == expected),
+                "expected `{expected}` in {desc} completions but got {labels:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_wasm_language_service_array_member_completions() {
+    let cases: &[(&str, u32, u32, &str)] = &[
+        ("const arr = [1, 2, 3];\narr.", 1, 4, "array-literal"),
+        ("const arr: number[] = [];\narr.", 1, 4, "typed-array"),
+        ("const t: [string, number] = [\"a\", 1];\nt.", 1, 2, "tuple"),
+    ];
+    for (source, line, character, desc) in cases {
+        let labels = completion_labels_at(source, *line, *character);
+        for expected in ["length", "push", "pop", "map", "filter", "forEach", "slice"] {
+            assert!(
+                labels.iter().any(|l| l == expected),
+                "expected `{expected}` in {desc} completions but got {labels:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_wasm_language_service_primitive_excludes_constructor() {
+    let cases: &[(&str, u32, u32, &str)] = &[
+        ("const b = true;\nb.", 1, 2, "boolean-literal"),
+        ("const b: boolean = false;\nb.", 1, 2, "typed-boolean"),
+        ("const n = 42;\nn.", 1, 2, "number-literal"),
+        ("const s: string = \"\";\ns.", 1, 2, "typed-string"),
+    ];
+    for (source, line, character, desc) in cases {
+        let labels = completion_labels_at(source, *line, *character);
+        assert!(
+            !labels.iter().any(|l| l == "constructor"),
+            "`constructor` must not appear in {desc} completions, got {labels:?}"
+        );
     }
 }

@@ -132,6 +132,12 @@ pub enum SubtypeFailureReason {
         param_index: usize,
         source_param: TypeId,
         target_param: TypeId,
+        /// Why the inner check between `target_param` and `source_param`
+        /// failed (contravariant in strict-function-types mode).
+        /// Carried so callers can elaborate the failure shape — for
+        /// example, distinguishing a callback's inner return-type
+        /// failure from an inner parameter failure.
+        inner_reason: Option<Box<Self>>,
     },
     /// Too many parameters in source.
     TooManyParameters {
@@ -214,6 +220,21 @@ pub enum SubtypeFailureReason {
     ReadonlyToMutableAssignment {
         source_type: TypeId,
         target_type: TypeId,
+    },
+    /// Two distinct type parameters used as keys of structurally-identical
+    /// indexed-access types: `S[T1]` against `S[T2]`. Even when `T1`'s
+    /// constraint is assignable to `T2`'s constraint, the parameter
+    /// identities differ and the index-access subtypes do not hold. tsc
+    /// elaborates this as the TS2322 chain plus the TS5075 message.
+    IndexAccessTypeParameterMismatch {
+        /// The source type parameter used as the source index access key.
+        source_param: TypeId,
+        /// The target type parameter used as the target index access key.
+        target_param: TypeId,
+        /// The target parameter's constraint, surfaced in the TS5075
+        /// elaboration. `None` only when the target parameter is
+        /// unconstrained (no useful elaboration to emit).
+        target_constraint: Option<TypeId>,
     },
 }
 
@@ -414,6 +435,7 @@ pub mod codes {
     pub use dc::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE as TYPE_NOT_ASSIGNABLE;
 
     pub use dc::INDEX_SIGNATURE_FOR_TYPE_IS_MISSING_IN_TYPE as MISSING_INDEX_SIGNATURE;
+    pub use dc::IS_ASSIGNABLE_TO_THE_CONSTRAINT_OF_TYPE_BUT_COULD_BE_INSTANTIATED_WITH_A_DIFFERE as TYPE_PARAM_INSTANTIATED_WITH_DIFFERENT_SUBTYPE;
     pub use dc::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE as PROPERTY_TYPE_MISMATCH;
 
     // Function/call errors
@@ -531,7 +553,8 @@ impl SubtypeFailureReason {
             | Self::ErrorType { .. }
             | Self::RecursionLimitExceeded
             | Self::ParameterCountMismatch { .. }
-            | Self::TooManyParameters { .. } => codes::TYPE_NOT_ASSIGNABLE,
+            | Self::TooManyParameters { .. }
+            | Self::IndexAccessTypeParameterMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
             Self::NoCommonProperties { .. } => codes::NO_COMMON_PROPERTIES,
             Self::ExcessProperty { .. } => codes::EXCESS_PROPERTY,
             Self::ReadonlyToMutableAssignment { .. } => codes::READONLY_TO_MUTABLE,
@@ -677,6 +700,7 @@ impl SubtypeFailureReason {
                 param_index: _,
                 source_param,
                 target_param,
+                inner_reason: _,
             } => PendingDiagnostic::error(
                 codes::TYPE_NOT_ASSIGNABLE,
                 vec![source.into(), target.into()],
@@ -836,6 +860,31 @@ impl SubtypeFailureReason {
                     codes::READONLY_TO_MUTABLE,
                     vec![(*source_type).into(), (*target_type).into()],
                 )
+            }
+            Self::IndexAccessTypeParameterMismatch {
+                source_param,
+                target_param,
+                target_constraint,
+            } => {
+                let mut diag = PendingDiagnostic::error(
+                    codes::TYPE_NOT_ASSIGNABLE,
+                    vec![source.into(), target.into()],
+                );
+                diag = diag.with_related(PendingDiagnostic::error(
+                    codes::TYPE_NOT_ASSIGNABLE,
+                    vec![(*source_param).into(), (*target_param).into()],
+                ));
+                if let Some(constraint) = target_constraint {
+                    diag = diag.with_related(PendingDiagnostic::error(
+                        codes::TYPE_PARAM_INSTANTIATED_WITH_DIFFERENT_SUBTYPE,
+                        vec![
+                            (*source_param).into(),
+                            (*target_param).into(),
+                            (*constraint).into(),
+                        ],
+                    ));
+                }
+                diag
             }
         }
     }

@@ -97,7 +97,7 @@ declare function dispatch<R, P extends any[]>(
     ...p: P
 ): R;
 
-const leaked = dispatch(box(<U>(u: U) => u), 1);
+const leaked: number = dispatch(box(<U>(u: U) => u), 1);
 const leaked2: string = dispatch(box(<U>(u: U) => u), "hi");
 "#;
     assert_no_call_argument_errors("repro2 alt-names: dispatch(box(<U>(u) => u), …)", source);

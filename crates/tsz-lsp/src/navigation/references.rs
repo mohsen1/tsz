@@ -11,6 +11,7 @@ use crate::utils::{find_node_at_offset, is_symbol_query_node};
 use rustc_hash::FxHashSet;
 use tsz_binder::SymbolId;
 use tsz_common::position::{Location, Position, Range};
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
@@ -108,30 +109,7 @@ impl<'a> FindReferences<'a> {
         // 3. Resolve the node to a symbol
         let symbol_id = self.resolve_symbol_internal(root, node_idx, scope_cache, scope_stats)?;
 
-        // 4. Find all references to this symbol
-        let mut walker = ScopeWalker::new(self.arena, self.binder);
-        let ref_nodes = walker.find_references(root, symbol_id);
-
-        // 5. Also include the declarations
-        let symbol = self.binder.symbols.get(symbol_id)?;
-        let mut all_nodes = ref_nodes;
-        all_nodes.extend(symbol.declarations.iter().copied());
-
-        // Remove duplicates (a declaration might also be a reference)
-        all_nodes.sort_by_key(|n| n.0);
-        all_nodes.dedup();
-
-        // 6. Convert to Locations
-        let locations: Vec<Location> = all_nodes
-            .iter()
-            .filter_map(|&idx| self.location_for_node(idx))
-            .collect();
-
-        if locations.is_empty() {
-            None
-        } else {
-            Some(locations)
-        }
+        self.reference_locations_for_symbol(root, symbol_id)
     }
 
     /// Find references for a specific node (by `NodeIndex`).
@@ -164,26 +142,7 @@ impl<'a> FindReferences<'a> {
             return None;
         }
 
-        let mut walker = ScopeWalker::new(self.arena, self.binder);
-        let ref_nodes = walker.find_references(root, symbol_id);
-
-        let symbol = self.binder.symbols.get(symbol_id)?;
-        let mut all_nodes = ref_nodes;
-        all_nodes.extend(symbol.declarations.iter().copied());
-
-        all_nodes.sort_by_key(|n| n.0);
-        all_nodes.dedup();
-
-        let locations: Vec<Location> = all_nodes
-            .iter()
-            .filter_map(|&idx| self.location_for_node(idx))
-            .collect();
-
-        if locations.is_empty() {
-            None
-        } else {
-            Some(locations)
-        }
+        self.reference_locations_for_symbol(root, symbol_id)
     }
 
     fn find_references_for_node_internal(
@@ -200,30 +159,7 @@ impl<'a> FindReferences<'a> {
         // Resolve the node to a symbol
         let symbol_id = self.resolve_symbol_internal(root, node_idx, scope_cache, scope_stats)?;
 
-        // Find all references to this symbol
-        let mut walker = ScopeWalker::new(self.arena, self.binder);
-        let ref_nodes = walker.find_references(root, symbol_id);
-
-        // Also include the declarations
-        let symbol = self.binder.symbols.get(symbol_id)?;
-        let mut all_nodes = ref_nodes;
-        all_nodes.extend(symbol.declarations.iter().copied());
-
-        // Remove duplicates
-        all_nodes.sort_by_key(|n| n.0);
-        all_nodes.dedup();
-
-        // Convert to Locations
-        let locations: Vec<Location> = all_nodes
-            .iter()
-            .filter_map(|&idx| self.location_for_node(idx))
-            .collect();
-
-        if locations.is_empty() {
-            None
-        } else {
-            Some(locations)
-        }
+        self.reference_locations_for_symbol(root, symbol_id)
     }
 
     /// Find only usages (excluding declarations) for the symbol at the given position.
@@ -266,10 +202,12 @@ impl<'a> FindReferences<'a> {
         let ref_nodes = walker.find_references(root, symbol_id);
 
         // Convert to Locations
-        let locations: Vec<Location> = ref_nodes
-            .iter()
-            .filter_map(|&idx| self.location_for_node(idx))
-            .collect();
+        let mut locations = Vec::with_capacity(ref_nodes.len());
+        locations.extend(
+            ref_nodes
+                .iter()
+                .filter_map(|&idx| self.location_for_node(idx)),
+        );
 
         if locations.is_empty() {
             None
@@ -302,31 +240,9 @@ impl<'a> FindReferences<'a> {
         let symbol = self.binder.symbols.get(symbol_id)?;
         let declaration_set: FxHashSet<u32> = symbol.declarations.iter().map(|n| n.0).collect();
 
-        let mut walker = ScopeWalker::new(self.arena, self.binder);
-        let ref_nodes = walker.find_references(root, symbol_id);
-
-        let mut all_nodes = ref_nodes;
-        all_nodes.extend(symbol.declarations.iter().copied());
-        all_nodes.sort_by_key(|n| n.0);
-        all_nodes.dedup();
-
-        let results: Vec<ReferenceInfo> = all_nodes
-            .iter()
-            .filter_map(|&idx| {
-                let target_idx = self.name_node_for(idx).unwrap_or(idx);
-                let location = self.location_for_node(idx)?;
-                let is_def = self.is_definition_node(idx, &declaration_set);
-                let is_write = is_def || self.is_write_access_node(target_idx);
-                let line_text = self.get_line_text(location.range.start.line);
-                Some(ReferenceInfo::new(location, is_write, is_def, line_text))
-            })
-            .collect();
-
-        if results.is_empty() {
-            None
-        } else {
-            Some(results)
-        }
+        let all_nodes =
+            self.reference_nodes_for_symbol_declarations(root, symbol_id, &symbol.declarations);
+        Self::non_empty(self.reference_infos_for_nodes(&all_nodes, &declaration_set))
     }
 
     /// Find references with resolved symbol info for the full references protocol.
@@ -352,25 +268,9 @@ impl<'a> FindReferences<'a> {
         let symbol = self.binder.symbols.get(symbol_id)?;
         let declaration_set: FxHashSet<u32> = symbol.declarations.iter().map(|n| n.0).collect();
 
-        let mut walker = ScopeWalker::new(self.arena, self.binder);
-        let ref_nodes = walker.find_references(root, symbol_id);
-
-        let mut all_nodes = ref_nodes;
-        all_nodes.extend(symbol.declarations.iter().copied());
-        all_nodes.sort_by_key(|n| n.0);
-        all_nodes.dedup();
-
-        let mut results: Vec<ReferenceInfo> = all_nodes
-            .iter()
-            .filter_map(|&idx| {
-                let target_idx = self.name_node_for(idx).unwrap_or(idx);
-                let location = self.location_for_node(idx)?;
-                let is_def = self.is_definition_node(idx, &declaration_set);
-                let is_write = is_def || self.is_write_access_node(target_idx);
-                let line_text = self.get_line_text(location.range.start.line);
-                Some(ReferenceInfo::new(location, is_write, is_def, line_text))
-            })
-            .collect();
+        let all_nodes =
+            self.reference_nodes_for_symbol_declarations(root, symbol_id, &symbol.declarations);
+        let mut results = self.reference_infos_for_nodes(&all_nodes, &declaration_set);
 
         // Deduplicate by location - when declaration node and identifier node
         // resolve to the same position, keep the one with is_definition=true
@@ -390,11 +290,7 @@ impl<'a> FindReferences<'a> {
         });
         results.dedup_by(|a, b| a.location.range == b.location.range);
 
-        if results.is_empty() {
-            None
-        } else {
-            Some((symbol_id, results))
-        }
+        Self::non_empty(results).map(|results| (symbol_id, results))
     }
 
     /// Find rename locations for the symbol at the given position.
@@ -419,15 +315,7 @@ impl<'a> FindReferences<'a> {
         }
 
         let symbol_id = self.resolve_symbol_internal(root, node_idx, None, None)?;
-        let symbol = self.binder.symbols.get(symbol_id)?;
-
-        let mut walker = ScopeWalker::new(self.arena, self.binder);
-        let ref_nodes = walker.find_references(root, symbol_id);
-
-        let mut all_nodes = ref_nodes;
-        all_nodes.extend(symbol.declarations.iter().copied());
-        all_nodes.sort_by_key(|n| n.0);
-        all_nodes.dedup();
+        let all_nodes = self.reference_nodes_for_symbol(root, symbol_id)?;
 
         let results: Vec<RenameLocation> = all_nodes
             .iter()
@@ -442,11 +330,254 @@ impl<'a> FindReferences<'a> {
             })
             .collect();
 
-        if results.is_empty() {
-            None
-        } else {
-            Some(results)
+        Self::non_empty(results)
+    }
+
+    fn reference_locations_for_symbol(
+        &self,
+        root: NodeIndex,
+        symbol_id: SymbolId,
+    ) -> Option<Vec<Location>> {
+        let nodes = self.reference_nodes_for_symbol(root, symbol_id)?;
+        Self::non_empty(self.locations_for_nodes(&nodes))
+    }
+
+    fn reference_nodes_for_symbol(
+        &self,
+        root: NodeIndex,
+        symbol_id: SymbolId,
+    ) -> Option<Vec<NodeIndex>> {
+        if symbol_id.is_none() {
+            return None;
         }
+
+        let symbol = self.binder.symbols.get(symbol_id)?;
+        Some(self.reference_nodes_for_symbol_declarations(root, symbol_id, &symbol.declarations))
+    }
+
+    fn reference_nodes_for_symbol_declarations(
+        &self,
+        root: NodeIndex,
+        symbol_id: SymbolId,
+        declarations: &[NodeIndex],
+    ) -> Vec<NodeIndex> {
+        let mut walker = ScopeWalker::new(self.arena, self.binder);
+        let mut nodes = walker.find_references(root, symbol_id);
+        nodes.extend(declarations.iter().copied());
+        self.collect_member_access_reference_nodes(root, symbol_id, &mut nodes);
+        Self::sort_dedup_nodes(&mut nodes);
+        nodes
+    }
+
+    fn collect_member_access_reference_nodes(
+        &self,
+        root: NodeIndex,
+        symbol_id: SymbolId,
+        nodes: &mut Vec<NodeIndex>,
+    ) {
+        use tsz_binder::symbol_flags;
+
+        let Some(symbol) = self.binder.symbols.get(symbol_id) else {
+            return;
+        };
+        if !symbol.has_any_flags(
+            symbol_flags::METHOD
+                | symbol_flags::PROPERTY
+                | symbol_flags::GET_ACCESSOR
+                | symbol_flags::SET_ACCESSOR,
+        ) {
+            return;
+        }
+
+        let parent_symbol_id = symbol.parent;
+        if parent_symbol_id.is_none() {
+            return;
+        }
+        let Some(parent_symbol) = self.binder.symbols.get(parent_symbol_id) else {
+            return;
+        };
+        if !parent_symbol.has_any_flags(symbol_flags::CLASS | symbol_flags::INTERFACE) {
+            return;
+        }
+
+        let member_name = symbol.escaped_name.as_str();
+        let parent_name = parent_symbol.escaped_name.as_str();
+        for node in &self.arena.nodes {
+            if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                continue;
+            }
+            let Some(access) = self.arena.get_access_expr(node) else {
+                continue;
+            };
+            if self.arena.get_identifier_text(access.name_or_argument) != Some(member_name) {
+                continue;
+            }
+            if self.expression_has_named_type(root, access.expression, parent_name) {
+                nodes.push(access.name_or_argument);
+            }
+        }
+    }
+
+    fn expression_has_named_type(
+        &self,
+        root: NodeIndex,
+        expr_idx: NodeIndex,
+        type_name: &str,
+    ) -> bool {
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+
+        if expr_node.kind == SyntaxKind::ThisKeyword as u16 {
+            return self.enclosing_class_name(expr_idx).as_deref() == Some(type_name);
+        }
+
+        if expr_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+
+        let mut walker = ScopeWalker::new(self.arena, self.binder);
+        let Some(sym_id) = walker.resolve_node(root, expr_idx) else {
+            return false;
+        };
+        if sym_id.is_none() {
+            return false;
+        }
+        let Some(expr_symbol) = self.binder.symbols.get(sym_id) else {
+            return false;
+        };
+
+        expr_symbol
+            .declarations
+            .iter()
+            .any(|&decl_idx| self.declaration_has_named_type(decl_idx, type_name))
+    }
+
+    fn declaration_has_named_type(&self, decl_idx: NodeIndex, type_name: &str) -> bool {
+        let Some(node) = self.arena.get(decl_idx) else {
+            return false;
+        };
+        match node.kind {
+            k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
+                let Some(decl) = self.arena.get_variable_declaration(node) else {
+                    return false;
+                };
+                self.type_node_matches_name(decl.type_annotation, type_name)
+                    || self.new_expression_matches_name(decl.initializer, type_name)
+            }
+            k if k == syntax_kind_ext::PARAMETER => {
+                let Some(param) = self.arena.get_parameter(node) else {
+                    return false;
+                };
+                self.type_node_matches_name(param.type_annotation, type_name)
+            }
+            _ => false,
+        }
+    }
+
+    fn type_node_matches_name(&self, type_idx: NodeIndex, type_name: &str) -> bool {
+        if !type_idx.is_some() {
+            return false;
+        }
+        let Some(type_node) = self.arena.get(type_idx) else {
+            return false;
+        };
+        if type_node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = self.arena.get_type_ref(type_node)
+        {
+            return self.expression_name_matches(type_ref.type_name, type_name);
+        }
+        self.expression_name_matches(type_idx, type_name)
+    }
+
+    fn new_expression_matches_name(&self, expr_idx: NodeIndex, type_name: &str) -> bool {
+        if !expr_idx.is_some() {
+            return false;
+        }
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::NEW_EXPRESSION {
+            return false;
+        }
+        let Some(call) = self.arena.get_call_expr(expr_node) else {
+            return false;
+        };
+        self.expression_name_matches(call.expression, type_name)
+    }
+
+    fn expression_name_matches(&self, expr_idx: NodeIndex, type_name: &str) -> bool {
+        if !expr_idx.is_some() {
+            return false;
+        }
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind == SyntaxKind::Identifier as u16 {
+            return self.arena.get_identifier_text(expr_idx) == Some(type_name);
+        }
+        if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.arena.get_access_expr(expr_node)
+        {
+            return self.arena.get_identifier_text(access.name_or_argument) == Some(type_name);
+        }
+        false
+    }
+
+    fn enclosing_class_name(&self, node_idx: NodeIndex) -> Option<String> {
+        let mut current = node_idx;
+        while current.is_some() {
+            let parent = self.arena.get_extended(current)?.parent;
+            if !parent.is_some() {
+                return None;
+            }
+            let parent_node = self.arena.get(parent)?;
+            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                let class_data = self.arena.get_class(parent_node)?;
+                return self
+                    .arena
+                    .get_identifier_text(class_data.name)
+                    .map(str::to_string);
+            }
+            current = parent;
+        }
+        None
+    }
+
+    fn sort_dedup_nodes(nodes: &mut Vec<NodeIndex>) {
+        nodes.sort_by_key(|n| n.0);
+        nodes.dedup();
+    }
+
+    fn locations_for_nodes(&self, nodes: &[NodeIndex]) -> Vec<Location> {
+        nodes
+            .iter()
+            .filter_map(|&idx| self.location_for_node(idx))
+            .collect()
+    }
+
+    fn reference_infos_for_nodes(
+        &self,
+        nodes: &[NodeIndex],
+        declaration_set: &FxHashSet<u32>,
+    ) -> Vec<ReferenceInfo> {
+        nodes
+            .iter()
+            .filter_map(|&idx| {
+                let target_idx = self.name_node_for(idx).unwrap_or(idx);
+                let location = self.location_for_node(idx)?;
+                let is_def = self.is_definition_node(idx, declaration_set);
+                let is_write = is_def || self.is_write_access_node(target_idx);
+                let line_text = self.get_line_text(location.range.start.line);
+                Some(ReferenceInfo::new(location, is_write, is_def, line_text))
+            })
+            .collect()
+    }
+
+    fn non_empty<T>(items: Vec<T>) -> Option<Vec<T>> {
+        if items.is_empty() { None } else { Some(items) }
     }
 
     /// Determine whether a node represents a write access to a symbol.

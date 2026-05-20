@@ -232,6 +232,19 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        if self.is_declaration_name_for_type_only_value_diagnostic(idx) {
+            return;
+        }
+
+        let local_same_name_value = (!self.is_identifier_in_type_position(idx))
+            .then(|| self.local_current_file_value_symbol_named(name))
+            .flatten();
+        if local_same_name_value.is_some_and(|sym_id| {
+            self.local_same_name_value_suppresses_type_only_value_diagnostic(idx, sym_id)
+        }) {
+            return;
+        }
+
         // Check if this is an ES2015+ type that requires specific lib support
         let is_es2015_type = lib_loader::is_es2015_plus_type(name);
         let allow_in_parse_recovery = self.has_type_only_value_in_parse_recovery_context(name, idx);
@@ -273,7 +286,9 @@ impl<'a> CheckerState<'a> {
                     ),
                 ),
             }
-        } else if self.is_computed_property_in_type_member(idx) {
+        } else if self.is_computed_property_in_type_member(idx)
+            && self.computed_type_member_allows_mapped_type_suggestion(idx)
+        {
             // TS2690: Type used as computed property key in type literal.
             // Suggest mapped type syntax: "Did you mean to use 'P in K'?"
             let suggested_var = Self::suggest_mapped_type_variable(name);
@@ -298,6 +313,50 @@ impl<'a> CheckerState<'a> {
         self.error_at_node(idx, &message, code);
     }
 
+    fn is_declaration_name_for_type_only_value_diagnostic(&self, idx: NodeIndex) -> bool {
+        let Some(ext) = self.ctx.arena.get_extended(idx) else {
+            return false;
+        };
+        let parent = ext.parent;
+        if parent.is_none() {
+            return false;
+        }
+        self.get_declaration_name_node(parent) == Some(idx)
+    }
+
+    fn local_same_name_value_suppresses_type_only_value_diagnostic(
+        &self,
+        idx: NodeIndex,
+        sym_id: tsz_binder::SymbolId,
+    ) -> bool {
+        if self
+            .require_call_bound_identifier_type_only_kind(idx)
+            .is_some()
+        {
+            return false;
+        }
+
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return true;
+        };
+        if symbol.value_declaration.is_none() {
+            return false;
+        }
+        if !symbol.declarations.contains(&symbol.value_declaration) {
+            return false;
+        }
+        let Some(node) = self.ctx.arena.get(symbol.value_declaration) else {
+            return true;
+        };
+        matches!(
+            node.kind,
+            syntax_kind_ext::VARIABLE_DECLARATION
+                | syntax_kind_ext::FUNCTION_DECLARATION
+                | syntax_kind_ext::CLASS_DECLARATION
+                | syntax_kind_ext::ENUM_DECLARATION
+        )
+    }
+
     /// Check if the identifier at `idx` is used as a computed property name
     /// inside a type member (property signature, method signature, etc.) within
     /// a type literal or interface declaration.
@@ -306,18 +365,39 @@ impl<'a> CheckerState<'a> {
     /// alias being used as a computed property key, which should get TS2690
     /// (with mapped type suggestion) instead of TS2693.
     fn is_computed_property_in_type_member(&self, idx: NodeIndex) -> bool {
-        // Walk up: Identifier -> ComputedPropertyName -> TypeMember -> TypeLiteral/Interface
-        let Some(ext) = self.ctx.arena.get_extended(idx) else {
-            return false;
+        // Walk up from the reported token to the computed property name. For
+        // primitive keywords like `[number]`, parser recovery can wrap the
+        // keyword before attaching it to `ComputedPropertyName`.
+        let mut current = idx;
+        let computed_name = loop {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            let parent_idx = ext.parent;
+            let Some(parent) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+            if parent.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                break parent_idx;
+            }
+            if matches!(
+                parent.kind,
+                syntax_kind_ext::PROPERTY_SIGNATURE
+                    | syntax_kind_ext::METHOD_SIGNATURE
+                    | syntax_kind_ext::INDEX_SIGNATURE
+            ) {
+                return true;
+            }
+            if matches!(
+                parent.kind,
+                syntax_kind_ext::TYPE_LITERAL | syntax_kind_ext::INTERFACE_DECLARATION
+            ) {
+                return false;
+            }
+            current = parent_idx;
         };
-        let Some(parent) = self.ctx.arena.get(ext.parent) else {
-            return false;
-        };
-        if parent.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-            return false;
-        }
 
-        let Some(parent_ext) = self.ctx.arena.get_extended(ext.parent) else {
+        let Some(parent_ext) = self.ctx.arena.get_extended(computed_name) else {
             return false;
         };
         let Some(grandparent) = self.ctx.arena.get(parent_ext.parent) else {
@@ -349,27 +429,39 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // tsc only suggests mapped type syntax when the computed property is the
-        // sole member of the type literal. When there are multiple members,
-        // it can't simply be converted to a mapped type, so TS2693 is emitted.
-        use tsz_parser::parser::node::NodeAccess;
-        let children = self.ctx.arena.get_children(grandparent_ext.parent);
-        let member_count = children
-            .iter()
-            .filter(|&&child| {
-                self.ctx.arena.get(child).is_some_and(|n| {
-                    matches!(
-                        n.kind,
-                        syntax_kind_ext::PROPERTY_SIGNATURE
-                            | syntax_kind_ext::METHOD_SIGNATURE
-                            | syntax_kind_ext::INDEX_SIGNATURE
-                            | syntax_kind_ext::CALL_SIGNATURE
-                            | syntax_kind_ext::CONSTRUCT_SIGNATURE
-                    )
-                })
-            })
-            .count();
-        member_count <= 1
+        true
+    }
+
+    fn computed_type_member_allows_mapped_type_suggestion(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        loop {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return true;
+            };
+            let parent_idx = ext.parent;
+            let Some(parent) = self.ctx.arena.get(parent_idx) else {
+                return true;
+            };
+            if matches!(
+                parent.kind,
+                syntax_kind_ext::TYPE_LITERAL | syntax_kind_ext::INTERFACE_DECLARATION
+            ) {
+                return match parent.kind {
+                    syntax_kind_ext::TYPE_LITERAL => self
+                        .ctx
+                        .arena
+                        .get_type_literal(parent)
+                        .is_none_or(|type_lit| type_lit.members.nodes.len() == 1),
+                    syntax_kind_ext::INTERFACE_DECLARATION => self
+                        .ctx
+                        .arena
+                        .get_interface(parent)
+                        .is_none_or(|interface| interface.members.nodes.len() == 1),
+                    _ => true,
+                };
+            }
+            current = parent_idx;
+        }
     }
 
     /// Generate a suggested variable name for a mapped type suggestion.
@@ -396,6 +488,10 @@ impl<'a> CheckerState<'a> {
         use tsz_binder::symbol_flags;
 
         if let Some(kind) = self.require_call_bound_identifier_type_only_kind(idx) {
+            return Some(kind);
+        }
+
+        if let Some(kind) = self.direct_lexical_type_only_marker_for_identifier(idx) {
             return Some(kind);
         }
 
@@ -590,6 +686,54 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Prefer the nearest lexical alias's own `type` marker before following
+    /// import resolution to a target symbol.
+    fn direct_lexical_type_only_marker_for_identifier(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<TypeOnlyKind> {
+        use tsz_binder::symbol_flags;
+
+        let name = self.ctx.arena.get_identifier_at(idx)?.escaped_text.as_str();
+        let lib_binders = self.get_lib_binders();
+        let sym_id = self.ctx.binder.resolve_name_with_filter(
+            name,
+            self.ctx.arena,
+            idx,
+            &lib_binders,
+            |_| true,
+        )?;
+        let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
+
+        if !(symbol.has_any_flags(symbol_flags::ALIAS) && symbol.is_type_only) {
+            return None;
+        }
+
+        let arena = self
+            .ctx
+            .binder
+            .symbol_arenas
+            .get(&sym_id)
+            .map(|arc| &**arc)
+            .or_else(|| {
+                self.ctx
+                    .resolve_symbol_file_index(sym_id)
+                    .map(|file_idx| self.ctx.get_arena_for_file(file_idx as u32))
+            })
+            .unwrap_or(self.ctx.arena);
+
+        for &decl in &symbol.declarations {
+            if decl.is_none() {
+                continue;
+            }
+            if let Some(kind) = Self::find_direct_type_only_marker(arena, decl) {
+                return Some(kind);
+            }
+        }
+
+        None
+    }
+
     pub(crate) fn require_call_bound_identifier_type_only_kind(
         &self,
         idx: NodeIndex,
@@ -640,7 +784,7 @@ impl<'a> CheckerState<'a> {
     /// Determine whether a cross-file type-only export came from `import type`
     /// (TS1361) or `export type` (TS1362) by resolving the target module and
     /// walking the export symbol's alias chain for a direct type-only marker.
-    fn classify_cross_file_type_only_kind(
+    pub(crate) fn classify_cross_file_type_only_kind(
         &self,
         module_specifier: &str,
         export_name: &str,
@@ -925,7 +1069,7 @@ mod tests {
     use crate::test_utils::check_source_diagnostics;
 
     #[test]
-    fn emits_ts2690_for_computed_type_keyword_in_type_member() {
+    fn emits_ts2693_for_computed_type_keyword_in_type_member() {
         let diagnostics = check_source_diagnostics(
             r#"
 namespace m1 {
@@ -944,11 +1088,72 @@ class C1 {}
 "#,
         );
 
-        // TS2690 is emitted (with mapped type suggestion) instead of TS2693
-        // when a type is used as a computed property key in a type member
+        // Primitive type keywords recovered in computed type-member keys flow
+        // through the same wrong-meaning path as value-position keyword usage.
         assert!(
-            diagnostics.iter().any(|diag| diag.code == 2690),
-            "Expected TS2690 for computed type keyword in type member, got: {diagnostics:?}",
+            diagnostics.iter().any(|diag| diag.code == 2693),
+            "Expected TS2693 for computed type keyword in type member, got: {diagnostics:?}",
+        );
+    }
+
+    #[test]
+    fn emits_ts2690_for_type_alias_computed_type_member_key() {
+        let diagnostics = check_source_diagnostics(
+            r#"
+type KeyName = "name";
+type Shape = {
+  [KeyName]: string;
+};
+"#,
+        );
+
+        let ts2690 = diagnostics
+            .iter()
+            .find(|diag| diag.code == 2690)
+            .expect("Expected TS2690 for type alias used as computed type member key");
+        assert!(
+            ts2690
+                .message_text
+                .contains("Did you mean to use 'K in KeyName'"),
+            "TS2690 should use the mapped-type suggestion from identifier facts, got: {ts2690:?}",
+        );
+    }
+
+    #[test]
+    fn emits_ts2690_for_commented_computed_type_member_key() {
+        let diagnostics = check_source_diagnostics(
+            r#"
+type OtherKey = "other";
+interface Shape {
+  [/* before */ OtherKey /* after */]: number;
+}
+"#,
+        );
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diag| diag.code == 2690 && diag.message_text.contains("O in OtherKey")),
+            "Expected TS2690 from computed-property AST ancestry with comments around the key, got: {diagnostics:?}",
+        );
+    }
+
+    #[test]
+    fn emits_ts2693_for_type_alias_value_use_outside_computed_member_key() {
+        let diagnostics = check_source_diagnostics(
+            r#"
+type Plain = string;
+Plain;
+"#,
+        );
+
+        assert!(
+            diagnostics.iter().any(|diag| diag.code == 2693),
+            "Expected ordinary type/value TS2693 outside computed type members, got: {diagnostics:?}",
+        );
+        assert!(
+            !diagnostics.iter().any(|diag| diag.code == 2690),
+            "Should not emit mapped-type suggestion outside computed type members, got: {diagnostics:?}",
         );
     }
 

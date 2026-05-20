@@ -11,9 +11,15 @@
 //! - Handles deferred evaluation when type parameters are unknown
 //! - Supports distributivity for naked type parameters in unions
 
-use crate::TypeDatabase;
 use crate::caches::db::QueryDatabase;
-use crate::def::DefId;
+use crate::construction::TypeDatabase;
+use crate::def::{DefId, DefKind};
+use crate::diagnostics::display_provenance::{
+    self, AliasApplicationPriority, AliasApplicationProvenance,
+    FreshObjectLiteralDisplayProvenance, UnionOriginProvenance,
+};
+use crate::evaluation::request::EvaluationRequest;
+use crate::evaluation::result::EvaluationResult;
 use crate::instantiation::instantiate::instantiate_generic;
 use crate::relations::subtype::{NoopResolver, TypeResolver};
 #[cfg(test)]
@@ -50,12 +56,17 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     cache: FxHashMap<TypeId, TypeId>,
     /// Unified recursion guard for `TypeId` cycle detection, depth, and iteration limits.
     guard: crate::recursion::RecursionGuard<TypeId>,
+    /// Recursion guard for mapped-key constraint simplification.
+    pub(super) keyof_constraint_guard: crate::recursion::RecursionGuard<TypeId>,
     /// Per-DefId recursion depth counter.
     /// Allows recursive type aliases (like `TrimRight`) to expand up to `MAX_DEF_DEPTH`
     /// times before stopping, matching tsc's TS2589 "Type instantiation is excessively
     /// deep and possibly infinite" behavior. Unlike a set-based cycle detector, this
     /// permits legitimate bounded recursion where each expansion converges.
     def_depth: FxHashMap<DefId, u32>,
+    /// Number of currently active `DefId` expansions at or above the threshold
+    /// that turns a structural recursion bailout into a real TS2589 failure.
+    real_instantiation_depth_count: u32,
     /// When true, suppress `this` type substitution during Lazy type evaluation.
     /// Used during intersection evaluation to prevent premature `this` binding to
     /// individual members instead of the full intersection type.
@@ -88,6 +99,36 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// so the formatter shows the intermediate alias name (e.g.
     /// `DeepReadonlyObject<Part>`) rather than the outer alias (`DeepReadonly<Part>`).
     pub(super) apparent_conditional_branch: Option<TypeId>,
+    /// Tracks whether ANY structural depth bailout was silently converted to an
+    /// opaque (identity) result during this evaluator's lifetime. Distinct from
+    /// `guard.exceeded` (cleared as part of the silent-bail policy) and from
+    /// `flag_depth_on_app_cycle`. Callers that run a follow-up pass with a more
+    /// powerful resolver use this to skip the retry when the original bail was
+    /// structural — a more powerful resolver does not change the structural cost
+    /// of recursive type-tree walks like `ts-toolbelt`'s `ComputeDeep` /
+    /// `Invert` mapped+conditional bodies. See `is_silent_depth_bailed`.
+    silent_depth_bailed: bool,
+}
+
+/// Operation-local memo table statistics for [`TypeEvaluator`].
+///
+/// Owner: one evaluator request. The caches are dropped with the evaluator and
+/// are never shared across resolver, substitution, or compiler-option modes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TypeEvaluatorCacheStatistics {
+    /// Entries in the conditional subtype memo keyed by `(check_type, extends_type)`.
+    pub conditional_subtype_entries: usize,
+    /// Entries in the `contains infer` predicate memo keyed by `TypeId`.
+    pub contains_infer_entries: usize,
+    estimated_size_bytes: usize,
+}
+
+impl TypeEvaluatorCacheStatistics {
+    /// Estimated heap bytes owned by the evaluator memo tables.
+    #[must_use]
+    pub const fn estimated_size_bytes(self) -> usize {
+        self.estimated_size_bytes
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -150,7 +191,11 @@ impl<'a> TypeEvaluator<'a, NoopResolver> {
             guard: crate::recursion::RecursionGuard::with_profile(
                 crate::recursion::RecursionProfile::TypeEvaluation,
             ),
+            keyof_constraint_guard: crate::recursion::RecursionGuard::with_profile(
+                crate::recursion::RecursionProfile::TypeEvaluation,
+            ),
             def_depth: FxHashMap::default(),
+            real_instantiation_depth_count: 0,
             suppress_this_binding: false,
             conditional_subtype_cache: FxHashMap::default(),
             contains_infer_cache: FxHashMap::default(),
@@ -158,11 +203,30 @@ impl<'a> TypeEvaluator<'a, NoopResolver> {
             flag_depth_on_app_cycle: false,
             expand_application_display_alias_args: false,
             apparent_conditional_branch: None,
+            silent_depth_bailed: false,
         }
     }
 }
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
+    /// Return entry and size accounting for this evaluator's operation-local caches.
+    #[must_use]
+    pub fn cache_statistics(&self) -> TypeEvaluatorCacheStatistics {
+        let conditional_subtype_entries = self.conditional_subtype_cache.len();
+        let contains_infer_entries = self.contains_infer_cache.len();
+        let type_evaluator_cache_estimated_size_bytes = conditional_subtype_entries
+            .saturating_mul(std::mem::size_of::<((TypeId, TypeId), bool)>())
+            .saturating_add(
+                contains_infer_entries.saturating_mul(std::mem::size_of::<(TypeId, bool)>()),
+            );
+
+        TypeEvaluatorCacheStatistics {
+            conditional_subtype_entries,
+            contains_infer_entries,
+            estimated_size_bytes: type_evaluator_cache_estimated_size_bytes,
+        }
+    }
+
     fn has_nested_complex_marker(&self, type_id: TypeId) -> bool {
         contains_type_matching(self.interner, type_id, |key| {
             matches!(
@@ -186,6 +250,47 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Matches TypeScript's instantiation depth limit that triggers TS2589.
     const MAX_DEF_DEPTH: u32 = 100;
 
+    /// When the structural per-`TypeId` recursion guard hits its depth limit,
+    /// surface it as TS2589 only if some DefId has been recursively expanded at
+    /// least this many times — otherwise treat the bailout as the stack-protection
+    /// cost of legitimate finite recursion and leave the type opaque.
+    ///
+    /// Calibration: empirically, `Permutation<U>` with `|U| ≤ 3` peaks around
+    /// `def_depth ≈ 33` when it hits the structural limit, while unbounded
+    /// patterns like `type Foo<T,B> = { "true": Foo<T, Foo<T,B>> }[T]` saturate
+    /// near `def_depth ≈ 50`.
+    const REAL_INSTANTIATION_BAILOUT_THRESHOLD: u32 = 40;
+
+    fn increment_def_depth(&mut self, def_id: DefId) -> bool {
+        let depth = self.def_depth.entry(def_id).or_insert(0);
+        if *depth >= Self::MAX_DEF_DEPTH {
+            return false;
+        }
+
+        let was_real_instantiation_depth = *depth >= Self::REAL_INSTANTIATION_BAILOUT_THRESHOLD;
+        *depth += 1;
+        if !was_real_instantiation_depth && *depth >= Self::REAL_INSTANTIATION_BAILOUT_THRESHOLD {
+            self.real_instantiation_depth_count += 1;
+        }
+        true
+    }
+
+    fn decrement_def_depth(&mut self, def_id: DefId) {
+        if let Some(depth) = self.def_depth.get_mut(&def_id) {
+            let was_real_instantiation_depth = *depth >= Self::REAL_INSTANTIATION_BAILOUT_THRESHOLD;
+            *depth = depth.saturating_sub(1);
+            if was_real_instantiation_depth && *depth < Self::REAL_INSTANTIATION_BAILOUT_THRESHOLD {
+                self.real_instantiation_depth_count =
+                    self.real_instantiation_depth_count.saturating_sub(1);
+            }
+        }
+    }
+
+    #[inline]
+    const fn has_real_instantiation_depth(&self) -> bool {
+        self.real_instantiation_depth_count > 0
+    }
+
     /// Create a new evaluator with a custom resolver.
     pub fn with_resolver(interner: &'a dyn TypeDatabase, resolver: &'a R) -> Self {
         TypeEvaluator {
@@ -197,7 +302,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             guard: crate::recursion::RecursionGuard::with_profile(
                 crate::recursion::RecursionProfile::TypeEvaluation,
             ),
+            keyof_constraint_guard: crate::recursion::RecursionGuard::with_profile(
+                crate::recursion::RecursionProfile::TypeEvaluation,
+            ),
             def_depth: FxHashMap::default(),
+            real_instantiation_depth_count: 0,
             suppress_this_binding: false,
             conditional_subtype_cache: FxHashMap::default(),
             contains_infer_cache: FxHashMap::default(),
@@ -205,6 +314,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             flag_depth_on_app_cycle: false,
             expand_application_display_alias_args: false,
             apparent_conditional_branch: None,
+            silent_depth_bailed: false,
         }
     }
 
@@ -277,6 +387,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.cache.clear();
         self.guard.reset();
         self.def_depth.clear();
+        self.real_instantiation_depth_count = 0;
+    }
+
+    /// Evaluate a normalized request, applying option-sensitive configuration
+    /// before consulting this evaluator's local cache.
+    pub fn evaluate_request(&mut self, request: EvaluationRequest) -> TypeId {
+        self.evaluate_request_result(request).into_type_id()
+    }
+
+    /// Evaluate a normalized request and return the typed result stage.
+    pub fn evaluate_request_result(&mut self, request: EvaluationRequest) -> EvaluationResult {
+        self.set_no_unchecked_indexed_access(request.no_unchecked_indexed_access());
+        EvaluationResult::new(self.evaluate(request.type_id()))
     }
 
     // =========================================================================
@@ -352,6 +475,23 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     #[inline]
     pub const fn is_depth_exceeded(&self) -> bool {
         self.guard.is_exceeded()
+    }
+
+    /// Whether any structural depth bailout was silently converted to an
+    /// opaque (identity) result during this evaluator's lifetime.
+    ///
+    /// `is_depth_exceeded` is intentionally cleared when the silent-bail policy
+    /// fires for legitimate finite recursion (see `RecursionResult::DepthExceeded`
+    /// handling), so a follow-up pass with a more powerful resolver cannot use
+    /// that flag to decide whether to retry. This counter preserves the signal.
+    ///
+    /// Callers that retry on the same root `type_id` should treat a silent bail
+    /// as "the structural type-tree walk hit its protection limit" — running
+    /// the retry will hit the same limit at the same shape and burn the same
+    /// time without making additional progress.
+    #[inline]
+    pub const fn is_silent_depth_bailed(&self) -> bool {
+        self.silent_depth_bailed
     }
 
     /// Mark the guard as exceeded, causing subsequent evaluations to bail out.
@@ -466,8 +606,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             });
             if global_depth >= Self::MAX_GLOBAL_EVAL_DEPTH {
                 GLOBAL_EVAL_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
-                self.guard.mark_exceeded();
-                return TypeId::ERROR;
+                // Cross-evaluator stack protection: leave `type_id` opaque
+                // rather than propagating ERROR. The outer evaluator can
+                // proceed at a shallower depth without inheriting a sticky
+                // exceeded flag. See the analogous DepthExceeded arm below.
+                self.silent_depth_bailed = true;
+                return type_id;
             }
             let result = self.evaluate_guarded(type_id);
             GLOBAL_EVAL_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
@@ -540,8 +684,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return type_id;
             }
             RecursionResult::DepthExceeded => {
-                self.cache.insert(type_id, TypeId::ERROR);
-                return TypeId::ERROR;
+                // The per-`TypeId` guard's depth limit is structural — it caps the
+                // type-tree walk to protect the stack, not the instantiation chain.
+                // tsc's `instantiationDepth` (the source of TS2589) is mirrored by
+                // `def_depth`, so consult that to decide whether the bailout is a
+                // real runaway (escalate) or just the structural cost of legitimate
+                // finite recursion like the type-challenges `Permutation<U>` /
+                // `Combination<U>` patterns (silently leave `type_id` opaque).
+                if self.has_real_instantiation_depth() {
+                    self.cache.insert(type_id, TypeId::ERROR);
+                    return TypeId::ERROR;
+                }
+                self.guard.clear_exceeded();
+                self.silent_depth_bailed = true;
+                self.cache.insert(type_id, type_id);
+                return type_id;
             }
             RecursionResult::IterationExceeded => {
                 self.cache.insert(type_id, type_id);
@@ -625,6 +782,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let name = self.interner.resolve_atom(atom);
                 self.resolver.resolve_unresolved_type_name(&name)
             }
+            TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => self
+                .interner
+                .object_shape(shape_id)
+                .symbol
+                .and_then(|sym_id| {
+                    self.resolver
+                        .symbol_to_def_id(crate::types::SymbolRef(sym_id.0))
+                }),
             _ => None,
         };
 
@@ -649,22 +814,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             //   type TrimRight<S> = S extends `${infer R} ` ? TrimRight<R> : S;
             // which need multiple re-entries of the same DefId to converge.
             // =======================================================================
-            let depth = self.def_depth.entry(def_id).or_insert(0);
-            if *depth >= Self::MAX_DEF_DEPTH {
+            if !self.increment_def_depth(def_id) {
                 self.guard.mark_exceeded();
                 return TypeId::ERROR;
             }
-            *depth += 1;
 
             // Try to get the type parameters for this DefId
             let type_params = self.resolver.get_lazy_type_params(def_id);
             let resolved = self.resolver.resolve_lazy(def_id, self.interner);
             let def_kind = self.resolver.get_def_kind(def_id);
             let is_type_alias_def = matches!(def_kind, Some(crate::def::DefKind::TypeAlias));
-            let prefer_application_display_alias = is_type_alias_def
-                && resolved.is_some_and(|body| {
-                    !matches!(self.interner.lookup(body), Some(TypeData::Conditional(_)))
-                });
+            let resolved_has_conditional_body = resolved.is_some_and(|body| {
+                matches!(self.interner.lookup(body), Some(TypeData::Conditional(_)))
+            });
+            if is_type_alias_def && resolved_has_conditional_body {
+                self.interner.mark_conditional_alias_base(app.base);
+            }
+            let prefer_application_display_alias =
+                is_type_alias_def && !resolved_has_conditional_body;
 
             tracing::trace!(
                 ?def_id,
@@ -677,6 +844,28 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // Save any apparent branch set by an outer conditional evaluator,
             // so nested evaluate_application calls don't steal the signal.
             let _saved_apparent = self.apparent_conditional_branch.take();
+
+            // Early cache lookup with the raw (unexpanded) args.
+            //
+            // The normal cache lookup (below) uses `expanded_args` and only runs
+            // when `type_params` is `Some`.  In contexts where the resolver is
+            // "lite" (e.g. inside `SubtypeChecker`) it often returns `None` for
+            // `get_lazy_type_params`, so the normal lookup is never reached even
+            // though the result is already in the shared `QueryDatabase` from an
+            // earlier full-resolver evaluation.
+            //
+            // By trying `app.args` first we let every evaluation context benefit
+            // from previously-computed results without re-doing the work.
+            if let Some(db) = self.query_db {
+                let no_unchecked = self.no_unchecked_indexed_access;
+                if let Some(cached) =
+                    db.lookup_application_eval_cache(def_id, &app.args, no_unchecked)
+                {
+                    self.decrement_def_depth(def_id);
+                    return cached;
+                }
+            }
+
             let result = if let Some(type_params) = type_params {
                 // Resolve the base type to get the body
                 if let Some(resolved) = resolved {
@@ -689,9 +878,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     // original `Application` opaque so later evaluator passes
                     // (with a populated body) can expand it correctly.
                     if resolved == TypeId::UNKNOWN {
-                        if let Some(d) = self.def_depth.get_mut(&def_id) {
-                            *d = d.saturating_sub(1);
-                        }
+                        self.decrement_def_depth(def_id);
                         return original_type_id;
                     }
                     // Pre-expand type arguments that are TypeQuery or Application.
@@ -740,9 +927,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             no_unchecked_indexed_access,
                         )
                     {
-                        if let Some(d) = self.def_depth.get_mut(&def_id) {
-                            *d = d.saturating_sub(1);
-                        }
+                        self.decrement_def_depth(def_id);
                         return cached;
                     }
 
@@ -795,9 +980,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                         resolved_arg,
                                     );
                                 }
-                                if let Some(d) = self.def_depth.get_mut(&def_id) {
-                                    *d = d.saturating_sub(1);
-                                }
+                                self.decrement_def_depth(def_id);
                                 return resolved_arg;
                             }
                             // Objectish<any>: identity homomorphic mapped type with `any` arg
@@ -840,9 +1023,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                         result,
                                     );
                                 }
-                                if let Some(d) = self.def_depth.get_mut(&def_id) {
-                                    *d = d.saturating_sub(1);
-                                }
+                                self.decrement_def_depth(def_id);
                                 return result;
                             }
                         }
@@ -876,6 +1057,68 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         resolved
                     };
 
+                    // Homomorphic mapped-type union distribution: when the alias body is
+                    // `{ [K in keyof T]: ... }` and T's argument resolves to a union,
+                    // distribute over union members here — before calling
+                    // `instantiate_generic` — so that `try_distribute_mapped_over_union_source`
+                    // in mapped.rs can distinguish the post-instantiation constraint from the
+                    // declared constraint. After a standard instantiate_generic call with
+                    // T→(A|B), both `constraint` and `type_param.constraint` collapse to
+                    // `keyof (A|B)`, which causes that guard to treat it as a direct use and
+                    // skip distribution.
+                    if let Some(TypeData::Mapped(mapped_id)) = self.interner.lookup(effective_body)
+                    {
+                        let mapped = self.interner.get_mapped(mapped_id);
+                        if let Some(TypeData::KeyOf(source)) =
+                            self.interner.lookup(mapped.constraint)
+                            && let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(source)
+                            && let Some(idx) = type_params.iter().position(|p| p.name == tp.name)
+                            && idx < expanded_args.len()
+                        {
+                            let arg = expanded_args[idx];
+                            let resolved_arg = self.evaluate(arg);
+                            if let Some(TypeData::Union(list_id)) =
+                                self.interner.lookup(resolved_arg)
+                                && !matches!(
+                                    self.interner.lookup(resolved_arg),
+                                    Some(TypeData::Array(_) | TypeData::Tuple(_))
+                                )
+                            {
+                                let members = self.interner.type_list(list_id).to_vec();
+                                let mut distributed = Vec::with_capacity(members.len());
+                                for member in members {
+                                    if crate::visitors::visitor_predicates::is_primitive_type(
+                                        self.interner,
+                                        member,
+                                    ) {
+                                        distributed.push(member);
+                                        continue;
+                                    }
+                                    let mut member_args = expanded_args.to_vec();
+                                    member_args[idx] = member;
+                                    let instantiated = instantiate_generic(
+                                        self.interner,
+                                        effective_body,
+                                        &type_params,
+                                        &member_args,
+                                    );
+                                    distributed.push(self.evaluate(instantiated));
+                                }
+                                let evaluated = self.interner.union(distributed);
+                                if let Some(db) = self.query_db {
+                                    db.insert_application_eval_cache(
+                                        def_id,
+                                        &expanded_args,
+                                        no_unchecked_indexed_access,
+                                        evaluated,
+                                    );
+                                }
+                                self.decrement_def_depth(def_id);
+                                return evaluated;
+                            }
+                        }
+                    }
+
                     // Instantiate the resolved type with the type arguments.
                     // Then rebind polymorphic `this` to the concrete application
                     // so interface bodies like `constraint: Constraint<this>`
@@ -889,12 +1132,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     if crate::contains_this_type(self.interner, instantiated) {
                         // Use original_type_id as the app_type — it's the same
                         // Application(base, args) that was already interned.
-                        instantiated = crate::substitute_this_type_cached(
-                            self.interner,
-                            self.query_db,
-                            instantiated,
-                            original_type_id,
-                        );
+                        instantiated =
+                            crate::instantiation::instantiate::substitute_this_type_cached(
+                                self.interner,
+                                self.query_db,
+                                instantiated,
+                                original_type_id,
+                            );
                     }
                     // Preserve discriminated object intersections after instantiation.
                     // Re-evaluating them here distributes impossible branches again,
@@ -907,10 +1151,27 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     } else {
                         self.evaluate(instantiated)
                     };
-                    let evaluated = crate::type_queries::prune_impossible_object_union_members(
-                        self.interner,
-                        evaluated,
-                    );
+                    if prefer_application_display_alias {
+                        self.store_intermediate_application_display_alias(
+                            instantiated,
+                            original_type_id,
+                            evaluated,
+                            &app.args,
+                        );
+                    } else {
+                        // Parametric structural (interface/class) applications:
+                        // also record a back-reference from the evaluated
+                        // structural form to the original Application so
+                        // `reduce_alias_body_to_application_form` can recover
+                        // it when the source has been eagerly evaluated to a
+                        // structural shape (e.g. via `ReturnType<typeof f>`
+                        // expanding through a Conditional alias body and
+                        // instantiating the Promise interface).
+                        self.store_parametric_structural_back_reference(
+                            evaluated,
+                            original_type_id,
+                        );
+                    }
                     if let Some(db) = self.query_db {
                         db.insert_application_eval_cache(
                             def_id,
@@ -938,9 +1199,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             no_unchecked_indexed_access,
                         )
                     {
-                        if let Some(d) = self.def_depth.get_mut(&def_id) {
-                            *d = d.saturating_sub(1);
-                        }
+                        self.decrement_def_depth(def_id);
                         return cached;
                     }
 
@@ -951,12 +1210,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         &expanded_args,
                     );
                     if crate::contains_this_type(self.interner, instantiated) {
-                        instantiated = crate::substitute_this_type_cached(
-                            self.interner,
-                            self.query_db,
-                            instantiated,
-                            original_type_id,
-                        );
+                        instantiated =
+                            crate::instantiation::instantiate::substitute_this_type_cached(
+                                self.interner,
+                                self.query_db,
+                                instantiated,
+                                original_type_id,
+                            );
                     }
                     let evaluated = if crate::type_queries::is_discriminated_object_intersection(
                         self.interner,
@@ -966,6 +1226,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     } else {
                         self.evaluate(instantiated)
                     };
+                    if prefer_application_display_alias {
+                        self.store_intermediate_application_display_alias(
+                            instantiated,
+                            original_type_id,
+                            evaluated,
+                            &app.args,
+                        );
+                    }
                     if let Some(db) = self.query_db {
                         db.insert_application_eval_cache(
                             def_id,
@@ -988,16 +1256,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             self.apparent_conditional_branch = _saved_apparent;
 
             // Decrement per-DefId depth after evaluation
-            if let Some(d) = self.def_depth.get_mut(&def_id) {
-                *d = d.saturating_sub(1);
-            }
+            self.decrement_def_depth(def_id);
 
             // Store reverse mapping for diagnostic display: when the evaluated
             // result differs from the original Application, record the mapping
             // so the formatter can display `Dictionary<string>` instead of the
             // expanded `{ [index: string]: string; }`.
             //
-            // For concrete args: always store (safe, no conflation risk).
+            // For concrete args: store unless the application is an identity
+            // wrapper around one of its own structural arguments. Repainting
+            // that argument globally makes unrelated uses of the same object
+            // look like the helper application.
             // For generic args: only store when the result is a Conditional or
             // IndexAccess type, plus still-deferred mapped aliases. Deferred mapped
             // aliases retain the as-written relationship needed for diagnostics like
@@ -1051,22 +1320,30 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         Some(TypeData::Intersection(_)) => true,
                         _ => false,
                     };
-                    let skip_type_alias_repaint = is_type_alias_def
+                    let result_is_application_arg = app.args.contains(&result);
+                    let skip_type_alias_repaint = matches!(
+                        self.interner.lookup(display_origin),
+                        Some(TypeData::Application(_))
+                    ) && result_is_non_empty_structural
+                        && (result_is_application_arg
+                            || (is_type_alias_def
+                                && match (
+                                    self.interner.lookup_alloc_order(result),
+                                    self.interner.lookup_alloc_order(display_origin),
+                                ) {
+                                    (Some(result_order), Some(display_order)) => {
+                                        result_order <= display_order
+                                    }
+                                    _ => result.0 <= display_origin.0,
+                                }));
+                    let keep_existing_conditional_branch_alias = is_type_alias_def
+                        && !prefer_application_display_alias
                         && matches!(
                             self.interner.lookup(display_origin),
                             Some(TypeData::Application(_))
                         )
-                        && match (
-                            self.interner.lookup_alloc_order(result),
-                            self.interner.lookup_alloc_order(display_origin),
-                        ) {
-                            (Some(result_order), Some(display_order)) => {
-                                result_order <= display_order
-                            }
-                            _ => result.0 <= display_origin.0,
-                        }
-                        && result_is_non_empty_structural;
-                    if !skip_type_alias_repaint {
+                        && display_provenance::display_alias(self.interner, result).is_some();
+                    if !skip_type_alias_repaint && !keep_existing_conditional_branch_alias {
                         if prefer_application_display_alias
                             || (self.expand_application_display_alias_args
                                 && matches!(
@@ -1074,10 +1351,23 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                     Some(TypeData::Application(_))
                                 ))
                         {
-                            self.interner
-                                .store_display_alias_preferring_application(result, display_origin);
+                            display_provenance::record_alias_application(
+                                self.interner,
+                                AliasApplicationProvenance {
+                                    evaluated: result,
+                                    application: display_origin,
+                                },
+                                AliasApplicationPriority::PreferApplication,
+                            );
                         } else {
-                            self.interner.store_display_alias(result, display_origin);
+                            display_provenance::record_alias_application(
+                                self.interner,
+                                AliasApplicationProvenance {
+                                    evaluated: result,
+                                    application: display_origin,
+                                },
+                                AliasApplicationPriority::PreserveExisting,
+                            );
                         }
                     }
 
@@ -1094,8 +1384,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             Some(crate::types::TypeData::Application(_))
                         )
                     {
-                        self.interner
-                            .store_display_alias(original_type_id, branch_app);
+                        display_provenance::record_alias_application(
+                            self.interner,
+                            AliasApplicationProvenance {
+                                evaluated: original_type_id,
+                                application: branch_app,
+                            },
+                            AliasApplicationPriority::PreserveExisting,
+                        );
                     }
                 }
             }
@@ -1105,6 +1401,244 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // If we can't expand, return the original application
             original_type_id
         }
+    }
+
+    fn store_intermediate_application_display_alias(
+        &self,
+        instantiated: TypeId,
+        original_type_id: TypeId,
+        evaluated: TypeId,
+        original_args: &[TypeId],
+    ) {
+        if instantiated == original_type_id || evaluated == TypeId::ERROR {
+            return;
+        }
+        // Only install this forward alias when the intermediate application
+        // appears to have been introduced after the outer application.
+        // If the instantiated application predates the outer one, it can be a
+        // user-authored type occurrence and globally aliasing it risks repainting
+        // unrelated diagnostics.
+        let instantiated_is_new_intermediate = match (
+            self.interner.lookup_alloc_order(instantiated),
+            self.interner.lookup_alloc_order(original_type_id),
+        ) {
+            (Some(instantiated_order), Some(original_order)) => instantiated_order > original_order,
+            _ => instantiated.0 > original_type_id.0,
+        };
+        if !instantiated_is_new_intermediate {
+            return;
+        }
+        if original_args.iter().any(|&arg| {
+            crate::type_queries::contains_generic_type_parameters_db(self.interner, arg)
+        }) {
+            return;
+        }
+        let instantiated_is_application = matches!(
+            self.interner.lookup(instantiated),
+            Some(TypeData::Application(_))
+        );
+        let original_is_application = matches!(
+            self.interner.lookup(original_type_id),
+            Some(TypeData::Application(_))
+        );
+
+        if !original_is_application {
+            return;
+        }
+
+        if !instantiated_is_application {
+            // Structural-body path: the type alias body resolved to a structural
+            // type rather than another Application (e.g.
+            // `type LinkedList<T> = T & { next: LinkedList<T> }` evaluates to an
+            // Intersection). Map `evaluated → original_type_id` so diagnostics show
+            // the alias name instead of the expanded structural form.
+            if self.is_recursive_type_alias_application(original_type_id)
+                && Self::is_structural_display_alias_result(self.interner, evaluated)
+            {
+                // Only store the display alias when `evaluated` was freshly produced
+                // by this evaluation (allocated after `original_type_id`). If it
+                // pre-exists, it was already interned by a different alias and
+                // overwriting its alias would corrupt diagnostics for that other alias.
+                // For example, `NestedRecord<"x.y.z", string>` and `Id<...string...>`
+                // can evaluate to the same structural object; the NestedRecord evaluation
+                // must not replace the `Id<...>` alias that was recorded first.
+                let evaluated_is_fresh = match (
+                    self.interner.lookup_alloc_order(evaluated),
+                    self.interner.lookup_alloc_order(original_type_id),
+                ) {
+                    (Some(eval_order), Some(orig_order)) => eval_order > orig_order,
+                    _ => evaluated.0 > original_type_id.0,
+                };
+                if evaluated_is_fresh {
+                    self.interner
+                        .store_display_alias_preferring_application(evaluated, original_type_id);
+                }
+            }
+            return;
+        }
+
+        if !Self::is_structural_display_alias_result(self.interner, evaluated) {
+            return;
+        }
+
+        display_provenance::record_alias_application(
+            self.interner,
+            AliasApplicationProvenance {
+                evaluated: instantiated,
+                application: original_type_id,
+            },
+            AliasApplicationPriority::PreferApplication,
+        );
+    }
+
+    fn is_recursive_type_alias_application(&self, type_id: TypeId) -> bool {
+        let Some(TypeData::Application(app_id)) = self.interner.lookup(type_id) else {
+            return false;
+        };
+        let app = self.interner.type_application(app_id);
+        let Some(TypeData::Lazy(def_id)) = self.interner.lookup(app.base) else {
+            return false;
+        };
+        if self.resolver.get_def_kind(def_id) != Some(DefKind::TypeAlias) {
+            return false;
+        }
+        let Some(body) = self.resolver.resolve_lazy(def_id, self.interner) else {
+            return false;
+        };
+        let mut visited = FxHashSet::default();
+        self.type_reaches_alias_def(body, def_id, &mut visited)
+    }
+
+    fn type_reaches_alias_def(
+        &self,
+        type_id: TypeId,
+        target_def_id: DefId,
+        visited: &mut FxHashSet<TypeId>,
+    ) -> bool {
+        if type_id.is_intrinsic() || !visited.insert(type_id) {
+            return false;
+        }
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Lazy(def_id))
+                if self.resolver.defs_are_equivalent(def_id, target_def_id) =>
+            {
+                return true;
+            }
+            Some(TypeData::Application(app_id)) => {
+                let app = self.interner.type_application(app_id);
+                if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(app.base)
+                    && self.resolver.defs_are_equivalent(def_id, target_def_id)
+                {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+
+        let mut found = false;
+        crate::visitor::for_each_child_by_id(self.interner, type_id, |child| {
+            if !found {
+                found = self.type_reaches_alias_def(child, target_def_id, visited);
+            }
+        });
+        found
+    }
+
+    /// Record a back-reference from an evaluated structural form to its
+    /// originating parametric Application — the interface/class counterpart
+    /// to `store_intermediate_application_display_alias` (which only stores
+    /// for type-alias bodies that are themselves Applications).
+    ///
+    /// Read by `reduce_alias_body_to_application_form` to recover the
+    /// Application form when the source has been eagerly evaluated to its
+    /// structural shape (e.g. `Promise<{id}>` substituted into a structural
+    /// Object). The downstream `store_display_alias_preferring_application`
+    /// applies its own safety gates (alloc-order, intrinsic-skip, generic-
+    /// args) that prevent overriding aliases for pre-existing types.
+    fn store_parametric_structural_back_reference(
+        &mut self,
+        evaluated: TypeId,
+        original_type_id: TypeId,
+    ) {
+        if evaluated == original_type_id || evaluated == TypeId::ERROR {
+            return;
+        }
+        let Some(TypeData::Application(app_id)) = self.interner.lookup(original_type_id) else {
+            return;
+        };
+        let app = self.interner.type_application(app_id);
+        if app.args.is_empty() {
+            return;
+        }
+        let app_def = match self.interner.lookup(app.base) {
+            Some(TypeData::Lazy(def_id)) => self
+                .resolver
+                .get_def_kind(def_id)
+                .map(|kind| (def_id, kind)),
+            Some(TypeData::TypeQuery(sym_ref)) => {
+                self.resolver.symbol_to_def_id(sym_ref).and_then(|def_id| {
+                    self.resolver
+                        .get_def_kind(def_id)
+                        .map(|kind| (def_id, kind))
+                })
+            }
+            _ => None,
+        };
+        let Some((_, app_kind)) = app_def else {
+            return;
+        };
+        // This back-reference is for nominal parametric shapes. Type-alias
+        // applications still need their evaluated structural form for displays
+        // such as TS2339 on conditional helper aliases. If the resolver cannot
+        // prove a nominal interface/class origin, do not repaint a structural
+        // result as an arbitrary application.
+        if !matches!(
+            app_kind,
+            crate::def::DefKind::Interface | crate::def::DefKind::Class
+        ) {
+            return;
+        }
+        if app.args.contains(&evaluated) {
+            return;
+        }
+        // Fast path: all-intrinsic args trivially have no free type
+        // parameters; skip the recursive `contains_generic_type_parameters_db`
+        // traversal that fires on every parametric application evaluation.
+        let all_intrinsic = app.args.iter().all(|a| a.is_intrinsic());
+        if !all_intrinsic
+            && app.args.iter().any(|&arg| {
+                crate::type_queries::contains_generic_type_parameters_db(self.interner, arg)
+            })
+        {
+            return;
+        }
+        if !Self::is_structural_display_alias_result(self.interner, evaluated) {
+            return;
+        }
+        display_provenance::record_alias_application(
+            self.interner,
+            AliasApplicationProvenance {
+                evaluated,
+                application: original_type_id,
+            },
+            AliasApplicationPriority::PreferApplication,
+        );
+    }
+
+    fn is_structural_display_alias_result(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
+        matches!(
+            interner.lookup(type_id),
+            Some(
+                TypeData::Object(_)
+                    | TypeData::ObjectWithIndex(_)
+                    | TypeData::Array(_)
+                    | TypeData::Tuple(_)
+                    | TypeData::Function(_)
+                    | TypeData::Callable(_)
+                    | TypeData::Intersection(_)
+                    | TypeData::Mapped(_)
+            )
+        )
     }
 
     /// Check if a type is a Conditional whose `extends_type` is an Application containing infer.
@@ -1615,7 +2149,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             original_members,
         );
         if !display_vec.is_empty() {
-            self.interner.store_display_properties(result, display_vec);
+            display_provenance::record_fresh_object_literal_display(
+                self.interner,
+                FreshObjectLiteralDisplayProvenance {
+                    type_id: result,
+                    properties: display_vec,
+                },
+            );
         }
     }
 
@@ -1641,7 +2181,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.simplify_union_members(&mut evaluated_members);
 
         let result = self.interner.union(evaluated_members.clone());
-        self.interner.store_union_origin(result, evaluated_members);
+        display_provenance::record_union_origin(
+            self.interner,
+            UnionOriginProvenance {
+                union_type_id: result,
+                origin_members: evaluated_members,
+            },
+        );
         result
     }
 
@@ -2085,7 +2631,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     )
                 );
                 if operand_is_named {
-                    self.interner().store_display_alias(result, keyof_type);
+                    display_provenance::record_alias_application(
+                        self.interner(),
+                        AliasApplicationProvenance {
+                            evaluated: result,
+                            application: keyof_type,
+                        },
+                        AliasApplicationPriority::PreserveExisting,
+                    );
                 }
             }
         }
@@ -2109,18 +2662,32 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // Unlike resolve_ref, resolve_type_query is aware that TypeQuery needs the
         // constructor type, not the instance type that may be stored under SymbolRef
         // in TypeEnvironment (inserted by type_reference_symbol_type).
+        //
+        // We must evaluate the resolved type (as visit_lazy does) because the resolver
+        // may return a Lazy(DefId) that still needs unfolding — e.g. DateConstructor.
         if let Some(resolved) = self.resolver.resolve_type_query(symbol, self.interner) {
-            return resolved;
+            return self.evaluate_resolved_or_original(resolved, original_type_id);
         }
 
         // Fallback: try DefId-based resolution if no SymbolRef mapping exists
         if let Some(def_id) = self.resolver.symbol_to_def_id(symbol)
             && let Some(resolved) = self.resolver.resolve_lazy(def_id, self.interner)
         {
-            return resolved;
+            return self.evaluate_resolved_or_original(resolved, original_type_id);
         }
 
         original_type_id
+    }
+
+    /// Evaluate `resolved` if it differs from `original`; avoids re-entering a
+    /// type that resolved to itself (which would trigger the cycle guard unnecessarily).
+    #[inline]
+    fn evaluate_resolved_or_original(&mut self, resolved: TypeId, original: TypeId) -> TypeId {
+        if resolved == original {
+            original
+        } else {
+            self.evaluate(resolved)
+        }
     }
 
     /// Visit a generic type application: Base<Args>
@@ -2136,10 +2703,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Visit a lazy type reference: Lazy(DefId)
     fn visit_lazy(&mut self, def_id: DefId, original_type_id: TypeId) -> TypeId {
         if let Some(resolved) = self.resolver.resolve_lazy(def_id, self.interner) {
+            if self.is_self_recursive_promise_union(resolved, def_id) {
+                return original_type_id;
+            }
+
             let resolved = if !self.suppress_this_binding
                 && crate::contains_this_type(self.interner, resolved)
             {
-                crate::substitute_this_type_cached(
+                crate::instantiation::instantiate::substitute_this_type_cached(
                     self.interner,
                     self.query_db,
                     resolved,
@@ -2175,6 +2746,75 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
+    /// Detect recursive aliases whose recursion flows through a well-known
+    /// promise-like wrapper, e.g. `type T = string | Promise<T>`.
+    ///
+    /// General recursive unions such as `Json` and recursive arrays must still
+    /// expand so structural assignability can inspect their non-recursive arms.
+    /// Promise fulfillment cycles are different: structural comparison of
+    /// `Promise<T>`'s callbacks can chase `T -> Promise<T> -> T` indefinitely.
+    /// Keep only those promise-recursive aliases opaque at the outer lazy
+    /// boundary and let ordinary recursion continue through the normal
+    /// evaluator guard.
+    fn is_self_recursive_promise_union(&self, type_id: TypeId, def_id: DefId) -> bool {
+        let Some(TypeData::Union(list_id)) = self.interner.lookup(type_id) else {
+            return false;
+        };
+
+        self.interner
+            .type_list(list_id)
+            .iter()
+            .any(|member| self.is_promise_application_containing_def(*member, def_id, 0))
+    }
+
+    fn is_promise_application_containing_def(
+        &self,
+        type_id: TypeId,
+        def_id: DefId,
+        depth: u8,
+    ) -> bool {
+        if depth > 8 {
+            return false;
+        }
+
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Application(app_id)) => {
+                let app = self.interner.type_application(app_id);
+                let args_contain_def = app
+                    .args
+                    .iter()
+                    .any(|arg| crate::visitor::contains_lazy_def_id(self.interner, *arg, def_id));
+                (self.is_well_known_promise_base(app.base) && args_contain_def)
+                    || app.args.iter().any(|arg| {
+                        self.is_promise_application_containing_def(*arg, def_id, depth + 1)
+                    })
+            }
+            Some(TypeData::Union(list_id)) => {
+                self.interner.type_list(list_id).iter().any(|member| {
+                    self.is_promise_application_containing_def(*member, def_id, depth + 1)
+                })
+            }
+            _ => false,
+        }
+    }
+
+    fn is_well_known_promise_base(&self, base: TypeId) -> bool {
+        if base == TypeId::PROMISE_BASE {
+            return true;
+        }
+
+        let Some(TypeData::Lazy(def_id)) = self.interner.lookup(base) else {
+            return false;
+        };
+        let Some(name) = self.resolver.get_def_name(def_id) else {
+            return false;
+        };
+        matches!(
+            self.interner.resolve_atom(name).as_str(),
+            "Promise" | "PromiseLike"
+        )
+    }
+
     /// Visit a string manipulation intrinsic type: Uppercase<T>, Lowercase<T>, etc.
     fn visit_string_intrinsic(&mut self, kind: StringIntrinsicKind, type_arg: TypeId) -> TypeId {
         self.evaluate_string_intrinsic(kind, type_arg)
@@ -2197,18 +2837,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// produce tuples.
     fn visit_tuple(&mut self, tuple_list_id: TupleListId, original_type_id: TypeId) -> TypeId {
         use crate::intern::TEMPLATE_LITERAL_EXPANSION_LIMIT;
+        use tsz_common::limits::MAX_REPRESENTABLE_TUPLE_LENGTH;
 
         let elements = self.interner.tuple_list(tuple_list_id);
 
-        // Quick check: does any element need evaluation?
-        let needs_eval = elements
-            .iter()
-            .any(|elem| Self::is_evaluable_meta_type(self.interner, elem.type_id));
+        // Quick check: does any element need evaluation or structural normalization?
+        // Also triggers when a rest element holds a concrete Tuple that must be
+        // flattened — e.g. `[L, ...R]` after infer-binding R to `[1, 2]`.
+        // ReadonlyType(Tuple) rest elements are already caught by is_evaluable_meta_type.
+        let needs_eval = elements.iter().any(|elem| {
+            Self::is_evaluable_meta_type(self.interner, elem.type_id)
+                || (elem.rest
+                    && matches!(self.interner.lookup(elem.type_id), Some(TypeData::Tuple(_))))
+        });
         if !needs_eval {
             return original_type_id;
         }
 
-        let mut result: Vec<TupleElement> = Vec::with_capacity(elements.len());
+        let mut alternatives: Vec<Vec<TupleElement>> = vec![Vec::with_capacity(elements.len())];
         let mut changed = false;
         let mut spread_product = 1usize;
 
@@ -2236,42 +2882,126 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     }
                 }
 
-                if let Some(TypeData::Tuple(inner_list_id)) = self.interner.lookup(evaluated) {
+                let evaluated_inner =
+                    crate::type_queries::data::unwrap_readonly(self.interner, evaluated);
+                if let Some(TypeData::Tuple(inner_list_id)) = self.interner.lookup(evaluated_inner)
+                {
                     let inner_elements = self.interner.tuple_list(inner_list_id);
-                    for inner_elem in inner_elements.iter() {
-                        result.push(*inner_elem);
+                    let current_len = alternatives.iter().map(|a| a.len()).max().unwrap_or(0);
+                    if current_len.saturating_add(inner_elements.len())
+                        > MAX_REPRESENTABLE_TUPLE_LENGTH
+                    {
+                        self.interner.mark_tuple_too_large();
+                        return TypeId::ERROR;
+                    }
+                    for alternative in &mut alternatives {
+                        alternative.extend(inner_elements.iter().copied());
                     }
                     changed = true;
                     continue;
                 } else if let Some(TypeData::Array(element_type)) = self.interner.lookup(evaluated)
                 {
                     // Rest element evaluating to an array stays as rest
-                    result.push(TupleElement {
+                    let rest_element = TupleElement {
                         type_id: element_type,
                         name: elem.name,
                         optional: elem.optional,
                         rest: true,
-                    });
+                    };
+                    for alternative in &mut alternatives {
+                        alternative.push(rest_element);
+                    }
                     if element_type != elem.type_id {
                         changed = true;
                     }
                     continue;
+                } else if let Some(TypeData::Union(list_id)) = self.interner.lookup(evaluated) {
+                    let members = self.interner.type_list(list_id);
+                    let mut spread_alternatives: Vec<Vec<TupleElement>> =
+                        Vec::with_capacity(members.len());
+                    for &member in members.iter() {
+                        match self.interner.lookup(member) {
+                            Some(TypeData::Tuple(inner_list_id)) => {
+                                spread_alternatives
+                                    .push(self.interner.tuple_list(inner_list_id).to_vec());
+                            }
+                            Some(TypeData::Array(element_type)) => {
+                                spread_alternatives.push(vec![TupleElement {
+                                    type_id: element_type,
+                                    name: elem.name,
+                                    optional: elem.optional,
+                                    rest: true,
+                                }]);
+                            }
+                            _ => {
+                                spread_alternatives.push(vec![TupleElement {
+                                    type_id: member,
+                                    name: elem.name,
+                                    optional: elem.optional,
+                                    rest: true,
+                                }]);
+                            }
+                        }
+                    }
+
+                    let alternative_count =
+                        alternatives.len().saturating_mul(spread_alternatives.len());
+                    if alternative_count >= TEMPLATE_LITERAL_EXPANSION_LIMIT {
+                        self.interner.mark_union_too_complex();
+                        return TypeId::ERROR;
+                    }
+
+                    let max_prefix = alternatives.iter().map(|p| p.len()).max().unwrap_or(0);
+                    let max_spread = spread_alternatives
+                        .iter()
+                        .map(|s| s.len())
+                        .max()
+                        .unwrap_or(0);
+                    if max_prefix.saturating_add(max_spread) > MAX_REPRESENTABLE_TUPLE_LENGTH {
+                        self.interner.mark_tuple_too_large();
+                        return TypeId::ERROR;
+                    }
+
+                    let mut distributed = Vec::with_capacity(alternative_count);
+                    for prefix in alternatives {
+                        for spread in &spread_alternatives {
+                            let mut next = Vec::with_capacity(prefix.len() + spread.len());
+                            next.extend_from_slice(&prefix);
+                            next.extend_from_slice(spread);
+                            distributed.push(next);
+                        }
+                    }
+                    alternatives = distributed;
+                    changed = true;
+                    continue;
                 }
             }
 
-            result.push(TupleElement {
+            let next_element = TupleElement {
                 type_id: evaluated,
                 name: elem.name,
                 optional: elem.optional,
                 rest: elem.rest,
-            });
+            };
+            for alternative in &mut alternatives {
+                alternative.push(next_element);
+            }
         }
 
         if !changed {
             return original_type_id;
         }
 
-        self.interner.tuple(result)
+        if alternatives.len() == 1 {
+            self.interner.tuple(alternatives.pop().unwrap_or_default())
+        } else {
+            self.interner.union(
+                alternatives
+                    .into_iter()
+                    .map(|elems| self.interner.tuple(elems))
+                    .collect(),
+            )
+        }
     }
 
     fn tuple_spread_alternative_count(&self, type_id: TypeId) -> Option<usize> {
@@ -2361,8 +3091,16 @@ pub fn evaluate_index_access_with_options(
 
 /// Convenience function for full type evaluation
 pub fn evaluate_type(interner: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    evaluate_type_with_request(interner, EvaluationRequest::new(type_id))
+}
+
+/// Convenience function for full type evaluation with explicit request options.
+pub fn evaluate_type_with_request(
+    interner: &dyn TypeDatabase,
+    request: EvaluationRequest,
+) -> TypeId {
     let mut evaluator = TypeEvaluator::new(interner);
-    evaluator.evaluate(type_id)
+    evaluator.evaluate_request_result(request).into_type_id()
 }
 
 /// Convenience function for evaluating mapped types

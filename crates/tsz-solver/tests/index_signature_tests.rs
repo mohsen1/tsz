@@ -1,7 +1,7 @@
 //! Tests for index signature matching in subtype checking.
 
 use super::*;
-use crate::TypeInterner;
+use crate::construction::TypeInterner;
 // =============================================================================
 // Index Signature Subtyping Tests
 // =============================================================================
@@ -771,5 +771,116 @@ fn test_named_source_still_rejected_by_number_only_any_target() {
         !checker.is_subtype_of(source, target),
         "Named class without numeric members must NOT satisfy a number-only `any` index \
          target (the short-circuit only applies when target also has a string index)"
+    );
+}
+
+/// When `T` is a declared class/interface, `T <: { [k: string]: V }` requires
+/// `T` to also declare a compatible string index signature. Compatible named
+/// properties alone are NOT sufficient.
+#[test]
+fn test_named_class_plain_object_not_assignable_to_string_indexed_target() {
+    use tsz_binder::SymbolId;
+
+    let interner = TypeInterner::new();
+    let class_symbols = [crate::SymbolRef(42)];
+    let is_class = |s: crate::SymbolRef| class_symbols.contains(&s);
+    let mut checker = SubtypeChecker::new(&interner).with_class_check(&is_class);
+
+    let source = interner.object_with_flags_and_symbol(
+        vec![
+            PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER),
+            PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER),
+        ],
+        ObjectFlags::empty(),
+        Some(SymbolId(42)),
+    );
+
+    let target = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+    });
+
+    assert!(
+        !checker.is_subtype_of(source, target),
+        "Named class/interface without string index must NOT be assignable to \
+         {{ [key: string]: number }} even when all properties are compatible"
+    );
+}
+
+/// Same structural rule holds regardless of property names (`x`/`y` instead of `a`/`b`).
+#[test]
+fn test_named_class_plain_object_not_assignable_to_string_indexed_target_alt_names() {
+    use tsz_binder::SymbolId;
+
+    let interner = TypeInterner::new();
+    let class_symbols = [crate::SymbolRef(43)];
+    let is_class = |s: crate::SymbolRef| class_symbols.contains(&s);
+    let mut checker = SubtypeChecker::new(&interner).with_class_check(&is_class);
+
+    let source = interner.object_with_flags_and_symbol(
+        vec![
+            PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER),
+            PropertyInfo::new(interner.intern_string("y"), TypeId::NUMBER),
+        ],
+        ObjectFlags::empty(),
+        Some(SymbolId(43)),
+    );
+
+    let target = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+    });
+
+    assert!(
+        !checker.is_subtype_of(source, target),
+        "Named class/interface without string index must NOT be assignable to \
+         {{ [key: string]: number }} regardless of property names"
+    );
+}
+
+/// Anonymous objects (no symbol) satisfy `{ [k: string]: T }` structurally when
+/// all their properties are compatible — the explicit-index requirement only applies
+/// to declared class/interface types.
+#[test]
+fn test_anonymous_plain_object_still_assignable_to_string_indexed_target_when_compatible() {
+    let interner = TypeInterner::new();
+
+    let source = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("foo"), TypeId::NUMBER),
+        PropertyInfo::new(interner.intern_string("bar"), TypeId::NUMBER),
+    ]);
+
+    let target = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+    });
+
+    assert!(
+        is_subtype_of(&interner, source, target),
+        "Anonymous object with compatible props should still satisfy {{ [k: string]: number }}"
     );
 }

@@ -8,9 +8,9 @@
 
 use std::sync::Arc;
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::objects::apparent::apparent_primitive_shape;
-use crate::operations::iterators::get_iterator_info;
+use crate::operations::iterators::{get_iterator_info, target_has_non_iterable_property_shape};
 use crate::types::{FunctionShape, IntrinsicKind, LiteralValue, ObjectShape, TypeId};
 use crate::visitor::{
     application_id, array_element_type, callable_shape_id, function_shape_id, intersection_list_id,
@@ -20,6 +20,7 @@ use crate::visitor::{
 };
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
+use super::intrinsic_object::{IntrinsicObjectKind, intrinsic_vs_object_super};
 
 /// Create a function type with no parameters and the given return type.
 ///
@@ -158,23 +159,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// ```
     ///
     /// This is used in subtype checking to determine when structural typing rules apply.
-    #[allow(clippy::match_same_arms)]
     pub(crate) fn is_object_keyword_type(&mut self, source: TypeId) -> bool {
-        let allow_any = self.any_propagation.allows_any_at_depth(self.guard.depth());
-        match source {
-            TypeId::ANY if allow_any => return true,
-            TypeId::NEVER | TypeId::ERROR | TypeId::OBJECT => return true,
-            TypeId::UNKNOWN
-            | TypeId::VOID
-            | TypeId::NULL
-            | TypeId::UNDEFINED
-            | TypeId::BOOLEAN
-            | TypeId::NUMBER
-            | TypeId::STRING
-            | TypeId::BIGINT
-            | TypeId::SYMBOL => return false,
-            // Fall through to structural check for ANY in strict mode and all other types
-            _ => {}
+        if source == TypeId::ERROR {
+            return true;
+        }
+        if let Some(kind) = intrinsic_kind(self.interner, source) {
+            let allow_any = self.any_propagation.allows_any_at_depth(self.guard.depth());
+            return match intrinsic_vs_object_super(kind, IntrinsicObjectKind::ObjectKeyword) {
+                Some(result) => result,
+                // `any` is mode-dependent for the `object` keyword.
+                None => allow_any,
+            };
         }
 
         if object_shape_id(self.interner, source).is_some()
@@ -225,10 +220,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// TypeScript's uppercase `Object` accepts all non-nullish values, including
     /// primitives (unlike lowercase `object` which rejects primitives).
     pub(crate) fn is_global_object_interface_type(&mut self, source: TypeId) -> bool {
-        match source {
-            TypeId::ANY | TypeId::NEVER | TypeId::ERROR => return true,
-            TypeId::NULL | TypeId::UNDEFINED | TypeId::VOID | TypeId::UNKNOWN => return false,
-            _ => {}
+        if source == TypeId::ERROR {
+            return true;
+        }
+        if let Some(kind) = intrinsic_kind(self.interner, source) {
+            // `any` (None) is always compatible with the global Object interface.
+            return intrinsic_vs_object_super(kind, IntrinsicObjectKind::GlobalObject)
+                .unwrap_or(true);
         }
 
         if let Some(members) = union_list_id(self.interner, source) {
@@ -439,48 +437,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// let m: number = new Number(); // ❌ Number is not assignable to number
     /// let o: Object = 42;           // ✅ number <: Number <: Object
     /// ```
-    /// Check if a target type has named properties beyond `[Symbol.iterator]`
-    /// and `__@iterator` (the iterable protocol). Properties like `length` and
-    /// numeric index signatures that `String` naturally has are also excluded.
     fn target_has_non_iterable_properties(&mut self, target: TypeId) -> bool {
-        // Arrays/tuples carry methods like `push`/`pop`/`slice` that `String`
-        // does not provide, so they must NOT slip through the iterable
-        // shortcut. Catch all three forms a target can take:
-        //   - `TypeData::Array` / `TypeData::Tuple` (no lib loaded)
-        //   - `ReadonlyType<Array|Tuple>` wrappers
-        //   - `Application(Array, [T])` (the global `Array<T>` interface)
-        // The probe `evaluate_type(target)` covers the Application form by
-        // resolving it to its structural array body. Without this guard,
-        // `string <: string[]` (and via `boolean | string[]` etc.) leaked
-        // through and silently suppressed downstream constraint diagnostics.
-        for probe in [
-            target,
-            readonly_inner_type(self.interner, target).unwrap_or(target),
-            self.evaluate_type(target),
-        ] {
-            if array_element_type(self.interner, probe).is_some()
-                || tuple_list_id(self.interner, probe).is_some()
-            {
-                return true;
-            }
-        }
-        let shape = object_shape_id(self.interner, target)
-            .or_else(|| object_with_index_shape_id(self.interner, target))
-            .map(|id| self.interner.object_shape(id));
-        let Some(shape) = shape else {
-            return false;
-        };
-        let sym_iter = self.interner.intern_string("[Symbol.iterator]");
-        let internal_iter = self.interner.intern_string("__@iterator");
-        let length_atom = self.interner.intern_string("length");
-        for prop in &shape.properties {
-            if prop.name == sym_iter || prop.name == internal_iter || prop.name == length_atom {
-                continue;
-            }
-            // This property is not part of the iterable protocol or String's natural shape
-            return true;
-        }
-        false
+        target_has_non_iterable_property_shape(self.interner, target, |t| self.evaluate_type(t))
     }
 
     pub(crate) fn is_boxed_primitive_subtype(

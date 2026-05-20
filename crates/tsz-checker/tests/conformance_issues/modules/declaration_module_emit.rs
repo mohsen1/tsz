@@ -685,7 +685,6 @@ acceptsM(n);
 }
 
 #[test]
-#[ignore = "merged backlog: needs nested property mismatch to preserve qualified related TS2345"]
 fn test_ts2345_related_property_mismatch_uses_qualified_pair() {
     let code = r#"
 declare namespace N {
@@ -2106,6 +2105,88 @@ declare class MyArray<T> implements Array<T> {
 }
 
 #[test]
+fn test_class_implements_public_dynamic_name_class_shape_no_ts2720() {
+    let source = r#"
+const c0 = "a";
+const c1 = 1;
+const s0 = Symbol();
+
+declare class T1 {
+    [c0]: number;
+    [c1]: string;
+    [s0]: boolean;
+}
+declare class T2 extends T1 {
+}
+
+const c4 = "a";
+const c5 = 1;
+const s2: typeof s0 = s0;
+
+declare class T13 implements T2 {
+    a: number;
+    1: string;
+    [s2]: boolean;
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2720 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2720)
+        .collect::<Vec<_>>();
+    assert!(
+        ts2720.is_empty(),
+        "Expected no TS2720 for public dynamic-name class shape. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_implements_interface_member_mismatch_prefers_ts2416() {
+    let source = r#"
+interface FileSystem {
+  read: number;
+}
+
+class WorkerFS implements FileSystem {
+  read: string;
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2416 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2416)
+        .collect::<Vec<_>>();
+    let ts2420 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2420)
+        .collect::<Vec<_>>();
+    assert!(
+        !ts2416.is_empty(),
+        "Expected TS2416 for implemented member type mismatch. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2420.is_empty(),
+        "Expected member-level TS2416 to suppress broad TS2420. Actual TS2420 diagnostics: {ts2420:#?}"
+    );
+}
+
+#[test]
 fn test_generic_array_extension_global_array_display_uses_shorthand() {
     let source = r#"
 export declare class ObservableArray<T> implements Array<T> {
@@ -2381,7 +2462,6 @@ class C implements I {
 /// prior declaration) and suppressing the TS2403 error. With the fix, `T` is correctly
 /// inferred as `unknown` from the failed argument matching, returning `unknown[]`.
 #[test]
-#[ignore = "merged backlog: needs tsc-compatible failed generic-call inference to also surface TS2403"]
 fn test_ts2403_var_redecl_generic_call_no_contextual_from_prior_decl() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
@@ -2428,5 +2508,153 @@ class C {
     assert!(
         diagnostics.iter().any(|d| d.code == 2403),
         "Expected TS2403 for var re-declaring optional parameter with different type.\nActual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts2460_no_false_positive_when_renamed_and_star_reexport_both_present() {
+    // When a module does both `export { X as Y }` and `export * from "..."` (which
+    // re-exports X), both Y and X are valid imports. tsc accepts this; tsz must not
+    // emit TS2460 for X just because it was also exported as Y.
+    let files = [
+        (
+            "/source.ts",
+            r#"
+export interface User {
+  id: number;
+}
+"#,
+        ),
+        (
+            "/middle.ts",
+            r#"
+import { User } from "./source";
+export { User as IUser };
+export * from "./source";
+"#,
+        ),
+        (
+            "/test.ts",
+            r#"
+import { IUser, User } from "./middle";
+const u1: User = { id: 1 };
+const u2: IUser = u1;
+"#,
+        ),
+    ];
+
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &files,
+        "/test.ts",
+        CheckerOptions {
+            strict: true,
+            module: ModuleKind::ES2020,
+            target: ScriptTarget::ES2020,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2460),
+        "Expected no TS2460 when symbol is also available via star re-export.\nActual: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no diagnostics.\nActual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts2460_no_false_positive_when_direct_export_also_renamed() {
+    // When the declaration is exported under its own name and also re-exported
+    // under an alias, both names are valid import targets. TS2460 is only for
+    // declarations that are local-only except for the renamed export.
+    let files = [
+        (
+            "/main.ts",
+            r#"
+export const namedConst = 42;
+export interface User {
+  id: number;
+}
+export { namedConst as renamedConst, User as Person };
+"#,
+        ),
+        (
+            "/consumer.ts",
+            r#"
+import { namedConst, renamedConst, User, Person } from "./main";
+
+const n: number = namedConst;
+const r: number = renamedConst;
+const u: User = { id: 1 };
+const p: Person = u;
+"#,
+        ),
+    ];
+
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &files,
+        "/consumer.ts",
+        CheckerOptions {
+            strict: true,
+            module: ModuleKind::ES2020,
+            target: ScriptTarget::ES2020,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2460),
+        "Expected no TS2460 when a declaration is directly exported and also renamed.\nActual: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no diagnostics.\nActual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts2460_still_fires_when_only_renamed_export_no_star_reexport() {
+    // Sanity-check: when a module ONLY renames the export (no star re-export that
+    // brings the original name back), importing the original name must still be TS2460.
+    let files = [
+        (
+            "/source.ts",
+            r#"
+export interface Widget {
+  id: number;
+}
+"#,
+        ),
+        (
+            "/middle.ts",
+            r#"
+import { Widget } from "./source";
+export { Widget as IWidget };
+"#,
+        ),
+        (
+            "/test.ts",
+            r#"
+import { Widget } from "./middle";
+"#,
+        ),
+    ];
+
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &files,
+        "/test.ts",
+        CheckerOptions {
+            strict: true,
+            module: ModuleKind::ES2020,
+            target: ScriptTarget::ES2020,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2460),
+        "Expected TS2460 when symbol is only exported under a renamed alias.\nActual: {diagnostics:#?}"
     );
 }

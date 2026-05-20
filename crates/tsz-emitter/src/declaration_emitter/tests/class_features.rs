@@ -133,6 +133,50 @@ fn test_optional_parenthesized_parameter_property_preserves_explicit_undefined()
 }
 
 #[test]
+fn test_optional_parameter_property_preserves_semantic_undefined_type_node() {
+    let output = emit_dts(
+        r#"
+    type Map = {} & { [P in string]: any };
+    type MapOrUndefined = Map | undefined | "dummy";
+    export class C {
+        constructor(
+            public value?: Exclude<MapOrUndefined, "dummy">,
+            public parenthesized?: (MapOrUndefined),
+            public unionUtility?: Exclude<MapOrUndefined, "dummy"> | "fallback",
+        ) {}
+    }
+    "#,
+    );
+
+    assert!(
+        output.contains(r#"value?: Exclude<MapOrUndefined, "dummy">;"#),
+        "Expected parameter property to preserve utility type that already includes undefined: {output}"
+    );
+    assert!(
+        output.contains(r#"constructor(value?: Exclude<MapOrUndefined, "dummy">"#),
+        "Expected constructor parameter to preserve utility type that already includes undefined: {output}"
+    );
+    assert!(
+        output.contains(r#"parenthesized?: MapOrUndefined;"#)
+            || output.contains(r#"parenthesized?: (MapOrUndefined);"#),
+        "Expected parameter property to preserve parenthesized alias that already includes undefined: {output}"
+    );
+    assert!(
+        output.contains(r#"unionUtility?: Exclude<MapOrUndefined, "dummy"> | "fallback";"#),
+        "Expected parameter property to preserve union with utility branch that already includes undefined: {output}"
+    );
+    assert!(
+        !output.contains(r#"Exclude<MapOrUndefined, "dummy"> | undefined"#),
+        "Expected no duplicate undefined branch for semantic undefined type node: {output}"
+    );
+    assert!(
+        !output.contains(r#"MapOrUndefined | undefined"#)
+            && !output.contains(r#"(MapOrUndefined) | undefined"#),
+        "Expected no duplicate undefined branch for parenthesized alias: {output}"
+    );
+}
+
+#[test]
 fn test_optional_function_type_preserves_explicit_undefined() {
     let output = emit_dts(
         r#"
@@ -167,6 +211,23 @@ fn test_parameter_property_initializer_infers_property_type() {
     assert!(
         output.contains("constructor(x?: string);"),
         "Expected initializer-backed parameter property constructor to stay optional: {output}"
+    );
+}
+
+#[test]
+fn test_js_async_class_field_arrow_emits_promise_return() {
+    let output = emit_js_dts(
+        r#"
+class Foo {
+    b = async () => {
+        await Promise.resolve(1);
+    }
+}
+"#,
+    );
+    assert!(
+        output.contains("b: () => Promise<void>;"),
+        "Expected async class field arrow to emit a Promise return: {output}"
     );
 }
 
@@ -308,7 +369,6 @@ fn test_optional_computed_method_in_class_emits_optional_property_function_type(
 }
 
 #[test]
-#[ignore = "current main CI restore: pre-existing red assertion exposed by Rust 1.95 build fix"]
 fn test_static_computed_methods_emit_body_inferred_return_types() {
     let output = emit_dts(
         r#"
@@ -338,7 +398,6 @@ fn test_static_computed_methods_emit_body_inferred_return_types() {
 }
 
 #[test]
-#[ignore = "current main CI restore: pre-existing red assertion exposed by Rust 1.95 build fix"]
 fn test_simple_computed_names_match_declaration_baseline_shape() {
     let output = emit_dts(
         r#"

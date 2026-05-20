@@ -1,13 +1,14 @@
 use crate::query_boundaries::assignability::{
     AssignabilityQueryInputs, ExcessPropertiesKind, check_assignable_gate_with_overrides,
     classify_for_excess_properties, get_keyof_type, get_string_literal_value, is_keyof_type,
-    is_type_parameter_like, object_shape_for_type,
+    is_type_parameter_like, object_shape_for_type, suppress_raw_excess_property_failure_if_needed,
 };
 use crate::query_boundaries::common::{TypeSubstitution, instantiate_type, type_param_info};
 use crate::state::{CheckerOverrideProvider, CheckerState};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -24,8 +25,89 @@ impl<'a> CheckerState<'a> {
         if decl.type_annotation == NodeIndex::NONE {
             return false;
         }
-        let annotation_text = self.get_source_text_for_node(decl.type_annotation);
-        annotation_text.contains('<') && annotation_text.contains("any")
+        self.type_annotation_contains_explicit_any_type_argument(decl.type_annotation)
+    }
+
+    fn type_annotation_contains_explicit_any_type_argument(
+        &self,
+        type_annotation: NodeIndex,
+    ) -> bool {
+        let mut stack = vec![type_annotation];
+        while let Some(current) = stack.pop() {
+            let Some(node) = self.ctx.arena.get(current) else {
+                continue;
+            };
+            if node.kind == syntax_kind_ext::TYPE_REFERENCE
+                && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+                && let Some(type_args) = &type_ref.type_arguments
+                && type_args
+                    .nodes
+                    .iter()
+                    .any(|&arg| self.type_node_contains_any_keyword(arg))
+            {
+                return true;
+            }
+            stack.extend(self.ctx.arena.get_children(current));
+        }
+        false
+    }
+
+    fn type_node_contains_any_keyword(&self, type_node: NodeIndex) -> bool {
+        let mut stack = vec![type_node];
+        while let Some(current) = stack.pop() {
+            let Some(node) = self.ctx.arena.get(current) else {
+                continue;
+            };
+            if node.kind == SyntaxKind::AnyKeyword as u16
+                || self.is_bare_any_keyword_type_reference(node)
+            {
+                return true;
+            }
+            stack.extend(self.ctx.arena.get_children(current));
+        }
+        false
+    }
+
+    fn is_bare_any_keyword_type_reference(&self, node: &tsz_parser::parser::node::Node) -> bool {
+        if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return false;
+        }
+        let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
+            return false;
+        };
+        if type_ref
+            .type_arguments
+            .as_ref()
+            .is_some_and(|args| !args.nodes.is_empty())
+        {
+            return false;
+        }
+        let Some(name_node) = self.ctx.arena.get(type_ref.type_name) else {
+            return false;
+        };
+        if name_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        self.ctx
+            .arena
+            .get_identifier(name_node)
+            .is_some_and(|ident| ident.escaped_text == "any")
+    }
+
+    pub(crate) fn generic_indexed_access_argument_surface(&self, type_id: TypeId) -> bool {
+        self.generic_indexed_access_argument_surface_inner(type_id)
+            || self
+                .ctx
+                .types
+                .get_display_alias(type_id)
+                .is_some_and(|alias| self.generic_indexed_access_argument_surface_inner(alias))
+    }
+
+    fn generic_indexed_access_argument_surface_inner(&self, type_id: TypeId) -> bool {
+        crate::query_boundaries::common::contains_generic_indexed_access_surface(
+            self.ctx.types,
+            type_id,
+        )
     }
 
     fn excess_property_target_score(&self, type_id: TypeId) -> (u8, usize) {
@@ -121,8 +203,9 @@ impl<'a> CheckerState<'a> {
         let is_weak_union = outcome
             .map(|o| o.weak_union_violation)
             .unwrap_or_else(|| self.is_weak_union_violation(source, target));
+        // TS2559 takes priority over TS2353 — do not skip when a weak-type violation applies.
         if is_weak_union {
-            return true;
+            return false;
         }
 
         // Use the canonical property classification from the RelationOutcome
@@ -147,9 +230,7 @@ impl<'a> CheckerState<'a> {
 
         // No pre-computed outcome available. Build one through the canonical
         // boundary so we never fall back to checker-local property enumeration.
-        use crate::query_boundaries::assignability::RelationRequest;
-        let (ps, pt) = self.prepare_assignability_inputs(source, target);
-        let built_outcome = self.execute_relation_request(&RelationRequest::assign(ps, pt));
+        let built_outcome = self.assign_relation_outcome(source, target);
         if let Some(ref cls) = built_outcome.property_classification {
             if cls.excess_properties.is_empty() {
                 return false;
@@ -161,6 +242,37 @@ impl<'a> CheckerState<'a> {
         }
         // No property classification available (e.g., non-object types) → don't skip
         false
+    }
+
+    /// Run excess property checking when `source` is a fresh object literal or fresh object type.
+    /// Returns `true` if an excess-property diagnostic was emitted.
+    fn check_excess_properties_for_fresh_source(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        source_idx: NodeIndex,
+    ) -> bool {
+        let is_direct_literal = self
+            .ctx
+            .arena
+            .get(source_idx)
+            .is_some_and(|n| n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION);
+        let is_fresh =
+            crate::query_boundaries::common::is_fresh_object_type(self.ctx.types, source);
+        if !(is_direct_literal || is_fresh) {
+            return false;
+        }
+        let node_idx = if is_direct_literal {
+            source_idx
+        } else {
+            // Fresh type from a non-literal expression (e.g. `return obj = { x: 1, y: 2 }`):
+            // walk through binary assignment expressions to find the object literal.
+            self.find_rhs_object_literal(source_idx)
+                .unwrap_or(source_idx)
+        };
+        let diags_before = self.ctx.diagnostics.len();
+        self.check_object_literal_excess_properties(source, target, node_idx);
+        self.ctx.diagnostics.len() > diags_before
     }
 
     /// Check assignability and emit the standard TS2322/TS2345-style diagnostic when needed.
@@ -207,61 +319,32 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Track whether excess property checking emits diagnostics.
-        // When TS2353 is emitted for excess properties, tsc does NOT also emit TS1360.
-        let mut had_excess_property_error = false;
-        {
-            let is_direct_literal = self
-                .ctx
-                .arena
-                .get(source_idx)
-                .is_some_and(|n| n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION);
-            if is_direct_literal {
-                let diags_before = self.ctx.diagnostics.len();
-                self.check_object_literal_excess_properties(source, target, source_idx);
-                had_excess_property_error = self.ctx.diagnostics.len() > diags_before;
-            } else if crate::query_boundaries::common::is_fresh_object_type(self.ctx.types, source)
-            {
-                // Fresh type from non-literal expression (e.g., `return obj = { x: 1, y: 2 }`).
-                // Walk through binary assignment expressions to find the object literal.
-                let literal_idx = self.find_rhs_object_literal(source_idx);
-                let diags_before = self.ctx.diagnostics.len();
-                self.check_object_literal_excess_properties(
-                    source,
-                    target,
-                    literal_idx.unwrap_or(source_idx),
-                );
-                had_excess_property_error = self.ctx.diagnostics.len() > diags_before;
-            }
-        }
+        // TS2353 and TS1360 are mutually exclusive; skip TS1360 when EPC fires.
+        let had_excess_property_error =
+            self.check_excess_properties_for_fresh_source(source, target, source_idx);
 
-        if self.is_assignable_to(source, target) {
+        if self.diagnostic_relation_boolean_guard(source, target) {
             return true;
         }
         if self.is_nested_same_wrapper_application_assignment(source, target) {
             return true;
         }
 
-        // Build a RelationRequest so the weak-union hint is collected alongside
+        // Use the canonical assign relation outcome so the weak-union hint is collected alongside
         // the failure reason, avoiding a redundant solver round-trip in
         // should_skip_weak_union_error's fallback path.
-        {
-            use crate::query_boundaries::assignability::RelationRequest;
-            let (ps, pt) = self.prepare_assignability_inputs(source, target);
-            let request = RelationRequest::assign(ps, pt);
-            let outcome = self.execute_relation_request(&request);
-            if self.should_skip_weak_union_error_with_outcome(
-                source,
-                target,
-                source_idx,
-                Some(&outcome),
-            ) {
-                return true;
-            }
-            if outcome.weak_union_violation {
-                self.error_no_common_properties(source, target, diag_idx);
-                return false;
-            }
+        let outcome = self.assign_relation_outcome(source, target);
+        if self.should_skip_weak_union_error_with_outcome(
+            source,
+            target,
+            source_idx,
+            Some(&outcome),
+        ) {
+            return true;
+        }
+        if outcome.weak_union_violation {
+            self.error_no_common_properties(source, target, diag_idx);
+            return false;
         }
 
         // tsc 6.0: `satisfies` ignores readonly-to-mutable mismatches.
@@ -270,7 +353,7 @@ impl<'a> CheckerState<'a> {
         // try checking T against the target.
         if let Some(inner) =
             crate::query_boundaries::common::readonly_inner_type(self.ctx.types, source)
-            && self.is_assignable_to(inner, target)
+            && self.diagnostic_relation_boolean_guard(inner, target)
         {
             return true;
         }
@@ -296,6 +379,19 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // For array literal sources, drill into element-level errors, matching
+        // tsc's `elaborateElementwise` behavior. Check the unwrapped source so
+        // equivalent forms like `([10, "20"]) satisfies number[]` and
+        // `([10, "20"] as (number | string)[]) satisfies number[]` use the same
+        // element elaboration path.
+        let unwrapped_source_idx = self.ctx.arena.skip_parenthesized_and_assertions(source_idx);
+        if let Some(node) = self.ctx.arena.get(unwrapped_source_idx)
+            && node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+            && self.try_elaborate_assignment_source_error(source_idx, target)
+        {
+            return false;
+        }
+
         self.error_type_does_not_satisfy_the_expected_type(source, target, diag_idx, keyword_pos);
         false
     }
@@ -316,15 +412,7 @@ impl<'a> CheckerState<'a> {
             None => return false,
         };
 
-        // Get the index signature value type from the target
         let index_value_type = target_shape.string_index.as_ref().map(|sig| sig.value_type);
-
-        let Some(index_value_type) = index_value_type else {
-            // No string index signature — try elaborating against named target properties.
-            // For targets with named properties (like interfaces), check if there are
-            // missing required properties (TS2741 elaboration) — handled elsewhere.
-            return false;
-        };
 
         // Iterate over the object literal's AST properties and check each value
         let Some(lit_data) = self.ctx.arena.get_literal_expr_at(source_idx) else {
@@ -338,30 +426,76 @@ impl<'a> CheckerState<'a> {
             let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
                 continue;
             };
-            if elem_node.kind != syntax_kind_ext::PROPERTY_ASSIGNMENT {
-                continue;
-            }
-            let Some(prop_data) = self.ctx.arena.get_property_assignment(elem_node) else {
+            let (prop_name_idx, prop_value_idx) = match elem_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                    let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) else {
+                        continue;
+                    };
+                    (prop.name, prop.initializer)
+                }
+                k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                    let Some(prop) = self.ctx.arena.get_shorthand_property(elem_node) else {
+                        continue;
+                    };
+                    (prop.name, prop.name)
+                }
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    let Some(method) = self.ctx.arena.get_method_decl(elem_node) else {
+                        continue;
+                    };
+                    (method.name, elem_idx)
+                }
+                _ => continue,
+            };
+            let target_prop_type = self
+                .get_property_name(prop_name_idx)
+                .and_then(|name| {
+                    let name_atom = self.ctx.types.intern_string(&name);
+                    target_shape
+                        .properties
+                        .iter()
+                        .find(|prop| prop.name == name_atom)
+                        .map(|prop| {
+                            if prop.write_type == TypeId::NONE {
+                                prop.type_id
+                            } else {
+                                prop.write_type
+                            }
+                        })
+                })
+                .or(index_value_type);
+            let Some(target_prop_type) = target_prop_type else {
                 continue;
             };
 
             // Get the type of the property value (the initializer)
-            let prop_value_type = self.get_type_of_node(prop_data.initializer);
+            let prop_value_type = self.get_type_of_node(prop_value_idx);
             self.ensure_relation_input_ready(prop_value_type);
-            self.ensure_relation_input_ready(index_value_type);
+            self.ensure_relation_input_ready(target_prop_type);
 
             // Check nested object literal excess properties FIRST — tsc prioritizes
             // excess property errors (TS2353) over assignability errors (TS2322).
             // e.g., `{ r: 0, g: 0, d: 0 }` vs `Color` reports "d does not exist" (TS2353)
             // rather than "missing b" (TS2322).
-            if let Some(val_node) = self.ctx.arena.get(prop_data.initializer)
+            if let Some(val_node) = self.ctx.arena.get(prop_value_idx)
                 && val_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
             {
+                let evaluated_target_prop_type = self.evaluate_type_with_env(target_prop_type);
+                if crate::query_boundaries::common::type_is_conditional_type_result_with_unresolved_inference(
+                    self.ctx.types,
+                    target_prop_type,
+                ) || crate::query_boundaries::common::type_is_conditional_type_result_with_unresolved_inference(
+                    self.ctx.types,
+                    evaluated_target_prop_type,
+                ) {
+                    continue;
+                }
+
                 let diags_before = self.ctx.diagnostics.len();
                 self.check_object_literal_excess_properties(
                     prop_value_type,
-                    index_value_type,
-                    prop_data.initializer,
+                    target_prop_type,
+                    prop_value_idx,
                 );
                 if self.ctx.diagnostics.len() > diags_before {
                     // Excess property errors were reported — skip assignability check
@@ -369,13 +503,13 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            if !self.is_assignable_to(prop_value_type, index_value_type) {
+            if !self.diagnostic_relation_boolean_guard(prop_value_type, target_prop_type) {
                 // Report TS2322 at the property name (use _with_anchor to avoid
                 // assignment_diagnostic_anchor_idx walking up to the variable declaration)
                 self.error_type_not_assignable_at_with_anchor(
                     prop_value_type,
-                    index_value_type,
-                    prop_data.name,
+                    target_prop_type,
+                    prop_name_idx,
                 );
             }
         }
@@ -449,7 +583,7 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
             return true;
         }
-        if self.is_assignable_to(source, target) {
+        if self.diagnostic_relation_boolean_guard(source, target) {
             return true;
         }
         let display_target = self.ctx.types.intersect_types_raw2(source, target);
@@ -484,7 +618,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check assignability using the actual types (return types)
-        if self.is_assignable_to(source, target) {
+        if self.diagnostic_relation_boolean_guard(source, target) {
             return true;
         }
 
@@ -607,48 +741,25 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Check excess properties on fresh object types BEFORE the assignability
-        // check. Fresh types from chained assignments (e.g., `return obj = { x: 1, y: 2 }`)
+        // Check excess properties on fresh object types BEFORE the assignability check.
+        // Fresh types from chained assignments (e.g. `return obj = { x: 1, y: 2 }`)
         // are structurally assignable but should still trigger TS2353.
-        let mut had_excess_property_error = false;
-        {
-            let is_direct_literal = self
-                .ctx
-                .arena
-                .get(source_idx)
-                .is_some_and(|n| n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION);
-            if is_direct_literal {
-                let diags_before = self.ctx.diagnostics.len();
-                self.check_object_literal_excess_properties(source, target, source_idx);
-                had_excess_property_error = self.ctx.diagnostics.len() > diags_before;
-            } else if crate::query_boundaries::common::is_fresh_object_type(self.ctx.types, source)
-            {
-                let literal_idx = self.find_rhs_object_literal(source_idx);
-                let diags_before = self.ctx.diagnostics.len();
-                self.check_object_literal_excess_properties(
-                    source,
-                    target,
-                    literal_idx.unwrap_or(source_idx),
-                );
-                had_excess_property_error = self.ctx.diagnostics.len() > diags_before;
-            }
-        }
+        let had_excess_property_error =
+            self.check_excess_properties_for_fresh_source(source, target, source_idx);
         if had_excess_property_error {
             return false;
         }
 
-        // Canonical relation path: execute a RelationRequest to get both the
-        // assignability result and structured failure info in one boundary call.
-
-        // Reset the relation depth flag before the assignability check so we
-        // can detect fresh depth exceedance from this particular relation.
-        self.ctx.relation_depth_exceeded.set(false);
-        let assignable = self.is_assignable_to(source, target);
-        // TS2859: if the solver hit its recursion/complexity limit during the check
-        // (including the constituent-count overflow guard in check_subtype_inner),
-        // emit "Excessive complexity comparing types" regardless of whether the
-        // relation technically succeeded or failed.
-        if self.ctx.relation_depth_exceeded.get() {
+        // Reset overflow flags before the assignability check so we detect fresh
+        // exceedance from this particular relation rather than a prior one.
+        self.ctx
+            .relation_overflow
+            .set(crate::context::RelationOverflowFlags::default());
+        let assignable = self.diagnostic_relation_boolean_guard(source, target);
+        // tsc emits TS2859 ("Excessive complexity") for all relation-checker
+        // overflows regardless of whether it was depth or iteration that fired.
+        // TS2321 ("Excessive stack depth") fires from a separate mechanism.
+        if !assignable && self.ctx.relation_overflow.get().has_overflow() {
             let source_name = self.format_type_diagnostic(source);
             let target_name = self.format_type_diagnostic(target);
             self.error_at_node(
@@ -677,16 +788,9 @@ impl<'a> CheckerState<'a> {
             }
             return true;
         }
-
-        // Build a RelationRequest for the Assign kind so the weak-union hint
+        // Use the canonical assign relation outcome so the weak-union hint
         // can be collected alongside the failure reason.
-        let request = {
-            use crate::query_boundaries::assignability::RelationRequest;
-            let (prepared_source, prepared_target) =
-                self.prepare_assignability_inputs(source, target);
-            RelationRequest::assign(prepared_source, prepared_target)
-        };
-        let outcome = self.execute_relation_request(&request);
+        let outcome = self.assign_relation_outcome(source, target);
 
         // Use the pre-computed RelationOutcome to avoid re-enumerating
         // properties and re-checking assignability inside the skip logic.
@@ -727,6 +831,35 @@ impl<'a> CheckerState<'a> {
         }
         self.error_type_not_assignable_with_reason_at(source, target, diag_idx);
         false
+    }
+
+    fn parameter_type_annotation_anchor_for_identifier_source(
+        &self,
+        source_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let source_idx = self.ctx.arena.skip_parenthesized_and_assertions(source_idx);
+        let source_node = self.ctx.arena.get(source_idx)?;
+        if source_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let sym_id = self.resolve_identifier_symbol(source_idx)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let mut decl_idx = symbol.value_declaration;
+        if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+            && decl_node.kind == SyntaxKind::Identifier as u16
+            && let Some(ext) = self.ctx.arena.get_extended(decl_idx)
+            && ext.parent.is_some()
+        {
+            decl_idx = ext.parent;
+        }
+
+        let decl_node = self.ctx.arena.get(decl_idx)?;
+        if decl_node.kind != syntax_kind_ext::PARAMETER {
+            return None;
+        }
+        let annotation = self.ctx.arena.get_parameter(decl_node)?.type_annotation;
+        annotation.is_some().then_some(annotation)
     }
 
     fn error_type_not_assignable_at_with_raw_display_types(
@@ -884,22 +1017,34 @@ impl<'a> CheckerState<'a> {
             self.error_type_not_assignable_with_reason_at_anchor(source, target, diag_idx);
             return false;
         }
-        if self.is_assignable_to(source, target) {
+        if self.diagnostic_relation_boolean_guard(source, target) {
             return true;
         }
         if self.is_nested_same_wrapper_application_assignment(source, target) {
             return true;
         }
 
-        // Build a RelationRequest so the weak-union hint is collected alongside
+        // TS2589: A homomorphic self-referential mapped-type alias applied to a tuple
+        // argument and checked against a tuple target causes infinite instantiation.
+        // tsc detects the depth limit during instantiation and emits TS2589 here
+        // instead of letting the structural check fall through to TS2322.
+        if self.source_is_homomorphic_self_mapped_tuple_arg_vs_tuple_target(source, target) {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            let anchor_idx = self
+                .parameter_type_annotation_anchor_for_identifier_source(source_idx)
+                .unwrap_or(source_idx);
+            self.error_at_node(
+                anchor_idx,
+                diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+            );
+            return false;
+        }
+
+        // Use the canonical assign relation outcome so the weak-union hint is collected alongside
         // the failure reason, avoiding a redundant solver round-trip in
         // should_skip_weak_union_error's fallback path.
-        let request = {
-            use crate::query_boundaries::assignability::RelationRequest;
-            let (ps, pt) = self.prepare_assignability_inputs(source, target);
-            RelationRequest::assign(ps, pt)
-        };
-        let outcome = self.execute_relation_request(&request);
+        let outcome = self.assign_relation_outcome(source, target);
         if self.should_skip_weak_union_error_with_outcome(
             source,
             target,
@@ -937,19 +1082,14 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
             return true;
         }
-        if self.is_assignable_to(source, target) {
+        if self.diagnostic_relation_boolean_guard(source, target) {
             return true;
         }
 
-        // Build a RelationRequest so the weak-union hint is collected alongside
+        // Use the canonical assign relation outcome so the weak-union hint is collected alongside
         // the failure reason, avoiding a redundant solver round-trip in
         // should_skip_weak_union_error's fallback path.
-        let request = {
-            use crate::query_boundaries::assignability::RelationRequest;
-            let (ps, pt) = self.prepare_assignability_inputs(source, target);
-            RelationRequest::assign(ps, pt)
-        };
-        let outcome = self.execute_relation_request(&request);
+        let outcome = self.assign_relation_outcome(source, target);
         if self.should_skip_weak_union_error_with_outcome(
             source,
             target,
@@ -985,19 +1125,14 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
             return true;
         }
-        if self.is_assignable_to(source, target) {
+        if self.diagnostic_relation_boolean_guard(source, target) {
             return true;
         }
 
-        // Build a RelationRequest so the weak-union hint is collected alongside
+        // Use the canonical assign relation outcome so the weak-union hint is collected alongside
         // the failure reason, avoiding a redundant solver round-trip in
         // should_skip_weak_union_error's fallback path.
-        let request = {
-            use crate::query_boundaries::assignability::RelationRequest;
-            let (ps, pt) = self.prepare_assignability_inputs(source, target);
-            RelationRequest::assign(ps, pt)
-        };
-        let outcome = self.execute_relation_request(&request);
+        let outcome = self.assign_relation_outcome(source, target);
         if self.should_skip_weak_union_error_with_outcome(
             source,
             target,
@@ -1035,10 +1170,13 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_assignability_for_parse_recovery(arg_idx, arg_idx) {
             return true;
         }
+        if target == TypeId::NEVER && self.generic_indexed_access_argument_surface(source) {
+            return true;
+        }
         let checker_only_mismatch = self
             .checker_only_assignability_failure_reason(source, target)
             .is_some();
-        if self.is_assignable_to(source, target) && !checker_only_mismatch {
+        if self.diagnostic_relation_boolean_guard(source, target) && !checker_only_mismatch {
             return true;
         }
         if self.should_suppress_partial_self_argument_mismatch(source, target) {
@@ -1053,15 +1191,9 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // Build a CallArg relation request to collect the weak-union hint
+        // Use the canonical call-argument relation outcome to collect the weak-union hint
         // without a separate solver call.
-        let request = {
-            use crate::query_boundaries::assignability::RelationRequest;
-            let (prepared_source, prepared_target) =
-                self.prepare_assignability_inputs(source, target);
-            RelationRequest::call_arg(prepared_source, prepared_target)
-        };
-        let outcome = self.execute_relation_request(&request);
+        let outcome = self.call_arg_relation_outcome(source, target);
 
         if self.should_skip_weak_union_error_with_outcome(source, target, arg_idx, Some(&outcome)) {
             return true;
@@ -1130,27 +1262,99 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> bool {
-        let target_display = self.format_type_for_assignability_message(target);
-        let Some(inner) = target_display
-            .strip_prefix("Partial<")
-            .and_then(|display| display.strip_suffix('>'))
-        else {
+        let Some(inner) = self.partial_self_argument_inner_type(target) else {
             return false;
         };
 
-        let source_display = self.format_type_for_assignability_message(source);
-        if source_display == inner {
-            return true;
+        self.type_matches_partial_self_inner(source, inner)
+    }
+
+    fn partial_self_argument_inner_type(&mut self, target: TypeId) -> Option<TypeId> {
+        let (base, args) = self.application_info_or_display_alias(target).or_else(|| {
+            let evaluated = self.evaluate_type_for_assignability(target);
+            self.application_info_or_display_alias(evaluated)
+        })?;
+        self.partial_like_application_inner_arg(base, &args)
+    }
+
+    fn partial_like_application_inner_arg(&self, base: TypeId, args: &[TypeId]) -> Option<TypeId> {
+        if args.len() == 1 && self.application_base_is_lib_partial(base) {
+            return args.first().copied();
         }
 
-        let source_alias = self.ctx.types.get_display_alias(source);
-        if source_alias
-            .is_some_and(|alias| self.format_type_for_assignability_message(alias) == inner)
+        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)
+            .or_else(|| self.ctx.definition_store.find_def_for_type(base))?;
+        let def = self.ctx.definition_store.get(def_id)?;
+        if def.kind != tsz_solver::def::DefKind::TypeAlias || def.type_params.len() != args.len() {
+            return None;
+        }
+        let inner = self.optional_homomorphic_mapped_inner_type(def.body?)?;
+        let param = type_param_info(self.ctx.types, inner)?;
+        let arg_idx = def
+            .type_params
+            .iter()
+            .position(|type_param| type_param.name == param.name)?;
+        args.get(arg_idx).copied()
+    }
+
+    fn optional_homomorphic_mapped_inner_type(&self, type_id: TypeId) -> Option<TypeId> {
+        let mapped = crate::query_boundaries::common::mapped_type_info(self.ctx.types, type_id)?;
+        if mapped.optional_modifier == Some(tsz_solver::MappedModifier::Remove)
+            || mapped.optional_modifier.is_none()
         {
-            return true;
+            return None;
         }
 
-        self.partial_inner_alias_instantiates_to_source(inner, source)
+        let inner =
+            crate::query_boundaries::common::keyof_inner_type(self.ctx.types, mapped.constraint)?;
+        let (template_object, _) =
+            crate::query_boundaries::common::index_access_types(self.ctx.types, mapped.template)?;
+        (template_object == inner).then_some(inner)
+    }
+
+    fn application_base_is_lib_partial(&self, base: TypeId) -> bool {
+        let Some(partial_def) = self.ctx.actual_lib_def_id_for_bare_name("Partial") else {
+            return false;
+        };
+        crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)
+            .or_else(|| self.ctx.definition_store.find_def_for_type(base))
+            == Some(partial_def)
+    }
+
+    fn type_matches_partial_self_inner(&mut self, source: TypeId, inner: TypeId) -> bool {
+        if source == inner {
+            return true;
+        }
+        self.ctx.types.get_display_alias(source) == Some(inner)
+            || self.partial_inner_alias_instantiates_to_source(inner, source)
+    }
+
+    fn partial_inner_alias_instantiates_to_source(
+        &mut self,
+        inner: TypeId,
+        source: TypeId,
+    ) -> bool {
+        let Some((base, args)) = self.application_info_or_display_alias(inner) else {
+            return false;
+        };
+        let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)
+            .or_else(|| self.ctx.definition_store.find_def_for_type(base))
+        else {
+            return false;
+        };
+        let Some(def) = self.ctx.definition_store.get(def_id) else {
+            return false;
+        };
+        if def.kind != tsz_solver::def::DefKind::TypeAlias || def.type_params.len() != args.len() {
+            return false;
+        }
+        let Some(body) = def.body else {
+            return false;
+        };
+
+        let substitution = TypeSubstitution::from_args(self.ctx.types, &def.type_params, &args);
+        let instantiated = instantiate_type(self.ctx.types, body, &substitution);
+        source == instantiated || self.ctx.types.get_display_alias(source) == Some(instantiated)
     }
 
     fn should_suppress_self_referential_generic_function_arg_mismatch(
@@ -1403,43 +1607,6 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    fn partial_inner_alias_instantiates_to_source(&mut self, inner: &str, source: TypeId) -> bool {
-        let Some((alias_name, arg_names)) = parse_simple_type_application_display(inner) else {
-            return false;
-        };
-        let alias_atom = self.ctx.types.intern_string(alias_name);
-        let Some(def_ids) = self.ctx.definition_store.find_defs_by_name(alias_atom) else {
-            return false;
-        };
-        let type_args: Vec<_> = arg_names
-            .iter()
-            .filter_map(|arg_name| self.ctx.type_parameter_scope.get(*arg_name).copied())
-            .collect();
-        if type_args.len() != arg_names.len() {
-            return false;
-        }
-
-        def_ids.into_iter().any(|def_id| {
-            let Some(def) = self.ctx.definition_store.get(def_id) else {
-                return false;
-            };
-            if def.kind != tsz_solver::def::DefKind::TypeAlias
-                || def.type_params.len() != type_args.len()
-            {
-                return false;
-            }
-            let Some(body) = def.body else {
-                return false;
-            };
-            let substitution =
-                TypeSubstitution::from_args(self.ctx.types, &def.type_params, &type_args);
-            let instantiated = instantiate_type(self.ctx.types, body, &substitution);
-            instantiated == source
-                || self.evaluate_type_for_assignability(instantiated)
-                    == self.evaluate_type_for_assignability(source)
-        })
-    }
-
     /// Returns true when a bivariant-assignability mismatch should produce a diagnostic.
     ///
     /// Uses the bivariant relation
@@ -1463,15 +1630,29 @@ impl<'a> CheckerState<'a> {
         {
             return true;
         }
-        !self.is_assignable_to_bivariant(source, target)
-            && !self.should_skip_weak_union_error(source, target, source_idx)
+        if self.is_assignable_to_bivariant(source, target) {
+            return false;
+        }
+
+        // Route the weak-union check through RelationRequest with the
+        // BivariantCallbacks kind so the pre-computed outcome avoids a
+        // redundant solver round-trip in the fallback path.
+        //
+        // `should_skip_weak_union_error_with_outcome` is the sole authority
+        // over the weak-union skip decision — including for `weak_union_violation`
+        // cases. Do not add an outer `!outcome.weak_union_violation` gate here;
+        // that guard suppresses TS2416 for non-object-literal sources (e.g.
+        // class property declarations) where the skip should NOT fire.
+        let outcome = self.bivariant_callbacks_relation_outcome(source, target);
+        !self.should_skip_weak_union_error_with_outcome(source, target, source_idx, Some(&outcome))
     }
 
     /// Check bidirectional assignability.
     ///
     /// Useful in checker locations that need type comparability/equivalence-like checks.
     pub(crate) fn are_mutually_assignable(&mut self, left: TypeId, right: TypeId) -> bool {
-        self.is_assignable_to(left, right) && self.is_assignable_to(right, left)
+        self.diagnostic_relation_boolean_guard(left, right)
+            && self.diagnostic_relation_boolean_guard(right, left)
     }
 
     /// Check if two object types with call/construct signatures are comparable
@@ -1891,6 +2072,16 @@ impl<'a> CheckerState<'a> {
         let Some(source_shape) = object_shape_for_type(self.ctx.types, source_resolved) else {
             return false;
         };
+
+        // When target is an intersection, source must overlap with every member.
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, target_resolved)
+        {
+            return members
+                .iter()
+                .all(|&member| self.object_properties_are_comparable(source, member));
+        }
+
         let Some(target_shape) = object_shape_for_type(self.ctx.types, target_resolved) else {
             return false;
         };
@@ -1937,6 +2128,24 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> crate::query_boundaries::assignability::AssignabilityFailureAnalysis {
+        // `S[T1]` vs `S[T2]` where T1/T2 are distinct type parameters
+        // collapses to the same evaluated shape (the constraint), so the
+        // structural pipeline loses the IndexAccess form before it can
+        // produce the TS2322 + TS5075 elaboration chain. Detect the
+        // mismatch on the unevaluated inputs and surface it directly.
+        if let Some(reason) =
+            crate::query_boundaries::assignability::index_access_pair_distinct_type_param_keys_failure_reason(
+                self.ctx.types,
+                &self.ctx.definition_store,
+                source,
+                target,
+            )
+        {
+            return crate::query_boundaries::assignability::AssignabilityFailureAnalysis {
+                weak_union_violation: false,
+                failure_reason: Some(reason),
+            };
+        }
         let (prepared_source, prepared_target) = self.prepare_assignability_inputs(source, target);
 
         // Keep failure analysis on the same relation boundary as `is_assignable_to`
@@ -1968,11 +2177,6 @@ impl<'a> CheckerState<'a> {
                 failure_reason: None,
             };
         }
-        // ExcessProperty failure suppression (deferred conditionals, non-EPC
-        // intersection members) is now handled by the boundary's
-        // `suppress_excess_property_failure_if_needed` in `execute_relation`.
-        // The raw failure reason here is from `check_assignable_gate_with_overrides`
-        // which doesn't go through that path, so we apply it here too.
         let result = gate.analysis.unwrap_or(
             crate::query_boundaries::assignability::AssignabilityFailureAnalysis {
                 weak_union_violation: false,
@@ -1980,53 +2184,26 @@ impl<'a> CheckerState<'a> {
             },
         );
 
-        // Apply boundary-level excess property suppression to the raw failure reason.
-        let failure_reason = if matches!(
-            &result.failure_reason,
-            Some(tsz_solver::SubtypeFailureReason::ExcessProperty { .. })
-        ) {
-            // Convert to RelationFailure to check, then back. But simpler: just
-            // check the conditions directly using the boundary's logic.
-            let evaluated_target = self.evaluate_type_for_assignability(target);
-            let should_suppress = crate::query_boundaries::common::has_deferred_conditional_member(
-                self.ctx.types,
-                evaluated_target,
-            ) || [target, evaluated_target].into_iter().any(|candidate| {
-                crate::query_boundaries::common::intersection_members(self.ctx.types, candidate)
-                    .is_some_and(|members| {
-                        members.iter().any(|member| {
-                            let evaluated = self.evaluate_type_for_assignability(*member);
-                            crate::query_boundaries::common::is_primitive_type(
-                                self.ctx.types,
-                                evaluated,
-                            ) || crate::query_boundaries::common::is_type_parameter_like(
-                                self.ctx.types,
-                                evaluated,
-                            )
-                        })
-                    })
-            });
-            if should_suppress {
-                None
-            } else {
-                result.failure_reason
-            }
-        } else {
-            result.failure_reason
-        };
+        let evaluated_target = self.evaluate_type_for_assignability(target);
+        let result = suppress_raw_excess_property_failure_if_needed(
+            result,
+            self.ctx.types,
+            [target, evaluated_target],
+            |member| self.evaluate_type_for_assignability(member),
+        );
 
         // Suppress false TS2559 (NoCommonProperties) for interfaces that extend
         // arrays/tuples. These types inherit non-optional members from Array.prototype
         // (length, push, pop, etc.) that aren't in the ObjectShape's property list,
         // making them appear as weak types when they aren't.
         let failure_reason = if matches!(
-            &failure_reason,
+            &result.failure_reason,
             Some(tsz_solver::SubtypeFailureReason::NoCommonProperties { .. })
         ) && self.target_extends_array_or_tuple(target)
         {
             None
         } else {
-            failure_reason
+            result.failure_reason
         };
 
         crate::query_boundaries::assignability::AssignabilityFailureAnalysis {
@@ -2254,13 +2431,14 @@ impl<'a> CheckerState<'a> {
     }
 
     fn iterator_result_required_value_mismatch(&mut self, source: TypeId, target: TypeId) -> bool {
-        let source_display = self.format_type(source);
-        let Some((source_name, source_args)) =
-            parse_simple_type_application_display(&source_display)
-        else {
+        let Some(source_args) = self.iterator_result_application_args(source) else {
             return false;
         };
-        if source_name != "IteratorResult" || source_args.get(1).copied() != Some("undefined") {
+        if source_args
+            .get(1)
+            .copied()
+            .is_none_or(|return_type| !self.type_evaluates_to(return_type, TypeId::UNDEFINED))
+        {
             return false;
         }
 
@@ -2282,6 +2460,19 @@ impl<'a> CheckerState<'a> {
         let value_type = value_prop.type_id;
 
         !self.is_assignable_to(TypeId::UNDEFINED, value_type)
+    }
+
+    fn iterator_result_application_args(&self, type_id: TypeId) -> Option<Vec<TypeId>> {
+        let (base, args) = self.application_info_or_display_alias(type_id)?;
+        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)
+            .or_else(|| self.ctx.definition_store.find_def_for_type(base))?;
+        let iterator_result_def =
+            self.resolve_entity_name_text_to_def_id_for_lowering("IteratorResult")?;
+        (def_id == iterator_result_def).then_some(args)
+    }
+
+    fn type_evaluates_to(&mut self, type_id: TypeId, expected: TypeId) -> bool {
+        type_id == expected || self.evaluate_type_for_assignability(type_id) == expected
     }
 
     fn iterator_next_type_display_mismatch(&mut self, source: TypeId, target: TypeId) -> bool {

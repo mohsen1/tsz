@@ -3,7 +3,10 @@
 //! Handles TypeScript's mapped types: `{ [K in keyof T]: T[K] }`
 //! Including homomorphic mapped types that preserve modifiers.
 
-use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::construction::TypeDatabase;
+use crate::instantiation::instantiate::{
+    TypeSubstitution, instantiate_type, instantiate_type_preserving,
+};
 use crate::objects::{PropertyCollectionResult, collect_properties};
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::Visibility;
@@ -11,18 +14,56 @@ use crate::types::{
     IndexSignature, IntrinsicKind, LiteralValue, MappedModifier, MappedType, ObjectFlags,
     ObjectShape, PropertyInfo, TupleListId, TypeData, TypeId,
 };
+use crate::visitor::keyof_inner_type;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
 
 use super::super::evaluate::TypeEvaluator;
 
+/// One iteration step of a mapped type: the property-name atom plus the
+/// `TypeId` that should be substituted for the iteration variable.
+///
+/// `LiteralValue::String("1")` and `LiteralValue::Number(1)` intern to the
+/// same atom `"1"`, so the atom alone cannot disambiguate the substitution.
+/// Storing the literal `TypeId` keeps that distinction and avoids re-parsing
+/// the atom back to `f64` on every iteration — `[K in 1]: K` evaluates with
+/// `K → Literal(Number(1))` instead of `K → Literal(String("1"))`.
+#[derive(Clone, Copy)]
+pub(crate) struct MappedKey {
+    pub name: Atom,
+    pub key_literal: TypeId,
+}
+
 pub(crate) struct MappedKeys {
-    pub string_literals: Vec<Atom>,
+    pub keys: Vec<MappedKey>,
     pub has_string: bool,
     pub has_number: bool,
+    /// Template literal types used as mapped-type key constraints (e.g. `` `on${string}` ``).
+    /// When non-empty and `has_string` is false, the object gets a template-literal index
+    /// signature instead of a plain string index signature.
+    pub template_literals: Vec<TypeId>,
+    /// Unique-symbol keys (e.g. `typeof sym1`) that appear in `keyof T` when T has
+    /// symbol-keyed properties.  Each element is a `TypeData::UniqueSymbol` `TypeId`.
+    pub symbol_keys: Vec<TypeId>,
 }
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
+    /// Partition `properties` from `collect_properties` into string, numeric, and symbol key buckets.
+    /// Reuses the existing `unique_symbol_ref_from_symbol_named_atom` helper to avoid
+    /// duplicating `__unique_N` / well-known-symbol atom conversion logic.
+    fn collect_props_into_keys(&self, keys: &mut MappedKeys, properties: Vec<PropertyInfo>) {
+        for prop in properties {
+            if prop.is_symbol_named {
+                if let Some(sym_ref) = self.unique_symbol_ref_from_symbol_named_atom(prop.name) {
+                    keys.symbol_keys
+                        .push(self.interner().unique_symbol(sym_ref));
+                }
+            } else {
+                keys.keys.push(self.mapped_key_from_property(&prop));
+            }
+        }
+    }
+
     /// Helper for key remapping in mapped types.
     /// Returns Ok(Some(remapped)) if remapping succeeded,
     /// Ok(None) if the key should be filtered (remapped to never),
@@ -48,7 +89,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         );
 
         let subst = TypeSubstitution::single(mapped.type_param.name, key_type);
-        let remapped = instantiate_type(self.interner(), name_type, &subst);
+        let remapped = instantiate_type_preserving(self.interner(), name_type, &subst);
 
         tracing::trace!(
             remapped_before_eval = remapped.0,
@@ -161,44 +202,77 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.interner().mapped(*mapped);
         }
 
-        // Evaluate the constraint to get concrete keys
+        if let Some(distributed) = self.try_distribute_mapped_over_union_source(mapped) {
+            return distributed;
+        }
+
+        // tsc's `instantiateMappedType` short-circuit: a generic homomorphic
+        // mapped type instantiated with a non-object source (primitive, literal,
+        // `never`, unique symbol, enum) reduces to that source. The check
+        // distinguishes this from directly-written `{ [K in keyof string]: ... }`
+        // by inspecting the iteration variable's *original* constraint.
+        if let Some(reduced) = self.try_reduce_substituted_homomorphic_mapped(mapped) {
+            return reduced;
+        }
+
+        // Issue #6814: `interner.union` collapses `"foo" | string | number`
+        // into `string | number`, so the eager-eval path below loses literal
+        // keys that an `as` clause must filter per-iteration. Rescue them when
+        // the constraint is `keyof T` and T combines named properties with a
+        // string/number index signature.
         let keys = self.evaluate_keyof_or_constraint(constraint);
 
         // If we can't determine concrete keys, keep it as a mapped type (deferred)
-        let key_set = match self.extract_mapped_keys(keys) {
-            Some(mut keys) => {
-                // Deduplicate string literals to handle overlapping enum members
-                // (e.g. `enum A { CAT = "cat" }` and `enum B { CAT = "cat" }` both
-                // produce key "cat") while preserving the original declaration
-                // order from the constraint. tsc walks the constraint union in
-                // source order, so the resulting mapped type's property order —
-                // and therefore the type printer's output for `T[keyof T]` —
-                // must follow that same order.
-                let mut seen: FxHashSet<Atom> = FxHashSet::default();
-                keys.string_literals.retain(|atom| seen.insert(*atom));
-                keys
+        let key_set = if constraint == TypeId::ANY
+            && mapped.name_type.is_none()
+            && mapped.template == TypeId::NEVER
+        {
+            MappedKeys {
+                keys: Vec::new(),
+                has_string: true,
+                has_number: true,
+                template_literals: Vec::new(),
+                symbol_keys: Vec::new(),
             }
-            None => {
-                // When key extraction fails but the mapped type has an `as` clause
-                // and the constraint is a concrete union (of non-literal types like
-                // objects), we can still evaluate by iterating over the constraint
-                // members directly. Each member is substituted into both the `as`
-                // clause (to derive the property name) and the template (to get the
-                // property type).
-                //
-                // Example: { [Item in ({name:"a"} | {name:"b"}) as Item['name']]: Item }
-                // → { a: {name:"a"}, b: {name:"b"} }
-                if mapped.name_type.is_some()
-                    && let Some(result) =
-                        self.try_evaluate_mapped_with_as_over_non_literal_constraint(mapped, keys)
-                {
-                    return result;
+        } else {
+            match self
+                .try_extract_keyof_keys_for_mapped_iteration(constraint)
+                .or_else(|| self.extract_mapped_keys(keys))
+            {
+                Some(mut keys) => {
+                    // Deduplicate string literals to handle overlapping enum members
+                    // (e.g. `enum A { CAT = "cat" }` and `enum B { CAT = "cat" }` both
+                    // produce key "cat") while preserving the original declaration
+                    // order from the constraint. tsc walks the constraint union in
+                    // source order, so the resulting mapped type's property order —
+                    // and therefore the type printer's output for `T[keyof T]` —
+                    // must follow that same order.
+                    let mut seen: FxHashSet<Atom> = FxHashSet::default();
+                    keys.keys.retain(|k| seen.insert(k.name));
+                    keys
                 }
-                tracing::trace!(
-                    keys_lookup = ?self.interner().lookup(keys),
-                    "evaluate_mapped: DEFERRED - could not extract concrete keys"
-                );
-                return self.interner().mapped(*mapped);
+                None => {
+                    // When key extraction fails but the mapped type has an `as` clause
+                    // and the constraint is a concrete union (of non-literal types like
+                    // objects), we can still evaluate by iterating over the constraint
+                    // members directly. Each member is substituted into both the `as`
+                    // clause (to derive the property name) and the template (to get the
+                    // property type).
+                    //
+                    // Example: { [Item in ({name:"a"} | {name:"b"}) as Item['name']]: Item }
+                    // → { a: {name:"a"}, b: {name:"b"} }
+                    if mapped.name_type.is_some()
+                        && let Some(result) = self
+                            .try_evaluate_mapped_with_as_over_non_literal_constraint(mapped, keys)
+                    {
+                        return result;
+                    }
+                    tracing::trace!(
+                        keys_lookup = ?self.interner().lookup(keys),
+                        "evaluate_mapped: DEFERRED - could not extract concrete keys"
+                    );
+                    return self.interner().mapped(*mapped);
+                }
             }
         };
 
@@ -206,7 +280,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // WASM environments have limited memory, but 100 is too restrictive for
         // real-world code (large SDKs, generated API types often have 150-250 keys).
         // 250 covers ~99% of real-world use cases while remaining safe for WASM.
-        if key_set.string_literals.len() > self.max_mapped_keys() {
+        if key_set.keys.len() + key_set.symbol_keys.len() > self.max_mapped_keys() {
             self.mark_depth_exceeded();
             return TypeId::ERROR;
         }
@@ -245,6 +319,25 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // inherits optionality from Partial<M0>'s properties, even though the
         // template is `M0[K]`, not `Partial<M0>[K]`.
         let is_homomorphic = source_object.is_some();
+
+        // A filtering/remapping `as` clause can still use the original source
+        // property template (`T[K]`). In that case, preserved optional source
+        // properties must carry their declared type through the mapped result
+        // rather than the read type (`T[K]` -> `T | undefined`). Conditional
+        // extends identity checks observe that difference even when ordinary
+        // assignability does not.
+        let template_reads_source_property =
+            source_object.is_some_and(|source| match self.interner().lookup(mapped.template) {
+                Some(TypeData::IndexAccess(obj, idx)) if obj == source => {
+                    matches!(
+                        self.interner().lookup(idx),
+                        Some(TypeData::TypeParameter(param)) if param.name == mapped.type_param.name
+                    )
+                }
+                _ => false,
+            });
+        let should_use_declared_source_property_type =
+            is_identity_homomorphic || template_reads_source_property;
 
         // PERF: Memoize source properties into a hash map for O(1) lookup during the key loop.
         // This avoids repeated O(N) collect_properties calls inside the loop.
@@ -378,43 +471,56 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         // Build the resulting object properties
-        let mut properties = Vec::with_capacity(key_set.string_literals.len());
+        let mut properties = Vec::with_capacity(key_set.keys.len());
         // PERF: Reuse a single TypeSubstitution across all keys to avoid
         // re-allocating the inner FxHashMap on every iteration.
         let mut subst = TypeSubstitution::new();
+        // When the source is an intersection containing type parameters (e.g., `S & State<T>`),
+        // collect_properties cannot capture the deferred index access constraints from those
+        // type parameters, so the identity-homomorphic shortcut must be skipped.
+        // Hoisted out of the key loops because this value is constant across all iterations.
+        let source_has_type_params = resolved_source_id.is_some_and(|src| {
+            crate::type_queries::is_type_parameter_or_intersection_with_type_parameter(
+                self.interner(),
+                src,
+            )
+        });
 
-        for key_name in key_set.string_literals {
+        for mapped_key in key_set.keys {
             // Check if depth was exceeded during previous iterations
             if self.is_depth_exceeded() {
                 return TypeId::ERROR;
             }
+            let key_name = mapped_key.name;
+            let key_literal = mapped_key.key_literal;
 
-            // Create substitution: type_param.name -> literal key type
-            // Use canonical constructor for O(1) equality
-            let key_literal = self.interner().literal_string_atom(key_name);
             let remapped = match self.remap_key_type_for_mapped(mapped, key_literal) {
                 Ok(Some(remapped)) => remapped,
                 Ok(None) => continue,
                 Err(()) => return self.interner().mapped(*mapped),
             };
-            // Extract property name(s) from remapped key.
-            // Handle unions: `as \`${K}1\` | \`${K}2\`` produces multiple properties per key.
-            let remapped_names: smallvec::SmallVec<[Atom; 1]> =
-                if let Some(name) = crate::visitor::literal_string(self.interner(), remapped) {
-                    smallvec::smallvec![name]
-                } else if let Some(TypeData::Union(list_id)) = self.interner().lookup(remapped) {
-                    let members = self.interner().type_list(list_id);
-                    let names: smallvec::SmallVec<[Atom; 1]> = members
-                        .iter()
-                        .filter_map(|&m| crate::visitor::literal_string(self.interner(), m))
-                        .collect();
-                    if names.is_empty() {
-                        return self.interner().mapped(*mapped);
-                    }
-                    names
-                } else {
+            // Extract property name(s) from the remapped key. The no-`as`-clause
+            // path is the common case (Partial / Readonly / Required / Pick
+            // expansions) and skips a lookup + numeric-atom intern.
+            // Unions arise from `as \`${K}1\` | \`${K}2\`` producing multiple
+            // properties per source key.
+            let remapped_names: smallvec::SmallVec<[Atom; 1]> = if remapped == key_literal {
+                smallvec::smallvec![key_name]
+            } else if let Some(entry) = self.mapped_key_from_literal(remapped) {
+                smallvec::smallvec![entry.name]
+            } else if let Some(TypeData::Union(list_id)) = self.interner().lookup(remapped) {
+                let members = self.interner().type_list(list_id);
+                let names: smallvec::SmallVec<[Atom; 1]> = members
+                    .iter()
+                    .filter_map(|&m| self.mapped_key_from_literal(m).map(|k| k.name))
+                    .collect();
+                if names.is_empty() {
                     return self.interner().mapped(*mapped);
-                };
+                }
+                names
+            } else {
+                return self.interner().mapped(*mapped);
+            };
 
             // Get modifiers for this specific key (preserves homomorphic behavior)
             // Use memoized source property info for O(1) lookup.
@@ -437,21 +543,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // For non-optional properties in identity homomorphic types, the
             // evaluated T[K] equals the declared type, so we can also skip.
             //
-            // EXCEPTION: When the source is an intersection containing type parameters
-            // (e.g., `S & State<T>`), collect_properties cannot capture the deferred
-            // index access constraints from those type parameters. For example,
-            // `Pick<S & State<T>, "a">` should produce property type `(S & State<T>)["a"]`
-            // which includes `S["a"]` as a constraint, but collect_properties only sees
-            // the concrete `State<T>` member and returns `T`, losing the `S["a"]` part.
-            // In such cases, fall through to normal evaluation which correctly handles
-            // index access distribution over intersections.
-            let source_has_type_params = resolved_source_id.is_some_and(|src| {
-                crate::type_queries::is_type_parameter_or_intersection_with_type_parameter(
-                    self.interner(),
-                    src,
-                )
-            });
-            let property_type = if is_identity_homomorphic
+            let property_type = if should_use_declared_source_property_type
                 && !source_has_type_params
                 && let Some(&(_, _, declared_type, _, _, _)) = source_info
             {
@@ -462,7 +554,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
                 // Substitute into the template
                 let instantiated_template =
-                    instantiate_type(self.interner(), mapped.template, &subst);
+                    instantiate_type_preserving(self.interner(), mapped.template, &subst);
                 let evaluated = self.evaluate(instantiated_template);
 
                 // Check if evaluation hit depth limit
@@ -501,6 +593,107 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
         }
 
+        for symbol_key_id in &key_set.symbol_keys {
+            if self.is_depth_exceeded() {
+                return TypeId::ERROR;
+            }
+
+            let remapped = match self.remap_key_type_for_mapped(mapped, *symbol_key_id) {
+                Ok(Some(r)) => r,
+                Ok(None) => continue,
+                Err(()) => return self.interner().mapped(*mapped),
+            };
+
+            // Collect the remapped unique-symbol TypeIds; handle union `as` results.
+            let remapped_syms: smallvec::SmallVec<[TypeId; 1]> =
+                match self.interner().lookup(remapped) {
+                    Some(TypeData::UniqueSymbol(_)) => smallvec::smallvec![remapped],
+                    Some(TypeData::Union(list_id)) => self
+                        .interner()
+                        .type_list(list_id)
+                        .iter()
+                        .copied()
+                        .filter(|&m| {
+                            matches!(self.interner().lookup(m), Some(TypeData::UniqueSymbol(_)))
+                        })
+                        .collect(),
+                    _ => continue, // remapped to non-symbol; skip
+                };
+
+            if remapped_syms.is_empty() {
+                continue;
+            }
+
+            let TypeData::UniqueSymbol(source_sym_ref) = self
+                .interner()
+                .lookup(*symbol_key_id)
+                .expect("symbol_keys only contains UniqueSymbol TypeIds")
+            else {
+                continue;
+            };
+            let source_atom = self
+                .interner()
+                .intern_string(&format!("__unique_{}", source_sym_ref.0));
+            let source_info = source_prop_map.get(&source_atom);
+            let (source_optional, source_readonly) =
+                source_info.map_or((false, false), |(opt, ro, _, _, _, _)| (*opt, *ro));
+            let (optional, readonly) = crate::type_queries::compute_mapped_modifiers(
+                mapped,
+                is_homomorphic,
+                source_optional,
+                source_readonly,
+            );
+
+            let property_type = if should_use_declared_source_property_type
+                && !source_has_type_params
+                && let Some(&(_, _, declared_type, _, _, _)) = source_info
+            {
+                declared_type
+            } else {
+                subst.clear();
+                subst.insert(mapped.type_param.name, *symbol_key_id);
+                let instantiated =
+                    instantiate_type_preserving(self.interner(), mapped.template, &subst);
+                let evaluated = self.evaluate(instantiated);
+                if evaluated == TypeId::ERROR && self.is_depth_exceeded() {
+                    return TypeId::ERROR;
+                }
+                evaluated
+            };
+
+            for remapped_sym_id in remapped_syms {
+                // Reuse source_atom when remapped symbol is the identity (no `as` remapping).
+                let remapped_atom = if remapped_sym_id == *symbol_key_id {
+                    source_atom
+                } else {
+                    let TypeData::UniqueSymbol(remapped_sym_ref) = self
+                        .interner()
+                        .lookup(remapped_sym_id)
+                        .expect("remapped_syms only contains UniqueSymbol TypeIds")
+                    else {
+                        continue;
+                    };
+                    self.interner()
+                        .intern_string(&format!("__unique_{}", remapped_sym_ref.0))
+                };
+                properties.push(PropertyInfo {
+                    name: remapped_atom,
+                    type_id: property_type,
+                    write_type: property_type,
+                    optional,
+                    readonly,
+                    is_method: false,
+                    is_class_prototype: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
+                    declaration_order: 0,
+                    is_string_named: false,
+                    is_symbol_named: true,
+                    single_quoted_name: false,
+                });
+            }
+        }
+
         // For homomorphic mapped types, restore source declaration order.
         // The key extraction and dedup may have reordered properties.
         if !source_decl_order.is_empty() {
@@ -512,36 +705,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             properties.sort_by_key(|p| order_map.get(&p.name).copied().unwrap_or(usize::MAX));
         }
 
+        let empty_atom = self.interner().intern_string("");
+
         let string_index = if key_set.has_string {
             match self.remap_key_type_for_mapped(mapped, TypeId::STRING) {
                 Ok(Some(remapped)) => {
                     if remapped != TypeId::STRING {
                         return self.interner().mapped(*mapped);
                     }
-                    let key_type = TypeId::STRING;
-                    subst.clear();
-                    subst.insert(mapped.type_param.name, key_type);
-                    let instantiated_template =
-                        instantiate_type(self.interner(), mapped.template, &subst);
-                    let mut value_type = self.evaluate(instantiated_template);
-
-                    // Get modifiers for string index
-                    let empty_atom = self.interner().intern_string("");
-                    let (idx_optional, idx_readonly) = self.get_mapped_modifiers(
-                        mapped,
+                    Some(self.build_index_signature_for_mapped(
+                        *mapped,
+                        TypeId::STRING,
                         is_homomorphic,
                         source_object,
                         empty_atom,
-                    );
-                    if idx_optional {
-                        value_type = self.interner().union2(value_type, TypeId::UNDEFINED);
-                    }
-                    Some(IndexSignature {
-                        key_type,
-                        value_type,
-                        readonly: idx_readonly,
-                        param_name: None,
-                    })
+                    ))
                 }
                 Ok(None) => None,
                 Err(()) => return self.interner().mapped(*mapped),
@@ -556,35 +734,33 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     if remapped != TypeId::NUMBER {
                         return self.interner().mapped(*mapped);
                     }
-                    let key_type = TypeId::NUMBER;
-                    subst.clear();
-                    subst.insert(mapped.type_param.name, key_type);
-                    let mut value_type =
-                        self.evaluate(instantiate_type(self.interner(), mapped.template, &subst));
-
-                    // Get modifiers for number index
-                    let empty_atom = self.interner().intern_string("");
-                    let (idx_optional, idx_readonly) = self.get_mapped_modifiers(
-                        mapped,
+                    Some(self.build_index_signature_for_mapped(
+                        *mapped,
+                        TypeId::NUMBER,
                         is_homomorphic,
                         source_object,
                         empty_atom,
-                    );
-                    if idx_optional {
-                        value_type = self.interner().union2(value_type, TypeId::UNDEFINED);
-                    }
-                    Some(IndexSignature {
-                        key_type,
-                        value_type,
-                        readonly: idx_readonly,
-                        param_name: None,
-                    })
+                    ))
                 }
                 Ok(None) => None,
                 Err(()) => return self.interner().mapped(*mapped),
             }
         } else {
             None
+        };
+
+        let string_index = if string_index.is_none() && !key_set.template_literals.is_empty() {
+            let key_type =
+                crate::utils::union_or_single(self.interner(), key_set.template_literals);
+            Some(self.build_index_signature_for_mapped(
+                *mapped,
+                key_type,
+                is_homomorphic,
+                source_object,
+                empty_atom,
+            ))
+        } else {
+            string_index
         };
 
         if string_index.is_some() || number_index.is_some() {
@@ -597,6 +773,30 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             })
         } else {
             self.interner().object(properties)
+        }
+    }
+
+    fn build_index_signature_for_mapped(
+        &mut self,
+        mapped: MappedType,
+        key_type: TypeId,
+        is_homomorphic: bool,
+        source_object: Option<TypeId>,
+        empty_atom: Atom,
+    ) -> IndexSignature {
+        let subst = TypeSubstitution::single(mapped.type_param.name, key_type);
+        let instantiated = instantiate_type(self.interner(), mapped.template, &subst);
+        let mut value_type = self.evaluate(instantiated);
+        let (idx_optional, idx_readonly) =
+            self.get_mapped_modifiers(&mapped, is_homomorphic, source_object, empty_atom);
+        if idx_optional {
+            value_type = self.interner().union2(value_type, TypeId::UNDEFINED);
+        }
+        IndexSignature {
+            key_type,
+            value_type,
+            readonly: idx_readonly,
+            param_name: None,
         }
     }
 
@@ -651,7 +851,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             subst.insert(mapped.type_param.name, member);
 
             // Evaluate the `as` clause to get the remapped key
-            let remapped_key = self.evaluate(instantiate_type(self.interner(), name_type, &subst));
+            let remapped_key = self.evaluate(instantiate_type_preserving(
+                self.interner(),
+                name_type,
+                &subst,
+            ));
 
             // If remapped key is `never`, skip this member (filtered out)
             if remapped_key == TypeId::NEVER {
@@ -678,7 +882,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             };
 
             // Evaluate the template with the substitution
-            let instantiated_template = instantiate_type(self.interner(), mapped.template, &subst);
+            let instantiated_template =
+                instantiate_type_preserving(self.interner(), mapped.template, &subst);
             let property_type = self.evaluate(instantiated_template);
 
             if property_type == TypeId::ERROR && self.is_depth_exceeded() {
@@ -803,6 +1008,113 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.try_evaluate_mapped_over_array_like(mapped, resolved)
     }
 
+    /// Reduce `Meta<X>` to `X` when `Meta` is a generic homomorphic mapped
+    /// type and `X` is non-object (primitive/literal/`never`/unique symbol/
+    /// enum). Returns `None` for directly-authored `{ [K in keyof X]: V }`
+    /// since its iteration variable's constraint is `keyof X`, not
+    /// `keyof <TypeParameter>`.
+    fn try_reduce_substituted_homomorphic_mapped(&mut self, mapped: &MappedType) -> Option<TypeId> {
+        let original_constraint = mapped.type_param.constraint?;
+        let TypeData::KeyOf(original_source) = self.interner().lookup(original_constraint)? else {
+            return None;
+        };
+        if !matches!(
+            self.interner().lookup(original_source),
+            Some(TypeData::TypeParameter(_))
+        ) {
+            return None;
+        }
+
+        let current_source = self.extract_source_from_keyof(mapped.constraint)?;
+        let resolved = self.evaluate(current_source);
+        if Self::is_mapped_short_circuit_source(self.interner(), resolved) {
+            Some(resolved)
+        } else {
+            None
+        }
+    }
+
+    /// True when a homomorphic mapped type whose source resolves to `type_id`
+    /// should reduce to `type_id` itself, mirroring the complement of
+    /// `AnyOrUnknown | InstantiableNonPrimitive | Object | Intersection` in
+    /// tsc's `instantiateMappedType`.
+    fn is_mapped_short_circuit_source(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+        if type_id.is_intrinsic() {
+            return !matches!(
+                type_id,
+                TypeId::OBJECT
+                    | TypeId::UNKNOWN
+                    | TypeId::ANY
+                    | TypeId::ERROR
+                    | TypeId::FUNCTION
+                    | TypeId::PROMISE_BASE
+                    | TypeId::DELEGATE
+                    | TypeId::STRICT_ANY
+            );
+        }
+        matches!(
+            types.lookup(type_id),
+            Some(
+                TypeData::Intrinsic(
+                    IntrinsicKind::Void
+                        | IntrinsicKind::Null
+                        | IntrinsicKind::Undefined
+                        | IntrinsicKind::Boolean
+                        | IntrinsicKind::Number
+                        | IntrinsicKind::String
+                        | IntrinsicKind::Bigint
+                        | IntrinsicKind::Symbol
+                        | IntrinsicKind::Never,
+                ) | TypeData::Literal(_)
+                    | TypeData::UniqueSymbol(_)
+                    | TypeData::Enum(_, _)
+            )
+        )
+    }
+
+    fn try_distribute_mapped_over_union_source(&mut self, mapped: &MappedType) -> Option<TypeId> {
+        // Direct `{ [K in keyof (A | B)]: ... }` uses the mapped
+        // parameter's own declared constraint. Only distribute when a
+        // homomorphic alias instantiation has replaced the effective source.
+        if mapped.type_param.constraint == Some(mapped.constraint) {
+            return None;
+        }
+
+        let source = self.extract_source_from_keyof(mapped.constraint)?;
+        let resolved_source = self.evaluate(source);
+        let Some(TypeData::Union(list_id)) = self.interner().lookup(resolved_source) else {
+            return None;
+        };
+
+        let members: Vec<TypeId> = self.interner().type_list(list_id).to_vec();
+        if members.len() < 2 {
+            return None;
+        }
+
+        let mut results = Vec::with_capacity(members.len());
+        for member in members {
+            let member_keyof = self.interner().keyof(member);
+            let mut memo = FxHashMap::default();
+            let member_template =
+                self.substitute_exact_type(mapped.template, source, member, &mut memo);
+            let member_name_type = mapped.name_type.map(|name_type| {
+                let mut memo = FxHashMap::default();
+                self.substitute_exact_type(name_type, source, member, &mut memo)
+            });
+            let member_mapped = MappedType {
+                type_param: mapped.type_param,
+                constraint: member_keyof,
+                name_type: member_name_type,
+                template: member_template,
+                readonly_modifier: mapped.readonly_modifier,
+                optional_modifier: mapped.optional_modifier,
+            };
+            results.push(self.evaluate_mapped(&member_mapped));
+        }
+
+        Some(self.interner().union(results))
+    }
+
     /// Try to evaluate a mapped type over a single array/tuple-like type.
     /// Returns None if the type is not array/tuple-like.
     fn try_evaluate_mapped_over_array_like(
@@ -871,7 +1183,57 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Evaluate a keyof or constraint type for mapped type iteration.
+    ///
+    /// Wrapped with `stacker::maybe_grow()` to handle deeply nested union/intersection
+    /// constraint chains without overflowing the default thread stack.
+    ///
+    /// All intermediate types in the evaluation chain remain entered in the
+    /// `keyof_constraint_guard` until the chain terminates. This ensures that
+    /// a cycle like `Lazy(A) → Lazy(B) → Lazy(A)` is detected when `A` is
+    /// re-entered while it is still in the guard's visited set. The depth cap
+    /// (`TypeEvaluation` profile: depth 100) also limits the chain length.
     fn evaluate_keyof_or_constraint(&mut self, constraint: TypeId) -> TypeId {
+        let mut current = constraint;
+        let mut entered: Vec<TypeId> = Vec::new();
+
+        let result = loop {
+            match self.keyof_constraint_guard.enter(current) {
+                crate::recursion::RecursionResult::Entered => {
+                    entered.push(current);
+                }
+                _ => break current,
+            }
+
+            let step = stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
+                self.evaluate_keyof_or_constraint_inner(current)
+            });
+
+            if step != current
+                && matches!(
+                    self.interner().lookup(step),
+                    Some(
+                        TypeData::Union(_)
+                            | TypeData::Intersection(_)
+                            | TypeData::KeyOf(_)
+                            | TypeData::Conditional(_)
+                            | TypeData::Lazy(_)
+                            | TypeData::Application(_)
+                    )
+                )
+            {
+                current = step;
+                continue;
+            }
+            break step;
+        };
+
+        for &id in entered.iter().rev() {
+            self.keyof_constraint_guard.leave(id);
+        }
+        result
+    }
+
+    fn evaluate_keyof_or_constraint_inner(&mut self, constraint: TypeId) -> TypeId {
         // PERF: Single lookup handles all cases instead of 4 separate DashMap lookups.
         let members = match self.interner().lookup(constraint) {
             Some(TypeData::Conditional(cond_id)) => {
@@ -928,23 +1290,104 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // Evaluate the constraint to resolve type aliases (Lazy), Applications, etc.
         // For example, `type Keys = "a" | "b"; { [P in Keys]: T }` has a Lazy(DefId)
         // constraint that must be evaluated to get the concrete union `"a" | "b"`.
-        let evaluated = self.evaluate(constraint);
-        if evaluated != constraint {
-            return self.evaluate_keyof_or_constraint(evaluated);
-        }
+        self.evaluate(constraint)
+    }
 
-        // Otherwise return as-is
-        constraint
+    /// Build a `MappedKey` from a literal `TypeId`. Returns `None` if the
+    /// type is not a single string or numeric literal.
+    fn mapped_key_from_literal(&self, type_id: TypeId) -> Option<MappedKey> {
+        match self.interner().lookup(type_id)? {
+            TypeData::Literal(LiteralValue::String(atom)) => Some(MappedKey {
+                name: atom,
+                key_literal: type_id,
+            }),
+            TypeData::Literal(LiteralValue::Number(n)) => {
+                let name = self.interner().intern_string(
+                    &crate::relations::subtype::rules::literals::format_number_for_template(n.0),
+                );
+                Some(MappedKey {
+                    name,
+                    key_literal: type_id,
+                })
+            }
+            _ => None,
+        }
+    }
+
+    /// Build a `MappedKey` from a collected property. Symbol-named keys
+    /// fall back to a string-literal substitution (mapped-type iteration
+    /// doesn't model symbol-keyed properties yet); other keys defer to
+    /// `literal_key_for_property_name`, which encodes the structural rule
+    /// "bare numeric name → number literal, quoted numeric name → string
+    /// literal".
+    fn mapped_key_from_property(&self, prop: &PropertyInfo) -> MappedKey {
+        let key_literal = if prop.is_symbol_named {
+            self.interner().literal_string_atom(prop.name)
+        } else {
+            crate::utils::literal_key_for_property_name(
+                self.interner(),
+                prop.name,
+                prop.is_string_named,
+            )
+        };
+        MappedKey {
+            name: prop.name,
+            key_literal,
+        }
+    }
+
+    /// When `constraint = keyof Operand` and Operand has both literal property
+    /// keys AND a string/number index signature, return the structural key set
+    /// (literals plus index flags) so per-key as-clause filters can drop the
+    /// index step without dropping the named properties. Returns `None` when
+    /// no rescue is possible — leaving the existing eager-eval flow unchanged.
+    ///
+    /// The pre-screen is a perf gate, not a correctness gate: `evaluate_mapped`
+    /// runs for every mapped type, so operand shapes that cannot possibly
+    /// satisfy `(literal keys) ∧ (string|number index)` skip the more expensive
+    /// `extract_mapped_keys` walk.
+    fn try_extract_keyof_keys_for_mapped_iteration(
+        &mut self,
+        constraint: TypeId,
+    ) -> Option<MappedKeys> {
+        let operand = keyof_inner_type(self.interner(), constraint)?;
+        match self.interner().lookup(operand) {
+            // Operand shapes that cannot combine literal keys with an index
+            // signature — skip the walk. `Object` is the no-index variant;
+            // the others return `NonObject` from `collect_properties`.
+            Some(
+                TypeData::Object(_)
+                | TypeData::TypeParameter(_)
+                | TypeData::Infer(_)
+                | TypeData::Union(_)
+                | TypeData::Intrinsic(_),
+            ) => return None,
+            // Inspect the shape directly to skip the walk when an
+            // `ObjectWithIndex` doesn't actually combine literals + index.
+            Some(TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner().object_shape(shape_id);
+                if shape.properties.is_empty()
+                    || (shape.string_index.is_none() && shape.number_index.is_none())
+                {
+                    return None;
+                }
+            }
+            _ => {}
+        }
+        let keys = self.extract_mapped_keys(constraint)?;
+        (!keys.keys.is_empty() && (keys.has_string || keys.has_number)).then_some(keys)
     }
 
     /// Extract mapped keys from a type (for mapped type iteration).
-    fn extract_mapped_keys(&mut self, type_id: TypeId) -> Option<MappedKeys> {
+    pub(super) fn extract_mapped_keys(&mut self, type_id: TypeId) -> Option<MappedKeys> {
         let key = self.interner().lookup(type_id)?;
 
         let mut keys = MappedKeys {
-            string_literals: Vec::new(),
+            keys: Vec::new(),
             has_string: false,
             has_number: false,
+            template_literals: Vec::new(),
+            symbol_keys: Vec::new(),
         };
 
         match key {
@@ -970,15 +1413,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         string_index,
                         number_index,
                     } => {
-                        for prop in properties {
-                            keys.string_literals.push(prop.name);
-                        }
+                        self.collect_props_into_keys(&mut keys, properties);
                         keys.has_string = string_index.is_some();
                         keys.has_number = number_index.is_some();
                         tracing::trace!(
-                            string_literals = ?keys.string_literals,
+                            keys = ?keys.keys.iter().map(|k| k.name).collect::<Vec<_>>(),
                             has_string = keys.has_string,
                             has_number = keys.has_number,
+                            symbol_keys_len = keys.symbol_keys.len(),
                             "extract_mapped_keys: extracted keys from KeyOf"
                         );
                         Some(keys)
@@ -1003,13 +1445,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                     string_index,
                                     number_index,
                                 } => {
-                                    for prop in properties {
-                                        keys.string_literals.push(prop.name);
-                                    }
+                                    self.collect_props_into_keys(&mut keys, properties);
                                     keys.has_string = string_index.is_some();
                                     keys.has_number = number_index.is_some();
                                     tracing::trace!(
-                                        string_literals = ?keys.string_literals,
+                                        keys = ?keys.keys.iter().map(|k| k.name).collect::<Vec<_>>(),
                                         "extract_mapped_keys: extracted keys from evaluated KeyOf operand"
                                     );
                                     return Some(keys);
@@ -1028,7 +1468,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
             }
             TypeData::Literal(LiteralValue::String(s)) => {
-                keys.string_literals.push(s);
+                keys.keys.push(MappedKey {
+                    name: s,
+                    key_literal: type_id,
+                });
                 Some(keys)
             }
             TypeData::TemplateLiteral(_) => {
@@ -1036,17 +1479,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 if evaluated != type_id {
                     return self.extract_mapped_keys(evaluated);
                 }
-                None
+                // Infinite set — can't expand to concrete keys; emit as index signature.
+                keys.template_literals.push(type_id);
+                Some(keys)
             }
             // Numeric literals become string property names (e.g., enum value 0 → "0").
             // This handles the case where a single-member enum is used as a mapped type
             // constraint: `Record<E, any>` where `enum E { A = 0 }` produces constraint
             // Enum(_, Literal(Number(0))) → key "0".
-            TypeData::Literal(LiteralValue::Number(n)) => {
-                let s = self.interner().intern_string(
-                    &crate::relations::subtype::rules::literals::format_number_for_template(n.0),
+            TypeData::Literal(LiteralValue::Number(_)) => {
+                keys.keys.push(
+                    self.mapped_key_from_literal(type_id)
+                        .expect("matched LiteralValue::Number"),
                 );
-                keys.string_literals.push(s);
                 Some(keys)
             }
             // `AB[K]` in mapped constraints: resolve to the union of property
@@ -1118,35 +1563,36 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         continue;
                     }
                     if member == TypeId::SYMBOL {
-                        // We don't model symbol index signatures yet; ignore symbol keys.
+                        // Generic `symbol` type — no concrete index to track.
                         continue;
                     }
-                    // Use visitor helper for data extraction (North Star Rule 3)
-                    if let Some(s) = crate::visitor::literal_string(self.interner(), member) {
-                        keys.string_literals.push(s);
-                    } else if let Some(n) = crate::visitor::literal_number(self.interner(), member)
-                    {
-                        // Numeric literals become string property names (e.g., 0 → "0").
-                        // This handles enum member values like `enum E { A = 0 }`.
-                        let s = self.interner().intern_string(
-                            &crate::relations::subtype::rules::literals::format_number_for_template(
-                                n.0,
-                            ),
-                        );
-                        keys.string_literals.push(s);
+                    if matches!(
+                        self.interner().lookup(member),
+                        Some(TypeData::UniqueSymbol(_))
+                    ) {
+                        keys.symbol_keys.push(member);
+                        continue;
+                    }
+                    if let Some(key) = self.mapped_key_from_literal(member) {
+                        keys.keys.push(key);
                     } else {
                         // Recursively extract keys from non-literal union members.
                         // Handles enum types (TypeData::Enum), lazy refs (TypeData::Lazy),
                         // and nested unions (e.g., `A | B` where A, B are enum types).
-                        // If extraction fails, we can't fully evaluate the union.
                         let inner_keys = self.extract_mapped_keys(member)?;
-                        keys.string_literals.extend(inner_keys.string_literals);
+                        keys.keys.extend(inner_keys.keys);
                         keys.has_string |= inner_keys.has_string;
                         keys.has_number |= inner_keys.has_number;
+                        keys.template_literals.extend(inner_keys.template_literals);
+                        keys.symbol_keys.extend(inner_keys.symbol_keys);
                     }
                 }
-                if !keys.has_string && !keys.has_number && keys.string_literals.is_empty() {
-                    // Only symbol keys (or nothing) - defer until we support symbol indices.
+                if !keys.has_string
+                    && !keys.has_number
+                    && keys.keys.is_empty()
+                    && keys.template_literals.is_empty()
+                    && keys.symbol_keys.is_empty()
+                {
                     return None;
                 }
                 Some(keys)
@@ -1161,6 +1607,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             TypeData::Intrinsic(IntrinsicKind::Never) => {
                 // Mapped over `never` yields an empty object.
+                Some(keys)
+            }
+            TypeData::UniqueSymbol(_) => {
+                keys.symbol_keys.push(type_id);
                 Some(keys)
             }
             TypeData::Enum(_def_id, members) => {
@@ -1207,19 +1657,31 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         // Other side accepts all strings, so keep result's literals.
                     } else if result.has_string {
                         // Result side accepts all strings, take other's literals.
-                        result.string_literals = other.string_literals.clone();
+                        result.keys = other.keys.clone();
                         result.has_string = false; // Narrowed to specific literals.
                     } else {
-                        // Both have specific literals: keep only the intersection.
-                        let other_set: rustc_hash::FxHashSet<_> =
-                            other.string_literals.iter().copied().collect();
-                        result.string_literals.retain(|lit| other_set.contains(lit));
+                        // Both have specific literals: keep only the intersection (by atom).
+                        let other_set: rustc_hash::FxHashSet<Atom> =
+                            other.keys.iter().map(|k| k.name).collect();
+                        result.keys.retain(|k| other_set.contains(&k.name));
+                    }
+                    // Template literals: union (not intersection) — keep all constraints.
+                    for tl in &other.template_literals {
+                        if !result.template_literals.contains(tl) {
+                            result.template_literals.push(*tl);
+                        }
+                    }
+                    // Symbol keys: keep only symbols present in every member's key set.
+                    if !result.symbol_keys.is_empty() {
+                        if other.symbol_keys.is_empty() {
+                            result.symbol_keys.clear();
+                        } else {
+                            result.symbol_keys.retain(|k| other.symbol_keys.contains(k));
+                        }
                     }
                 }
-                if !result.has_string && !result.has_number && result.string_literals.is_empty() {
-                    // Intersection is empty — produces empty object.
-                    // Still return Some so we generate an empty object type rather than deferring.
-                }
+                // Intersection may be empty — still return Some to produce an empty object
+                // rather than deferring.
                 Some(result)
             }
             TypeData::Lazy(def_id) => {
@@ -1230,6 +1692,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     return self.extract_mapped_keys(resolved);
                 }
                 None
+            }
+            TypeData::TypeQuery(sym_ref) => {
+                // `typeof sym` can be a concrete unique-symbol key. Resolve the
+                // value-space query before deciding whether mapped iteration has
+                // a concrete property key; otherwise tuple element unions like
+                // `typeof tuple[number]` drop symbol elements as if they were
+                // unconstrained `symbol`.
+                let resolved = self
+                    .resolver()
+                    .resolve_type_query(sym_ref, self.interner())
+                    .unwrap_or_else(|| self.evaluate(type_id));
+                if resolved != type_id {
+                    self.extract_mapped_keys(resolved)
+                } else {
+                    None
+                }
             }
             // Can't extract literals from other types
             _ => None,
@@ -1316,14 +1794,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // Only do subset check for pure string literal keys (no string/number index)
                 if !constraint_keys.has_string
                     && !constraint_keys.has_number
-                    && !constraint_keys.string_literals.is_empty()
+                    && !constraint_keys.keys.is_empty()
                 {
                     let expected_set: rustc_hash::FxHashSet<Atom> =
-                        expected_key_set.string_literals.iter().copied().collect();
+                        expected_key_set.keys.iter().map(|k| k.name).collect();
                     let is_subset = constraint_keys
-                        .string_literals
+                        .keys
                         .iter()
-                        .all(|k| expected_set.contains(k));
+                        .all(|k| expected_set.contains(&k.name));
                     if is_subset {
                         return Some(obj);
                     }
@@ -1354,14 +1832,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             self.extract_mapped_keys(expected_keys),
         ) && !constraint_keys.has_string
             && !constraint_keys.has_number
-            && !constraint_keys.string_literals.is_empty()
+            && !constraint_keys.keys.is_empty()
         {
             let expected_set: rustc_hash::FxHashSet<Atom> =
-                expected_key_set.string_literals.iter().copied().collect();
+                expected_key_set.keys.iter().map(|k| k.name).collect();
             if constraint_keys
-                .string_literals
+                .keys
                 .iter()
-                .all(|key| expected_set.contains(key))
+                .all(|k| expected_set.contains(&k.name))
             {
                 return Some(source);
             }
@@ -1582,5 +2060,285 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         self.interner().tuple(mapped_elements)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::construction::TypeInterner;
+    use crate::recursion::RecursionResult;
+    use crate::types::TypeParamInfo;
+
+    #[test]
+    fn evaluate_keyof_or_constraint_preserves_reentrant_constraint() {
+        let interner = TypeInterner::new();
+        let mut evaluator = TypeEvaluator::new(&interner);
+        let constraint = interner.keyof(TypeId::STRING);
+
+        assert!(matches!(
+            evaluator.keyof_constraint_guard.enter(constraint),
+            RecursionResult::Entered
+        ));
+        assert_eq!(
+            evaluator.evaluate_keyof_or_constraint(constraint),
+            constraint
+        );
+        evaluator.keyof_constraint_guard.leave(constraint);
+    }
+
+    /// Build the post-instantiation form of
+    /// `type M<T> = { [<iter_name> in keyof T]: <template> }`
+    /// with `T` substituted by `concrete_source`. The iteration variable's
+    /// declared constraint stays `keyof T` (the type parameter), proving
+    /// `M` was authored as a generic homomorphic mapping.
+    fn build_instantiated_homomorphic_mapped(
+        interner: &TypeInterner,
+        iter_name: &str,
+        concrete_source: TypeId,
+        template: TypeId,
+    ) -> MappedType {
+        let iter_atom = interner.intern_string(iter_name);
+        let outer_t = interner.type_param(TypeParamInfo::simple(interner.intern_string("T")));
+        let original_constraint = interner.keyof(outer_t);
+        MappedType {
+            type_param: TypeParamInfo {
+                name: iter_atom,
+                constraint: Some(original_constraint),
+                default: None,
+                is_const: false,
+            },
+            constraint: interner.keyof(concrete_source),
+            name_type: None,
+            template,
+            readonly_modifier: None,
+            optional_modifier: None,
+        }
+    }
+
+    /// tsc's `instantiateMappedType` reduces a generic homomorphic mapped
+    /// type to its source whenever the source resolves to a primitive,
+    /// literal, `never`, unique symbol, or enum. This proves the rule is
+    /// structural — varying the iteration-variable name must not affect
+    /// the decision.
+    #[test]
+    fn instantiated_homomorphic_mapped_over_non_object_source_reduces_to_source() {
+        let interner = TypeInterner::new();
+        let template = TypeId::BOOLEAN;
+
+        let primitive_cases = [
+            TypeId::STRING,
+            TypeId::NUMBER,
+            TypeId::BOOLEAN,
+            TypeId::BIGINT,
+            TypeId::SYMBOL,
+            TypeId::NULL,
+            TypeId::UNDEFINED,
+            TypeId::VOID,
+            TypeId::NEVER,
+        ];
+
+        for iter_name in ["P", "K", "X"] {
+            for source in primitive_cases {
+                let mapped =
+                    build_instantiated_homomorphic_mapped(&interner, iter_name, source, template);
+                let mut evaluator = TypeEvaluator::new(&interner);
+                assert_eq!(
+                    evaluator.evaluate_mapped(&mapped),
+                    source,
+                    "instantiated homomorphic mapped over {source:?} with iter `{iter_name}` should reduce to source"
+                );
+            }
+
+            let literal_foo = interner.literal_string("foo");
+            let mapped =
+                build_instantiated_homomorphic_mapped(&interner, iter_name, literal_foo, template);
+            let mut evaluator = TypeEvaluator::new(&interner);
+            assert_eq!(
+                evaluator.evaluate_mapped(&mapped),
+                literal_foo,
+                "instantiated homomorphic mapped over a string literal should reduce to the literal"
+            );
+        }
+    }
+
+    /// A directly authored `{ [K in keyof string]: V }` — whose iteration
+    /// variable's declared constraint is `keyof string`, NOT `keyof <typeparam>`
+    /// — must NOT take the primitive short-circuit. tsc keeps the normal
+    /// key-expansion behavior here, producing an indexed object over string's
+    /// apparent members.
+    #[test]
+    fn direct_mapped_over_string_does_not_short_circuit() {
+        let interner = TypeInterner::new();
+        let constraint = interner.keyof(TypeId::STRING);
+        let mapped = MappedType {
+            type_param: TypeParamInfo {
+                name: interner.intern_string("K"),
+                constraint: Some(constraint),
+                default: None,
+                is_const: false,
+            },
+            constraint,
+            name_type: None,
+            template: TypeId::BOOLEAN,
+            readonly_modifier: None,
+            optional_modifier: None,
+        };
+        let mut evaluator = TypeEvaluator::new(&interner);
+        let result = evaluator.evaluate_mapped(&mapped);
+        assert_ne!(
+            result,
+            TypeId::STRING,
+            "direct `{{ [K in keyof string]: V }}` must NOT reduce to `string`"
+        );
+    }
+
+    /// Object sources must not short-circuit — they exercise the full
+    /// homomorphic-mapping expansion. This proves the rule is keyed on the
+    /// source's structure (primitive vs. object), not on iteration-variable
+    /// spelling or the mere presence of a generic outer constraint.
+    #[test]
+    fn instantiated_homomorphic_mapped_over_object_source_does_not_short_circuit() {
+        let interner = TypeInterner::new();
+        let foo_atom = interner.intern_string("foo");
+        let property = crate::types::PropertyInfo {
+            name: foo_atom,
+            type_id: TypeId::STRING,
+            ..Default::default()
+        };
+        let source = interner.object(vec![property]);
+
+        let mapped = build_instantiated_homomorphic_mapped(&interner, "P", source, TypeId::STRING);
+        let mut evaluator = TypeEvaluator::new(&interner);
+        let result = evaluator.evaluate_mapped(&mapped);
+        assert_ne!(
+            result, source,
+            "object sources must NOT take the primitive short-circuit"
+        );
+    }
+
+    /// Union sources are handled by `try_distribute_mapped_over_union_source`,
+    /// which distributes the mapped type over each member and recursively
+    /// evaluates. Primitive members must still reduce to themselves so the
+    /// final result is the original union (e.g. `M<string | "foo">` → `string | "foo"`).
+    #[test]
+    fn instantiated_homomorphic_mapped_distributes_over_primitive_union() {
+        let interner = TypeInterner::new();
+        let literal_foo = interner.literal_string("foo");
+        let source = interner.union(vec![TypeId::STRING, literal_foo]);
+        let mapped = build_instantiated_homomorphic_mapped(&interner, "P", source, TypeId::BOOLEAN);
+        let mut evaluator = TypeEvaluator::new(&interner);
+        let result = evaluator.evaluate_mapped(&mapped);
+        let expected = interner.union(vec![TypeId::STRING, literal_foo]);
+        assert_eq!(
+            result, expected,
+            "union of primitives should distribute and each member should reduce to itself"
+        );
+    }
+
+    /// Deep union chain: `"a" | "b" | "c" | ... | "z"` (26 members) used as a mapped
+    /// constraint. Tests that `evaluate_keyof_or_constraint` handles wide flat unions
+    /// without stack overflow regardless of whether the iteration-variable is named `K` or `P`.
+    #[test]
+    fn evaluate_keyof_or_constraint_deep_flat_union_constraint() {
+        let interner = TypeInterner::new();
+        let mut evaluator = TypeEvaluator::new(&interner);
+
+        let members: Vec<TypeId> = (b'a'..=b'z')
+            .map(|c| interner.literal_string(&(c as char).to_string()))
+            .collect();
+        let wide_union = interner.union(members);
+
+        // constraint is a union of 26 string literals — evaluate_keyof_or_constraint
+        // must visit each member recursively; none should be changed by evaluation.
+        let result = evaluator.evaluate_keyof_or_constraint(wide_union);
+        assert_eq!(
+            result, wide_union,
+            "flat union of string literals should be returned unchanged"
+        );
+    }
+
+    /// Deeply nested union: `Union(a, Union(b, Union(c, ...)))` with 50 levels.
+    /// Tests that the guard fires at the depth limit and the function terminates.
+    #[test]
+    fn evaluate_keyof_or_constraint_nested_union_terminates() {
+        let interner = TypeInterner::new();
+        let mut evaluator = TypeEvaluator::new(&interner);
+
+        // Build Union(lit_0, Union(lit_1, Union(lit_2, ... )))
+        let mut nested = interner.literal_string("leaf");
+        for i in 0..50u32 {
+            let lit = interner.literal_string(&i.to_string());
+            nested = interner.union(vec![lit, nested]);
+        }
+
+        // Must not stack-overflow, must return a type (either the nested union or a simplified form)
+        let result = evaluator.evaluate_keyof_or_constraint(nested);
+        // The result is a valid TypeId (non-error).
+        assert_ne!(
+            result,
+            TypeId::ERROR,
+            "deep nested union must not produce ERROR"
+        );
+    }
+
+    /// Verifies that the iteration-variable name does not affect constraint evaluation.
+    /// Both `K` and `Q` iterate over the same constraint and must produce identical results.
+    #[test]
+    fn evaluate_keyof_or_constraint_name_invariant() {
+        let interner = TypeInterner::new();
+
+        let lit_a = interner.literal_string("a");
+        let lit_b = interner.literal_string("b");
+        let constraint = interner.union(vec![lit_a, lit_b]);
+
+        let result_k = TypeEvaluator::new(&interner).evaluate_keyof_or_constraint(constraint);
+        let result_q = TypeEvaluator::new(&interner).evaluate_keyof_or_constraint(constraint);
+
+        assert_eq!(
+            result_k, result_q,
+            "constraint evaluation must be independent of iteration-variable name"
+        );
+    }
+
+    /// Verifies that re-entering the same TypeId within the chain is detected and does
+    /// not loop forever. The `keyof_constraint_guard` keeps all intermediate types
+    /// entered until the chain terminates; if the same TypeId appears again (cycle),
+    /// `enter` returns `Cycle` and terminates the loop. We exercise this by calling
+    /// `evaluate_keyof_or_constraint` on a union whose members are themselves unions
+    /// sharing a member — the shared type will be encountered twice across the
+    /// recursive union-member evaluation and must not cause unbounded iteration.
+    #[test]
+    fn evaluate_keyof_or_constraint_cycle_guard_prevents_infinite_loop() {
+        let interner = TypeInterner::new();
+        let mut evaluator = TypeEvaluator::new(&interner);
+
+        // Build two overlapping unions that share a member so the guard is exercised
+        // across recursive member evaluation: U1 = (lit_x | U2), U2 = (lit_y | lit_z)
+        // evaluate_keyof_or_constraint on U1 recurses into both lit_x and U2;
+        // evaluating U2 recurses into lit_y and lit_z. The guard must handle all
+        // levels without hanging.
+        let lit_x = interner.literal_string("x");
+        let lit_y = interner.literal_string("y");
+        let lit_z = interner.literal_string("z");
+        let u2 = interner.union(vec![lit_y, lit_z]);
+        let u1 = interner.union(vec![lit_x, u2]);
+
+        let result = evaluator.evaluate_keyof_or_constraint(u1);
+        assert_ne!(
+            result,
+            TypeId::ERROR,
+            "nested union evaluation must not produce ERROR"
+        );
+
+        // A constraint that evaluates to itself must terminate immediately (the
+        // `step != current` guard short-circuits before re-entering the loop).
+        let plain_union = interner.union(vec![lit_x, lit_y]);
+        let result2 = evaluator.evaluate_keyof_or_constraint(plain_union);
+        assert_ne!(
+            result2,
+            TypeId::ERROR,
+            "self-stable union must terminate without ERROR"
+        );
     }
 }

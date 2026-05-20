@@ -3,6 +3,8 @@
 
 mod builtin_iterator_return_alias;
 mod jsx_runtime_bridge;
+mod simple_local_interface;
+mod type_alias_merged_value;
 mod type_alias_variable_alias;
 
 use crate::query_boundaries::common::{contains_infer_types, contains_type_parameters};
@@ -10,9 +12,11 @@ use crate::query_boundaries::state::type_environment;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{SymbolId, symbol_flags};
+use tsz_common::ModuleKind;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{PropertyInfo, TypeId, Visibility};
+
 impl<'a> CheckerState<'a> {
     pub(crate) fn normalize_namespace_export_declaration_order(props: &mut [PropertyInfo]) {
         props.sort_by(
@@ -64,6 +68,58 @@ impl<'a> CheckerState<'a> {
             .into_iter()
             .map(|(name, sym_id, _)| (name, sym_id))
             .collect()
+    }
+
+    /// Resolve the type of a require-style import alias under Node20/NodeNext
+    /// CJS-of-ESM `"module.exports"` interop.
+    ///
+    /// When a `.cjs`/`.cts` file imports a `.mjs`/`.mts` module that exports a
+    /// `"module.exports"` binding (`export { X as "module.exports" }`), the
+    /// alias resolves to the `"module.exports"` value rather than a synthesized
+    /// namespace surface — `import X = require(M)`, `import * as X from M`,
+    /// and (separately handled at `new`/identifier sites) `import X from M` all
+    /// see `typeof X`, mirroring tsc's CommonJS-of-ESM interop where
+    /// `module.exports = X` replaces the entire module value.
+    pub(crate) fn module_exports_require_interop_alias_type(
+        &mut self,
+        sym_id: SymbolId,
+    ) -> Option<TypeId> {
+        // The interop only applies under Node20/NodeNext; gate on that first so
+        // every other build pays one enum compare per call.
+        if !matches!(
+            self.ctx.compiler_options.module,
+            ModuleKind::Node20 | ModuleKind::NodeNext
+        ) {
+            return None;
+        }
+        // Local-binder lookup: the alias symbol is owned by the file that
+        // wrote the import declaration, not by the target module, so a
+        // cross-file fallback would surface an unrelated symbol that happens
+        // to share the same raw `SymbolId`.
+        let module_exports_sym = {
+            let symbol = self.ctx.binder.get_symbol(sym_id)?;
+            if symbol.flags & symbol_flags::ALIAS == 0 {
+                return None;
+            }
+            // Only require-style alias shapes: `import X = require(M)`
+            // (import_name = None) and `import * as X from M`
+            // (import_name = "*"). Named and default imports flow through
+            // their own type-resolution paths.
+            if !matches!(symbol.import_name.as_deref(), None | Some("*")) {
+                return None;
+            }
+            let module_name = symbol.import_module.as_deref()?;
+            if !self.current_file_uses_module_exports_require_interop(module_name) {
+                return None;
+            }
+            let declaring_file_idx = self
+                .ctx
+                .resolve_symbol_file_index(sym_id)
+                .or(Some(self.ctx.current_file_idx));
+            self.resolve_effective_module_exports_from_file(module_name, declaring_file_idx)
+                .and_then(|exports| exports.get("module.exports"))?
+        };
+        Some(self.get_type_of_symbol(module_exports_sym))
     }
 
     pub(crate) fn node_esm_cjs_default_import_namespace_type(
@@ -239,7 +295,23 @@ impl<'a> CheckerState<'a> {
             return prop_type;
         }
 
-        let mut prop_type = self.get_type_of_symbol(export_sym_id);
+        let should_delegate = self
+            .ctx
+            .resolve_symbol_file_index(export_sym_id)
+            .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
+            || self
+                .get_cross_file_symbol(export_sym_id)
+                .is_some_and(|symbol| {
+                    symbol.decl_file_idx != u32::MAX
+                        && symbol.decl_file_idx as usize != self.ctx.current_file_idx
+                });
+        let mut prop_type = if should_delegate {
+            self.delegate_cross_arena_symbol_resolution(export_sym_id)
+                .map(|(type_id, _)| type_id)
+                .unwrap_or_else(|| self.get_type_of_symbol(export_sym_id))
+        } else {
+            self.get_type_of_symbol(export_sym_id)
+        };
         if symbol_flags_opt.is_some_and(|flags| {
             (flags & symbol_flags::ENUM) != 0 && (flags & symbol_flags::ENUM_MEMBER) == 0
         }) {
@@ -527,16 +599,11 @@ impl<'a> CheckerState<'a> {
         declaring_file_idx: Option<usize>,
         exports_table: &tsz_binder::SymbolTable,
         props: &mut Vec<PropertyInfo>,
-    ) {
-        let Some(export_equals_sym_id) = exports_table.get("export=") else {
-            return;
-        };
-        let Some(mut export_equals_symbol) = self
+    ) -> Option<String> {
+        let export_equals_sym_id = exports_table.get("export=")?;
+        let mut export_equals_symbol = self
             .get_symbol_globally(export_equals_sym_id)
-            .or_else(|| self.get_cross_file_symbol(export_equals_sym_id))
-        else {
-            return;
-        };
+            .or_else(|| self.get_cross_file_symbol(export_equals_sym_id))?;
 
         if export_equals_symbol.decl_file_idx == u32::MAX
             && let Some(target_idx) = self.ctx.resolve_symbol_file_index(export_equals_sym_id)
@@ -576,7 +643,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut nested_exports = tsz_binder::SymbolTable::new();
-        self.merge_export_equals_import_type_members(
+        let nested_module_specifier = self.merge_export_equals_import_type_members(
             export_equals_symbol,
             declaring_file_idx,
             &mut nested_exports,
@@ -635,6 +702,50 @@ impl<'a> CheckerState<'a> {
                 single_quoted_name: false,
             });
         }
+        nested_module_specifier
+    }
+
+    /// Merge value-side property exports from a CommonJS module's JS export
+    /// surface into a typeof-import namespace `props` list. Supplements the
+    /// binder's `module_exports` table for files where the binder records only
+    /// an `export=` (or nothing at all) for `module.exports = { … }`-style
+    /// object-literal exports, so `typeof import("./mod").foo` can find `foo`
+    /// as a value member instead of falsely emitting TS2694.
+    ///
+    /// Existing props (added from the binder's exports table or
+    /// [`append_export_equals_import_type_namespace_props`]) take precedence —
+    /// this only fills in names that are not already present.
+    pub(crate) fn merge_js_export_surface_into_typeof_import_namespace_props(
+        &mut self,
+        module_name: &str,
+        declaring_file_idx: Option<usize>,
+        props: &mut Vec<PropertyInfo>,
+    ) {
+        let Some(js_surface) =
+            self.resolve_js_export_surface_for_module(module_name, declaring_file_idx)
+        else {
+            return;
+        };
+        for prop in js_surface.named_exports {
+            let prop_name_atom = self.ctx.types.resolve_atom_ref(prop.name);
+            let prop_name = prop_name_atom.as_ref();
+            if prop_name == "export=" {
+                continue;
+            }
+            if props
+                .iter()
+                .any(|p| self.ctx.types.resolve_atom_ref(p.name).as_ref() == prop_name)
+            {
+                continue;
+            }
+            let mut new_prop = prop.clone();
+            new_prop.declaration_order = if prop_name == "default" {
+                1
+            } else {
+                (props.len() as u32) + 2
+            };
+            props.push(new_prop);
+        }
     }
 
     /// Compute type of a symbol (internal, not cached).
@@ -647,15 +758,26 @@ impl<'a> CheckerState<'a> {
         &mut self,
         sym_id: SymbolId,
     ) -> (TypeId, Vec<tsz_solver::TypeParamInfo>) {
-        // PERF: see `docs/plan/PERFORMANCE_PLAN.md`. Counts every
-        // entry to type-of-symbol computation; PR 1 uses this against
+        // PERF: see `docs/plan/PERFORMANCE_PLAN.md`. Counts every entry to
+        // type-of-symbol computation; attribution uses this against
         // unique-SymbolId estimates to characterize recomputation.
-        tsz_common::perf_counters::inc(
-            &tsz_common::perf_counters::counters().compute_type_of_symbol_calls,
-        );
+        // The helper gates once before the `counters()` `OnceLock<PerfCounters>`
+        // deref so disabled builds skip the deref entirely on this
+        // multi-million-call hot path.
+        tsz_common::perf_counters::record_compute_type_of_symbol_call();
 
         let factory = self.ctx.types.factory();
         use tsz_lowering::TypeLowering;
+
+        // Node20/NodeNext CJS-of-ESM `export { X as "module.exports" }` interop:
+        // a require-style alias (`import X = require(M)` or `import * as X from M`)
+        // pointing at an ESM module M with a `"module.exports"` binding is the
+        // value of that binding — not a synthesized namespace wrapper. Decide this
+        // before cross-arena delegation so the same rule fires for same-arena and
+        // cross-arena alias resolutions.
+        if let Some(me_type) = self.module_exports_require_interop_alias_type(sym_id) {
+            return (me_type, Vec::new());
+        }
 
         // Handle cross-file symbol resolution via delegation
         if let Some(result) = self.delegate_cross_arena_symbol_resolution(sym_id) {
@@ -670,31 +792,82 @@ impl<'a> CheckerState<'a> {
 
         // Use get_symbol_globally to find symbols in lib files and other files
         // Extract needed data to avoid holding borrow across mutable operations
-        let (flags, value_decl, declarations, import_module, import_name, escaped_name) =
-            match self.get_symbol_globally(sym_id) {
-                Some(symbol) => (
+        let (flags, value_decl, declarations, import_module, import_name, escaped_name) = match self
+            .get_symbol_globally(sym_id)
+        {
+            Some(symbol) => {
+                tsz_common::perf_counters::record_compute_type_of_symbol_source_outcome(
+                    tsz_common::perf_counters::ComputeTypeOfSymbolSourceOutcome::GlobalSymbol,
+                );
+                (
                     symbol.flags,
                     symbol.value_declaration,
                     symbol.declarations.clone(),
                     symbol.import_module.clone(),
                     symbol.import_name.clone(),
                     symbol.escaped_name.clone(),
-                ),
-                None => {
-                    // Also try the cross-file symbol
-                    match self.get_cross_file_symbol(sym_id) {
-                        Some(symbol) => (
+                )
+            }
+            None => {
+                // Also try the cross-file symbol
+                match self.get_cross_file_symbol(sym_id) {
+                    Some(symbol) => {
+                        tsz_common::perf_counters::record_compute_type_of_symbol_source_outcome(
+                                tsz_common::perf_counters::ComputeTypeOfSymbolSourceOutcome::CrossFileSymbol,
+                            );
+                        (
                             symbol.flags,
                             symbol.value_declaration,
                             symbol.declarations.clone(),
                             symbol.import_module.clone(),
                             symbol.import_name.clone(),
                             symbol.escaped_name.clone(),
-                        ),
-                        None => return (TypeId::UNKNOWN, Vec::new()),
+                        )
+                    }
+                    None => {
+                        tsz_common::perf_counters::record_compute_type_of_symbol_source_outcome(
+                                tsz_common::perf_counters::ComputeTypeOfSymbolSourceOutcome::MissingSymbol,
+                            );
+                        return (TypeId::UNKNOWN, Vec::new());
                     }
                 }
-            };
+            }
+        };
+
+        let kind_outcome = if flags & symbol_flags::ALIAS != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::Alias
+        } else if flags & symbol_flags::TYPE_ALIAS != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::TypeAlias
+        } else if flags & symbol_flags::INTERFACE != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::Interface
+        } else if flags & symbol_flags::CLASS != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::Class
+        } else if flags & symbol_flags::FUNCTION != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::Function
+        } else if flags & symbol_flags::VARIABLE != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::Variable
+        } else if flags & symbol_flags::MODULE != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::Module
+        } else if flags & symbol_flags::PROPERTY != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::Property
+        } else if flags & symbol_flags::METHOD != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::Method
+        } else if flags & symbol_flags::ACCESSOR != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::Accessor
+        } else if flags & symbol_flags::ENUM != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::Enum
+        } else if flags & symbol_flags::TYPE_PARAMETER != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::TypeParameter
+        } else if flags & symbol_flags::TYPE_LITERAL != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::TypeLiteral
+        } else if flags & symbol_flags::OBJECT_LITERAL != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::ObjectLiteral
+        } else if flags & symbol_flags::SIGNATURE != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::Signature
+        } else {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::Other
+        };
+        tsz_common::perf_counters::record_compute_type_of_symbol_kind_outcome(kind_outcome);
 
         tracing::trace!(
         sym_id = sym_id.0,
@@ -958,7 +1131,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            // Create the structural type (union of member types, or NUMBER/STRING for homogeneous enums)
+            // Create the structural type as a finite union of member values.
             let structural_type = if member_types.is_empty() {
                 // Empty enum - default to NUMBER
                 TypeId::NUMBER
@@ -1305,6 +1478,39 @@ impl<'a> CheckerState<'a> {
 
         // Interface - return interface type with call signatures
         if flags & symbol_flags::INTERFACE != 0 {
+            if tsz_common::perf_counters::enabled_fast() {
+                let interface_callsite_outcome = if self.ctx.symbol_resolution_stack.len() < 2 {
+                    tsz_common::perf_counters::ComputeTypeOfSymbolInterfaceCallsiteOutcome::Root
+                } else {
+                    let parent_sym_id = self.ctx.symbol_resolution_stack
+                        [self.ctx.symbol_resolution_stack.len() - 2];
+                    let parent_flags = self
+                        .get_symbol_globally(parent_sym_id)
+                        .map(|symbol| symbol.flags)
+                        .or_else(|| self.get_cross_file_symbol(parent_sym_id).map(|s| s.flags));
+                    match parent_flags {
+                        Some(parent_flags) if parent_flags & symbol_flags::INTERFACE != 0 => {
+                            tsz_common::perf_counters::ComputeTypeOfSymbolInterfaceCallsiteOutcome::ParentInterface
+                        }
+                        Some(parent_flags) if parent_flags & symbol_flags::TYPE_ALIAS != 0 => {
+                            tsz_common::perf_counters::ComputeTypeOfSymbolInterfaceCallsiteOutcome::ParentTypeAlias
+                        }
+                        Some(parent_flags) if parent_flags & symbol_flags::ALIAS != 0 => {
+                            tsz_common::perf_counters::ComputeTypeOfSymbolInterfaceCallsiteOutcome::ParentAlias
+                        }
+                        Some(_) => {
+                            tsz_common::perf_counters::ComputeTypeOfSymbolInterfaceCallsiteOutcome::ParentOther
+                        }
+                        None => {
+                            tsz_common::perf_counters::ComputeTypeOfSymbolInterfaceCallsiteOutcome::ParentMissing
+                        }
+                    }
+                };
+                tsz_common::perf_counters::record_compute_type_of_symbol_interface_callsite_outcome(
+                    interface_callsite_outcome,
+                );
+            }
+
             // Merged lib symbols can live in the main binder but still carry
             // declaration nodes from other arenas. Lowering those declarations
             // against the current arena produces incomplete interface shapes
@@ -1347,6 +1553,59 @@ impl<'a> CheckerState<'a> {
                                 .any(|a| !std::ptr::eq(a.as_ref(), self.ctx.arena))
                     })
             });
+            let mut has_local_interface_decl = false;
+            let mut has_local_interface_heritage_extends = false;
+            let mut has_local_computed_property_name = false;
+            let mut namespace_prefix = None;
+            for decl_idx in declarations.iter().copied() {
+                let Some(node) = self.ctx.arena.get(decl_idx) else {
+                    continue;
+                };
+                let Some(interface) = self.ctx.arena.get_interface(node) else {
+                    continue;
+                };
+                has_local_interface_decl = true;
+                if namespace_prefix.is_none() {
+                    namespace_prefix = self.declaration_namespace_prefix(self.ctx.arena, decl_idx);
+                }
+                if !has_local_interface_heritage_extends
+                    && let Some(heritage_clauses) = interface.heritage_clauses.as_ref()
+                {
+                    has_local_interface_heritage_extends =
+                        heritage_clauses.nodes.iter().copied().any(|clause_idx| {
+                            self.ctx
+                                .arena
+                                .get(clause_idx)
+                                .and_then(|clause_node| {
+                                    self.ctx.arena.get_heritage_clause(clause_node)
+                                })
+                                .is_some_and(|clause| {
+                                    clause.token == tsz_scanner::SyntaxKind::ExtendsKeyword as u16
+                                })
+                        });
+                }
+                if has_local_computed_property_name {
+                    continue;
+                }
+                has_local_computed_property_name =
+                    interface.members.nodes.iter().copied().any(|member_idx| {
+                        let Some(member) = self.ctx.arena.get(member_idx) else {
+                            return false;
+                        };
+                        let name_idx = if let Some(sig) = self.ctx.arena.get_signature(member) {
+                            sig.name
+                        } else if let Some(acc) = self.ctx.arena.get_accessor(member) {
+                            acc.name
+                        } else {
+                            return false;
+                        };
+                        self.ctx.arena.get(name_idx).is_some_and(|name_node| {
+                            name_node.kind
+                                == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                        })
+                    });
+            }
+
             // Only use the is_lib_symbol fallback when the per-declaration check
             // couldn't determine the arena origin (i.e. no declaration_arenas entry
             // AND the declaration exists in the current arena). The is_lib_symbol
@@ -1362,29 +1621,25 @@ impl<'a> CheckerState<'a> {
                 // interfaces will have real interface nodes; cross-arena collisions
                 // will have NodeIndexes that point to unrelated nodes. Only fall
                 // back to lib resolution when there's no real interface decl.
-                let has_real_interface_decl = declarations.iter().any(|&decl_idx| {
-                    self.ctx
-                        .arena
-                        .get(decl_idx)
-                        .and_then(|node| self.ctx.arena.get_interface(node))
-                        .is_some()
-                });
-                !has_real_interface_decl && self.ctx.binder.symbol_arenas.contains_key(&sym_id)
+                !has_local_interface_decl && self.ctx.binder.symbol_arenas.contains_key(&sym_id)
             };
             // When all declarations are from lib arenas (no local interface
             // declarations), resolve via the lib type directly. But when the
             // user has local interface declarations that augment/extend the lib
             // type (e.g., `interface Node { forEachChild(...) }`), we must fall
             // through to the full merge path so user-declared members are included.
-            let has_local_interface_decl = declarations.iter().any(|&decl_idx| {
-                self.ctx
-                    .arena
-                    .get(decl_idx)
-                    .and_then(|node| self.ctx.arena.get_interface(node))
-                    .is_some()
-            });
-            if (has_out_of_arena_decl || is_lib_symbol)
-                && !has_local_interface_decl
+            let should_suppress_missing_interface_decl_reject =
+                tsz_common::perf_counters::enabled_fast()
+                    && self
+                        .ctx
+                        .simple_object_missing_interface_decl_residue_is_lib_provenance_case(
+                            sym_id,
+                            has_local_interface_decl,
+                        );
+            let can_resolve_lib_interface_without_local_decl =
+                !has_local_interface_decl && (has_out_of_arena_decl || is_lib_symbol);
+
+            if can_resolve_lib_interface_without_local_decl
                 && !self.ctx.lib_contexts.is_empty()
                 && let Some(lib_type) = self.resolve_lib_type_by_name(&escaped_name)
             {
@@ -1414,6 +1669,29 @@ impl<'a> CheckerState<'a> {
                 return (lib_type, Vec::new());
             }
 
+            if let Some(interface_type) = self.try_lower_simple_local_interface_object(
+                sym_id,
+                &declarations,
+                simple_local_interface::SimpleLocalInterfaceFacts {
+                    has_out_of_arena_decl,
+                    has_cross_file_same_index,
+                    has_local_interface_decl,
+                    has_local_interface_heritage_extends,
+                    has_local_computed_property_name,
+                    suppress_missing_interface_decl_reject:
+                        should_suppress_missing_interface_decl_reject,
+                },
+            ) {
+                tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_fastpath_hit();
+                if let Some(shape) = type_environment::object_shape(self.ctx.types, interface_type)
+                {
+                    self.ctx
+                        .definition_store
+                        .set_instance_shape(self.ctx.get_or_create_def_id(sym_id), shape);
+                }
+                return (interface_type, Vec::new());
+            }
+
             if !declarations.is_empty() {
                 // Get type parameters from the first interface declaration.
                 // When cross-file declarations exist, the first declaration may be
@@ -1440,17 +1718,35 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
+                let needs_computed_name_map = has_local_computed_property_name;
+                let needs_prewarm =
+                    declarations.len() > 1 || has_out_of_arena_decl || has_cross_file_same_index;
+                let needs_local_heritage_merge = has_local_interface_heritage_extends;
+                tsz_common::perf_counters::record_compute_type_of_symbol_interface_fastpath_outcome(
+                    tsz_common::perf_counters::ComputeTypeOfSymbolInterfaceFastPathOutcome::from_skips(
+                        !needs_computed_name_map,
+                        !needs_prewarm,
+                        !needs_local_heritage_merge,
+                    ),
+                );
+
                 // Pre-compute computed property names that the lowering can't resolve from AST alone.
-                let computed_names = self.precompute_computed_property_names(&declarations);
-                let prewarmed_type_params =
-                    self.prewarm_member_type_reference_params(&declarations);
-                let namespace_prefix = declarations.iter().copied().find_map(|decl_idx| {
-                    self.ctx
-                        .arena
-                        .get(decl_idx)
-                        .and_then(|node| self.ctx.arena.get_interface(node))
-                        .and_then(|_| self.declaration_namespace_prefix(self.ctx.arena, decl_idx))
-                });
+                let (computed_names, computed_symbol_names) = if needs_computed_name_map {
+                    (
+                        self.precompute_computed_property_names(&declarations),
+                        self.precompute_symbol_named_computed_property_names(&declarations),
+                    )
+                } else {
+                    (
+                        rustc_hash::FxHashMap::default(),
+                        rustc_hash::FxHashSet::default(),
+                    )
+                };
+                let prewarmed_type_params = if needs_prewarm {
+                    self.prewarm_member_type_reference_params(&declarations)
+                } else {
+                    rustc_hash::FxHashMap::default()
+                };
 
                 let type_param_bindings = self.get_type_param_bindings();
                 let type_resolver =
@@ -1468,9 +1764,13 @@ impl<'a> CheckerState<'a> {
                 };
                 let value_resolver =
                     |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
+                let arena_ptr =
+                    self.ctx.arena as *const tsz_parser::parser::node::NodeArena as usize;
                 let computed_name_resolver = |expr_idx: NodeIndex| -> Option<tsz_common::Atom> {
-                    computed_names.get(&expr_idx).copied()
+                    computed_names.get(&(expr_idx, arena_ptr)).copied()
                 };
+                let computed_symbol_name_resolver =
+                    |expr_idx: NodeIndex| computed_symbol_names.contains(&(expr_idx, arena_ptr));
                 let lazy_type_params_resolver = |def_id: tsz_solver::def::DefId| {
                     prewarmed_type_params
                         .get(&def_id)
@@ -1499,6 +1799,13 @@ impl<'a> CheckerState<'a> {
                             scoped.push_str(type_name);
                             self.resolve_entity_name_text_to_def_id_for_lowering(&scoped)
                         })
+                        .or_else(|| {
+                            (!self.ctx.file_local_type_shadow_for_lib_name(type_name))
+                                .then(|| {
+                                    self.resolve_actual_lib_name_to_def_id_for_lowering(type_name)
+                                })
+                                .flatten()
+                        })
                         .or_else(|| self.resolve_entity_name_text_to_def_id_for_lowering(type_name))
                 };
                 let lowering = TypeLowering::with_hybrid_resolver(
@@ -1510,6 +1817,7 @@ impl<'a> CheckerState<'a> {
                 )
                 .with_type_param_bindings(type_param_bindings)
                 .with_computed_name_resolver(&computed_name_resolver)
+                .with_computed_symbol_name_resolver(&computed_symbol_name_resolver)
                 .with_lazy_type_params_resolver(&lazy_type_params_resolver)
                 .with_name_def_id_resolver(&name_resolver)
                 .with_type_query_override(&type_query_override);
@@ -1549,8 +1857,11 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                let mut interface_type =
-                    self.merge_interface_heritage_types(&declarations, interface_type);
+                let mut interface_type = if needs_local_heritage_merge {
+                    self.merge_interface_heritage_types(&declarations, interface_type)
+                } else {
+                    interface_type
+                };
 
                 // Merge heritage types from cross-file declarations that
                 // merge_interface_heritage_types couldn't process (it uses
@@ -1595,129 +1906,4 @@ impl<'a> CheckerState<'a> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use tsz_solver::{QueryDatabase, TypeInterner};
-
-    fn make_prop(name: tsz_common::Atom, declaration_order: u32) -> PropertyInfo {
-        PropertyInfo {
-            name,
-            type_id: TypeId::ANY,
-            write_type: TypeId::ANY,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            is_class_prototype: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-            declaration_order,
-            is_string_named: false,
-            is_symbol_named: false,
-            single_quoted_name: false,
-        }
-    }
-
-    #[test]
-    fn synthetic_namespace_default_normalization_preserves_default_before_augmentations() {
-        let types = TypeInterner::new();
-        let default_atom = types.intern_string("default");
-        let configs_atom = types.intern_string("configs");
-        let mut props = vec![make_prop(configs_atom, 0), make_prop(default_atom, 1)];
-
-        CheckerState::normalize_namespace_export_declaration_order(&mut props);
-        let namespace_type = types.factory().object(props);
-        let shape = crate::query_boundaries::common::object_shape_for_type(&types, namespace_type)
-            .expect("namespace type should have an object shape");
-        let shape_props: Vec<_> = shape
-            .properties
-            .iter()
-            .map(|prop| {
-                (
-                    types.resolve_atom_ref(prop.name).to_string(),
-                    prop.declaration_order,
-                )
-            })
-            .collect();
-
-        assert_eq!(
-            shape_props,
-            vec![("configs".to_string(), 2), ("default".to_string(), 1)]
-        );
-    }
-
-    #[test]
-    fn ordered_namespace_export_entries_follow_first_declaration_span() {
-        use tsz_binder::{BinderState, SymbolTable, symbol_flags};
-        use tsz_checker::context::{CheckerOptions, ScriptTarget};
-        use tsz_parser::parser::ParserState;
-
-        let mut parser = ParserState::new("/test.ts".to_string(), String::new());
-        let root = parser.parse_source_file();
-        let mut binder = BinderState::new();
-        binder.bind_source_file(parser.get_arena(), root);
-
-        let third = binder
-            .symbols
-            .alloc(symbol_flags::EXPORT_VALUE, "third".to_string());
-        binder
-            .symbols
-            .get_mut(third)
-            .expect("third symbol should exist")
-            .add_declaration(NodeIndex::NONE, Some((30, 31)));
-
-        let first = binder
-            .symbols
-            .alloc(symbol_flags::EXPORT_VALUE, "first".to_string());
-        binder
-            .symbols
-            .get_mut(first)
-            .expect("first symbol should exist")
-            .add_declaration(NodeIndex::NONE, Some((10, 11)));
-
-        let second = binder
-            .symbols
-            .alloc(symbol_flags::EXPORT_VALUE, "second".to_string());
-        binder
-            .symbols
-            .get_mut(second)
-            .expect("second symbol should exist")
-            .add_declaration(NodeIndex::NONE, Some((20, 21)));
-
-        let missing_span = binder
-            .symbols
-            .alloc(symbol_flags::EXPORT_VALUE, "missingSpan".to_string());
-
-        let mut exports = SymbolTable::new();
-        exports.set("third".to_string(), third);
-        exports.set("missingSpan".to_string(), missing_span);
-        exports.set("first".to_string(), first);
-        exports.set("second".to_string(), second);
-
-        let types = TypeInterner::new();
-        let checker = CheckerState::new(
-            parser.get_arena(),
-            &binder,
-            &types,
-            "/test.ts".to_string(),
-            CheckerOptions {
-                target: ScriptTarget::ES2020,
-                ..CheckerOptions::default()
-            },
-        );
-
-        let ordered = checker.ordered_namespace_export_entries(&exports);
-        let names: Vec<_> = ordered
-            .into_iter()
-            .map(|(name, _)| name.to_string())
-            .collect();
-        assert_eq!(
-            names,
-            vec![
-                "first".to_string(),
-                "second".to_string(),
-                "third".to_string(),
-                "missingSpan".to_string()
-            ]
-        );
-    }
-}
+mod tests;

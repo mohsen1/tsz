@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
+use serde::Serialize;
 use wasm_bindgen::prelude::{JsValue, wasm_bindgen};
 
 use crate::CheckerState;
@@ -27,7 +28,7 @@ use crate::lsp::{
 };
 use crate::parser;
 use crate::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 /// High-performance parser using Node architecture (16 bytes/node).
 /// This is the optimized path for Phase 8 test suite evaluation.
@@ -114,6 +115,12 @@ impl Parser {
         // Invalidate binder since we have new global symbols
         self.binder = None;
         self.type_cache = None;
+    }
+
+    /// Return global parsed-lib cache statistics as JSON.
+    #[wasm_bindgen(js_name = getLibFileCacheStatisticsJson)]
+    pub fn get_lib_file_cache_statistics_json(&self) -> String {
+        crate::api::wasm::lib_cache::lib_file_cache_statistics_json()
     }
 
     /// Parse the source file and return the root node index.
@@ -335,11 +342,11 @@ impl Parser {
     }
 
     fn emit_with_context(&self, root_idx: parser::NodeIndex, ctx: EmitContext) -> String {
-        let transforms = LoweringPass::new(self.parser.get_arena(), &ctx).run(root_idx);
+        let emit_plan = LoweringPass::new(self.parser.get_arena(), &ctx).run_plan(root_idx);
 
-        let mut printer = Printer::with_transforms_and_options(
+        let mut printer = Printer::with_emit_plan_and_options(
             self.parser.get_arena(),
-            transforms,
+            emit_plan,
             ctx.options.clone(),
         );
         printer.set_target_es5(ctx.target_es5);
@@ -1102,7 +1109,11 @@ impl Parser {
             &mut self.scope_cache,
             None,
         ) {
-            Ok(edit) => Ok(serde_wasm_bindgen::to_value(&edit)?),
+            Ok(edit) => {
+                let serializer =
+                    serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+                Ok(edit.serialize(&serializer)?)
+            }
             Err(e) => Err(JsValue::from_str(&e)),
         }
     }

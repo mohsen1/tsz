@@ -111,6 +111,48 @@ fn constructor_recovered_return_type_survives_arrow_parameter_syntax() {
 }
 
 #[test]
+fn lowered_instance_field_arrow_initializer_keeps_trailing_comment_after_semicolon() {
+    let output = print_with_printer_options(
+        "class C {\n    a = () => arguments // should error\n    constructor() {}\n}\n",
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            use_define_for_class_fields: false,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("this.a = () => arguments; // should error"),
+        "Lowered class field arrow comment should follow the generated assignment semicolon.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("this.a = () => arguments // should error\n;"),
+        "Arrow body should not emit the field comment before the assignment semicolon.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn lowered_class_expression_field_arrow_initializer_keeps_trailing_comment_after_semicolon() {
+    let output = print_with_cli_style_pipeline(
+        "function D() {\n    return class T {\n        a = () => arguments // should error\n    };\n}\n",
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            use_define_for_class_fields: false,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("this.a = () => arguments; // should error"),
+        "Lowered class expression field arrow comment should follow the generated assignment semicolon.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("this.a = () => arguments // should error\n;"),
+        "Transformed class-expression field should not let the arrow body steal the field comment.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn downlevel_define_type_only_computed_property_does_not_allocate_temp() {
     let output = print_with_printer_options(
         "class C {\n    [side.effect]: string;\n}\n",
@@ -175,6 +217,52 @@ fn downlevel_assign_typed_only_field_emits_nothing() {
     assert!(
         !output.contains("defineProperty(this, \"prop\""),
         "Typed-only field without define-fields must not emit defineProperty.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn native_define_typed_only_public_field_emits_nothing() {
+    let output = print_with_printer_options(
+        "class Test {\n    prop: number;\n    bare;\n    #privateProp: number;\n}\n",
+        PrinterOptions {
+            target: ScriptTarget::ES2022,
+            use_define_for_class_fields: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !output.contains("prop;"),
+        "Typed-only public field should be erased in native class-field emit.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("bare;"),
+        "Untyped public field should remain a runtime class field.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("#privateProp;"),
+        "Private fields remain runtime declarations even when annotated.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn native_define_decorated_typed_public_field_stays_runtime_field() {
+    let output = print_with_printer_options(
+        "class Test {\n    @dec\n    prop: number;\n}\n",
+        PrinterOptions {
+            target: ScriptTarget::ES2022,
+            use_define_for_class_fields: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("@dec"),
+        "ES decorator should be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("prop;"),
+        "Decorated typed field remains a runtime class field.\nOutput:\n{output}"
     );
 }
 

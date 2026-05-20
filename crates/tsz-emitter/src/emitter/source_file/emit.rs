@@ -1,9 +1,10 @@
 use super::super::Printer;
 use super::super::core::JsxEmit;
-use tsz_common::common::ModuleKind;
-use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::Node;
+use tsz_common::common::{ModuleKind, ScriptTarget};
+use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, NodeList};
+use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
     // =========================================================================
@@ -72,21 +73,29 @@ impl<'a> Printer<'a> {
         for ident in &self.arena.identifiers {
             self.file_identifiers.insert(ident.escaped_text.clone());
         }
-        if !matches!(
-            self.ctx.original_module_kind,
-            Some(ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System)
-        ) {
+        if !self.ctx.is_inside_module_wrapper_body() {
             self.commonjs_named_import_substitutions.clear();
         }
         if !matches!(self.ctx.original_module_kind, Some(ModuleKind::AMD)) {
             self.wrapped_export_module_substitutions.clear();
         }
         self.generated_temp_names.clear();
-        self.commonjs_tslib_import_binding = "tslib_1".to_string();
+        self.reserved_nested_temp_names.clear();
+        self.preplanned_legacy_decorated_class_aliases.clear();
+        self.async_generator_inner_name_counts.clear();
+        self.reserved_disposable_env_names.clear();
+        self.node_esm_create_require_names = None;
+        // The wrapper sets the correct binding (e.g. "tslib_2" for a second outFile
+        // module) before calling the body; resetting here would clobber that value.
+        if !self.ctx.is_inside_module_wrapper_body() {
+            self.commonjs_tslib_import_binding = "tslib_1".to_string();
+        }
         self.ctx.arguments_capture_counter = 0;
+        self.next_dynamic_import_promise_id = 1;
         self.first_for_of_emitted = false;
         self.namespace_all_exported_names.clear();
         self.collect_all_namespace_exports(&source.statements);
+        self.prepare_file_level_class_temp_reservations(&source.statements);
 
         // Pre-pass: collect const enum values for inlining at usage sites.
         // tsc replaces property/element access to const enum members with their
@@ -115,8 +124,8 @@ impl<'a> Printer<'a> {
         let inside_module_wrapper = self.ctx.original_module_kind.is_some();
         self.all_comments = if !self.ctx.options.remove_comments {
             if let Some(text) = self.source_text {
-                tsz_common::comments::get_comment_ranges(text)
-                    .into_iter()
+                self.source_comment_ranges
+                    .iter()
                     .filter(|c| {
                         let content = c.get_text(text);
                         // When inside a module wrapper (AMD/UMD/System):
@@ -140,6 +149,7 @@ impl<'a> Printer<'a> {
                         }
                         true
                     })
+                    .cloned()
                     .collect()
             } else {
                 Vec::new()
@@ -497,6 +507,9 @@ impl<'a> Printer<'a> {
             && !is_file_module
             && !self.ctx.options.target.supports_es2025()
             && self.block_has_using_declarations(&source.statements);
+        let will_emit_runtime_helpers = !self.ctx.options.no_emit_helpers
+            && self.transforms.helpers_populated()
+            && self.transforms.helpers().any_needed();
 
         let should_emit_use_strict = !source_has_use_strict
             && !self.ctx.options.suppress_use_strict
@@ -512,8 +525,60 @@ impl<'a> Printer<'a> {
         // module file, we must emit "use strict" at the correct position (before
         // __esModule marker / exports preamble) and skip the source's own
         // directive during statement iteration to avoid duplication.
-        let skip_source_use_strict =
-            source_has_use_strict && (needs_use_strict_cjs || needs_use_strict_inside_wrapper);
+        let source_use_strict_must_precede_helpers = source_has_use_strict
+            && !(is_es_module_output && is_file_module)
+            && !jsx_will_add_esm_imports
+            && will_emit_runtime_helpers
+            && !self.ctx.options.suppress_use_strict;
+        let skip_source_use_strict = source_has_use_strict
+            && (needs_use_strict_cjs
+                || needs_use_strict_inside_wrapper
+                || source_use_strict_must_precede_helpers);
+        let source_use_strict_text = if skip_source_use_strict {
+            source.statements.nodes.iter().find_map(|&idx| {
+                let stmt_node = self.arena.get(idx)?;
+                if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                    return None;
+                }
+                let expr_stmt = self.arena.get_expression_statement(stmt_node)?;
+                let expr_node = self.arena.get(expr_stmt.expression)?;
+                if !expr_node.is_string_literal() {
+                    return None;
+                }
+                let is_use_strict = self
+                    .arena
+                    .get_literal(expr_node)
+                    .is_some_and(|lit| lit.text == "use strict");
+                if !is_use_strict {
+                    return None;
+                }
+                let text = self.source_text?;
+                crate::safe_slice::slice(text, expr_node.pos as usize, expr_node.end as usize)
+                    .ok()
+                    .map(str::to_string)
+            })
+        } else {
+            None
+        };
+
+        // Header comments before a source-authored `"use strict"` belong to that
+        // prologue. If we have to reposition the directive before helpers, move
+        // those comments with it instead of letting the generic helper-deferral
+        // path attach them to the first runtime statement.
+        let first_stmt_pos = source
+            .statements
+            .nodes
+            .first()
+            .and_then(|&idx| self.arena.get(idx))
+            .map_or(node.end, |n| self.skip_trivia_forward(n.pos, n.end));
+
+        if skip_source_use_strict && !self.ctx.options.remove_comments {
+            let (emitted, _, had_trailing_newline) =
+                self.emit_comments_in_range(0, first_stmt_pos, false, false);
+            if emitted && !had_trailing_newline {
+                self.pending_block_comment_space = true;
+            }
+        }
 
         // Emit "use strict" when either:
         // - we need to add it (source doesn't have it), or
@@ -522,19 +587,17 @@ impl<'a> Printer<'a> {
         if should_emit_use_strict
             || (skip_source_use_strict && !self.ctx.options.suppress_use_strict)
         {
-            self.write("\"use strict\";");
+            if let Some(text) = source_use_strict_text.as_deref() {
+                self.write(text);
+                self.write(";");
+            } else {
+                self.write("\"use strict\";");
+            }
             self.write_line();
         }
         // Emit header comments AFTER "use strict" but BEFORE helpers.
         // Use skip_trivia_forward to find the actual token start since
         // node.pos may include leading trivia (where comments live).
-        let first_stmt_pos = source
-            .statements
-            .nodes
-            .first()
-            .and_then(|&idx| self.arena.get(idx))
-            .map_or(node.end, |n| self.skip_trivia_forward(n.pos, n.end));
-
         // When removeComments is true, tsc still emits "pinned" comments
         // (/*! ... */) that are detached from the first statement (i.e.,
         // separated by a blank line). These are typically copyright notices.
@@ -572,30 +635,34 @@ impl<'a> Printer<'a> {
                 }
             }
         }
-        let first_stmt_is_auto_accessor_class = source
-            .statements
-            .nodes
-            .iter()
-            .filter_map(|&idx| self.arena.get(idx))
-            .find(|stmt_node| {
-                !self.ctx.flags.in_declaration_emit && !self.is_erased_statement(stmt_node)
-            })
-            .is_some_and(|stmt_node| {
-                stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                    && self
-                        .arena
-                        .get_class(stmt_node)
-                        .is_some_and(|class| self.class_has_auto_accessor_members(class))
-            });
+        let auto_accessor_class_leading_comments_need_deferral = self.ctx.options.target
+            != ScriptTarget::ESNext
+            && (self.ctx.options.target as u32) < (ScriptTarget::ES2022 as u32);
+        let first_stmt_is_auto_accessor_class = auto_accessor_class_leading_comments_need_deferral
+            && source
+                .statements
+                .nodes
+                .iter()
+                .filter_map(|&idx| self.arena.get(idx))
+                .find(|stmt_node| {
+                    !self.ctx.flags.in_declaration_emit && !self.is_erased_statement(stmt_node)
+                })
+                .is_some_and(|stmt_node| {
+                    stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                        && self.arena.get_class(stmt_node).is_some_and(|class| {
+                            self.class_has_auto_accessor_members(class)
+                                && !self.class_has_decorators(class)
+                        })
+                });
 
         let mut deferred_header_comments: Vec<(String, bool)> = Vec::new();
         let mut jsx_deferred_comments: Vec<(String, bool)> = Vec::new();
         let is_commonjs = self.ctx.is_commonjs();
         // Check upfront if runtime helpers will be injected — this affects
         // whether attached header comments should be deferred to after helpers.
-        let will_emit_helpers = !self.ctx.options.no_emit_helpers
-            && self.transforms.helpers_populated()
-            && self.transforms.helpers().any_needed();
+        let will_emit_helpers = will_emit_runtime_helpers;
+        let needs_node_esm_create_require_preamble =
+            self.source_needs_node_esm_create_require(&source.statements);
 
         // Pre-compute the detached comment boundary for erased first statements.
         // tsc's algorithm: scan header comment ranges, find the FIRST blank-line
@@ -791,7 +858,9 @@ impl<'a> Printer<'a> {
                     //    the first real statement.
                     let should_defer = (is_commonjs
                         && (is_triple_slash_no_space || (!is_detached && !is_amd_dependency)))
-                        || (will_emit_helpers && !is_detached && !is_amd_dependency);
+                        || ((will_emit_helpers || needs_node_esm_create_require_preamble)
+                            && !is_detached
+                            && !is_amd_dependency);
                     // When JSX auto-import will generate ESM imports, defer
                     // /// <reference> directives so they appear AFTER the import,
                     // matching tsc's ordering.
@@ -827,7 +896,7 @@ impl<'a> Printer<'a> {
         if suppress_jsx_import_legacy
             && self.ctx.is_effectively_commonjs()
             && matches!(
-                self.ctx.options.jsx,
+                self.effective_jsx_emit(),
                 JsxEmit::ReactJsx | JsxEmit::ReactJsxDev
             )
         {
@@ -836,18 +905,22 @@ impl<'a> Printer<'a> {
                 self.jsx_legacy_cjs_runtime_var = Some(self.make_unique_name());
             }
         }
-        let jsx_legacy_dev_file_name_text =
-            if suppress_jsx_import_legacy && matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev) {
-                self.jsx_dev_file_name_text()
-            } else {
-                None
-            };
+        let jsx_legacy_dev_file_name_text = if suppress_jsx_import_legacy
+            && matches!(self.effective_jsx_emit(), JsxEmit::ReactJsxDev)
+        {
+            self.jsx_dev_file_name_text()
+        } else {
+            None
+        };
         let jsx_import_text = if suppress_jsx_import_legacy {
             None
         } else {
             self.jsx_auto_import_text()
         };
         let mut emitted_jsx_esm_import = false;
+        if needs_node_esm_create_require_preamble {
+            self.emit_node_esm_create_require_preamble();
+        }
         if !self.ctx.is_commonjs()
             && let Some(ref jsx_import) = jsx_import_text
         {
@@ -975,7 +1048,8 @@ impl<'a> Printer<'a> {
         let pre_tslib_import_byte_offset = self.writer.len();
         let pre_tslib_import_line = self.writer.current_line();
         if self.ctx.options.import_helpers && !self.ctx.is_commonjs() && helpers.any_needed() {
-            let names = helpers.needed_names();
+            let mut names = helpers.needed_names();
+            names.sort_unstable();
             if !names.is_empty() {
                 // When a helper name collides with a local identifier (e.g.
                 // `declare var __decorate`), tsc renames the import alias to
@@ -1082,6 +1156,19 @@ impl<'a> Printer<'a> {
             if has_top_level_using
                 && source.statements.nodes.iter().any(|&stmt_idx| {
                     self.arena.get(stmt_idx).is_some_and(|stmt_node| {
+                        let after_first_using = source
+                            .statements
+                            .nodes
+                            .iter()
+                            .take_while(|&&idx| idx != stmt_idx)
+                            .any(|&idx| {
+                                self.arena
+                                    .get(idx)
+                                    .is_some_and(|node| self.statement_is_top_level_using(node))
+                            });
+                        if !after_first_using {
+                            return false;
+                        }
                         (stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
                             && self
                                 .arena
@@ -1093,10 +1180,26 @@ impl<'a> Printer<'a> {
                                         && export.module_specifier.is_none()
                                         && self.arena.get(export.export_clause).is_some_and(
                                             |clause_node| {
-                                                clause_node.kind
-                                                    != syntax_kind_ext::FUNCTION_DECLARATION
-                                                    && clause_node.kind
-                                                        != syntax_kind_ext::CLASS_DECLARATION
+                                                if clause_node.kind
+                                                    == syntax_kind_ext::FUNCTION_DECLARATION
+                                                {
+                                                    return false;
+                                                }
+                                                if clause_node.kind
+                                                    == syntax_kind_ext::CLASS_DECLARATION
+                                                {
+                                                    return self
+                                                        .arena
+                                                        .get_class(clause_node)
+                                                        .is_some_and(|class| {
+                                                            !self
+                                                                .collect_class_decorators(
+                                                                    &class.modifiers,
+                                                                )
+                                                                .is_empty()
+                                                        });
+                                                }
+                                                true
                                             },
                                         )
                                 }))
@@ -1312,18 +1415,26 @@ impl<'a> Printer<'a> {
                 self.write(jsx_import);
             }
 
-            // Emit CJS tslib require after exports preamble
-            if self.ctx.options.import_helpers && helpers.any_needed() {
-                self.commonjs_tslib_import_binding = self.next_commonjs_module_var("tslib");
-                if self.ctx.options.target.is_es5() {
-                    self.write("var ");
-                } else {
-                    self.write("const ");
+            // Emit CJS tslib require. AMD/System wrapper bodies bind tslib via a
+            // wrapper parameter/setter; UMD keeps tsc's CJS factory-body require().
+            let needs_tslib_binding = helpers.any_needed()
+                || self.import_helpers_need_tslib_binding_for_class_emit(&source.statements);
+            if self.ctx.options.import_helpers && needs_tslib_binding {
+                if !matches!(
+                    self.ctx.original_module_kind,
+                    Some(ModuleKind::AMD | ModuleKind::System)
+                ) {
+                    self.commonjs_tslib_import_binding = self.next_commonjs_module_var("tslib");
+                    if self.ctx.options.target.is_es5() {
+                        self.write("var ");
+                    } else {
+                        self.write("const ");
+                    }
+                    let binding = self.commonjs_tslib_import_binding.clone();
+                    self.write(&binding);
+                    self.write(" = require(\"tslib\");");
+                    self.write_line();
                 }
-                let binding = self.commonjs_tslib_import_binding.clone();
-                self.write(&binding);
-                self.write(" = require(\"tslib\");");
-                self.write_line();
             }
         }
 
@@ -1364,6 +1475,7 @@ impl<'a> Printer<'a> {
         self.hoisted_assignment_value_temps.clear();
         self.preallocated_logical_assignment_value_temps.clear();
         self.preallocated_assignment_temps.clear();
+        self.preallocated_hoisted_temp_names.clear();
         self.hoisted_for_of_temps.clear();
         self.preallocated_temp_names.clear();
         self.reserved_iterator_return_temps.clear();
@@ -1410,6 +1522,30 @@ impl<'a> Printer<'a> {
         } else {
             rustc_hash::FxHashMap::default()
         };
+
+        // Re-exports appearing before their enum declaration consult these
+        // entries to suppress the would-be `exports.<alias> = local;` line
+        // that otherwise reads `local` in its TDZ window.
+        if is_top_level_cjs {
+            for (local_name, aliases) in self.transforms.cjs_iife_folded_bindings() {
+                if aliases.is_empty() {
+                    continue;
+                }
+                self.ctx
+                    .module_state
+                    .iife_exported_names
+                    .insert(local_name.clone());
+                let entry = self
+                    .ctx
+                    .module_state
+                    .iife_exported_bindings
+                    .entry(local_name.clone())
+                    .or_default();
+                for alias in aliases {
+                    entry.insert(alias.clone());
+                }
+            }
+        }
 
         let mut last_erased_stmt_end: Option<u32> = None;
         let mut last_erased_was_shorthand_module = false;
@@ -1535,7 +1671,12 @@ impl<'a> Printer<'a> {
                     false
                 };
                 if is_strict {
-                    self.skip_comments_for_erased_node(stmt_node);
+                    let strict_end = expr_node.end;
+                    while self.comment_emit_idx < self.all_comments.len()
+                        && self.all_comments[self.comment_emit_idx].end <= strict_end
+                    {
+                        self.comment_emit_idx += 1;
+                    }
                     continue;
                 }
             }
@@ -1616,16 +1757,22 @@ impl<'a> Printer<'a> {
                 {
                     true
                 } else if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
-                    // Only external module imports (`import x = require("mod")`)
-                    // count as runtime module syntax. Namespace aliases
-                    // (`import x = M.A`) are erased and should not suppress
-                    // deferred `export {};` emission.
+                    // External module imports (`import x = require("mod")`) and
+                    // exported aliases count as runtime module syntax. Plain
+                    // namespace aliases (`import x = M.A`) are erased and should
+                    // not suppress deferred `export {};` emission.
                     self.arena
                         .get_import_decl(stmt_node)
-                        .and_then(|import_data| self.arena.get(import_data.module_specifier))
-                        .is_some_and(|spec_node| {
-                            spec_node.is_string_literal()
-                                || spec_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE
+                        .is_some_and(|import_data| {
+                            self.arena
+                                .has_modifier(&import_data.modifiers, SyntaxKind::ExportKeyword)
+                                || self.arena.get(import_data.module_specifier).is_some_and(
+                                    |spec_node| {
+                                        spec_node.is_string_literal()
+                                            || spec_node.kind
+                                                == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE
+                                    },
+                                )
                         })
                 } else {
                     false
@@ -1651,14 +1798,16 @@ impl<'a> Printer<'a> {
                 if stmt_node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
                     self.emit_recovered_interface_body_statements(stmt_node);
                 }
+                if self.erased_statement_has_recovered_import_type_tail(stmt_node) {
+                    if !self.writer.is_at_line_start() {
+                        self.write_line();
+                    }
+                    self.write(";");
+                    self.write_line();
+                }
                 if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
-                    let scan_end = next_stmt_node.map_or_else(
-                        || {
-                            self.source_text
-                                .map_or(stmt_node.end, |text| text.len() as u32)
-                        },
-                        |n| n.pos,
-                    );
+                    let scan_end = next_stmt_node
+                        .map_or_else(|| self.source_text_end_or(stmt_node.end), |n| n.pos);
                     self.emit_recovered_template_module_declaration(stmt_node, scan_end);
                 }
                 if let Some(recovered_tail) =
@@ -1726,12 +1875,13 @@ impl<'a> Printer<'a> {
             // the statement's first token, so they won't be emitted here.
             let defer_for_of_comments = stmt_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
                 && self.should_defer_for_of_comments(stmt_node);
-            let skip_auto_accessor_leading_comments = stmt_node.kind
-                == syntax_kind_ext::CLASS_DECLARATION
-                && self
-                    .arena
-                    .get_class(stmt_node)
-                    .is_some_and(|class| self.class_has_auto_accessor_members(class));
+            let skip_auto_accessor_leading_comments =
+                auto_accessor_class_leading_comments_need_deferral
+                    && stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                    && self.arena.get_class(stmt_node).is_some_and(|class| {
+                        self.class_has_auto_accessor_members(class)
+                            && !self.class_has_decorators(class)
+                    });
             // Save state before leading comments so we can undo them if the
             // statement produces no output (same pattern as emit_block_body).
             let pre_comment_writer_len = self.writer.len();
@@ -1807,11 +1957,18 @@ impl<'a> Printer<'a> {
                 }
                 let use_deferred_nested_cjs_exports = is_top_level_cjs
                     && !cjs_deferred_export_names.is_empty()
-                    && stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT
                     && stmt_node.kind != syntax_kind_ext::CLASS_DECLARATION;
-                let prev_deferred_local_export_bindings = if use_deferred_nested_cjs_exports {
+                let use_deferred_single_cjs_exports = use_deferred_nested_cjs_exports
+                    && stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT;
+                let prev_deferred_local_export_bindings = if use_deferred_single_cjs_exports {
                     self.deferred_local_export_bindings
                         .replace(cjs_deferred_export_bindings.clone())
+                } else {
+                    None
+                };
+                let prev_deferred_local_export_bindings_all = if use_deferred_nested_cjs_exports {
+                    self.deferred_local_export_bindings_all
+                        .replace(cjs_deferred_export_bindings_all.clone())
                 } else {
                     None
                 };
@@ -1819,12 +1976,15 @@ impl<'a> Printer<'a> {
                 self.emit(stmt_idx);
 
                 if use_deferred_nested_cjs_exports {
-                    self.deferred_local_export_bindings = prev_deferred_local_export_bindings;
+                    if use_deferred_single_cjs_exports {
+                        self.deferred_local_export_bindings = prev_deferred_local_export_bindings;
+                    }
+                    self.deferred_local_export_bindings_all =
+                        prev_deferred_local_export_bindings_all;
                 }
             }
             let emitted_output = self.writer.len() > before_len;
             let mut handled_legacy_decorated_deferred_export = false;
-            let mut handled_deferred_enum_iife_export = false;
 
             if emitted_output
                 && is_top_level_cjs
@@ -1845,6 +2005,7 @@ impl<'a> Printer<'a> {
                     emitted,
                     &local_name,
                     export_name,
+                    false,
                 );
                 self.writer.truncate(before_len);
                 self.write(&rewritten);
@@ -1855,52 +2016,11 @@ impl<'a> Printer<'a> {
                 handled_legacy_decorated_deferred_export = true;
             }
 
-            if emitted_output
-                && is_top_level_cjs
-                && !cjs_deferred_export_bindings.is_empty()
-                && stmt_node.kind == syntax_kind_ext::ENUM_DECLARATION
-                && let Some(enum_decl) = self.arena.get_enum(stmt_node)
-                && let Some(name) = self.get_identifier_text_opt(enum_decl.name)
-                && let Some(export_name) = cjs_deferred_export_bindings.get(&name)
-                && export_name == &name
-                && !self.ctx.module_state.iife_exported_names.contains(&name)
-            {
-                let full_output = self.writer.get_output().to_string();
-                let emitted = full_output[before_len..].to_string();
-                let from = format!("({name} || ({name} = {{}}))");
-                let to = format!("({name} || (exports.{name} = {name} = {{}}))");
-                if emitted.contains(&from) {
-                    let separate_assignment = format!("exports.{name} = {name};");
-                    let rewritten = emitted.replacen(&from, &to, 1);
-                    let had_trailing_newline = rewritten.ends_with('\n');
-                    let mut rewritten = rewritten
-                        .lines()
-                        .filter(|line| line.trim() != separate_assignment)
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    if had_trailing_newline {
-                        rewritten.push('\n');
-                    }
-                    self.writer.truncate(before_len);
-                    self.writer.write_raw_text(&rewritten);
-                    self.ctx
-                        .module_state
-                        .iife_exported_names
-                        .insert(name.clone());
-                    self.ctx
-                        .module_state
-                        .inline_exported_names
-                        .insert(export_name.clone());
-                    handled_deferred_enum_iife_export = true;
-                }
-            }
-
             // CJS: emit inline `exports.X = X;` right after var/class declarations
             // whose names appear in a later `export { X }` clause. This matches
             // tsc's interleaved ordering where exports follow their declarations.
             if emitted_output
                 && !handled_legacy_decorated_deferred_export
-                && !handled_deferred_enum_iife_export
                 && !cjs_deferred_export_names.is_empty()
             {
                 let names = self.get_declaration_export_names(stmt_node);
@@ -1921,7 +2041,11 @@ impl<'a> Printer<'a> {
                         // is a syntax error.
                         self.write_export_property_access(export_name);
                         self.write(" = ");
-                        self.write(&name);
+                        if self.commonjs_exported_var_names.contains(&name) {
+                            self.write_export_property_access(&name);
+                        } else {
+                            self.write(&name);
+                        }
                         self.write(";");
                         self.ctx
                             .module_state
@@ -1945,9 +2069,11 @@ impl<'a> Printer<'a> {
                 // Once a real statement produces output, its deferred header
                 // comments are "claimed" and should not be undone.
                 has_deferred_header = false;
-                // Emit trailing comments on the same line as the statement.
-                // Use the next statement's pos as upper bound to avoid scanning
-                // into the next statement's trivia (same pattern as emit_block_body).
+                // Emit trailing comments; use next statement pos as upper bound, or full
+                // source length: token_full_start() lands before trailing trivia so stmt_node.end
+                // would exclude comments sitting at exactly that position (e.g., last statement).
+                let source_end =
+                    next_stmt_pos.unwrap_or_else(|| self.source_text_end_or(stmt_node.end));
                 if self.writer.is_at_line_start() {
                     // The emission already wrote a final newline (e.g., CJS inline
                     // export, transform dispatch). Undo it so trailing comments
@@ -1955,22 +2081,20 @@ impl<'a> Printer<'a> {
                     // newline after.
                     if !self.ctx.options.remove_comments {
                         let saved_idx = self.comment_emit_idx;
-                        let upper_bound = next_stmt_pos.unwrap_or(stmt_node.end);
                         let token_end =
-                            self.find_token_end_before_trivia(stmt_node_pos, upper_bound);
+                            self.find_token_end_before_trivia(stmt_node_pos, source_end);
                         // Peek: check if there are trailing comments to emit.
                         // Only backtrack if there actually are comments to add.
-                        if self.has_trailing_comment_on_same_line(token_end, upper_bound) {
+                        if self.has_trailing_comment_on_same_line(token_end, source_end) {
                             self.comment_emit_idx = saved_idx;
                             self.writer.undo_last_write_line();
-                            self.emit_trailing_comments_before(token_end, upper_bound);
+                            self.emit_trailing_comments_before(token_end, source_end);
                             self.write_line();
                         }
                     }
                 } else {
-                    let upper_bound = next_stmt_pos.unwrap_or(stmt_node.end);
-                    let token_end = self.find_token_end_before_trivia(stmt_node_pos, upper_bound);
-                    self.emit_trailing_comments_before(token_end, upper_bound);
+                    let token_end = self.find_token_end_before_trivia(stmt_node_pos, source_end);
+                    self.emit_trailing_comments_before(token_end, source_end);
                     self.write_line();
                 }
             } else if !is_erased {
@@ -2005,7 +2129,8 @@ impl<'a> Printer<'a> {
                         break;
                     }
                 }
-                let scan_end = next_stmt_pos.unwrap_or(stmt_node.end);
+                let scan_end =
+                    next_stmt_pos.unwrap_or_else(|| self.source_text_end_or(stmt_node.end));
                 let stmt_token_end = self.find_token_end_before_trivia(stmt_node_pos, scan_end);
                 let line_end = if let Some(text) = self.source_text {
                     let bytes = text.as_bytes();
@@ -2178,263 +2303,105 @@ impl<'a> Printer<'a> {
         self.ctx.block_scope_state.exit_scope();
     }
 
-    fn recovered_yield_call_statement_text(&self, node: &Node) -> Option<String> {
-        let expr_stmt = self.arena.get_expression_statement(node)?;
-        let expr_node = self.arena.get(expr_stmt.expression)?;
-        let is_recovered_yield = if expr_node.kind == syntax_kind_ext::YIELD_EXPRESSION {
-            let yield_expr = self.arena.get_unary_expr_ex(expr_node)?;
-            yield_expr.expression.is_none()
-        } else {
-            self.arena
-                .get_identifier(expr_node)
-                .is_some_and(|ident| ident.escaped_text == "yield")
-        };
-        if !is_recovered_yield {
-            return None;
+    fn erased_statement_has_recovered_import_type_tail(&self, stmt_node: &Node) -> bool {
+        if stmt_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+            return self.type_alias_has_recovered_import_type_tail(stmt_node);
         }
 
-        let text = self.source_text?;
-        let bytes = text.as_bytes();
-        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
-        let mut pos = start.checked_add("yield".len())?;
-        while pos < bytes.len() && matches!(bytes[pos], b' ' | b'\t') {
-            pos += 1;
-        }
-        if bytes.get(pos) != Some(&b'(') {
-            return None;
+        if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+            && let Some(export) = self.arena.get_export_decl(stmt_node)
+            && let Some(inner_node) = self.arena.get(export.export_clause)
+            && inner_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+        {
+            return self.type_alias_has_recovered_import_type_tail(inner_node);
         }
 
-        let mut depth = 0_i32;
-        let mut end = pos;
-        while end < bytes.len() {
-            match bytes[end] {
-                b'(' => depth += 1,
-                b')' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        end += 1;
-                        break;
-                    }
-                }
-                b'\n' | b'\r' => return None,
-                _ => {}
-            }
-            end += 1;
-        }
-        if depth != 0 {
-            return None;
-        }
-
-        let recovered = crate::safe_slice::slice(text, start, end).ok()?.trim_end();
-        Some(format!("{recovered};"))
+        false
     }
 
-    fn recovered_invalid_jsx_closing_fragment_statement_text(&self, node: &Node) -> Option<String> {
-        if node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
-            return None;
-        }
-
-        let text = self.source_text?;
-        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
-        let tail = text.get(start..)?;
-        tail.starts_with("</>").then(|| " > ;".to_string())
-    }
-
-    fn recovered_ambient_class_parenthesized_tail_text(&self, node: &Node) -> Option<String> {
-        if node.kind != syntax_kind_ext::CLASS_DECLARATION {
-            return None;
-        }
-
-        let class = self.arena.get_class(node)?;
-        if !self.arena.is_declare(&class.modifiers) || class.heritage_clauses.is_some() {
-            return None;
-        }
-
-        let text = self.source_text?;
-        let cursor = class.type_parameters.as_ref().map_or_else(
-            || self.arena.get(class.name).map(|name| name.end),
-            |params| Some(params.end),
-        )?;
-        let start = self.skip_trivia_forward(cursor, node.end) as usize;
-        let bytes = text.as_bytes();
-        if bytes.get(start) != Some(&b'(') {
-            return None;
-        }
-
-        let mut depth = 0_i32;
-        let mut end = start;
-        while end < bytes.len() {
-            match bytes[end] {
-                b'(' => depth += 1,
-                b')' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        end += 1;
-                        break;
-                    }
-                }
-                b'\n' | b'\r' => return None,
-                _ => {}
-            }
-            end += 1;
-        }
-        if depth != 0 || end > node.end as usize {
-            return None;
-        }
-
-        let recovered = crate::safe_slice::slice(text, start, end).ok()?.trim_end();
-        Some(format!("{recovered};"))
-    }
-
-    fn is_recovered_yield_operand_statement(&self, node: &Node) -> bool {
-        if node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
-            return false;
-        }
-        let Some(text) = self.source_text else {
+    fn type_alias_has_recovered_import_type_tail(&self, alias_node: &Node) -> bool {
+        let Some(alias) = self.arena.get_type_alias(alias_node) else {
             return false;
         };
-        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
-        text.as_bytes().get(start) == Some(&b'(')
+        let Some(type_node) = self.arena.get(alias.type_node) else {
+            return false;
+        };
+        if type_node.kind != syntax_kind_ext::TYPE_QUERY {
+            return false;
+        }
+        let Some(type_query) = self.arena.get_type_query(type_node) else {
+            return false;
+        };
+        self.type_query_import_call_has_recovered_tail(type_node, type_query.expr_name)
     }
 
-    fn recovered_trailing_binary_operator_text(
+    fn type_query_import_call_has_recovered_tail(
         &self,
-        previous: &Node,
-        current: &Node,
-    ) -> Option<String> {
-        if previous.kind != syntax_kind_ext::EXPRESSION_STATEMENT
-            || current.kind != syntax_kind_ext::EXPRESSION_STATEMENT
+        type_query_node: &Node,
+        expr_idx: NodeIndex,
+    ) -> bool {
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION
+            || expr_node.end <= type_query_node.end
         {
-            return None;
+            return false;
         }
-
-        let text = self.source_text?;
-        let bytes = text.as_bytes();
-        let previous_start = (previous.pos as usize).min(bytes.len());
-        let mut previous_end = (previous.end as usize).min(bytes.len());
-        while previous_end > previous_start
-            && matches!(bytes[previous_end - 1], b' ' | b'\t' | b'\r' | b'\n')
-        {
-            previous_end -= 1;
-        }
-
-        let previous_text = text.get(previous_start..previous_end)?;
-        let operator = [
-            "instanceof",
-            "===",
-            "!==",
-            ">>>",
-            "&&",
-            "||",
-            "??",
-            "==",
-            "!=",
-            "<=",
-            ">=",
-            "<<",
-            ">>",
-            "**",
-            "in",
-            "|",
-            "&",
-            "^",
-            "<",
-            ">",
-            "+",
-            "-",
-            "*",
-            "/",
-            "%",
-        ]
-        .into_iter()
-        .find(|operator| previous_text.ends_with(operator))?;
-
-        let mut start = previous_end.checked_sub(operator.len())?;
-        while start > previous_start && matches!(bytes[start - 1], b' ' | b'\t') {
-            start -= 1;
-        }
-
-        let current_expr = self
-            .arena
-            .get_expression_statement(current)
-            .and_then(|stmt| self.arena.get(stmt.expression))?;
-        let end = (current_expr.pos as usize).min(bytes.len());
-        if end < previous_end {
-            return None;
-        }
-
-        let recovered = text.get(start..end)?;
-        if recovered.contains('\n') || recovered.contains('\r') {
-            return None;
-        }
-        Some(recovered.to_string())
+        let Some(call) = self.arena.get_call_expr(expr_node) else {
+            return false;
+        };
+        let Some(callee) = self.arena.get(call.expression) else {
+            return false;
+        };
+        callee.kind == SyntaxKind::ImportKeyword as u16
+            && call
+                .arguments
+                .as_ref()
+                .is_some_and(|args| args.nodes.len() >= 2)
     }
 
-    fn recovered_leading_arrow_chain_text(
+    pub(in crate::emitter) fn import_helpers_need_tslib_binding_for_class_emit(
         &self,
-        previous: &Node,
-        current: &Node,
-    ) -> Option<String> {
-        if previous.kind != syntax_kind_ext::EXPRESSION_STATEMENT
-            || current.kind != syntax_kind_ext::EXPRESSION_STATEMENT
+        statements: &NodeList,
+    ) -> bool {
+        self.ctx.options.import_helpers
+            && statements
+                .nodes
+                .iter()
+                .copied()
+                .any(|idx| self.node_needs_tslib_binding_for_class_emit(idx))
+    }
+
+    fn node_needs_tslib_binding_for_class_emit(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+
+        if matches!(
+            node.kind,
+            k if k == syntax_kind_ext::CLASS_DECLARATION
+                || k == syntax_kind_ext::CLASS_EXPRESSION
+        ) && let Some(class_data) = self.arena.get_class(node)
         {
-            return None;
+            let needs_extends_helper = self.ctx.target_es5
+                && crate::transforms::emit_utils::get_extends_expression_index(
+                    self.arena,
+                    &class_data.heritage_clauses,
+                )
+                .is_some();
+            let needs_decorator_helper =
+                self.ctx.options.legacy_decorators && self.class_has_decorators(class_data);
+            if needs_extends_helper || needs_decorator_helper {
+                return true;
+            }
         }
 
-        let text = self.source_text?;
-        let previous_text = text.get(previous.pos as usize..previous.end as usize)?;
-        if !previous_text.trim_end().ends_with('?') {
-            return None;
-        }
-
-        let current_expr = self
-            .arena
-            .get_expression_statement(current)
-            .and_then(|stmt| self.arena.get(stmt.expression))?;
-        let start = (previous.end as usize).min(text.len());
-        let end = (current_expr.pos as usize).min(text.len());
-        if start >= end {
-            return None;
-        }
-
-        let gap = text.get(start..end)?.trim();
-        if !gap.ends_with("=>") {
-            return None;
-        }
-
-        let mut parts = gap.split("=>").map(str::trim).collect::<Vec<_>>();
-        if parts.len() < 2 || parts.pop() != Some("") || parts.iter().any(|part| part.is_empty()) {
-            return None;
-        }
-
-        Some(format!("{} => ", parts.join(" => ")))
+        self.arena
+            .get_children(idx)
+            .into_iter()
+            .any(|child_idx| self.node_needs_tslib_binding_for_class_emit(child_idx))
     }
-
-    fn recovered_debugger_namespace_line(&self, node: &Node) -> Option<(u32, Option<&'a str>)> {
-        let text = self.source_text?;
-        let bytes = text.as_bytes();
-        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
-        let mut line_end = start;
-        while line_end < bytes.len() && bytes[line_end] != b'\n' && bytes[line_end] != b'\r' {
-            line_end += 1;
-        }
-
-        let line = crate::safe_slice::slice(text, start, line_end).ok()?;
-        let trimmed = line.trim_start();
-        let rest = trimmed.strip_prefix("declare namespace debugger")?;
-        if rest.as_bytes().first().is_some_and(is_identifier_continue) {
-            return None;
-        }
-
-        let trailing_comment = line
-            .find("//")
-            .map(|comment_start| line[comment_start..].trim());
-        Some((line_end as u32, trailing_comment))
-    }
-}
-
-const fn is_identifier_continue(byte: &u8) -> bool {
-    byte.is_ascii_alphanumeric() || *byte == b'_' || *byte == b'$'
 }
 
 fn jsx_dev_file_name(file_name: &str) -> String {

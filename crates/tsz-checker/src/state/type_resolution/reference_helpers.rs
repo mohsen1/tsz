@@ -11,6 +11,33 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn resolve_type_only_import_alias_target_symbol(
+        &mut self,
+        name: &str,
+    ) -> Option<SymbolId> {
+        let alias_sym_id = self.ctx.binder.file_locals.get(name)?;
+        let alias_symbol = self.ctx.binder.get_symbol(alias_sym_id)?;
+        if !alias_symbol.has_any_flags(symbol_flags::ALIAS) || !alias_symbol.is_type_only {
+            return None;
+        }
+        let module_name = alias_symbol.import_module.clone()?;
+        let import_name = alias_symbol
+            .import_name
+            .as_deref()
+            .unwrap_or(name)
+            .to_owned();
+        let target_sym_id = self.resolve_cross_file_export_from_file(
+            &module_name,
+            &import_name,
+            Some(self.ctx.current_file_idx),
+        )?;
+        if let Some(file_idx) = self.ctx.resolve_symbol_file_index(target_sym_id) {
+            self.ctx
+                .register_symbol_file_target(target_sym_id, file_idx);
+        }
+        Some(target_sym_id)
+    }
+
     pub(crate) fn get_reference_type_params_for_symbol(
         &mut self,
         sym_id: SymbolId,
@@ -111,7 +138,10 @@ impl<'a> CheckerState<'a> {
             match self.resolve_identifier_symbol_in_type_position(type_name_idx) {
                 TypeSymbolResolution::Type(sym_id) => {
                     self.check_for_static_member_class_type_param_reference(sym_id, type_name_idx);
-                    if self.ctx.has_lib_loaded() && self.ctx.symbol_is_from_lib(sym_id) {
+                    if self.ctx.has_lib_loaded()
+                        && (self.ctx.symbol_is_from_lib(sym_id)
+                            || self.ctx.binder.lib_symbol_ids.contains(&sym_id))
+                    {
                         self.prime_lib_type_params(name);
                     }
                     if self.symbol_is_namespace_only(sym_id) {
@@ -415,7 +445,14 @@ impl<'a> CheckerState<'a> {
                     } else {
                         let type_resolver = |node_idx: NodeIndex| {
                             decl_arena.get_identifier_text(node_idx).and_then(|name| {
-                                self.resolve_entity_name_text_to_def_id_for_lowering(name)
+                                (!self.ctx.file_local_type_shadow_for_lib_name(name))
+                                    .then(|| {
+                                        self.resolve_actual_lib_name_to_def_id_for_lowering(name)
+                                    })
+                                    .flatten()
+                                    .or_else(|| {
+                                        self.resolve_entity_name_text_to_def_id_for_lowering(name)
+                                    })
                                     .and_then(|def_id| {
                                         self.ctx.def_to_symbol_id_with_fallback(def_id)
                                     })
@@ -424,13 +461,27 @@ impl<'a> CheckerState<'a> {
                         };
                         let def_id_resolver = |node_idx: NodeIndex| {
                             decl_arena.get_identifier_text(node_idx).and_then(|name| {
-                                self.resolve_entity_name_text_to_def_id_for_lowering(name)
+                                (!self.ctx.file_local_type_shadow_for_lib_name(name))
+                                    .then(|| {
+                                        self.resolve_actual_lib_name_to_def_id_for_lowering(name)
+                                    })
+                                    .flatten()
+                                    .or_else(|| {
+                                        self.resolve_entity_name_text_to_def_id_for_lowering(name)
+                                    })
                             })
                         };
                         let value_resolver =
                             |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
                         let name_resolver = |type_name: &str| {
-                            self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+                            (!self.ctx.file_local_type_shadow_for_lib_name(type_name))
+                                .then(|| {
+                                    self.resolve_actual_lib_name_to_def_id_for_lowering(type_name)
+                                })
+                                .flatten()
+                                .or_else(|| {
+                                    self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+                                })
                         };
                         tsz_lowering::TypeLowering::with_hybrid_resolver(
                             decl_arena,
@@ -458,7 +509,14 @@ impl<'a> CheckerState<'a> {
                     } else {
                         let type_resolver = |node_idx: NodeIndex| {
                             decl_arena.get_identifier_text(node_idx).and_then(|name| {
-                                self.resolve_entity_name_text_to_def_id_for_lowering(name)
+                                (!self.ctx.file_local_type_shadow_for_lib_name(name))
+                                    .then(|| {
+                                        self.resolve_actual_lib_name_to_def_id_for_lowering(name)
+                                    })
+                                    .flatten()
+                                    .or_else(|| {
+                                        self.resolve_entity_name_text_to_def_id_for_lowering(name)
+                                    })
                                     .and_then(|def_id| {
                                         self.ctx.def_to_symbol_id_with_fallback(def_id)
                                     })
@@ -467,13 +525,27 @@ impl<'a> CheckerState<'a> {
                         };
                         let def_id_resolver = |node_idx: NodeIndex| {
                             decl_arena.get_identifier_text(node_idx).and_then(|name| {
-                                self.resolve_entity_name_text_to_def_id_for_lowering(name)
+                                (!self.ctx.file_local_type_shadow_for_lib_name(name))
+                                    .then(|| {
+                                        self.resolve_actual_lib_name_to_def_id_for_lowering(name)
+                                    })
+                                    .flatten()
+                                    .or_else(|| {
+                                        self.resolve_entity_name_text_to_def_id_for_lowering(name)
+                                    })
                             })
                         };
                         let value_resolver =
                             |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
                         let name_resolver = |type_name: &str| {
-                            self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+                            (!self.ctx.file_local_type_shadow_for_lib_name(type_name))
+                                .then(|| {
+                                    self.resolve_actual_lib_name_to_def_id_for_lowering(type_name)
+                                })
+                                .flatten()
+                                .or_else(|| {
+                                    self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+                                })
                         };
                         tsz_lowering::TypeLowering::with_hybrid_resolver(
                             decl_arena,
@@ -526,11 +598,20 @@ impl<'a> CheckerState<'a> {
                     merged = params;
                     continue;
                 }
-                // Merge defaults across declarations of a merged class/interface.
-                // tsc spreads type-parameter defaults across all merged declarations:
-                // a default specified on any declaration applies for the unsupplied
-                // position. Only fill missing slots so the leftmost-with-default wins.
+                // Merge constraints/defaults across declarations of a merged
+                // class/interface. `tsc` makes a constraint/default specified on one
+                // declaration visible to sibling declarations at the same positional
+                // type-parameter slot. Only fill missing slots so the leftmost
+                // declaration still owns explicit facts on that slot.
                 for (slot, incoming) in merged.iter_mut().zip(params.iter()) {
+                    if slot.constraint.is_none() && incoming.constraint.is_some() {
+                        *slot = tsz_solver::TypeParamInfo {
+                            name: slot.name,
+                            constraint: incoming.constraint,
+                            default: slot.default,
+                            is_const: slot.is_const,
+                        };
+                    }
                     if slot.default.is_none() && incoming.default.is_some() {
                         *slot = tsz_solver::TypeParamInfo {
                             name: slot.name,
@@ -1082,8 +1163,10 @@ impl<'a> CheckerState<'a> {
         self.body_contains_self_referencing_mapped(type_alias.type_node, &sym_name, &param_names)
     }
 
-    /// Recursively check if a type node contains a mapped type that references
-    /// the alias with the same type arguments.
+    /// Returns `true` only when the body contains the pattern `{ [P in K]: Alias<K> }[K]`:
+    /// a mapped type whose template is an identity self-reference, immediately indexed to
+    /// extract a property.  That shape collapses the alias back to itself (infinite instantiation).
+    /// A mapped type appearing directly in the body or as a union member is coinductively valid.
     fn body_contains_self_referencing_mapped(
         &self,
         node_idx: NodeIndex,
@@ -1094,28 +1177,20 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        // Check if this node is a mapped type with self-reference in template
-        if node.kind == syntax_kind_ext::MAPPED_TYPE
-            && let Some(mapped) = self.ctx.arena.get_mapped_type(node)
+        if node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE
+            && let Some(indexed) = self.ctx.arena.get_indexed_access_type(node)
+            && let Some(obj_node) = self.ctx.arena.get(indexed.object_type)
+            && obj_node.kind == syntax_kind_ext::MAPPED_TYPE
+            && let Some(mapped) = self.ctx.arena.get_mapped_type(obj_node)
             && self.template_has_identity_self_ref(mapped.type_node, name, param_names)
         {
             return true;
         }
 
-        // Special case: index access type like `{ [P in K]: N<T, K> }[K]`
-        // The object type is a mapped type, check if it self-references
-        if node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE
-            && let Some(indexed) = self.ctx.arena.get_indexed_access_type(node)
+        // Skip MAPPED_TYPE (coinductively valid) and CONDITIONAL_TYPE (bounded recursion).
+        if node.kind != syntax_kind_ext::CONDITIONAL_TYPE
+            && node.kind != syntax_kind_ext::MAPPED_TYPE
         {
-            // Check the object type (which may be a mapped type)
-            if self.body_contains_self_referencing_mapped(indexed.object_type, name, param_names) {
-                return true;
-            }
-        }
-
-        // Recurse into children for union types, intersection types, etc.
-        // Skip conditional types as they represent bounded recursion
-        if node.kind != syntax_kind_ext::CONDITIONAL_TYPE {
             for child_idx in self.ctx.arena.get_children(node_idx) {
                 if self.body_contains_self_referencing_mapped(child_idx, name, param_names) {
                     return true;
@@ -1253,5 +1328,272 @@ impl<'a> CheckerState<'a> {
             }
         }
         None
+    }
+
+    /// Returns `true` when the type alias body is **directly** a homomorphic mapped type
+    /// whose template is an identity self-reference: `type A<T> = { [P in keyof T]: A<T> }`.
+    ///
+    /// The constraint of the mapped type's type parameter must be `keyof X` where `X`
+    /// is a type parameter of the outer alias (homomorphic form). The template must
+    /// contain an identity self-reference — the same alias applied to the exact same
+    /// argument list as the outer alias's type parameters.
+    ///
+    /// This is the pattern that causes infinite instantiation when the type argument is
+    /// a tuple: the homomorphic expansion produces a tuple of self-referential applications,
+    /// and checking element assignability recurses infinitely.
+    ///
+    /// Returns `false` for:
+    /// - Bodies that are NOT directly a mapped type (indexed-access wrapping is handled
+    ///   separately by `alias_has_self_referencing_mapped_body`)
+    /// - Bounded recursive aliases (`type M<T,R> = {[K in keyof T]: T[K] extends any[]? M<T[K],R>:R}`)
+    /// - Templates with union-or-ground-type wrapping (`type R<K,V> = {[P in K]: V | R<K,V>}`)
+    pub(crate) fn alias_body_is_direct_homomorphic_self_mapped(
+        &self,
+        sym_id: SymbolId,
+        decl_idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+            return false;
+        }
+        let Some(type_alias) = self.ctx.arena.get_type_alias(node) else {
+            return false;
+        };
+
+        // Body must be DIRECTLY a MAPPED_TYPE (not wrapped in union/indexed-access/etc.)
+        let Some(body_node) = self.ctx.arena.get(type_alias.type_node) else {
+            return false;
+        };
+        if body_node.kind != syntax_kind_ext::MAPPED_TYPE {
+            return false;
+        }
+        let Some(mapped) = self.ctx.arena.get_mapped_type(body_node) else {
+            return false;
+        };
+
+        // Collect alias type parameter names for identity self-ref detection
+        let sym_name = self
+            .ctx
+            .binder
+            .get_symbol(sym_id)
+            .map(|s| s.escaped_name.clone())
+            .unwrap_or_default();
+        let param_names: Vec<String> = type_alias
+            .type_parameters
+            .as_ref()
+            .map(|tpl| {
+                tpl.nodes
+                    .iter()
+                    .filter_map(|&param_idx| {
+                        let param_node = self.ctx.arena.get(param_idx)?;
+                        let param = self.ctx.arena.get_type_parameter(param_node)?;
+                        let name_node = self.ctx.arena.get(param.name)?;
+                        let ident = self.ctx.arena.get_identifier(name_node)?;
+                        Some(self.ctx.arena.resolve_identifier_text(ident).to_string())
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Mapped type must have a homomorphic constraint: the type_parameter's constraint
+        // must be `keyof X` where X is a type parameter of the outer alias.
+        // This distinguishes `{ [P in keyof T]: ... }` from `{ [P in K]: ... }`.
+        if !self
+            .mapped_type_param_has_keyof_alias_param_constraint(mapped.type_parameter, &param_names)
+        {
+            return false;
+        }
+
+        // The template must BE a direct identity self-reference (not merely contain one).
+        // A union-ground template like `number | Self<T>` would cause coinductive termination
+        // because the `number` branch is a base case. Only a bare `Self<T>` as the template
+        // (no union/intersection wrapping) causes non-terminating element-by-element comparison.
+        self.template_is_direct_identity_self_ref(mapped.type_node, &sym_name, &param_names)
+    }
+
+    /// Returns `true` when `node_idx` IS an identity self-reference — the same alias applied
+    /// to its own type parameters — without recursing into children.
+    ///
+    /// Unlike [`Self::template_has_identity_self_ref`], this check does NOT recurse into union
+    /// or intersection children. It is used by [`Self::alias_body_is_direct_homomorphic_self_mapped`]
+    /// to distinguish a bare self-referential template (`Circular<T>`) from a union-ground
+    /// template (`number | Circular<T>`), which terminates coinductively.
+    fn template_is_direct_identity_self_ref(
+        &self,
+        node_idx: NodeIndex,
+        name: &str,
+        param_names: &[String],
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return false;
+        }
+        let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
+            return false;
+        };
+        let Some(name_node) = self.ctx.arena.get(type_ref.type_name) else {
+            return false;
+        };
+        let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+            return false;
+        };
+        if self.ctx.arena.resolve_identifier_text(ident) != name {
+            return false;
+        }
+        let Some(args) = &type_ref.type_arguments else {
+            return false;
+        };
+        if args.nodes.len() != param_names.len() {
+            return false;
+        }
+        args.nodes
+            .iter()
+            .zip(param_names.iter())
+            .all(|(&arg_idx, param_name)| {
+                self.ctx
+                    .arena
+                    .get(arg_idx)
+                    .and_then(|n| {
+                        if n.kind == syntax_kind_ext::TYPE_REFERENCE {
+                            let tr = self.ctx.arena.get_type_ref(n)?;
+                            let name_n = self.ctx.arena.get(tr.type_name)?;
+                            let id = self.ctx.arena.get_identifier(name_n)?;
+                            Some(self.ctx.arena.resolve_identifier_text(id) == *param_name)
+                        } else if n.kind == SyntaxKind::Identifier as u16 {
+                            let id = self.ctx.arena.get_identifier(n)?;
+                            Some(self.ctx.arena.resolve_identifier_text(id) == *param_name)
+                        } else {
+                            Some(false)
+                        }
+                    })
+                    .unwrap_or(false)
+            })
+    }
+
+    /// Returns `true` when the mapped type's iteration variable has a `keyof X` constraint
+    /// where `X` is one of the alias type parameter names.
+    fn mapped_type_param_has_keyof_alias_param_constraint(
+        &self,
+        type_param_idx: NodeIndex,
+        alias_param_names: &[String],
+    ) -> bool {
+        let Some(tp_node) = self.ctx.arena.get(type_param_idx) else {
+            return false;
+        };
+        let Some(tp_data) = self.ctx.arena.get_type_parameter(tp_node) else {
+            return false;
+        };
+        // Constraint must exist and be a TYPE_OPERATOR node
+        let Some(constraint_node) = self.ctx.arena.get(tp_data.constraint) else {
+            return false;
+        };
+        if constraint_node.kind != syntax_kind_ext::TYPE_OPERATOR {
+            return false;
+        }
+        let Some(op_data) = self.ctx.arena.get_type_operator(constraint_node) else {
+            return false;
+        };
+        // Operator must be `keyof`
+        if op_data.operator != SyntaxKind::KeyOfKeyword as u16 {
+            return false;
+        }
+        // Operand must be a simple type reference to one of the alias's type parameters
+        let Some(operand_node) = self.ctx.arena.get(op_data.type_node) else {
+            return false;
+        };
+        if operand_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return false;
+        }
+        let Some(operand_ref) = self.ctx.arena.get_type_ref(operand_node) else {
+            return false;
+        };
+        // No type arguments — bare `T`, not `T<...>`
+        if operand_ref.type_arguments.is_some() {
+            return false;
+        }
+        let Some(name_node) = self.ctx.arena.get(operand_ref.type_name) else {
+            return false;
+        };
+        let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+            return false;
+        };
+        let operand_name = self.ctx.arena.resolve_identifier_text(ident);
+        alias_param_names.iter().any(|p| p == operand_name)
+    }
+
+    /// Returns `true` when `source` is a type application of an alias whose body is
+    /// directly a homomorphic self-referential mapped type, any of the application's
+    /// type arguments is a tuple type, and `target` is also a tuple type.
+    ///
+    /// This is the structural condition under which tsc emits TS2589 instead of TS2322:
+    /// the homomorphic expansion of the alias over a tuple argument produces a tuple of
+    /// self-referential applications, and checking those against the tuple target recurses
+    /// infinitely through element-by-element comparison.
+    pub(crate) fn source_is_homomorphic_self_mapped_tuple_arg_vs_tuple_target(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        use crate::query_boundaries::common::{is_tuple_like_type, is_tuple_type};
+
+        // Target must be a tuple-like type (the structural check that causes infinite expansion)
+        if !is_tuple_like_type(self.ctx.types.as_type_database(), target) {
+            return false;
+        }
+
+        // Source must be an Application type
+        let Some((base, args)) =
+            crate::query_boundaries::common::application_info(self.ctx.types, source)
+        else {
+            return false;
+        };
+
+        // At least one type argument must resolve to a tuple type.
+        // Named type aliases (e.g. `type tup = [number, number, number]`) are
+        // stored as `Lazy(def_id)` inside Application args and won't match
+        // `is_tuple_type` directly. Follow one level of Lazy indirection through
+        // the symbol_types cache so aliased tuples are recognised.
+        let db = self.ctx.types.as_type_database();
+        let any_arg_is_tuple = args.iter().any(|&arg| {
+            if is_tuple_type(db, arg) {
+                return true;
+            }
+            let Some(def_id) = crate::query_boundaries::common::lazy_def_id(db, arg) else {
+                return false;
+            };
+            let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) else {
+                return false;
+            };
+            self.ctx
+                .symbol_types
+                .get(&sym_id)
+                .is_some_and(|&resolved| is_tuple_type(db, resolved))
+        });
+        if !any_arg_is_tuple {
+            return false;
+        }
+
+        // The base alias must have a direct homomorphic self-referential mapped body
+        let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)
+        else {
+            return false;
+        };
+        let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS) {
+            return false;
+        }
+        symbol
+            .declarations
+            .iter()
+            .any(|&decl_idx| self.alias_body_is_direct_homomorphic_self_mapped(sym_id, decl_idx))
     }
 }

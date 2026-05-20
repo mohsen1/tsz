@@ -395,7 +395,7 @@ impl<'a> CheckerState<'a> {
                 };
                 // Check if the augmentation target re-exports from source. Use
                 // context accessors because the real driver stores program-wide
-                // re-export maps on ProjectEnv instead of cloning them into each
+                // re-export maps on ProgramContext instead of cloning them into each
                 // per-file binder.
                 let wildcard_reexports_from_source = self
                     .ctx
@@ -423,8 +423,17 @@ impl<'a> CheckerState<'a> {
                                     ) == Some(source_idx)
                             })
                     });
-                let reexports_from_source =
-                    wildcard_reexports_from_source || named_reexports_from_source;
+                let reexports_from_source = wildcard_reexports_from_source
+                    || named_reexports_from_source
+                    || self
+                        .resolve_cross_file_export_from_file(
+                            aug_key,
+                            interface_name,
+                            Some(binder_idx),
+                        )
+                        .is_some_and(|sym_id| {
+                            self.ctx.resolve_symbol_file_index(sym_id) == Some(source_idx)
+                        });
                 if reexports_from_source {
                     for (file_idx, aug) in indexed_augs.iter() {
                         if aug.name != interface_name {
@@ -1142,6 +1151,12 @@ impl<'a> CheckerState<'a> {
         use crate::query_boundaries::state::type_resolution as query;
         use tsz_solver::{CallableShape, ObjectShape};
 
+        // Fast-path: avoids string allocations and hashset bookkeeping when
+        // no augmentations are registered anywhere in the program.
+        if !self.ctx.program_has_module_augmentations() {
+            return base_type;
+        }
+
         let guard_key = (
             module_spec.to_string(),
             interface_name.to_string(),
@@ -1307,8 +1322,11 @@ impl<'a> CheckerState<'a> {
         // Check cross-file augmentations using global index for O(1) lookup
         if let Some(aug_targets) = self.ctx.global_augmentation_targets_index.as_ref() {
             if let Some(entries) = aug_targets.get(module_spec) {
-                for &(aug_sym_id, _file_idx) in entries {
-                    if let Some(aug_sym) = self.ctx.binder.get_symbol(aug_sym_id)
+                for &(aug_sym_id, file_idx) in entries {
+                    if let Some(aug_sym) = self
+                        .ctx
+                        .get_binder_for_file(file_idx)
+                        .and_then(|binder| binder.get_symbol(aug_sym_id))
                         && aug_sym.escaped_name == interface_name
                         && !matching_sym_ids.contains(&aug_sym_id)
                     {
@@ -1397,7 +1415,7 @@ mod tests {
             .insert(".".to_string(), vec![aug]);
 
         // Set up CheckerState with the binder
-        let types = tsz_solver::TypeInterner::new();
+        let types = tsz_solver::construction::TypeInterner::new();
         let main_arena = Arc::new(NodeArena::new());
         let checker = CheckerState::new(
             &main_arena,
@@ -1450,7 +1468,7 @@ mod tests {
             .expect("fresh Arc")
             .insert(".".to_string(), vec![aug]);
 
-        let types = tsz_solver::TypeInterner::new();
+        let types = tsz_solver::construction::TypeInterner::new();
         let main_arena = Arc::new(NodeArena::new());
         let checker = CheckerState::new(
             &main_arena,

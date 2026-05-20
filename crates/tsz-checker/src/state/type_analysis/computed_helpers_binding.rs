@@ -1257,7 +1257,7 @@ impl<'a> CheckerState<'a> {
             && self.jsdoc_type_annotation_for_node(value_decl).is_none()
             && !self.has_satisfies_jsdoc_comment(expr_idx)
         {
-            let snap = self.ctx.snapshot_diagnostics();
+            let snap = crate::context::speculation::DiagnosticSpeculationSnapshot::new(&self.ctx);
             let wrapped_type =
                 if let Some(val_type) = self.resolve_property_access_value_type(expr_idx) {
                     val_type
@@ -1284,7 +1284,7 @@ impl<'a> CheckerState<'a> {
             {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
-                self.suppress_circular_initializer_relation_diagnostics(&snap, expr_idx);
+                self.suppress_circular_initializer_relation_diagnostics(snap, expr_idx);
                 let message = format_message(
                     diagnostic_messages::IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION_AND_IS_REFERE,
                     &["default"],
@@ -1428,6 +1428,13 @@ impl<'a> CheckerState<'a> {
         let file_idx = self.ctx.resolve_symbol_file_index(sym_id)?;
         let arena = self.ctx.get_arena_for_file(file_idx as u32);
         arena.get(decl_idx)?;
+        let cached = self
+            .ctx
+            .lib_delegation_cache
+            .declaration_node_type(arena, decl_idx, 1);
+        if let Some(cached) = cached {
+            return Some(cached);
+        }
         let binder = self.ctx.get_binder_for_file(file_idx)?;
         let file_name = arena
             .source_files
@@ -1453,7 +1460,13 @@ impl<'a> CheckerState<'a> {
             .ctx
             .symbol_resolution_depth
             .set(self.ctx.symbol_resolution_depth.get());
-        Some(checker.type_of_value_declaration_for_symbol(sym_id, decl_idx))
+        let result = checker.type_of_value_declaration_for_symbol(sym_id, decl_idx);
+        if !matches!(result, TypeId::ERROR | TypeId::UNKNOWN) {
+            self.ctx
+                .lib_delegation_cache
+                .insert_declaration_node_type(arena, decl_idx, 1, result);
+        }
+        Some(result)
     }
 
     fn local_value_symbol_type(&mut self, sym_id: SymbolId) -> Option<TypeId> {

@@ -261,6 +261,66 @@ fn test_read_source_file_binary_with_control_bytes() {
 }
 
 #[test]
+fn resolve_effective_lib_paths_preserves_resolved_libs_without_replacement_root() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let lib_dir = dir.path().join("resolved-libs");
+    fs::create_dir_all(&lib_dir).expect("create lib dir");
+    let es2020 = lib_dir.join("lib.es2020.d.ts");
+    let dom = lib_dir.join("lib.dom.d.ts");
+    fs::write(&es2020, "interface Array<T> {}\n").expect("write es2020 lib");
+    fs::write(&dom, "interface Document {}\n").expect("write dom lib");
+
+    let resolved = ResolvedCompilerOptions {
+        lib_files: vec![es2020.clone(), dom.clone(), es2020.clone()],
+        lib_replacement: true,
+        ..Default::default()
+    };
+
+    let paths = super::resolve_effective_lib_paths(&resolved, &[], dir.path(), false)
+        .expect("resolve libs");
+
+    assert_eq!(
+        paths,
+        vec![
+            fs::canonicalize(&es2020).expect("canonical es2020"),
+            fs::canonicalize(&dom).expect("canonical dom"),
+        ],
+        "when no @typescript replacement root exists, already-resolved libs should be reused and deduplicated"
+    );
+}
+
+#[test]
+fn resolve_effective_lib_paths_uses_lib_replacements_when_root_exists() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let original_dir = dir.path().join("resolved-libs");
+    fs::create_dir_all(&original_dir).expect("create original lib dir");
+    let original = original_dir.join("lib.es2020.d.ts");
+    fs::write(&original, "interface Original {}\n").expect("write original lib");
+
+    let replacement = dir
+        .path()
+        .join("node_modules/@typescript/lib-es2020/index.d.ts");
+    fs::create_dir_all(replacement.parent().expect("replacement parent"))
+        .expect("create replacement dir");
+    fs::write(&replacement, "interface Replacement {}\n").expect("write replacement lib");
+
+    let resolved = ResolvedCompilerOptions {
+        lib_files: vec![original],
+        lib_replacement: true,
+        ..Default::default()
+    };
+
+    let paths = super::resolve_effective_lib_paths(&resolved, &[], dir.path(), false)
+        .expect("resolve libs");
+
+    assert_eq!(
+        paths,
+        vec![fs::canonicalize(&replacement).expect("canonical replacement")],
+        "when the @typescript replacement root exists, matching replacement packages still win"
+    );
+}
+
+#[test]
 fn test_read_source_file_text_is_not_binary() {
     let mut file = NamedTempFile::new().expect("temporary file should be created");
     file.write_all(b"const x = 1;\n")
@@ -523,6 +583,19 @@ fn test_cli_strict_expands_strict_builtin_iterator_return() {
     );
 }
 
+#[test]
+fn test_cli_strict_does_not_enable_no_implicit_returns() {
+    let args = CliArgs::try_parse_from(["tsz", "--strict"]).expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    options.checker.no_implicit_returns = false;
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+
+    assert!(
+        !options.checker.no_implicit_returns,
+        "--strict must NOT enable no_implicit_returns (not part of the strict family)"
+    );
+}
+
 /// An explicit `--strictBuiltinIteratorReturn=false` after `--strict` must still
 /// disable the option — individual flag overrides win over the strict expansion.
 #[test]
@@ -597,6 +670,53 @@ fn test_compile_no_unchecked_side_effect_imports_cli_reenables_ts2882() {
         cli_result.diagnostics.iter().any(|diag| diag.code == 2882),
         "CLI override should re-enable TS2882, got: {:?}",
         cli_result.diagnostics
+    );
+}
+
+#[test]
+fn test_compile_ambient_wildcard_asset_import_suppresses_unresolved_module() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("index.ts"),
+        "import logo from './assets/logo.svg';\nlogo;\n",
+    )
+    .expect("write source");
+    fs::write(
+        dir.path().join("assets.d.ts"),
+        r#"declare module "*.svg" {
+  const src: string;
+  export default src;
+}
+"#,
+    )
+    .expect("write ambient module");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "noEmit": true,
+    "noUncheckedSideEffectImports": true,
+    "strict": true,
+    "target": "ES2020"
+  },
+  "files": ["index.ts", "assets.d.ts"]
+}"#,
+    )
+    .expect("write tsconfig");
+
+    let args = CliArgs::try_parse_from(["tsz", "-p", "tsconfig.json"]).expect("parse args");
+    let result = compile(&args, dir.path()).expect("compile");
+    assert!(
+        result.diagnostics.iter().all(|diag| diag.code != 2307),
+        "ambient wildcard should suppress TS2307, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        result.diagnostics.iter().all(|diag| diag.code != 2882),
+        "ambient wildcard should suppress TS2882, got: {:?}",
+        result.diagnostics
     );
 }
 
@@ -1775,6 +1895,69 @@ fn test_types_entry_with_explicit_type_roots_still_emits_ts2688() {
     );
 }
 
+#[test]
+fn no_check_suppresses_unresolved_triple_slash_type_reference_errors() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let base = dir.path();
+    fs::write(
+        base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noCheck": true
+          },
+          "files": ["index.ts"]
+        }"#,
+    )
+    .expect("write tsconfig");
+    fs::write(
+        base.join("index.ts"),
+        "/// <reference types=\"missing\" />\nconst value = 1;\n",
+    )
+    .expect("write index.ts");
+
+    let args = CliArgs::try_parse_from(["tsz", "--project", "tsconfig.json"]).expect("parse args");
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        !result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::CANNOT_FIND_TYPE_DEFINITION_FILE_FOR),
+        "noCheck should suppress unresolved triple-slash type reference TS2688, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn no_check_keeps_compiler_options_types_errors() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let base = dir.path();
+    fs::write(
+        base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noCheck": true,
+            "types": ["missing"]
+          },
+          "files": ["index.ts"]
+        }"#,
+    )
+    .expect("write tsconfig");
+    fs::write(base.join("index.ts"), "const value = 1;\n").expect("write index.ts");
+
+    let args = CliArgs::try_parse_from(["tsz", "--project", "tsconfig.json"]).expect("parse args");
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::CANNOT_FIND_TYPE_DEFINITION_FILE_FOR),
+        "noCheck should still report unresolved compilerOptions.types TS2688, got: {:?}",
+        result.diagnostics
+    );
+}
+
 /// When a JavaScript source file contains TypeScript-only syntax (e.g.,
 /// `import x = require(...)`), tsc emits TS8002 from
 /// `getJSSyntacticDiagnosticsForFile`. Because that diagnostic flows through
@@ -1972,7 +2155,7 @@ fn isolated_declaration_codes_block_declaration_emit() {
     // Issue #3709 follow-up: TS9007/TS9011/etc. must suppress `.d.ts`
     // emission for the affected source file. tsc refuses to write a
     // declaration file when isolated-declaration constraints are violated.
-    for code in [9007, 9008, 9010, 9011, 9012, 9013, 9015, 9019, 9039] {
+    for code in [6232, 9007, 9008, 9010, 9011, 9012, 9013, 9015, 9019, 9039] {
         assert!(
             is_declaration_emit_blocking_diagnostic_code(code),
             "TS{code} (isolated-declarations family) should block declaration emit"
@@ -1991,4 +2174,487 @@ fn non_isolated_declaration_codes_do_not_block_declaration_emit() {
             "TS{code} should not block declaration emit"
         );
     }
+}
+
+#[test]
+fn cross_file_commonjs_merge_blocks_all_declaration_outputs() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("index.js"),
+        r#"const m = require("./exporter");
+
+module.exports = m.named;
+module.exports.memberName = "thing";
+"#,
+    )
+    .expect("write index");
+    fs::write(
+        dir.path().join("exporter.js"),
+        r#"export function named() {}
+"#,
+    )
+    .expect("write exporter");
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--declaration",
+        "--allowJs",
+        "--checkJs",
+        "--lib",
+        "es6",
+        "--outDir",
+        "out",
+        "--target",
+        "es2015",
+        "--module",
+        "commonjs",
+        "index.js",
+        "exporter.js",
+    ])
+    .expect("parse args");
+    let result = compile(&args, dir.path()).expect("compile");
+
+    assert!(
+        result.diagnostics.iter().any(|diag| {
+            diag.code
+                == diagnostic_codes::DECLARATION_AUGMENTS_DECLARATION_IN_ANOTHER_FILE_THIS_CANNOT_BE_SERIALIZED
+        }),
+        "expected TS6232, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !dir.path().join("out/index.d.ts").exists(),
+        "index.d.ts should not be emitted after TS6232"
+    );
+    assert!(
+        !dir.path().join("out/exporter.d.ts").exists(),
+        "exporter.d.ts should not be emitted after TS6232"
+    );
+}
+
+#[test]
+fn cross_file_commonjs_default_export_merge_emits_declarations() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("index.js"),
+        r#"const m = require("./exporter");
+
+module.exports = m.default;
+module.exports.memberName = "thing";
+"#,
+    )
+    .expect("write index");
+    fs::write(
+        dir.path().join("exporter.js"),
+        r#"function validate() {}
+
+export default validate;
+"#,
+    )
+    .expect("write exporter");
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--declaration",
+        "--allowJs",
+        "--checkJs",
+        "--lib",
+        "es6",
+        "--outDir",
+        "out",
+        "--target",
+        "es2015",
+        "--module",
+        "commonjs",
+        "index.js",
+        "exporter.js",
+    ])
+    .expect("parse args");
+    let result = compile(&args, dir.path()).expect("compile");
+
+    assert!(
+        !result.diagnostics.iter().any(|diag| {
+            diag.code
+                == diagnostic_codes::DECLARATION_AUGMENTS_DECLARATION_IN_ANOTHER_FILE_THIS_CANNOT_BE_SERIALIZED
+        }),
+        "did not expect TS6232, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        dir.path().join("out/index.d.ts").exists(),
+        "index.d.ts should be emitted for default export merges"
+    );
+    assert!(
+        dir.path().join("out/exporter.d.ts").exists(),
+        "exporter.d.ts should be emitted for default export merges"
+    );
+}
+
+#[test]
+fn jsdoc_bare_module_imports_inline_commonjs_callable_static_surface_in_declaration_emit() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("base.js"),
+        r#"class Base {}
+function couldntThinkOfAny() {
+    return {};
+}
+couldntThinkOfAny.Base = Base;
+module.exports = couldntThinkOfAny;
+"#,
+    )
+    .expect("write base");
+    fs::write(
+        dir.path().join("maker.js"),
+        r#"class Widget {}
+function makeThing() {
+    return {};
+}
+makeThing.Widget = Widget;
+module.exports = makeThing;
+"#,
+    )
+    .expect("write maker");
+    fs::write(
+        dir.path().join("file.js"),
+        r#"/** @typedef {import('./base')} BaseFactory */
+/** @callback BaseFactoryFactory
+ * @param {import('./base')} factory
+ */
+/** @enum {import('./base')} */
+const couldntThinkOfAny = {};
+
+/** @typedef {import('./maker')} MakerAlias */
+/** @callback MakerConsumer
+ * @param {import('./maker')} renamed
+ */
+function use() {}
+"#,
+    )
+    .expect("write file");
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--declaration",
+        "--allowJs",
+        "--checkJs",
+        "--lib",
+        "es6",
+        "--outDir",
+        "out",
+        "--target",
+        "es2015",
+        "--module",
+        "commonjs",
+        "base.js",
+        "maker.js",
+        "file.js",
+    ])
+    .expect("parse args");
+    let result = compile(&args, dir.path()).expect("compile");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "did not expect diagnostics, got: {:?}",
+        result.diagnostics
+    );
+
+    let dts = fs::read_to_string(dir.path().join("out/file.d.ts")).expect("read file.d.ts");
+    assert!(
+        dts.contains(
+            r#"type BaseFactory = {
+    (): {};
+    Base: {
+        new (): {};
+    };
+};"#
+        ),
+        "expected BaseFactory to inline callable/static import surface: {dts}"
+    );
+    assert!(
+        dts.contains(
+            r#"type BaseFactoryFactory = (factory: {
+    (): {};
+    Base: {
+        new (): {};
+    };
+}) => any;"#
+        ),
+        "expected callback parameter import to inline callable/static surface: {dts}"
+    );
+    assert!(
+        dts.contains("declare const couldntThinkOfAny: {};"),
+        "expected JSDoc enum bare import expansion to emit const fallback: {dts}"
+    );
+    assert!(
+        !dts.contains("declare namespace couldntThinkOfAny"),
+        "did not expect enum bare import expansion to synthesize an empty namespace: {dts}"
+    );
+    assert!(
+        dts.contains(
+            r#"type MakerAlias = {
+    (): {};
+    Widget: {
+        new (): {};
+    };
+};"#
+        ),
+        "expected renamed typedef import to inline callable/static surface: {dts}"
+    );
+    assert!(
+        dts.contains(
+            r#"type MakerConsumer = (renamed: {
+    (): {};
+    Widget: {
+        new (): {};
+    };
+}) => any;"#
+        ),
+        "expected renamed callback import to inline callable/static surface: {dts}"
+    );
+}
+
+/// Regression: `export { } from "./missing"` (and the type-only variant)
+/// must not emit TS2307. The export clause binds nothing from the module,
+/// so tsc skips module resolution entirely. The rule is structural: a
+/// present `NAMED_EXPORTS` clause with zero specifiers is the empty-clause
+/// shape, regardless of the `type` modifier or the chosen module specifier
+/// text. See issue #6688.
+#[test]
+fn test_empty_named_export_from_missing_module_does_not_emit_ts2307() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("file.ts"),
+        r#"export type { } from "./does-not-exist-a";
+export { } from "./does-not-exist-b";
+export {};
+"#,
+    )
+    .expect("write file");
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--noEmit",
+        "--pretty",
+        "false",
+        dir.path().join("file.ts").to_string_lossy().as_ref(),
+    ])
+    .expect("parse args");
+    let result = compile(&args, dir.path()).expect("compile succeeds");
+
+    let ts2307: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|diag| {
+            diag.code == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
+        })
+        .collect();
+    assert!(
+        ts2307.is_empty(),
+        "Did not expect TS2307 for empty `export {{ }} from \"...\"` or `export type {{ }} from \"...\"`. Got: {ts2307:?}"
+    );
+}
+
+/// Adjacent shape: a non-empty `export type { X } from "./missing"` MUST
+/// still emit TS2307 because the clause references a member of the module.
+/// This guards against the empty-clause gate over-suppressing real
+/// resolution errors. Two different specifier names exercise that the
+/// fix is not keyed off any user-chosen identifier.
+#[test]
+fn test_nonempty_named_export_from_missing_module_still_emits_ts2307() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("file.ts"),
+        r#"export type { Foo } from "./does-not-exist-a";
+export { bar } from "./does-not-exist-b";
+"#,
+    )
+    .expect("write file");
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--noEmit",
+        "--pretty",
+        "false",
+        dir.path().join("file.ts").to_string_lossy().as_ref(),
+    ])
+    .expect("parse args");
+    let result = compile(&args, dir.path()).expect("compile succeeds");
+
+    let ts2307_count = result
+        .diagnostics
+        .iter()
+        .filter(|diag| {
+            diag.code == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
+        })
+        .count();
+    assert_eq!(
+        ts2307_count, 2,
+        "Expected two TS2307 diagnostics for non-empty re-exports from missing modules, got: {:?}",
+        result.diagnostics
+    );
+}
+
+/// Adjacent shape: `import type { } from "./missing"` and the non-type
+/// variant `import { } from "./missing"` still resolve the module per tsc.
+/// The empty-clause gate is intentionally export-side only.
+#[test]
+fn test_empty_named_import_from_missing_module_still_emits_ts2307() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("file_type.ts"),
+        r#"import type { } from "./does-not-exist-c";
+export {};
+"#,
+    )
+    .expect("write file_type");
+    fs::write(
+        dir.path().join("file_value.ts"),
+        r#"import { } from "./does-not-exist-d";
+export {};
+"#,
+    )
+    .expect("write file_value");
+
+    for fname in ["file_type.ts", "file_value.ts"] {
+        let args = CliArgs::try_parse_from([
+            "tsz",
+            "--noEmit",
+            "--pretty",
+            "false",
+            dir.path().join(fname).to_string_lossy().as_ref(),
+        ])
+        .expect("parse args");
+        let result = compile(&args, dir.path()).expect("compile succeeds");
+        let ts2307_count = result
+            .diagnostics
+            .iter()
+            .filter(|diag| {
+                diag.code
+                    == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
+            })
+            .count();
+        assert_eq!(
+            ts2307_count, 1,
+            "Expected TS2307 for empty named import from missing module ({fname}); the export-side gate must not affect imports. Got: {:?}",
+            result.diagnostics
+        );
+    }
+}
+
+/// Adjacent shape: `export * from "./missing"` (and the namespace and
+/// type-only star variants) still emit TS2307. These have no
+/// `NAMED_EXPORTS` clause — the export-clause is absent (`export *`) or
+/// is a `NAMESPACE_EXPORT` node (`export * as ns`) — so the empty-clause
+/// gate does not apply and the normal resolution path runs.
+#[test]
+fn test_wildcard_export_from_missing_module_still_emits_ts2307() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("file.ts"),
+        r#"export * from "./does-not-exist-e";
+export * as ns from "./does-not-exist-f";
+export type * from "./does-not-exist-g";
+"#,
+    )
+    .expect("write file");
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--noEmit",
+        "--pretty",
+        "false",
+        dir.path().join("file.ts").to_string_lossy().as_ref(),
+    ])
+    .expect("parse args");
+    let result = compile(&args, dir.path()).expect("compile succeeds");
+
+    let ts2307_count = result
+        .diagnostics
+        .iter()
+        .filter(|diag| {
+            diag.code == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
+        })
+        .count();
+    assert_eq!(
+        ts2307_count, 3,
+        "Expected three TS2307 diagnostics for wildcard/namespace/type-only star re-exports from missing modules, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn test_cli_sound_report_only_sets_sound_mode_and_report_only() {
+    let args = CliArgs::try_parse_from(["tsz", "--soundReportOnly"]).expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+    assert!(
+        options.checker.sound_mode,
+        "--soundReportOnly must enable sound_mode (implied)"
+    );
+    assert!(
+        options.checker.sound_report_only,
+        "--soundReportOnly must enable sound_report_only"
+    );
+}
+
+#[test]
+fn test_cli_sound_report_only_kebab_alias_works() {
+    let args = CliArgs::try_parse_from(["tsz", "--sound-report-only"]).expect("parse kebab alias");
+    let mut options = ResolvedCompilerOptions::default();
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+    assert!(options.checker.sound_mode);
+    assert!(options.checker.sound_report_only);
+}
+
+#[test]
+fn test_cli_sound_report_only_false_override_clears_only_report_only() {
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--sound",
+        "--__explicitly-disabled-bool-flag=soundReportOnly",
+    ])
+    .expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+    assert!(options.checker.sound_mode, "sound_mode must stay true");
+    assert!(
+        !options.checker.sound_report_only,
+        "sound_report_only must be cleared"
+    );
+}
+
+#[test]
+fn test_sound_report_only_defaults_false() {
+    let options = ResolvedCompilerOptions::default();
+    assert!(!options.checker.sound_report_only);
+    assert!(!options.checker.sound_mode);
+}
+
+#[test]
+fn test_cli_sound_flag_does_not_set_report_only() {
+    let args = CliArgs::try_parse_from(["tsz", "--sound"]).expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+    assert!(options.checker.sound_mode, "sound_mode must be true");
+    assert!(
+        !options.checker.sound_report_only,
+        "--sound alone must not set sound_report_only"
+    );
+}
+
+#[test]
+fn test_compile_sound_report_only_collects_diagnostics_from_sound_mode() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(dir.path().join("a.ts"), "const x: string = 42;\n").expect("write source");
+
+    let args_sound_report_only =
+        CliArgs::try_parse_from(["tsz", "--noEmit", "--soundReportOnly", "a.ts"])
+            .expect("parse args");
+    let result = compile(&args_sound_report_only, dir.path()).expect("compile");
+    assert!(
+        result.diagnostics.iter().any(|d| d.code == 2322),
+        "TS2322 should still be reported in sound_report_only mode, got: {:?}",
+        result.diagnostics
+    );
 }

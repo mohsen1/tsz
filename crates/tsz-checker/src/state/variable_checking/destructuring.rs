@@ -793,6 +793,7 @@ impl<'a> CheckerState<'a> {
             self.ctx.types.as_type_database(),
             parent_type,
         );
+        let normalized_parent_type = parent_type;
         let parent_type = if has_recursive_alias_shape {
             let parent_type = self.resolve_lazy_type(parent_type);
             let parent_type = self.resolve_type_for_property_access(parent_type);
@@ -800,6 +801,8 @@ impl<'a> CheckerState<'a> {
         } else {
             self.evaluate_type_for_assignability(parent_type)
         };
+        let parent_type = self
+            .preserve_actual_lib_namespace_binding_parent_type(normalized_parent_type, parent_type);
         let defer_property_not_found = self
             .should_defer_property_not_found_for_contextual_destructuring(pattern_idx, parent_type);
         let suppress_missing_property_for_literal_default = self
@@ -1532,6 +1535,62 @@ impl<'a> CheckerState<'a> {
         } else {
             TypeId::ANY
         }
+    }
+
+    fn preserve_actual_lib_namespace_binding_parent_type(
+        &mut self,
+        original_type: TypeId,
+        evaluated_type: TypeId,
+    ) -> TypeId {
+        let lazy_def_id =
+            crate::query_boundaries::common::lazy_def_id(self.ctx.types, original_type);
+        let sym_id = lazy_def_id
+            .and_then(|def_id| self.ctx.def_to_symbol_id(def_id))
+            .or_else(|| {
+                crate::query_boundaries::common::type_shape_symbol(self.ctx.types, original_type)
+            });
+
+        let (export_name, require_symbol_match) = if let Some(sym_id) = sym_id {
+            let lib_binders = self.get_lib_binders();
+            let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {
+                return evaluated_type;
+            };
+            if self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id) {
+                (symbol.escaped_name.clone(), Some(sym_id))
+            } else if symbol.parent.is_some()
+                && self.ctx.symbol_is_from_actual_or_cloned_lib(symbol.parent)
+            {
+                (symbol.escaped_name.clone(), None)
+            } else {
+                return evaluated_type;
+            }
+        } else {
+            let Some(def_id) = lazy_def_id else {
+                return evaluated_type;
+            };
+            let Some(def_info) = self.ctx.definition_store.get(def_id) else {
+                return evaluated_type;
+            };
+            let name = self.ctx.types.resolve_atom_ref(def_info.name).to_string();
+            if name.is_empty() {
+                return evaluated_type;
+            }
+            (name, None)
+        };
+
+        let namespace = "Intl";
+        let Some(export_sym_id) = self.resolve_lib_namespace_export_symbol(namespace, &export_name)
+        else {
+            return evaluated_type;
+        };
+        if require_symbol_match.is_some_and(|sym_id| export_sym_id != sym_id) {
+            return evaluated_type;
+        }
+
+        let cache_name = format!("{namespace}.{export_name}");
+        self.ctx.lib_type_resolution_cache.remove(&cache_name);
+        self.resolve_lib_interface_type_by_symbol(&cache_name, export_sym_id)
+            .unwrap_or(evaluated_type)
     }
 
     fn get_binding_element_literal_key_type(

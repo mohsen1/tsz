@@ -34,6 +34,12 @@ impl<'a> CheckerState<'a> {
         {
             return true;
         }
+        if (param_type == TypeId::NEVER
+            || self.evaluate_type_for_assignability(param_type) == TypeId::NEVER)
+            && self.generic_indexed_access_argument_surface(arg_type)
+        {
+            return true;
+        }
 
         if crate::query_boundaries::assignability::are_types_structurally_identical(
             self.ctx.types,
@@ -93,6 +99,9 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_argument_not_assignable_diagnostic(arg_type, param_type) {
             return;
         }
+        if self.should_suppress_constraint_cascade_constructor_argument(arg_type, param_type) {
+            return;
+        }
 
         if self.should_suppress_partial_self_argument_mismatch(arg_type, param_type) {
             return;
@@ -100,6 +109,11 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_self_referential_mapped_constraint_arg_mismatch(
             arg_type, param_type, idx,
         ) {
+            return;
+        }
+        if self
+            .should_suppress_promise_then_nullable_callback_arg_mismatch(arg_type, param_type, idx)
+        {
             return;
         }
         if self.is_callback_like_argument(idx)
@@ -243,6 +257,17 @@ impl<'a> CheckerState<'a> {
             arg_str = generic_arg_str;
             param_str = generic_param_str;
         }
+        if let Some(widened_arg_str) = self
+            .widen_literal_call_argument_display_against_plain_primitive_parameter(
+                arg_type, idx, &param_str,
+            )
+        {
+            arg_str = widened_arg_str;
+        }
+        if self.inline_literal_satisfies_has_permissive_target(idx) {
+            arg_str = Self::widen_member_literals_in_display_text(&arg_str);
+        }
+        param_str = Self::trim_single_unbalanced_trailing_type_arg_close(param_str);
         let (arg_str, param_str) =
             self.finalize_pair_display_for_diagnostic(arg_type, param_type, arg_str, param_str);
         let message = format_message(
@@ -270,6 +295,206 @@ impl<'a> CheckerState<'a> {
         self.emit_render_request(idx, request);
     }
 
+    fn should_suppress_promise_then_nullable_callback_arg_mismatch(
+        &mut self,
+        arg_type: TypeId,
+        param_type: TypeId,
+        idx: NodeIndex,
+    ) -> bool {
+        if !self.is_callback_like_argument(idx)
+            || !self.type_is_nullish_only(param_type)
+            || matches!(arg_type, TypeId::ERROR | TypeId::ANY)
+        {
+            return false;
+        }
+
+        let Some(call_idx) = self.parent_call_containing_argument(idx) else {
+            return false;
+        };
+        let Some(call_node) = self.ctx.arena.get(call_idx) else {
+            return false;
+        };
+        let Some(call) = self.ctx.arena.get_call_expr(call_node) else {
+            return false;
+        };
+        let callee_idx = self.ctx.arena.skip_parenthesized(call.expression);
+        let Some(callee_node) = self.ctx.arena.get(callee_idx) else {
+            return false;
+        };
+        if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = self.ctx.arena.get_access_expr(callee_node) else {
+            return false;
+        };
+        let Some(name_node) = self.ctx.arena.get(access.name_or_argument) else {
+            return false;
+        };
+        let Some(name) = self.ctx.arena.get_identifier(name_node) else {
+            return false;
+        };
+        if name.escaped_text != "then" {
+            return false;
+        }
+
+        let receiver_type = self.get_type_of_node(access.expression);
+        let evaluated_receiver = self.evaluate_type_with_env(receiver_type);
+        self.type_ref_is_promise_like(receiver_type)
+            || self.type_ref_is_promise_like(evaluated_receiver)
+    }
+
+    fn type_is_nullish_only(&self, type_id: TypeId) -> bool {
+        match type_id {
+            TypeId::NULL | TypeId::UNDEFINED => true,
+            _ => crate::query_boundaries::common::union_members(self.ctx.types, type_id)
+                .is_some_and(|members| {
+                    !members.is_empty()
+                        && members
+                            .iter()
+                            .all(|&member| matches!(member, TypeId::NULL | TypeId::UNDEFINED))
+                }),
+        }
+    }
+
+    fn parent_call_containing_argument(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = idx;
+        for _ in 0..100 {
+            let ext = self.ctx.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                return None;
+            }
+            let parent_idx = ext.parent;
+            let parent = self.ctx.arena.get(parent_idx)?;
+            match parent.kind {
+                k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                    || k == syntax_kind_ext::NON_NULL_EXPRESSION
+                    || k == syntax_kind_ext::TYPE_ASSERTION
+                    || k == syntax_kind_ext::AS_EXPRESSION
+                    || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+                {
+                    current = parent_idx;
+                }
+                k if k == syntax_kind_ext::CALL_EXPRESSION
+                    || k == syntax_kind_ext::NEW_EXPRESSION =>
+                {
+                    return self
+                        .ctx
+                        .arena
+                        .get_call_expr(parent)
+                        .and_then(|call| call.arguments.as_ref())
+                        .is_some_and(|args| args.nodes.contains(&current))
+                        .then_some(parent_idx);
+                }
+                _ => return None,
+            }
+        }
+        None
+    }
+
+    fn should_suppress_constraint_cascade_constructor_argument(
+        &self,
+        arg_type: TypeId,
+        param_type: TypeId,
+    ) -> bool {
+        if !self
+            .ctx
+            .diagnostics
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT)
+        {
+            return false;
+        }
+        if !crate::query_boundaries::common::is_constructor_like_type(self.ctx.types, arg_type) {
+            return false;
+        }
+        if crate::query_boundaries::common::is_constructor_like_type(self.ctx.types, param_type)
+            || crate::query_boundaries::common::is_callable_type(self.ctx.types, param_type)
+        {
+            return true;
+        }
+        crate::query_boundaries::common::union_members(self.ctx.types, param_type).is_some_and(
+            |members| {
+                members.iter().all(|&member| {
+                    crate::query_boundaries::common::is_constructor_like_type(
+                        self.ctx.types,
+                        member,
+                    ) || crate::query_boundaries::common::is_callable_type(self.ctx.types, member)
+                })
+            },
+        )
+    }
+
+    fn trim_single_unbalanced_trailing_type_arg_close(display: String) -> String {
+        let Some(candidate) = display.strip_suffix('>') else {
+            return display;
+        };
+
+        let mut opens = 0usize;
+        let mut closes = 0usize;
+        let mut prev = '\0';
+        let mut in_single = false;
+        let mut in_double = false;
+        let mut escaped = false;
+
+        for ch in display.chars() {
+            if escaped {
+                escaped = false;
+                prev = ch;
+                continue;
+            }
+            if in_single || in_double {
+                if ch == '\\' {
+                    escaped = true;
+                } else if in_single && ch == '\'' {
+                    in_single = false;
+                } else if in_double && ch == '"' {
+                    in_double = false;
+                }
+                prev = ch;
+                continue;
+            }
+            match ch {
+                '\'' => in_single = true,
+                '"' => in_double = true,
+                '<' => opens += 1,
+                '>' if prev != '=' => closes += 1,
+                _ => {}
+            }
+            prev = ch;
+        }
+
+        if closes == opens.saturating_add(1) {
+            candidate.to_string()
+        } else {
+            display
+        }
+    }
+
+    fn widen_literal_call_argument_display_against_plain_primitive_parameter(
+        &mut self,
+        arg_type: TypeId,
+        arg_idx: NodeIndex,
+        param_display: &str,
+    ) -> Option<String> {
+        let param_base = match param_display {
+            "string" => TypeId::STRING,
+            "number" => TypeId::NUMBER,
+            "boolean" => TypeId::BOOLEAN,
+            "bigint" => TypeId::BIGINT,
+            "symbol" => TypeId::SYMBOL,
+            _ => return None,
+        };
+        let source = self
+            .literal_type_from_initializer(arg_idx)
+            .unwrap_or(arg_type);
+        let source_base =
+            crate::query_boundaries::common::widen_literal_to_primitive(self.ctx.types, source);
+        if source_base == source || source_base == param_base {
+            return None;
+        }
+        Some(self.format_type_for_assignability_message(source_base))
+    }
+
     pub(in crate::error_reporter::call_errors) fn mapped_property_mismatch_parameter_display(
         &mut self,
         param_display: &str,
@@ -293,7 +518,10 @@ impl<'a> CheckerState<'a> {
         Some(self.format_type_for_assignability_message(display_type))
     }
 
-    fn type_includes_undefined(db: &dyn tsz_solver::TypeDatabase, ty: TypeId) -> bool {
+    fn type_includes_undefined(
+        db: &dyn tsz_solver::construction::TypeDatabase,
+        ty: TypeId,
+    ) -> bool {
         ty == TypeId::UNDEFINED
             || crate::query_boundaries::common::union_members(db, ty)
                 .is_some_and(|members| members.contains(&TypeId::UNDEFINED))

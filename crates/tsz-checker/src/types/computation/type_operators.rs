@@ -1,10 +1,11 @@
 //! Union, intersection, type operator, and keyof type computation.
 //! Also includes class-type helpers for brand property resolution.
 
+use super::super::unique_symbol_arena::has_declared_unique_symbol_owner;
 use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
-use tsz_solver::TypeId;
+use tsz_solver::{SymbolRef, TypeId};
 
 impl<'a> CheckerState<'a> {
     /// Get type from a union type node (A | B).
@@ -24,7 +25,6 @@ impl<'a> CheckerState<'a> {
     /// - Objects: Combines properties from all members
     /// - Functions: Union of function signatures
     pub(crate) fn get_type_from_union_type(&mut self, idx: NodeIndex) -> TypeId {
-        let factory = self.ctx.types.factory();
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
         };
@@ -44,8 +44,10 @@ impl<'a> CheckerState<'a> {
                 return member_types[0];
             }
 
-            let result = factory.union(member_types.clone());
-
+            let result = tsz_solver::utils::union_or_single_literal_reduce(
+                self.ctx.types,
+                member_types.clone(),
+            );
             // Mirror tsc's `UnionType.origin`: record the as-written input
             // member list so the diagnostic printer can preserve top-level
             // alias names that union flattening would otherwise dissolve
@@ -117,13 +119,20 @@ impl<'a> CheckerState<'a> {
 
             // Handle keyof operator
             if operator == SyntaxKind::KeyOfKeyword as u16 {
-                return factory.keyof(inner_type);
+                return self.get_keyof_type(inner_type);
             }
 
             // Handle unique operator
             if operator == SyntaxKind::UniqueKeyword as u16 {
-                // unique is handled differently - it's a type modifier for symbols
-                // For now, just return the inner type
+                if inner_type == TypeId::SYMBOL
+                    && !has_declared_unique_symbol_owner(self.ctx.arena, idx)
+                {
+                    return self.ctx.types.unique_symbol(synthetic_unique_symbol_ref(
+                        &self.ctx.file_name,
+                        node.pos,
+                        node.end,
+                    ));
+                }
                 return inner_type;
             }
 
@@ -157,7 +166,9 @@ impl<'a> CheckerState<'a> {
         match classify_for_type_resolution(self.ctx.types, operand) {
             TypeResolutionKind::Lazy(def_id) => {
                 if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
-                    let resolved = self.get_type_of_symbol(sym_id);
+                    let env_resolved = { self.ctx.type_env.borrow().get_def(def_id) };
+                    let resolved =
+                        env_resolved.unwrap_or_else(|| self.type_reference_symbol_type(sym_id));
                     // Guard: if resolution returned the same Lazy type (symbol is
                     // currently being resolved — circular placeholder), bail out.
                     // Without this, the recursive get_keyof_type call loops forever
@@ -297,4 +308,17 @@ impl<'a> CheckerState<'a> {
         self.get_class_decl_for_display_type(type_id)
             .map(|(class_idx, _)| self.get_class_name_from_decl(class_idx))
     }
+}
+
+fn synthetic_unique_symbol_ref(file_name: &str, pos: u32, end: u32) -> SymbolRef {
+    let mut hash = 0x811c_9dc5u32;
+    for byte in file_name.as_bytes() {
+        hash ^= u32::from(*byte);
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    for value in [pos, end] {
+        hash ^= value;
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    SymbolRef(hash | 0x8000_0000)
 }

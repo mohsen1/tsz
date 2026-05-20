@@ -9,12 +9,12 @@ use super::call_evaluator::{
     AssignabilityChecker, CallEvaluator, CallResult, CallWithCheckerResult, CombinedUnionSignature,
     UnionCallSignatureCompatibility,
 };
+use crate::construction::{QueryDatabase, TypeDatabase};
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::types::{
     CallSignature, CallableShape, FunctionShape, IntrinsicKind, ParamInfo, TupleElement, TypeData,
     TypeId, TypeListId, TypeParamInfo,
 };
-use crate::{QueryDatabase, TypeDatabase};
 use rustc_hash::FxHashSet;
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
@@ -114,6 +114,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             result = self.interner.intersection2(result, param_type);
         }
         result
+    }
+
+    fn is_generic_correlated_union_call_arg(&self, arg_type: TypeId) -> bool {
+        self.correlated_union_arg_surface_is_generic(arg_type)
+            || self
+                .interner
+                .get_display_alias(arg_type)
+                .is_some_and(|alias| self.correlated_union_arg_surface_is_generic(alias))
+    }
+
+    fn correlated_union_arg_surface_is_generic(&self, arg_type: TypeId) -> bool {
+        crate::type_queries::contains_type_parameters_db(self.interner, arg_type)
+            || crate::type_queries::contains_generic_indexed_access_surface(self.interner, arg_type)
     }
 
     /// Resolve a function call: func(args...) -> result
@@ -451,7 +464,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         // Collect single signatures from each member: (params, return_type, has_rest)
-        let mut all_signatures: Vec<(Vec<ParamInfo>, TypeId, bool)> = Vec::new();
+        let mut all_signatures: Vec<(Vec<ParamInfo>, TypeId, bool)> =
+            Vec::with_capacity(members.len());
 
         for &member in members {
             let member = self.normalize_union_member(member);
@@ -493,13 +507,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             .max()
             .unwrap_or(0);
 
-        let mut combined_params = Vec::new();
+        let mut combined_params = Vec::with_capacity(max_param_count);
         let mut min_required = 0;
 
         for i in 0..max_param_count {
-            let mut param_types_at_pos = Vec::new();
-            let mut required_param_types_at_pos = Vec::new();
-            let mut optional_param_types_at_pos = Vec::new();
+            let mut param_types_at_pos = Vec::with_capacity(all_signatures.len());
+            let mut required_param_types_at_pos = Vec::with_capacity(all_signatures.len());
+            let mut optional_param_types_at_pos = Vec::with_capacity(all_signatures.len());
             let mut saw_absent = false;
             let mut saw_rest_at_pos = false;
 
@@ -652,7 +666,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         // Collect single construct signatures from each member: (params, return_type, has_rest)
-        let mut all_signatures: Vec<(Vec<ParamInfo>, TypeId, bool)> = Vec::new();
+        let mut all_signatures: Vec<(Vec<ParamInfo>, TypeId, bool)> =
+            Vec::with_capacity(members.len());
 
         for &member in members {
             let member = self.normalize_union_member(member);
@@ -684,11 +699,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             .max()
             .unwrap_or(0);
 
-        let mut combined_params = Vec::new();
+        let mut combined_params = Vec::with_capacity(max_param_count);
         let mut min_required = 0;
 
         for i in 0..max_param_count {
-            let mut param_types_at_pos = Vec::new();
+            let mut param_types_at_pos = Vec::with_capacity(all_signatures.len());
             let mut any_required = false;
 
             for (params, _, has_rest) in &all_signatures {
@@ -793,7 +808,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     fn build_union_call_result(
-        &self,
+        &mut self,
         union_type: TypeId,
         failures: &mut Vec<CallResult>,
         return_types: Vec<TypeId>,
@@ -817,7 +832,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
             if all_arg_mismatches && !failures.is_empty() {
                 // Extract all parameter types from the failures
-                let mut param_types = Vec::new();
+                let mut param_types = Vec::with_capacity(failures.len());
                 for failure in failures.iter() {
                     if let CallResult::ArgumentTypeMismatch { expected, .. } = failure {
                         param_types.push(*expected);
@@ -850,6 +865,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 } else {
                     TypeId::ERROR
                 };
+
+                if intersected_param == TypeId::NEVER
+                    && self.is_generic_correlated_union_call_arg(actual_arg_type)
+                {
+                    let param_union = self.interner.union(param_types);
+                    if self.checker.is_assignable_to(actual_arg_type, param_union) {
+                        return CallResult::Success(
+                            combined_return_override.unwrap_or(TypeId::UNKNOWN),
+                        );
+                    }
+                }
 
                 return CallResult::ArgumentTypeMismatch {
                     index: 0,
@@ -1151,8 +1177,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             compat
         };
 
-        let mut return_types = Vec::new();
-        let mut failures = Vec::new();
+        let mut return_types = Vec::with_capacity(members.len());
+        let mut failures = Vec::with_capacity(members.len());
 
         for &member in members.iter() {
             let result = self.resolve_call(member, arg_types);
@@ -1184,9 +1210,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
         // Phase 3: Result aggregation.
         if let Some(ref combined) = combined
-            && !arg_types.iter().any(|&arg_type| {
-                crate::type_queries::contains_type_parameters_db(self.interner, arg_type)
-            })
+            && !arg_types
+                .iter()
+                .any(|&arg_type| self.is_generic_correlated_union_call_arg(arg_type))
         {
             for (i, &arg_type) in arg_types.iter().enumerate() {
                 if i < combined.param_types.len() {
@@ -1270,9 +1296,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // actually reached. When all arguments are fully concrete (e.g.,
                 // `string | number` passed to `((a: string) => void) | ((a: number) => void)`),
                 // tsc correctly rejects the call (TS2345).
-                let has_generic_args = arg_types.iter().any(|&arg_type| {
-                    crate::type_queries::contains_type_parameters_db(self.interner, arg_type)
-                });
+                let has_generic_args = arg_types
+                    .iter()
+                    .any(|&arg_type| self.is_generic_correlated_union_call_arg(arg_type));
                 if has_generic_args && combined.param_types.contains(&TypeId::NEVER) {
                     let all_arg_mismatch = failures
                         .iter()
@@ -1298,7 +1324,20 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                     })
                                     .collect();
                                 let param_union = self.interner.union(member_param_types);
-                                if !self.checker.is_assignable_to(arg_type, param_union) {
+                                let evaluated_arg = self.checker.evaluate_type(arg_type);
+                                let indexed_access_evaluates_to_param_union = matches!(
+                                    self.interner.lookup(arg_type),
+                                    Some(TypeData::IndexAccess(_, index))
+                                            if crate::type_queries::contains_type_parameters_db(
+                                                self.interner,
+                                                index,
+                                            )
+                                ) && evaluated_arg
+                                    != arg_type
+                                    && self.checker.is_assignable_to(evaluated_arg, param_union);
+                                if !self.checker.is_assignable_to(arg_type, param_union)
+                                    && !indexed_access_evaluates_to_param_union
+                                {
                                     param_union_pass = false;
                                     break;
                                 }
@@ -1443,6 +1482,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ) -> CallResult {
         // Handle generic functions FIRST so uninstantiated this_types don't fail assignability
         if !func.type_params.is_empty() {
+            if let Some(result) = self.resolve_trivial_single_type_param_call(func, arg_types) {
+                return result;
+            }
             if let Some(func) = self.generic_function_shape_for_inference(func, arg_types) {
                 return self.resolve_generic_call(&func, arg_types);
             }
@@ -1602,7 +1644,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         // Try each call signature
-        let mut failures = Vec::new();
+        let mut failures = Vec::with_capacity(callable.call_signatures.len());
         let mut all_arg_count_mismatches = true;
         let mut min_expected = usize::MAX;
         let mut max_expected = 0;
@@ -1884,10 +1926,10 @@ pub fn compute_contextual_types_with_compat_checker<'a, R, F>(
     configure_checker: F,
 ) -> TypeSubstitution
 where
-    R: crate::TypeResolver,
-    F: FnOnce(&mut crate::CompatChecker<'a, R>),
+    R: crate::relations::subtype::TypeResolver,
+    F: FnOnce(&mut crate::relations::compat::CompatChecker<'a, R>),
 {
-    let mut checker = crate::CompatChecker::with_resolver(interner, resolver);
+    let mut checker = crate::relations::compat::CompatChecker::with_resolver(interner, resolver);
     configure_checker(&mut checker);
 
     let mut evaluator = CallEvaluator::new(interner, &mut checker);
@@ -1899,14 +1941,16 @@ pub fn get_contextual_signature_with_compat_checker(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<FunctionShape> {
-    CallEvaluator::<crate::CompatChecker>::get_contextual_signature(db, type_id)
+    CallEvaluator::<crate::relations::compat::CompatChecker>::get_contextual_signature(db, type_id)
 }
 
 pub fn get_contextual_signature_cached_with_compat_checker(
     db: &dyn QueryDatabase,
     type_id: TypeId,
 ) -> Option<FunctionShape> {
-    CallEvaluator::<crate::CompatChecker>::get_contextual_signature_cached(db, type_id)
+    CallEvaluator::<crate::relations::compat::CompatChecker>::get_contextual_signature_cached(
+        db, type_id,
+    )
 }
 
 pub fn get_contextual_signature_for_arity_with_compat_checker(
@@ -1914,7 +1958,7 @@ pub fn get_contextual_signature_for_arity_with_compat_checker(
     type_id: TypeId,
     arg_count: usize,
 ) -> Option<FunctionShape> {
-    CallEvaluator::<crate::CompatChecker>::get_contextual_signature_for_arity(
+    CallEvaluator::<crate::relations::compat::CompatChecker>::get_contextual_signature_for_arity(
         db,
         type_id,
         Some(arg_count),
@@ -1926,7 +1970,7 @@ pub fn get_contextual_signature_for_arity_cached_with_compat_checker(
     type_id: TypeId,
     arg_count: usize,
 ) -> Option<FunctionShape> {
-    CallEvaluator::<crate::CompatChecker>::get_contextual_signature_for_arity_cached(
+    CallEvaluator::<crate::relations::compat::CompatChecker>::get_contextual_signature_for_arity_cached(
         db,
         type_id,
         Some(arg_count),

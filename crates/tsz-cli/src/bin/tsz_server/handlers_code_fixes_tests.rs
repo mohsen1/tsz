@@ -5,6 +5,7 @@ use crate::handlers_code_fixes_utils::reorder_import_candidates_for_package_root
 use crate::{CheckOptions, LogConfig, LogLevel, ServerMode};
 use rustc_hash::FxHashMap;
 use std::path::PathBuf;
+use tsz::checker::diagnostics::DiagnosticCategory;
 use tsz::lsp::code_actions::ImportCandidate;
 use tsz::parser::ParserState;
 
@@ -2656,5 +2657,223 @@ fn handle_get_code_fixes_implement_interface_function_typed_property() {
     assert!(
         !new_text.contains("Method not implemented."),
         "function-typed properties should not be rendered as throwing methods, got: {new_text}"
+    );
+}
+
+// ── fixMissingTypeAnnotationOnExports (TS9010) ───────────────────────────────
+//
+// These tests exercise `apply_isolated_decl_type_annotation_fix` and
+// `infer_type_for_isolated_decl_initializer` directly, using a synthetic
+// TS9010 diagnostic at the variable-name position. The structural rule:
+//
+//   When an exported variable's initializer is any JSX expression
+//   (`JsxElement`, `JsxSelfClosingElement`, or `JsxFragment`), the correct
+//   annotation type is `JSX.Element`. The two tests use distinct variable names
+//   and distinct JSX node shapes to confirm the fix is keyed on the node kind,
+//   not on any specific spelling.
+
+fn make_ts9010_diagnostic(
+    file: &str,
+    start: u32,
+    length: u32,
+) -> tsz::checker::diagnostics::Diagnostic {
+    tsz::checker::diagnostics::Diagnostic {
+        category: DiagnosticCategory::Error,
+        code: 9010,
+        file: file.to_string(),
+        start,
+        length,
+        message_text: "Variable must have an explicit type annotation with --isolatedDeclarations."
+            .to_string(),
+        related_information: Vec::new(),
+    }
+}
+
+fn parse_to_arena(file: &str, content: &str) -> tsz::parser::node::NodeArena {
+    let mut parser = ParserState::new(file.to_string(), content.to_string());
+    parser.parse_source_file();
+    parser.into_arena()
+}
+
+/// `JsxSelfClosingElement` initializer, variable named `element`.
+/// Rule: any self-closing JSX expression → annotation `JSX.Element`.
+#[test]
+fn fix_missing_type_annotation_jsx_self_closing() {
+    // offset 13: "element" (after "export const ")
+    let content = "export const element = <div/>;";
+    let file = "/fix_missing_jsx_self_closing.tsx";
+    let arena = parse_to_arena(file, content);
+    let line_map = LineMap::build(content);
+
+    let diag = make_ts9010_diagnostic(file, 13, 7 /* "element" */);
+    let fixes = Server::apply_isolated_decl_type_annotation_fix(
+        file,
+        content,
+        &arena,
+        &line_map,
+        &[diag],
+        &[9010],
+        None,
+    );
+
+    assert_eq!(fixes.len(), 2, "expected exactly two fix variants");
+
+    let direct_text = fixes[0]["changes"][0]["textChanges"][0]["newText"]
+        .as_str()
+        .expect("direct annotation newText");
+    assert_eq!(
+        direct_text, ": JSX.Element",
+        "direct annotation should insert `: JSX.Element`"
+    );
+
+    let satisfies_text = fixes[1]["changes"][0]["textChanges"][1]["newText"]
+        .as_str()
+        .expect("satisfies+cast newText");
+    assert!(
+        satisfies_text.contains("JSX.Element"),
+        "satisfies+cast should reference JSX.Element, got: {satisfies_text}"
+    );
+
+    // Both fixes must carry the canonical fixId for the client to batch them.
+    for fix in &fixes {
+        assert_eq!(
+            fix["fixId"].as_str(),
+            Some(super::FIX_MISSING_TYPE_ANNOTATION_FIX_ID),
+            "fixId mismatch"
+        );
+    }
+
+    // Confirm the fix inserts after the name, not at the start of the line.
+    let insert_offset = fixes[0]["changes"][0]["textChanges"][0]["start"]["offset"]
+        .as_u64()
+        .expect("start offset");
+    assert!(
+        insert_offset > 13,
+        "annotation must be inserted after the variable name"
+    );
+}
+
+/// `JsxElement` (open/close tags) initializer, variable named `wrapper`.
+/// Rule: any JSX element expression → annotation `JSX.Element`, regardless
+/// of variable name or tag choice.
+#[test]
+fn fix_missing_type_annotation_jsx_element() {
+    // offset 13: "wrapper" (after "export const ")
+    let content = "export const wrapper = <span><b/></span>;";
+    let file = "/fix_missing_jsx_element.tsx";
+    let arena = parse_to_arena(file, content);
+    let line_map = LineMap::build(content);
+
+    let diag = make_ts9010_diagnostic(file, 13, 7 /* "wrapper" */);
+    let fixes = Server::apply_isolated_decl_type_annotation_fix(
+        file,
+        content,
+        &arena,
+        &line_map,
+        &[diag],
+        &[9010],
+        None,
+    );
+
+    assert_eq!(
+        fixes.len(),
+        2,
+        "expected exactly two fix variants for JsxElement"
+    );
+
+    let direct_text = fixes[0]["changes"][0]["textChanges"][0]["newText"]
+        .as_str()
+        .expect("direct annotation newText");
+    assert_eq!(direct_text, ": JSX.Element");
+
+    let satisfies_text = fixes[1]["changes"][0]["textChanges"][1]["newText"]
+        .as_str()
+        .expect("satisfies+cast close newText");
+    assert!(
+        satisfies_text.contains("JSX.Element"),
+        "satisfies+cast should reference JSX.Element, got: {satisfies_text}"
+    );
+}
+
+/// `JsxFragment` initializer (`<>...</>`), variable named `items`.
+/// Rule: JSX fragment is also a JSX expression → annotation `JSX.Element`.
+#[test]
+fn fix_missing_type_annotation_jsx_fragment() {
+    // offset 13: "items" (after "export const ")
+    let content = "export const items = <><li/></>;";
+    let file = "/fix_missing_jsx_fragment.tsx";
+    let arena = parse_to_arena(file, content);
+    let line_map = LineMap::build(content);
+
+    let diag = make_ts9010_diagnostic(file, 13, 5 /* "items" */);
+    let fixes = Server::apply_isolated_decl_type_annotation_fix(
+        file,
+        content,
+        &arena,
+        &line_map,
+        &[diag],
+        &[9010],
+        None,
+    );
+
+    assert_eq!(fixes.len(), 2, "expected two fix variants for JsxFragment");
+    let direct_text = fixes[0]["changes"][0]["textChanges"][0]["newText"]
+        .as_str()
+        .expect("newText");
+    assert_eq!(direct_text, ": JSX.Element");
+}
+
+/// Non-JSX initializer (numeric literal) must produce no fixes — the
+/// function only handles the JSX class of shapes; other cases fall back
+/// to the full checker-backed path.
+#[test]
+fn fix_missing_type_annotation_non_jsx_produces_no_fixes() {
+    let content = "export const count = 42;";
+    let file = "/fix_missing_non_jsx.ts";
+    let arena = parse_to_arena(file, content);
+    let line_map = LineMap::build(content);
+
+    let diag = make_ts9010_diagnostic(file, 13, 5 /* "count" */);
+    let fixes = Server::apply_isolated_decl_type_annotation_fix(
+        file,
+        content,
+        &arena,
+        &line_map,
+        &[diag],
+        &[9010],
+        None,
+    );
+
+    assert!(
+        fixes.is_empty(),
+        "non-JSX initializer should produce no fixes from the AST-structural path"
+    );
+}
+
+/// Calling with `error_codes` that do NOT include 9010 must return nothing
+/// even when a TS9010 diagnostic is present — the guard is on the request,
+/// not the diagnostic bag.
+#[test]
+fn fix_missing_type_annotation_wrong_error_code_returns_empty() {
+    let content = "export const el = <div/>;";
+    let file = "/fix_missing_wrong_code.tsx";
+    let arena = parse_to_arena(file, content);
+    let line_map = LineMap::build(content);
+
+    let diag = make_ts9010_diagnostic(file, 13, 2 /* "el" */);
+    // Client only asked about TS2304 — should not get 9010 fixes.
+    let fixes = Server::apply_isolated_decl_type_annotation_fix(
+        file,
+        content,
+        &arena,
+        &line_map,
+        &[diag],
+        &[2304],
+        None,
+    );
+
+    assert!(
+        fixes.is_empty(),
+        "should not produce fixes when error_codes does not include 9010"
     );
 }

@@ -1,6 +1,7 @@
 use super::*;
 use crate::parallel::residency::{MemoryPressure, ResidencyBudget};
 use crate::parallel::skeleton::diff_skeletons;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::fs;
 use std::path::Path;
 use tsz_common::common::ModuleKind;
@@ -131,6 +132,38 @@ fn test_normalize_lib_reference_name_handles_legacy_and_nested_lib_names() {
     );
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn test_rayon_worker_count_for_work_items_caps_only_small_implicit_workloads() {
+    assert_eq!(rayon_worker_count_for_work_items(4, 16, false), Some(4));
+    assert_eq!(rayon_worker_count_for_work_items(4, 2, false), Some(2));
+    assert_eq!(rayon_worker_count_for_work_items(0, 16, false), None);
+    assert_eq!(rayon_worker_count_for_work_items(33, 16, false), None);
+    assert_eq!(rayon_worker_count_for_work_items(4, 16, true), None);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn test_small_workload_rayon_pool_does_not_cap_global_pool() {
+    if std::env::var_os("RAYON_NUM_THREADS").is_some() {
+        return;
+    }
+    let available = std::thread::available_parallelism()
+        .map(std::num::NonZeroUsize::get)
+        .unwrap_or(1);
+    let small_threads = run_with_rayon_pool_for_work_items(4, rayon::current_num_threads);
+    assert_eq!(small_threads, available.clamp(1, 4));
+
+    ensure_rayon_global_pool();
+    let global_threads = rayon::current_num_threads();
+    if available > 4 {
+        assert!(
+            global_threads > small_threads,
+            "small workload runner must use a scoped pool, not permanently cap the global pool"
+        );
+    }
+}
+
 #[test]
 fn test_resolve_lib_reference_path_prefers_available_candidate_names() {
     let temp_dir = tempfile::tempdir().expect("temp dir");
@@ -150,6 +183,95 @@ fn test_resolve_lib_reference_path_prefers_available_candidate_names() {
     assert_eq!(wrapped_path, lib_dir.join("lib.custom.d.ts"));
 
     assert!(resolve_lib_reference_path(base_path, "nonexistent").is_none());
+}
+
+#[test]
+fn test_resolve_lib_reference_path_uses_embedded_virtual_root_without_disk_probe_shape() {
+    let base_path = Path::new("/embedded-lib/es2020.d.ts");
+
+    let es5 = resolve_lib_reference_path(base_path, "lib.es5.d.ts").expect("resolve es5");
+    assert_eq!(es5, Path::new("/embedded-lib/es5.d.ts"));
+
+    let dom = resolve_lib_reference_path(base_path, "dom.generated").expect("resolve dom");
+    assert_eq!(dom, Path::new("/embedded-lib/dom.d.ts"));
+
+    assert!(resolve_lib_reference_path(base_path, "definitely-not-a-lib").is_none());
+}
+
+#[test]
+fn test_resolve_generated_embedded_lib_reference_path_uses_normalized_refs() {
+    let dom = resolve_generated_embedded_lib_reference_path("dom");
+    assert_eq!(dom, Path::new("/embedded-lib/dom.d.ts"));
+
+    let es5 = resolve_generated_embedded_lib_reference_path("lib.d.ts");
+    assert_eq!(es5, Path::new("/embedded-lib/es5.d.ts"));
+}
+
+#[test]
+fn test_collect_lib_files_recursive_cached_reads_embedded_virtual_root_as_static() {
+    let mut loaded = FxHashSet::default();
+    let mut file_contents = Vec::new();
+    let file_cache = FxHashMap::default();
+
+    collect_lib_files_recursive_cached(
+        Path::new("/embedded-lib/es2020.d.ts"),
+        &mut loaded,
+        &mut file_contents,
+        &file_cache,
+    )
+    .expect("collect embedded lib files");
+
+    let (_, source_text) = file_contents
+        .iter()
+        .find(|(name, _)| name == "/embedded-lib/es2020.d.ts")
+        .expect("es2020 entry");
+    assert!(matches!(
+        source_text,
+        LibSourceText::Static {
+            text: _,
+            content_hash: _
+        }
+    ));
+    assert!(loaded.iter().all(|path| path.starts_with("/embedded-lib")));
+}
+
+#[test]
+fn test_collect_lib_files_recursive_cached_uses_owned_references_for_physical_libs() {
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let es2020_path = temp_dir.path().join("lib.es2020.d.ts");
+    let custom_path = temp_dir.path().join("lib.custom.d.ts");
+    fs::write(&es2020_path, "").expect("write es2020 lib");
+    fs::write(&custom_path, "").expect("write custom lib");
+
+    let es2020_path = es2020_path.canonicalize().expect("canonical es2020");
+    let custom_path = custom_path.canonicalize().expect("canonical custom");
+    let mut file_cache = FxHashMap::default();
+    file_cache.insert(
+        es2020_path.clone(),
+        "/// <reference lib=\"custom\" />\ninterface PhysicalEs2020 {}\n".to_string(),
+    );
+    file_cache.insert(
+        custom_path.clone(),
+        "interface PhysicalCustom {}\n".to_string(),
+    );
+
+    let mut loaded = FxHashSet::default();
+    let mut file_contents = Vec::new();
+    collect_lib_files_recursive_cached(&es2020_path, &mut loaded, &mut file_contents, &file_cache)
+        .expect("collect physical lib files");
+
+    assert!(
+        file_contents
+            .iter()
+            .any(|(name, _)| name == custom_path.to_string_lossy().as_ref()),
+        "physical lib references should be parsed from owned source text"
+    );
+    assert!(
+        file_contents
+            .iter()
+            .all(|(name, _)| !name.starts_with("/embedded-lib")),
+        "physical libs must not use embedded reference metadata"
+    );
 }
 
 #[test]
@@ -501,6 +623,82 @@ fn test_load_lib_files_for_binding_strict_recurses_reference_libs() {
         names.len() >= 3,
         "Expected at least 3 loaded lib files, got {}",
         names.len()
+    );
+}
+
+#[test]
+fn clone_lib_files_for_checker_creates_distinct_parsed_bound_copies() {
+    let lib = std::sync::Arc::new(tsz_binder::lib_loader::LibFile::from_source(
+        "lib.test.d.ts".to_string(),
+        "interface Array<T> { length: number; }\ninterface Promise<T> { then(): Promise<T>; }\n"
+            .to_string(),
+    ));
+
+    let cloned = clone_lib_files_for_checker(&[std::sync::Arc::clone(&lib)], false);
+
+    assert_eq!(cloned.len(), 1);
+    let cloned_lib = &cloned[0];
+    assert_eq!(cloned_lib.file_name, lib.file_name);
+    assert_eq!(cloned_lib.root_index, lib.root_index);
+    assert!(
+        !std::sync::Arc::ptr_eq(&cloned_lib.arena, &lib.arena),
+        "checker lib clone must have independent arena identity",
+    );
+    assert!(
+        !std::sync::Arc::ptr_eq(&cloned_lib.binder, &lib.binder),
+        "checker lib clone must have independent binder identity",
+    );
+    assert_eq!(cloned_lib.arena.len(), lib.arena.len());
+    assert_eq!(cloned_lib.binder.symbols.len(), lib.binder.symbols.len());
+}
+
+#[test]
+fn test_compile_files_with_default_libs_preserves_promise_type_parameters() {
+    let lib_paths =
+        crate::config::resolve_default_lib_files(tsz_common::common::ScriptTarget::ES2015)
+            .expect("default libs");
+    let program = compile_files_with_libs(
+        vec![(
+            "main.ts".to_string(),
+            "declare const p: Promise<number>;\n".to_string(),
+        )],
+        &lib_paths,
+    );
+
+    let promise_id = program
+        .globals
+        .get("Promise")
+        .expect("Promise should be a global lib symbol");
+    let promise = program
+        .symbols
+        .get(promise_id)
+        .expect("Promise symbol should resolve");
+
+    assert!(
+        promise.has_any_flags(tsz_binder::symbol_flags::INTERFACE),
+        "Promise should retain its interface meaning after lib merge; flags={}",
+        promise.flags
+    );
+
+    let has_generic_interface_decl = promise.declarations.iter().any(|decl_idx| {
+        program
+            .declaration_arenas
+            .get(&(promise_id, *decl_idx))
+            .into_iter()
+            .flatten()
+            .any(|arena| {
+                arena.get(*decl_idx).is_some_and(|node| {
+                    arena
+                        .get_interface(node)
+                        .is_some_and(|iface| iface.type_parameters.is_some())
+                })
+            })
+    });
+
+    assert!(
+        has_generic_interface_decl,
+        "Promise should retain the generic interface declaration; declarations={:?}",
+        promise.declarations
     );
 }
 
@@ -933,7 +1131,6 @@ fn test_check_files_parallel_preserves_same_file_namespace_exports() {
 }
 
 #[test]
-#[ignore] // TODO: Import shadowing type meaning needs parallel checking refinement
 fn test_check_files_parallel_preserves_import_shadowing_type_meaning() {
     let files = vec![
         ("b.ts".to_string(), "export const zzz = 123;\n".to_string()),
@@ -1154,7 +1351,6 @@ const text: string = outputValue;
 }
 
 #[test]
-#[ignore = "current-base direct unit regression; unrelated to server protocol shape"]
 fn test_check_files_parallel_zod_issue_data_cross_file_spread() {
     let files = vec![
         (
@@ -1456,7 +1652,7 @@ namespace N1 {
         .find(|file| file.file_name == "test.ts")
         .expect("expected merged test.ts file");
     let rebuilt_binder = create_binder_from_bound_file(file, &program, 0);
-    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let query_cache = tsz_solver::construction::QueryCache::new(&program.type_interner);
     let mut recreated_checker = crate::checker::state::CheckerState::with_options(
         &file.arena,
         &rebuilt_binder,
@@ -1511,7 +1707,7 @@ namespace N1 {
         .find(|file| file.file_name == "test.ts")
         .expect("expected merged test.ts file");
     let rebuilt_binder = create_binder_from_bound_file(file, &program, 0);
-    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let query_cache = tsz_solver::construction::QueryCache::new(&program.type_interner);
     let mut checker = crate::checker::state::CheckerState::with_options(
         &file.arena,
         &rebuilt_binder,
@@ -1633,7 +1829,7 @@ namespace N1 {
         .find(|file| file.file_name == "test.ts")
         .expect("expected merged test.ts file");
     let rebuilt_binder = create_binder_from_bound_file(file, &program, 0);
-    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let query_cache = tsz_solver::construction::QueryCache::new(&program.type_interner);
     let mut checker = crate::checker::state::CheckerState::with_options(
         &file.arena,
         &rebuilt_binder,
@@ -1822,7 +2018,7 @@ c = d;
         .find(|file| file.file_name == "test.ts")
         .expect("expected merged test.ts file");
     let rebuilt_binder = create_binder_from_bound_file(program_file, &program, 0);
-    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let query_cache = tsz_solver::construction::QueryCache::new(&program.type_interner);
     let mut checker = crate::checker::state::CheckerState::with_options(
         &program_file.arena,
         &rebuilt_binder,
@@ -1873,32 +2069,44 @@ c = d;
                 tsz_solver::visitor::lazy_def_id(&program.type_interner, app.base)
             },
         ) {
-        let variances = tsz_solver::QueryDatabase::get_type_param_variance(&query_cache, def_id)
-            .map(|variances| format!("{variances:?}"))
-            .unwrap_or_else(|| "<none>".to_string());
-        let params = tsz_solver::TypeResolver::get_lazy_type_params(&query_cache, def_id)
-            .map(|params| format!("{params:?}"))
-            .unwrap_or_else(|| "<none>".to_string());
-        let body =
-            tsz_solver::TypeResolver::resolve_lazy(&query_cache, def_id, &program.type_interner)
-                .map(|body| checker.format_type(body))
+        let variances =
+            tsz_solver::construction::QueryDatabase::get_type_param_variance(&query_cache, def_id)
+                .map(|variances| format!("{variances:?}"))
                 .unwrap_or_else(|| "<none>".to_string());
+        let params = tsz_solver::relations::subtype::TypeResolver::get_lazy_type_params(
+            &query_cache,
+            def_id,
+        )
+        .map(|params| format!("{params:?}"))
+        .unwrap_or_else(|| "<none>".to_string());
+        let body = tsz_solver::relations::subtype::TypeResolver::resolve_lazy(
+            &query_cache,
+            def_id,
+            &program.type_interner,
+        )
+        .map(|body| checker.format_type(body))
+        .unwrap_or_else(|| "<none>".to_string());
         let ctx_params = checker
             .ctx
             .get_def_type_params(def_id)
             .map(|params| format!("{params:?}"))
             .unwrap_or_else(|| "<none>".to_string());
-        let ctx_body =
-            tsz_solver::TypeResolver::resolve_lazy(&checker.ctx, def_id, &program.type_interner)
-                .map(|body| checker.format_type(body))
-                .unwrap_or_else(|| "<none>".to_string());
-        let policy = tsz_solver::RelationPolicy::from_flags(checker.ctx.pack_relation_flags());
-        let context = tsz_solver::RelationContext {
+        let ctx_body = tsz_solver::relations::subtype::TypeResolver::resolve_lazy(
+            &checker.ctx,
+            def_id,
+            &program.type_interner,
+        )
+        .map(|body| checker.format_type(body))
+        .unwrap_or_else(|| "<none>".to_string());
+        let policy = tsz_solver::relations::relation_queries::RelationPolicy::from_flags(
+            checker.ctx.pack_relation_flags(),
+        );
+        let context = tsz_solver::relations::relation_queries::RelationContext {
             query_db: Some(&query_cache),
             inheritance_graph: Some(&checker.ctx.inheritance_graph),
             class_check: None,
         };
-        let solver_variance = tsz_solver::check_application_variance(
+        let solver_variance = tsz_solver::relations::relation_queries::check_application_variance(
             &program.type_interner,
             &checker.ctx,
             Some(&query_cache),
@@ -1996,7 +2204,7 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
         .find(|file| file.file_name == "test.ts")
         .expect("expected merged test.ts file");
     let rebuilt_binder = create_binder_from_bound_file(program_file, &program, 0);
-    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let query_cache = tsz_solver::construction::QueryCache::new(&program.type_interner);
     let mut checker = crate::checker::state::CheckerState::with_options(
         &program_file.arena,
         &rebuilt_binder,
@@ -2053,7 +2261,7 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
     let source_type = checker.get_type_of_node(decl.initializer);
     let target_type = checker.get_type_from_type_node(decl.type_annotation);
     let read_constraint_type =
-        |object_type| match tsz_solver::QueryDatabase::resolve_property_access(
+        |object_type| match tsz_solver::construction::QueryDatabase::resolve_property_access(
             &query_cache,
             object_type,
             "constraint",
@@ -2066,8 +2274,10 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
     let source_constraint_type =
         read_constraint_type(source_type).expect("Num.constraint should resolve through self type");
     let evaluated_target_type = {
-        let mut evaluator =
-            tsz_solver::TypeEvaluator::with_resolver(&program.type_interner, &checker.ctx);
+        let mut evaluator = tsz_solver::computation::TypeEvaluator::with_resolver(
+            &program.type_interner,
+            &checker.ctx,
+        );
         evaluator.evaluate(target_type)
     };
     let target_constraint_type = read_constraint_type(evaluated_target_type)
@@ -2267,7 +2477,6 @@ export default function () {
 }
 
 #[test]
-#[ignore] // TODO: Cross-file const/class redeclaration TS2451 needs parallel detection
 fn test_check_files_parallel_cross_file_const_and_class_redeclaration_uses_ts2451() {
     let files = vec![
         ("a.ts".to_string(), "const Bar = 3;\n".to_string()),
@@ -2298,12 +2507,10 @@ fn test_check_files_parallel_cross_file_const_and_class_redeclaration_uses_ts245
         .map(|diag| diag.code)
         .collect();
 
-    // After the fix-duplicate-identifier merge, cross-file const/class redeclarations
-    // correctly emit TS2300 (Duplicate identifier) instead of TS2451.
     assert_eq!(
         codes,
-        vec![2300],
-        "Expected b.ts to report TS2300 for cross-file const/class redeclaration. Diagnostics: {:#?}",
+        vec![2451],
+        "Expected b.ts to report TS2451 for cross-file const/class redeclaration. Diagnostics: {:#?}",
         file_b.diagnostics
     );
 }
@@ -2555,9 +2762,7 @@ fn test_umd_export_vs_declare_global_const_emits_ts2451() {
     );
 }
 
-// TODO: Implement TS2300 duplicate identifier detection for global augmentation conflicts.
 #[test]
-#[ignore]
 fn test_check_files_parallel_global_augmentation_member_conflicts_emit_ts2300() {
     let files = vec![
         (
@@ -3219,10 +3424,9 @@ class B {
 }
 
 #[test]
-#[ignore] // TODO: Private accessor before field declarations reporting needs parallel handling
 fn test_check_files_parallel_private_accessor_before_field_reports_both_declarations() {
-    // tsc reports TS2300 on BOTH declarations when a private accessor and
-    // private field share the same name, so we expect 6 total (2 per class).
+    // tsc reports TS2300 on the later field declaration when a private accessor
+    // already established the same name.
     let source = r#"
 function cases() {
     class A {
@@ -3265,8 +3469,8 @@ function cases() {
         .count();
 
     assert_eq!(
-        ts2300_count, 6,
-        "Expected TS2300 on both accessor and field declarations (2 per class × 3 classes). Diagnostics: {:#?}",
+        ts2300_count, 3,
+        "Expected TS2300 on the later private field declarations. Diagnostics: {:#?}",
         file.diagnostics
     );
     assert!(
@@ -4808,6 +5012,187 @@ fn test_merge_deterministic_global_namespace() {
         prev_symbol_names = Some(symbol_names);
         prev_deep_exports = Some(deep_exports);
     }
+}
+
+/// Regression: when the same namespace member is declared in two sibling lib
+/// files (the parent namespace already merges across files), the global merge
+/// must collapse the nested declarations into one symbol carrying both
+/// declarations. Without this, property lookup on the namespace-scoped type
+/// reports a different shape depending on which lib's declaration won the
+/// initial allocation race — mirroring the real-world regression where
+/// `Intl.ResolvedDateTimeFormatOptions` was split between
+/// `lib.es5.d.ts` (carrying `calendar`, `numberingSystem`, ...) and
+/// `lib.es2021.intl.d.ts` (carrying `dateStyle`, `formatMatcher`, ...) and
+/// only one half survived in the merged shape.
+#[test]
+fn lib_merge_collapses_same_named_nested_interfaces_across_lib_files() {
+    fn assert_merged(namespace: &str, type_name: &str, members_a: &str, members_b: &str) {
+        let src_a =
+            format!("declare namespace {namespace} {{ interface {type_name} {{ {members_a} }} }}");
+        let src_b =
+            format!("declare namespace {namespace} {{ interface {type_name} {{ {members_b} }} }}");
+
+        let lib_files = vec![
+            std::sync::Arc::new(crate::lib_loader::LibFile::from_source(
+                "lib.a.d.ts".to_string(),
+                src_a,
+            )),
+            std::sync::Arc::new(crate::lib_loader::LibFile::from_source(
+                "lib.b.d.ts".to_string(),
+                src_b,
+            )),
+        ];
+
+        let program = merge_bind_results(parse_and_bind_parallel_with_libs(
+            vec![("main.ts".to_string(), String::new())],
+            &lib_files,
+        ));
+
+        let ns_id = program
+            .globals
+            .get(namespace)
+            .unwrap_or_else(|| panic!("namespace {namespace} should be a global lib symbol"));
+        let ns_sym = program
+            .symbols
+            .get(ns_id)
+            .unwrap_or_else(|| panic!("namespace {namespace} symbol must exist"));
+
+        let exports = ns_sym
+            .exports
+            .as_ref()
+            .unwrap_or_else(|| panic!("namespace {namespace} must have exports"));
+        let type_id = exports
+            .get(type_name)
+            .unwrap_or_else(|| panic!("{namespace}.{type_name} must be exported"));
+
+        // The merged interface symbol must carry distinct declarations from
+        // BOTH lib files. `symbol.declarations` deduplicates by raw NodeIndex
+        // which can coincide across arenas, so verify via the (symbol, decl)
+        // → arenas map: two declarations from sibling lib files must show up
+        // as either two NodeIndex entries or one NodeIndex entry with two
+        // arenas.
+        let type_sym = program
+            .symbols
+            .get(type_id)
+            .unwrap_or_else(|| panic!("{namespace}.{type_name} symbol must exist"));
+        let total_arena_decls: usize = type_sym
+            .declarations
+            .iter()
+            .map(|&decl_idx| {
+                program
+                    .declaration_arenas
+                    .get(&(type_id, decl_idx))
+                    .map_or(0, |v| v.len())
+            })
+            .sum();
+        assert_eq!(
+            total_arena_decls,
+            2,
+            "{namespace}.{type_name} should hold both lib declarations across arenas, \
+             got declarations={:?} and arena counts={:?}",
+            type_sym.declarations,
+            type_sym
+                .declarations
+                .iter()
+                .map(|&d| program
+                    .declaration_arenas
+                    .get(&(type_id, d))
+                    .map_or(0, |v| v.len()))
+                .collect::<Vec<_>>(),
+        );
+    }
+
+    // Original repro: `Intl.ResolvedDateTimeFormatOptions` split across two libs.
+    assert_merged(
+        "Intl",
+        "ResolvedDateTimeFormatOptions",
+        "calendar: string; numberingSystem: string;",
+        "dateStyle?: string; formatMatcher?: string;",
+    );
+
+    // Vary the namespace and type names to prove the rule isn't keyed on
+    // any particular spelling.
+    assert_merged(
+        "MyOwnNS",
+        "Config",
+        "host: string; port: number;",
+        "useTls: boolean; retries: number;",
+    );
+
+    // Renamed sibling namespace under a different alias.
+    assert_merged(
+        "Reflect2",
+        "Capability",
+        "read: boolean;",
+        "write: boolean;",
+    );
+}
+
+/// Negative case for the nested-merge rule: two `Foo` interfaces nested
+/// inside *different* namespaces must remain distinct, even after the merge.
+/// Without keying on the parent's global id, both `Foo`s would collapse and
+/// `NsA.Foo` would gain members from `NsB.Foo`.
+#[test]
+fn lib_merge_does_not_collapse_nested_interfaces_under_different_namespaces() {
+    let lib_files = vec![
+        std::sync::Arc::new(crate::lib_loader::LibFile::from_source(
+            "lib.a.d.ts".to_string(),
+            "declare namespace NsA { interface Foo { onlyA: string; } }".to_string(),
+        )),
+        std::sync::Arc::new(crate::lib_loader::LibFile::from_source(
+            "lib.b.d.ts".to_string(),
+            "declare namespace NsB { interface Foo { onlyB: number; } }".to_string(),
+        )),
+    ];
+
+    let program = merge_bind_results(parse_and_bind_parallel_with_libs(
+        vec![("main.ts".to_string(), String::new())],
+        &lib_files,
+    ));
+
+    let lookup = |ns: &str, type_name: &str| -> SymbolId {
+        let ns_id = program.globals.get(ns).expect("namespace");
+        let ns_sym = program.symbols.get(ns_id).expect("namespace symbol");
+        ns_sym
+            .exports
+            .as_ref()
+            .expect("exports")
+            .get(type_name)
+            .expect("type export")
+    };
+
+    let a_id = lookup("NsA", "Foo");
+    let b_id = lookup("NsB", "Foo");
+    assert_ne!(
+        a_id, b_id,
+        "NsA.Foo and NsB.Foo must remain distinct symbols; \
+         the nested-merge key (global parent id, name) must scope them by parent",
+    );
+
+    let a_sym = program.symbols.get(a_id).expect("NsA.Foo");
+    let b_sym = program.symbols.get(b_id).expect("NsB.Foo");
+    let a_decl_count: usize = a_sym
+        .declarations
+        .iter()
+        .map(|&d| {
+            program
+                .declaration_arenas
+                .get(&(a_id, d))
+                .map_or(0, |v| v.len())
+        })
+        .sum();
+    let b_decl_count: usize = b_sym
+        .declarations
+        .iter()
+        .map(|&d| {
+            program
+                .declaration_arenas
+                .get(&(b_id, d))
+                .map_or(0, |v| v.len())
+        })
+        .sum();
+    assert_eq!(a_decl_count, 1, "NsA.Foo should hold one declaration");
+    assert_eq!(b_decl_count, 1, "NsB.Foo should hold one declaration");
 }
 
 #[test]
@@ -7398,7 +7783,7 @@ fn single_file_definition_store_from_binder() {
     let mut binder = crate::binder::BinderState::new();
     binder.bind_source_file(&parsed.arena, parsed.source_file);
 
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
     let store = create_definition_store_from_binder(&binder, &interner);
 
     // All 6 top-level declarations should have DefIds
@@ -7465,7 +7850,7 @@ type LocalType = number;
     let mut binder = crate::binder::BinderState::new();
     binder.bind_source_file(&parsed.arena, parsed.source_file);
 
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
     let store = create_definition_store_from_binder(&binder, &interner);
 
     // AugmentedGlobal should have is_global_augmentation = true
@@ -8713,7 +9098,7 @@ fn solver_from_semantic_defs_matches_core_helper() {
     let mut binder = crate::binder::BinderState::new();
     binder.bind_source_file(&parsed.arena, parsed.source_file);
 
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
 
     // Path A: core helper (delegates to solver factory internally)
     let store_a = crate::parallel::create_definition_store_from_binder(&binder, &interner);
@@ -9089,7 +9474,7 @@ var e: Date = c.b();
         },
     );
 
-    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let query_cache = tsz_solver::construction::QueryCache::new(&program.type_interner);
     let mut checker = crate::checker::state::CheckerState::with_options(
         &file1_bound.arena,
         &binder,

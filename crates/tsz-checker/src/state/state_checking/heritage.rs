@@ -1726,6 +1726,15 @@ impl<'a> CheckerState<'a> {
         base_constructor_type: TypeId,
         explicit_type_args: Option<&tsz_parser::parser::NodeList>,
     ) {
+        if self.heritage_call_has_invalid_mixin_constructor_constraint(expr_idx) {
+            self.error_at_node(
+                expr_idx,
+                crate::diagnostics::diagnostic_messages::BASE_CONSTRUCTORS_MUST_ALL_HAVE_THE_SAME_RETURN_TYPE,
+                crate::diagnostics::diagnostic_codes::BASE_CONSTRUCTORS_MUST_ALL_HAVE_THE_SAME_RETURN_TYPE,
+            );
+            return;
+        }
+
         let mut signatures = Vec::new();
         self.collect_heritage_call_expression_constructor_signatures(
             base_constructor_type,
@@ -1782,13 +1791,8 @@ impl<'a> CheckerState<'a> {
         // When the base constructor type is an intersection (e.g., mixin patterns
         // like `T & (new (...args) => Mixin)`), constructor signatures come from
         // different intersection members and naturally have different return types.
-        // tsc doesn't compare return types across intersection members — the
-        // instance type is the intersection of all individual return types.
-        //
-        // Imported mixin helpers can also surface as a synthetic constructor object
-        // with multiple construct signatures plus an intersected `prototype` type
-        // instead of a raw intersection at the top level. Treat that shape the same
-        // way: it is a mixin composition artifact, not a real overload set.
+        // tsc doesn't compare return types across intersection members. Invalid
+        // mixin constructor constraints are handled by the explicit check above.
         let has_intersection_instance =
             crate::query_boundaries::flow_analysis::instance_type_from_constructor(
                 self.ctx.types,
@@ -1839,10 +1843,10 @@ impl<'a> CheckerState<'a> {
                 || !self.are_mutually_assignable(candidate_return, *first_return)
             {
                 self.error_at_node(
-                    expr_idx,
-                    crate::diagnostics::diagnostic_messages::BASE_CONSTRUCTORS_MUST_ALL_HAVE_THE_SAME_RETURN_TYPE,
-                    crate::diagnostics::diagnostic_codes::BASE_CONSTRUCTORS_MUST_ALL_HAVE_THE_SAME_RETURN_TYPE,
-                );
+                expr_idx,
+                crate::diagnostics::diagnostic_messages::BASE_CONSTRUCTORS_MUST_ALL_HAVE_THE_SAME_RETURN_TYPE,
+                crate::diagnostics::diagnostic_codes::BASE_CONSTRUCTORS_MUST_ALL_HAVE_THE_SAME_RETURN_TYPE,
+            );
                 return;
             }
         }

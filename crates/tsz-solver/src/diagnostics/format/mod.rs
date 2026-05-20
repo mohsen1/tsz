@@ -17,7 +17,7 @@ pub mod test_tracing;
 mod tests;
 pub mod tracing_helpers;
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::def::{DefId, DefinitionStore};
 use crate::diagnostics::{
     DiagnosticArg, PendingDiagnostic, RelatedInformation, SourceSpan, TypeDiagnostic,
@@ -29,6 +29,7 @@ use crate::types::{
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
+use std::mem::size_of;
 use std::sync::Arc;
 use tracing::trace;
 use tsz_binder::SymbolId;
@@ -60,6 +61,15 @@ fn needs_property_name_quotes(name: &str) -> bool {
         }
         _ => true,
     }
+}
+
+/// Operation-local cache accounting for `TypeFormatter`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TypeFormatterCacheStatistics {
+    /// Cached atom-to-string display entries.
+    pub atom_cache_entries: usize,
+    /// Approximate heap and struct residency owned by the formatter.
+    pub estimated_size_bytes: usize,
 }
 
 /// Context for generating type strings.
@@ -133,6 +143,9 @@ pub struct TypeFormatter<'a> {
     /// This lets a recursive alias expand one structural layer before nested
     /// self-references elide as `...`.
     skipped_type_alias_expansion_visiting: FxHashSet<DefId>,
+    /// Optional compiler-controlled display replacement for the lib-only
+    /// `BuiltinIteratorReturn` alias.
+    builtin_iterator_return_type: Option<TypeId>,
     /// When true, don't follow `display_alias` when it points to an Intersection
     /// type and the current type is an Object. Used for TS2741 messages where
     /// tsc shows the merged object form instead of the intersection form.
@@ -160,6 +173,18 @@ pub struct TypeFormatter<'a> {
     /// When true, generic mapped type aliases that evaluate to scalar types are
     /// displayed as their evaluated result. Used for assignability diagnostics.
     expand_scalar_mapped_alias_applications: bool,
+    /// When true, the canonical primitive key union (`string | number | symbol`,
+    /// shared by `keyof any` and the lib.d.ts alias `PropertyKey`) is rendered
+    /// in its structural form even in diagnostic mode. tsc strips the
+    /// `aliasSymbol` from the constraint type before formatting TS2344 messages
+    /// (`Type 'X' does not satisfy the constraint 'string | number | symbol'`)
+    /// while still keeping `PropertyKey` in other diagnostics. The default is
+    /// false to preserve the existing behavior across every other surface.
+    expand_primitive_key_union: bool,
+    /// When true, render union members in canonical interner order even when a
+    /// source/display origin was recorded. This is used by narrow diagnostic
+    /// surfaces where tsc does not preserve source-written union order.
+    ignore_union_origins: bool,
 }
 
 impl<'a> TypeFormatter<'a> {
@@ -362,6 +387,7 @@ impl<'a> TypeFormatter<'a> {
             skip_application_display_alias_chase: false,
             skip_type_alias_def_ids: FxHashSet::default(),
             skipped_type_alias_expansion_visiting: FxHashSet::default(),
+            builtin_iterator_return_type: None,
             skip_intersection_display_alias: false,
             skip_application_alias_for_intersections: false,
             capitalize_primitive_intersection_members: false,
@@ -369,7 +395,27 @@ impl<'a> TypeFormatter<'a> {
             long_property_receiver_display: false,
             long_property_receiver_object_elision_end_depth: 26,
             expand_scalar_mapped_alias_applications: false,
+            expand_primitive_key_union: false,
+            ignore_union_origins: false,
         }
+    }
+
+    /// Return cache entry and residency accounting for this formatter.
+    pub fn cache_statistics(&self) -> TypeFormatterCacheStatistics {
+        TypeFormatterCacheStatistics {
+            atom_cache_entries: self.atom_cache.len(),
+            estimated_size_bytes: self.estimated_size_bytes(),
+        }
+    }
+
+    /// Estimate memory retained by this operation-local formatter.
+    pub fn estimated_size_bytes(&self) -> usize {
+        size_of::<Self>()
+            + self.atom_cache.capacity() * size_of::<(Atom, Arc<str>)>()
+            + self.display_alias_visiting.capacity() * size_of::<TypeId>()
+            + self.format_visiting.capacity() * size_of::<TypeId>()
+            + self.skip_type_alias_def_ids.capacity() * size_of::<DefId>()
+            + self.skipped_type_alias_expansion_visiting.capacity() * size_of::<DefId>()
     }
 
     fn distributed_conditional_application_display(
@@ -575,6 +621,7 @@ impl<'a> TypeFormatter<'a> {
             skip_application_display_alias_chase: false,
             skip_type_alias_def_ids: FxHashSet::default(),
             skipped_type_alias_expansion_visiting: FxHashSet::default(),
+            builtin_iterator_return_type: None,
             skip_intersection_display_alias: false,
             skip_application_alias_for_intersections: false,
             capitalize_primitive_intersection_members: false,
@@ -582,6 +629,8 @@ impl<'a> TypeFormatter<'a> {
             long_property_receiver_display: false,
             long_property_receiver_object_elision_end_depth: 26,
             expand_scalar_mapped_alias_applications: false,
+            expand_primitive_key_union: false,
+            ignore_union_origins: false,
         }
     }
 
@@ -636,6 +685,24 @@ impl<'a> TypeFormatter<'a> {
         self
     }
 
+    /// Render the canonical primitive key union (`string | number | symbol`)
+    /// in its structural form rather than collapsing it to `PropertyKey`. tsc
+    /// strips the `aliasSymbol` from the constraint type before formatting
+    /// the TS2344 message; opt-in callers (the constraint-not-satisfied
+    /// emitter) use this to mirror that surface without affecting any other
+    /// diagnostic.
+    pub const fn with_expanded_primitive_key_union(mut self) -> Self {
+        self.expand_primitive_key_union = true;
+        self
+    }
+
+    /// Render unions in canonical formatter order, ignoring any stored
+    /// source/display origin for this formatter instance.
+    pub const fn with_ignore_union_origins(mut self) -> Self {
+        self.ignore_union_origins = true;
+        self
+    }
+
     /// Preserve optional parameter surface syntax when formatting type output.
     /// When false, optional params append `| undefined` unless already present.
     pub const fn with_preserve_optional_parameter_surface_syntax(mut self, preserve: bool) -> Self {
@@ -685,10 +752,41 @@ impl<'a> TypeFormatter<'a> {
             .is_some_and(|def| def.kind == crate::def::DefKind::TypeAlias)
     }
 
+    fn display_alias_application_base_has_conditional_body(&self, alias_origin: TypeId) -> bool {
+        let Some(TypeData::Application(app_id)) = self.interner.lookup(alias_origin) else {
+            return false;
+        };
+        let app = self.interner.type_application(app_id);
+        let Some(def_store) = self.def_store else {
+            return false;
+        };
+
+        let def_id = match self.interner.lookup(app.base) {
+            Some(TypeData::Lazy(def_id)) => Some(def_id),
+            _ => def_store.find_def_for_type(app.base),
+        };
+
+        def_id
+            .and_then(|def_id| def_store.get(def_id))
+            .and_then(|def| def.body)
+            .is_some_and(|body| {
+                matches!(self.interner.lookup(body), Some(TypeData::Conditional(_)))
+            })
+    }
+
     /// Skip type alias names for aliases whose body is a generic Application.
     /// Used in assignability messages where tsc shows the Application form.
     pub const fn with_skip_application_alias_names(mut self) -> Self {
         self.skip_application_alias_names = true;
+        self
+    }
+
+    /// Do not follow display aliases whose origin is an Application.
+    /// Used when a diagnostic has already selected the application spelling it
+    /// wants to show and formatter-level provenance would repaint it as a
+    /// wrapper alias.
+    pub const fn with_skip_application_display_alias_chase(mut self) -> Self {
+        self.skip_application_display_alias_chase = true;
         self
     }
 
@@ -739,6 +837,13 @@ impl<'a> TypeFormatter<'a> {
             self.preserve_optional_property_surface_syntax = true;
             self.preserve_optional_parameter_surface_syntax = true;
         }
+        self
+    }
+
+    /// Replace diagnostic display of the compiler-internal lib alias
+    /// `BuiltinIteratorReturn` with the option-selected concrete type.
+    pub const fn with_builtin_iterator_return_type(mut self, ty: TypeId) -> Self {
+        self.builtin_iterator_return_type = Some(ty);
         self
     }
 
@@ -1227,8 +1332,22 @@ impl<'a> TypeFormatter<'a> {
             // union form, matching tsc behavior.
             let use_keyof_alias =
                 if let Some(TypeData::KeyOf(keyof_operand)) = self.interner.lookup(alias_origin) {
-                    self.def_store
-                        .is_some_and(|ds| ds.find_def_for_type(keyof_operand).is_some())
+                    self.def_store.is_some_and(|ds| {
+                        ds.find_def_for_type(keyof_operand).is_some()
+                            || matches!(
+                                self.interner.lookup(keyof_operand),
+                                Some(TypeData::Lazy(def_id)) if ds.get(def_id).is_some()
+                            )
+                            || self.interner.get_display_alias(keyof_operand).is_some_and(
+                                |operand_alias| {
+                                    ds.find_def_for_type(operand_alias).is_some()
+                                        || matches!(
+                                            self.interner.lookup(operand_alias),
+                                            Some(TypeData::Lazy(def_id)) if ds.get(def_id).is_some()
+                                        )
+                                },
+                            )
+                    })
                 } else {
                     false
                 };
@@ -1275,13 +1394,17 @@ impl<'a> TypeFormatter<'a> {
                 } else {
                     false
                 };
-            let use_lazy_type_alias =
+            let use_lazy_display_alias =
                 if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(alias_origin) {
                     self.def_store
                         .and_then(|ds| ds.get(def_id).map(|def| (ds, def)))
                         .is_some_and(|(ds, def)| {
-                            def.kind == crate::def::DefKind::TypeAlias
-                                && def.type_params.is_empty()
+                            matches!(
+                                def.kind,
+                                crate::def::DefKind::TypeAlias
+                                    | crate::def::DefKind::Interface
+                                    | crate::def::DefKind::Class
+                            ) && def.type_params.is_empty()
                                 && !def.body.is_some_and(|body| ds.is_computed_body(body))
                         })
                 } else {
@@ -1334,9 +1457,14 @@ impl<'a> TypeFormatter<'a> {
                         self.interner.lookup(alias_origin),
                         Some(TypeData::Application(_))
                     ))
+                || (self.skip_application_alias_names
+                    && self.display_alias_application_base_has_conditional_body(alias_origin))
                 || (is_empty_object
                     && self.display_alias_application_base_is_type_alias(alias_origin));
-            if (!is_simple_type || use_keyof_alias || use_application_alias || use_lazy_type_alias)
+            if (!is_simple_type
+                || use_keyof_alias
+                || use_application_alias
+                || use_lazy_display_alias)
                 && !skip_alias_chase
                 && self.display_alias_visiting.insert(alias_origin)
             {
@@ -1364,6 +1492,13 @@ impl<'a> TypeFormatter<'a> {
         if inserted_visiting {
             self.format_visiting.remove(&type_id);
         }
+        self.current_depth -= 1;
+        result
+    }
+
+    pub fn format_union_members_in_order(&mut self, members: &[TypeId]) -> Cow<'static, str> {
+        self.current_depth += 1;
+        let result = self.format_union_preserving_member_order(members).into();
         self.current_depth -= 1;
         result
     }
@@ -1406,7 +1541,10 @@ impl<'a> TypeFormatter<'a> {
                 self.format_object_with_index(shape.as_ref()).into()
             }
             TypeData::Union(members) => {
-                if self.diagnostic_mode && self.is_primitive_key_union_data(key) {
+                if self.diagnostic_mode
+                    && !self.expand_primitive_key_union
+                    && self.is_primitive_key_union_data(key)
+                {
                     return Cow::Borrowed("PropertyKey");
                 }
                 // tsc preserves top-level alias names that would otherwise be
@@ -1414,10 +1552,12 @@ impl<'a> TypeFormatter<'a> {
                 // expand to T's body). The checker records the unflattened
                 // input member list as a side-table "origin"; consult it here
                 // before structural display.
-                if let Some(origin) = self.interner.get_union_origin(type_id) {
+                let members = self.interner.type_list(*members);
+                if !self.ignore_union_origins
+                    && let Some(origin) = self.interner.get_union_origin(type_id)
+                {
                     return self.format_union(origin.as_slice()).into();
                 }
-                let members = self.interner.type_list(*members);
                 self.format_union(members.as_ref()).into()
             }
             TypeData::Intersection(members) => {
@@ -1484,12 +1624,25 @@ impl<'a> TypeFormatter<'a> {
             }
             TypeData::TypeParameter(info) => Cow::Owned(self.atom(info.name).to_string()),
             TypeData::UnresolvedTypeName(name) => {
+                if self.atom(*name).as_ref() == "BuiltinIteratorReturn"
+                    && let Some(replacement) = self.builtin_iterator_return_type
+                {
+                    return self.format(replacement);
+                }
                 if let Some((def_id, body)) = self.skipped_type_alias_body_by_name(*name) {
                     return self.format_skipped_type_alias_body(def_id, body);
                 }
                 Cow::Owned(self.atom(*name).to_string())
             }
             TypeData::Lazy(def_id) => {
+                if let Some(replacement) = self.builtin_iterator_return_type
+                    && let Some(def_store) = self.def_store
+                    && let Some(def) = def_store.get(*def_id)
+                    && def.kind == crate::def::DefKind::TypeAlias
+                    && self.atom(def.name).as_ref() == "BuiltinIteratorReturn"
+                {
+                    return self.format(replacement);
+                }
                 if self.skip_type_alias_def_ids.contains(def_id)
                     && let Some(def_store) = self.def_store
                     && let Some(def) = def_store.get(*def_id)

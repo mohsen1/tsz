@@ -2,8 +2,8 @@
 
 use super::state::{
     CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_CLASS_MEMBER_NAME, CONTEXT_FLAG_CONSTRUCTOR_PARAMETERS,
-    CONTEXT_FLAG_GENERATOR, CONTEXT_FLAG_GENERATOR_MEMBER_NAME, CONTEXT_FLAG_STATIC_BLOCK,
-    ParserState,
+    CONTEXT_FLAG_FUNCTION_BODY, CONTEXT_FLAG_GENERATOR, CONTEXT_FLAG_GENERATOR_MEMBER_NAME,
+    CONTEXT_FLAG_STATIC_BLOCK, ParserState,
 };
 use crate::parser::{
     NodeIndex, NodeList,
@@ -628,22 +628,27 @@ impl ParserState {
 
         // Recovery: Handle return type annotation on constructor (invalid but users write it)
         if self.parse_optional(SyntaxKind::ColonToken) {
-            let missing_type = !self.can_token_start_type() && self.is_type_terminator_token();
-            if !missing_type {
-                self.parse_error_at_current_token(
-                    "Type annotation cannot appear on a constructor declaration.",
-                    diagnostic_codes::TYPE_ANNOTATION_CANNOT_APPEAR_ON_A_CONSTRUCTOR_DECLARATION,
-                );
+            if self.should_recover_constructor_return_type_at_class_member_boundary() {
+                self.error_type_expected();
+            } else {
+                let missing_type = !self.can_token_start_type() && self.is_type_terminator_token();
+                if !missing_type {
+                    self.parse_error_at_current_token(
+                        "Type annotation cannot appear on a constructor declaration.",
+                        diagnostic_codes::TYPE_ANNOTATION_CANNOT_APPEAR_ON_A_CONSTRUCTOR_DECLARATION,
+                    );
+                }
+                // Consume the type annotation for recovery (use parse_return_type to match tsc,
+                // which parses type predicates even in invalid constructor return types)
+                let _ = self.parse_return_type();
             }
-            // Consume the type annotation for recovery (use parse_return_type to match tsc,
-            // which parses type predicates even in invalid constructor return types)
-            let _ = self.parse_return_type();
         }
 
         // Push a new label scope for the constructor body
         // Clear static block flag - constructor creates a new function boundary
         let body_saved_flags = self.context_flags;
         self.context_flags &= !CONTEXT_FLAG_STATIC_BLOCK;
+        self.context_flags |= CONTEXT_FLAG_FUNCTION_BODY;
         self.push_label_scope();
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_block()
@@ -664,6 +669,66 @@ impl ParserState {
                 parameters,
                 body,
             },
+        )
+    }
+
+    fn should_recover_constructor_return_type_at_class_member_boundary(&mut self) -> bool {
+        if !self.scanner.has_preceding_line_break() {
+            return false;
+        }
+
+        if matches!(
+            self.current_token,
+            SyntaxKind::CloseBraceToken
+                | SyntaxKind::CloseParenToken
+                | SyntaxKind::CommaToken
+                | SyntaxKind::SemicolonToken
+                | SyntaxKind::EndOfFileToken
+        ) {
+            return false;
+        }
+
+        if self.is_constructor_return_type_recovery_class_member_start() {
+            return true;
+        }
+
+        if !self.is_property_name() {
+            return false;
+        }
+
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token();
+        let result = !self.scanner.has_preceding_line_break()
+            && matches!(
+                self.current_token,
+                SyntaxKind::OpenParenToken
+                    | SyntaxKind::LessThanToken
+                    | SyntaxKind::QuestionToken
+                    | SyntaxKind::ExclamationToken
+                    | SyntaxKind::ColonToken
+                    | SyntaxKind::EqualsToken
+                    | SyntaxKind::SemicolonToken
+            );
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        result
+    }
+
+    const fn is_constructor_return_type_recovery_class_member_start(&mut self) -> bool {
+        matches!(
+            self.current_token,
+            SyntaxKind::PublicKeyword
+                | SyntaxKind::PrivateKeyword
+                | SyntaxKind::ProtectedKeyword
+                | SyntaxKind::StaticKeyword
+                | SyntaxKind::ReadonlyKeyword
+                | SyntaxKind::AbstractKeyword
+                | SyntaxKind::OverrideKeyword
+                | SyntaxKind::AccessorKeyword
+                | SyntaxKind::DeclareKeyword
+                | SyntaxKind::AtToken
+                | SyntaxKind::AsteriskToken
         )
     }
 
@@ -752,6 +817,7 @@ impl ParserState {
         // Clear static block flag - accessor creates a new function boundary
         let saved_flags = self.context_flags;
         self.context_flags &= !CONTEXT_FLAG_STATIC_BLOCK;
+        self.context_flags |= CONTEXT_FLAG_FUNCTION_BODY;
         self.push_label_scope();
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_block()
@@ -954,6 +1020,17 @@ impl ParserState {
         while !self.is_token(SyntaxKind::CloseBraceToken)
             && !self.is_token(SyntaxKind::EndOfFileToken)
         {
+            if let Some(close_pos) = self.class_member_list_outer_declaration_recovery_close_pos() {
+                self.parse_error_at(
+                    close_pos,
+                    1,
+                    "Declaration or statement expected.",
+                    diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                );
+                self.suppress_next_missing_class_close_brace_error_once = true;
+                break;
+            }
+
             if self.is_token(SyntaxKind::TryKeyword) && self.look_ahead_is_try_block_same_line() {
                 self.parse_error_at_current_token(
                     "Unexpected token. A constructor, method, accessor, or property was expected.",
@@ -1005,6 +1082,23 @@ impl ParserState {
         }
 
         self.make_node_list(members)
+    }
+
+    fn class_member_list_outer_declaration_recovery_close_pos(&mut self) -> Option<u32> {
+        if !self.is_token(SyntaxKind::ClassKeyword)
+            || !self.scanner.has_preceding_line_break()
+            || !self.look_ahead_next_is_identifier_or_keyword_on_same_line()
+        {
+            return None;
+        }
+
+        self.previous_significant_close_brace_pos_ending_at(self.scanner.get_token_full_start())
+    }
+
+    fn previous_significant_close_brace_pos_ending_at(&self, token_end: usize) -> Option<u32> {
+        let close_pos = token_end.checked_sub(1)?;
+        (self.get_source_text().as_bytes().get(close_pos) == Some(&b'}'))
+            .then(|| self.u32_from_usize(close_pos))
     }
 
     fn look_ahead_is_try_block_same_line(&mut self) -> bool {
@@ -1648,13 +1742,16 @@ impl ParserState {
         // Detect `@` after the member name where `:`, `=`, `;`, `(`, or `<` is expected.
         // Only when `@` is on the SAME line — if on a new line, ASI applies and the
         // property ends normally; the `@` starts a new decorated member.
-        if self.is_token(SyntaxKind::AtToken) && !self.scanner.has_preceding_line_break() {
+        let late_property_name_decorator =
+            self.is_token(SyntaxKind::AtToken) && !self.scanner.has_preceding_line_break();
+        if late_property_name_decorator {
             self.parse_error_at_current_token(
                 "Decorators must precede the name and all keywords of property declarations.",
                 diagnostic_codes::DECORATORS_MUST_PRECEDE_THE_NAME_AND_ALL_KEYWORDS_OF_PROPERTY_DECLARATIONS,
             );
-            // Parse and consume the misplaced decorator(s) for recovery
-            let _ = self.parse_decorators();
+            // Keep the decorator token in the stream. TSC reports TS1436 for
+            // the property, then recovers by applying the decorator to the
+            // following class member.
         }
 
         let method_saved_flags = self.context_flags;
@@ -1666,6 +1763,7 @@ impl ParserState {
         if asterisk_token {
             self.context_flags |= CONTEXT_FLAG_GENERATOR;
         }
+        self.context_flags |= CONTEXT_FLAG_FUNCTION_BODY;
 
         // Check if it's a method or property.
         // Method: foo() or foo<T>().
@@ -1901,6 +1999,7 @@ impl ParserState {
             // initializer." — matching tsc's parseSemicolonAfterPropertyName.
             if type_annotation != NodeIndex::NONE
                 && initializer == NodeIndex::NONE
+                && !late_property_name_decorator
                 && !self.can_parse_semicolon()
             {
                 use tsz_common::diagnostics::diagnostic_codes;
@@ -1926,6 +2025,7 @@ impl ParserState {
             if !has_var_let_modifier
                 && type_annotation == NodeIndex::NONE
                 && initializer == NodeIndex::NONE
+                && !late_property_name_decorator
                 && !self.is_token(SyntaxKind::SemicolonToken)
                 && !self.can_parse_semicolon()
             {

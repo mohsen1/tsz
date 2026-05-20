@@ -10,7 +10,8 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{
-    CallSignature, CallableShape, ParamInfo, PropertyInfo, TypeId, TypeParamInfo, Visibility,
+    CallSignature, CallableShape, ObjectShape, ParamInfo, PropertyInfo, TypeId, TypeParamInfo,
+    Visibility,
 };
 
 impl CheckerState<'_> {
@@ -274,7 +275,7 @@ impl CheckerState<'_> {
             .then(|| DiagnosticSpeculationSnapshot::new(&self.ctx));
         let rhs_type = self.get_type_of_node(rhs_idx);
         if let Some(snap) = diag_snap {
-            snap.rollback(&mut self.ctx);
+            snap.rollback(&mut self.ctx.diagnostic_state());
         }
         rhs_type
     }
@@ -690,7 +691,7 @@ impl CheckerState<'_> {
                 && !enclosing_has_this_tag
             {
                 let implicit_type = if type_id == TypeId::ANY
-                    || (provisional_open && type_id == TypeId::UNDEFINED)
+                    || (provisional_open && matches!(type_id, TypeId::NULL | TypeId::UNDEFINED))
                 {
                     Some("any")
                 } else if crate::query_boundaries::common::array_element_type(
@@ -1271,7 +1272,163 @@ impl CheckerState<'_> {
                         single_quoted_name: false,
                     });
                 }
+                k if matches!(
+                    k,
+                    syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR
+                ) =>
+                {
+                    let Some(accessor) = self.ctx.arena.get_accessor(member_node) else {
+                        continue;
+                    };
+                    if self.has_static_modifier(&accessor.modifiers) {
+                        continue;
+                    }
+                    let Some(name) = self.get_property_name(accessor.name) else {
+                        continue;
+                    };
+                    let name_atom = self.ctx.types.intern_string(&name);
+                    if props.iter().any(|prop| prop.name == name_atom) {
+                        continue;
+                    }
+                    let visibility = self.get_member_visibility(&accessor.modifiers, accessor.name);
+                    let type_id = if k == syntax_kind_ext::GET_ACCESSOR
+                        && accessor.type_annotation.is_some()
+                    {
+                        self.get_type_from_type_node(accessor.type_annotation)
+                    } else if k == syntax_kind_ext::SET_ACCESSOR {
+                        accessor
+                            .parameters
+                            .nodes
+                            .first()
+                            .and_then(|&param_idx| {
+                                let param_node = self.ctx.arena.get(param_idx)?;
+                                let param = self.ctx.arena.get_parameter(param_node)?;
+                                (!self.ctx.is_js_file() && param.type_annotation.is_some())
+                                    .then(|| self.get_type_from_type_node(param.type_annotation))
+                            })
+                            .unwrap_or(TypeId::ANY)
+                    } else {
+                        TypeId::ANY
+                    };
+                    props.push(PropertyInfo {
+                        name: name_atom,
+                        type_id,
+                        write_type: TypeId::ANY,
+                        optional: false,
+                        readonly: false,
+                        is_method: false,
+                        is_class_prototype: true,
+                        visibility,
+                        parent_id: class_sym,
+                        declaration_order: 0,
+                        is_string_named: false,
+                        is_symbol_named: false,
+                        single_quoted_name: false,
+                    });
+                }
                 _ => {}
+            }
+        }
+
+        let merge_base_type = |this: &mut Self, props: &mut Vec<PropertyInfo>, base_type| {
+            if let Some(base_shape) =
+                crate::query_boundaries::common::object_shape_for_type(this.ctx.types, base_type)
+            {
+                let own_names: FxHashSet<_> = props.iter().map(|prop| prop.name).collect();
+                props.extend(
+                    base_shape
+                        .properties
+                        .iter()
+                        .filter(|prop| !own_names.contains(&prop.name))
+                        .cloned(),
+                );
+            }
+        };
+
+        let invalid_shadowed_base =
+            class
+                .heritage_clauses
+                .as_ref()
+                .is_some_and(|heritage_clauses| {
+                    heritage_clauses.nodes.iter().any(|&clause_idx| {
+                        let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                            return false;
+                        };
+                        let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                            return false;
+                        };
+                        if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                            return false;
+                        }
+                        let Some(&type_idx) = heritage.types.nodes.first() else {
+                            return false;
+                        };
+                        let Some(type_node) = self.ctx.arena.get(type_idx) else {
+                            return false;
+                        };
+                        let expr_idx = if let Some(expr_type_args) =
+                            self.ctx.arena.get_expr_type_args(type_node)
+                        {
+                            expr_type_args.expression
+                        } else {
+                            type_idx
+                        };
+                        self.resolve_heritage_symbol(expr_idx)
+                            .is_some_and(|base_sym_id| {
+                                self.heritage_expression_shadows_nonconstructable_lib_value(
+                                    expr_idx,
+                                    base_sym_id,
+                                )
+                            })
+                    })
+                });
+
+        if !invalid_shadowed_base && let Some(base_idx) = self.get_base_class_idx(class_idx) {
+            if let Some(base_type) = self
+                .ctx
+                .class_instance_type_cache
+                .get(&base_idx)
+                .copied()
+                .or_else(|| {
+                    let base_node = self.ctx.arena.get(base_idx)?;
+                    let base_class = self.ctx.arena.get_class(base_node)?;
+                    Some(self.get_class_instance_type(base_idx, base_class))
+                })
+            {
+                merge_base_type(self, &mut props, base_type);
+            }
+        } else if let Some(ref heritage_clauses) = class.heritage_clauses {
+            for &clause_idx in &heritage_clauses.nodes {
+                let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                    continue;
+                };
+                let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                    continue;
+                };
+                if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                    continue;
+                }
+                let Some(&type_idx) = heritage.types.nodes.first() else {
+                    break;
+                };
+                let Some(type_node) = self.ctx.arena.get(type_idx) else {
+                    break;
+                };
+                let (expr_idx, type_arguments) =
+                    if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node) {
+                        (
+                            expr_type_args.expression,
+                            expr_type_args.type_arguments.as_ref(),
+                        )
+                    } else {
+                        (type_idx, None)
+                    };
+                if let Some(base_type) =
+                    self.base_instance_type_from_expression(expr_idx, type_arguments)
+                {
+                    merge_base_type(self, &mut props, base_type);
+                }
+                break;
             }
         }
 
@@ -1279,7 +1436,11 @@ impl CheckerState<'_> {
             return TypeId::ERROR;
         }
 
-        let result = factory.object(props);
+        let result = factory.object_with_index(ObjectShape {
+            properties: props,
+            symbol: class_sym,
+            ..ObjectShape::default()
+        });
         // Cache the partial type so subsequent nested class expressions can use it
         self.ctx.class_instance_type_cache.insert(class_idx, result);
         result

@@ -194,7 +194,9 @@ impl NodeArena {
     #[must_use]
     fn len_u32(&self, len: usize) -> u32 {
         let _ = self;
-        u32::try_from(len).expect("node arena length exceeds u32::MAX")
+        u32::try_from(len).expect(
+            "node arena length exceeds u32::MAX; large AST support requires a larger span type",
+        )
     }
 
     // ============================================================================
@@ -2297,6 +2299,15 @@ mod tests {
             after > before,
             "estimated_size_bytes should grow with interned strings: {before} -> {after}"
         );
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "node arena length exceeds u32::MAX; large AST support requires a larger span type"
+    )]
+    fn len_u32_overflow_panics_with_expected_message() {
+        let arena = NodeArena::new();
+        let _ = arena.len_u32(usize::MAX);
     }
 
     /// Workstream-7 deliverable 3 ("Add a defensive identifier text

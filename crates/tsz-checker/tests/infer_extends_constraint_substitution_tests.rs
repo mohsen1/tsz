@@ -43,6 +43,202 @@ fn has_error(diags: &[tsz_checker::diagnostics::Diagnostic], code: u32) -> bool 
     diags.iter().any(|d| d.code == code)
 }
 
+fn relation_errors(
+    diags: &[tsz_checker::diagnostics::Diagnostic],
+) -> Vec<&tsz_checker::diagnostics::Diagnostic> {
+    diags
+        .iter()
+        .filter(|diag| diag.code == 2322 || diag.code == 2345)
+        .collect()
+}
+
+#[test]
+fn anyof_empty_object_matches_never_index_falsy_pattern() {
+    let source = r#"
+type Falsy = 0 | '' | false | [] | { [K in any]: never } | undefined | null;
+type AnyOf<T extends readonly unknown[]> = T extends readonly [infer F, ...infer R]
+  ? F extends Falsy ? AnyOf<R> : true
+  : false;
+
+type AO1 = AnyOf<[0, '', false, [], {}, null, undefined]>;
+const ao1: AO1 = false;
+"#;
+
+    let diags = check_strict(source);
+    assert!(
+        diags.is_empty(),
+        "expected AnyOf tuple of falsy members to evaluate to false, got diagnostics: {diags:?}"
+    );
+}
+
+#[test]
+fn template_literal_middle_infer_matches_known_substring() {
+    let source = r#"
+type DropString<S extends string, T extends string> =
+  S extends `${infer Before}${T}${infer After}`
+    ? `${Before}${After}`
+    : S;
+
+type DS1 = DropString<'hello', 'l'>;
+const ds1: DS1 = 'helo';
+"#;
+
+    let diags = check_strict(source);
+    assert!(
+        diags.is_empty(),
+        "expected DropString<'hello', 'l'> to evaluate to 'helo', got diagnostics: {diags:?}"
+    );
+}
+
+#[test]
+fn map_type_arguments_stay_instantiated_after_mixed_semantic_operations() {
+    let source = r#"
+const obj = { a: 1, b: 2, c: 3 };
+const keys = Object.keys(obj);
+const _keys: string[] = keys;
+
+const values = Object.values(obj);
+const _values: number[] = values;
+
+const entries = Object.entries(obj);
+const _entries: [string, number][] = entries;
+
+const set = new Set([1, 2, 3]);
+const arr = Array.from(set);
+const _arr: number[] = arr;
+
+const arrayLike = { length: 3, 0: "a", 1: "b", 2: "c" };
+const arr2 = Array.from(arrayLike);
+const _arr2: string[] = arr2;
+
+const map = new Map<string, number>();
+map.set("a", 1);
+const _mapGet: number | undefined = map.get("a");
+
+const numSet = new Set<number>();
+numSet.add(1);
+const _hasOne: boolean = numSet.has(1);
+
+const wm = new WeakMap<object, number>();
+const ws = new WeakSet<object>();
+
+const target = { x: 1 };
+const proxy = new Proxy(target, {
+  get(t, p) { return t[p as keyof typeof t]; }
+});
+const _px: number = proxy.x;
+
+const promises = [Promise.resolve(1), Promise.resolve("a")];
+const all = Promise.all(promises);
+const race = Promise.race(promises);
+
+const mixed: (string | number)[] = [1, "a", 2, "b"];
+const numOnly = mixed.filter((x): x is number => typeof x === "number");
+const _numOnly: number[] = numOnly;
+
+const readonlyArr: readonly number[] = [1, 2, 3];
+const mapped = readonlyArr.map(x => x * 2);
+const _mapped: number[] = mapped;
+
+const name = "World";
+const greeting: `Hello, ${string}` = `Hello, ${name}`;
+
+type Add<A extends number, B extends number> =
+  [A, B] extends [1, 1] ? 2 :
+  [A, B] extends [1, 2] ? 3 :
+  number;
+type Sum = Add<1, 1>;
+const sum: Sum = 2;
+
+const items: unknown[] = ["a", 1, "b", 2];
+const strings = items.filter((x): x is string => typeof x === "string");
+const _strings: string[] = strings;
+
+void wm;
+void ws;
+void all;
+void race;
+void greeting;
+void sum;
+export {};
+"#;
+
+    let diags = check_strict_with_libs(source);
+    let relation_diags = relation_errors(&diags);
+    assert!(
+        relation_diags.is_empty(),
+        "expected Map<string, number> methods to keep instantiated parameters after mixed semantic operations, got: {relation_diags:#?}; all diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn renamed_collection_type_arguments_survive_prior_conditional_and_predicate_work() {
+    let source = r#"
+const values = [1, "two", 3];
+const onlyNumbers = values.filter((value): value is number => typeof value === "number");
+const _onlyNumbers: number[] = onlyNumbers;
+
+type PickResult<T> = T extends { item: infer Item } ? Item : never;
+type Picked = PickResult<{ item: "done" }>;
+const picked: Picked = "done";
+
+const label = "Ready";
+const templated: `${string}!` = `${label}!`;
+
+const lookup = new Map<boolean, Date>();
+lookup.set(true, new Date());
+const _lookupValue: Date | undefined = lookup.get(true);
+
+void templated;
+export {};
+"#;
+
+    let diags = check_strict_with_libs(source);
+    let relation_diags = relation_errors(&diags);
+    assert!(
+        relation_diags.is_empty(),
+        "expected renamed Map<boolean, Date> methods to keep instantiated parameters after prior conditional and predicate work, got: {relation_diags:#?}; all diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn template_literal_trailing_infer_matches_union_suffix() {
+    let source = r#"
+type Whitespace = ' ' | '\t' | '\n';
+
+type TrimRight<S extends string> =
+  S extends `${infer Rest}${Whitespace}`
+    ? TrimRight<Rest>
+    : S;
+
+type TR1 = TrimRight<'hello  '>;
+const tr1: TR1 = 'hello';
+"#;
+
+    let diags = check_strict(source);
+    assert!(
+        diags.is_empty(),
+        "expected TrimRight<'hello  '> to evaluate to 'hello', got diagnostics: {diags:?}"
+    );
+}
+
+#[test]
+fn template_literal_type_parameter_delimiters_match() {
+    let source = r#"
+type Param<S extends string, L extends string, R extends string> =
+  S extends `${L}${infer X}${R}` ? X : never;
+
+type P1 = Param<"(hello)", "(", ")">;
+const p1: P1 = "hello";
+"#;
+
+    let diags = check_strict(source);
+    assert!(
+        diags.is_empty(),
+        "expected Param<'(hello)', '(', ')'> to evaluate to 'hello', got diagnostics: {diags:?}"
+    );
+}
+
 /// `infer A extends keyof T` should work when T is a substituted type parameter.
 /// `GetPath<T, P>` recursively walks a path through an object type.
 #[test]
@@ -127,6 +323,51 @@ let c: "no_match" = r;  // should error: R is "hello"
     );
 }
 
+#[test]
+fn test_array_element_infer_extends_object_accepts_object_element() {
+    let source = r#"
+type ExtractElement<T> = T extends (infer U extends object)[] ? U : never;
+type Elem = ExtractElement<{ name: string }[]>;
+
+const elem: Elem = { name: "test" };
+"#;
+    let diags = check_strict(source);
+    assert!(
+        !has_error(&diags, 2322),
+        "Expected Array<object> constrained infer to preserve the object element type. Got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_array_element_infer_extends_object_rejects_primitive_element() {
+    let source = r#"
+type ExtractElement<T> = T extends (infer U extends object)[] ? U : never;
+type Elem = ExtractElement<string[]>;
+
+const elem: Elem = "test";
+"#;
+    let diags = check_strict(source);
+    assert!(
+        has_error(&diags, 2322),
+        "Expected string[] constrained infer to evaluate to never. Got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_array_element_infer_extends_object_rejects_non_array_application() {
+    let source = r#"
+type ExtractElement<T> = T extends (infer U extends object)[] ? U : never;
+type Elem = ExtractElement<Promise<{ name: string }>>;
+
+const elem: Elem = { name: "test" };
+"#;
+    let diags = check_strict_with_libs(source);
+    assert!(
+        has_error(&diags, 2322),
+        "Expected Promise<object> constrained array infer to evaluate to never. Got: {diags:?}"
+    );
+}
+
 /// Template literal `infer N extends number` should parse matching string
 /// captures into numeric literals. This keeps tuple string keys like "0" and
 /// "1" usable as ordinal indices.
@@ -202,6 +443,43 @@ getIndex(2);
 }
 
 #[test]
+fn test_extract_keyof_string_preserves_unique_symbol_inference_candidate() {
+    let source = r#"
+type Extract<T, U> = T extends U ? T : never;
+
+declare function getProperty2<T, K extends keyof T>(obj: T, key: Extract<K, string>): T[K];
+
+declare const s: unique symbol;
+interface StrNum {
+    first: string;
+    second: number;
+    [s]: string;
+}
+declare const obj: StrNum;
+let prop: string;
+
+prop = getProperty2(obj, "first");
+prop = getProperty2(obj, s);
+"#;
+    let diags = check_strict(source);
+    let ts2345: Vec<_> = diags.iter().filter(|d| d.code == 2345).collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "Expected only the unique-symbol Extract<K, string> argument to emit TS2345. Got: {diags:#?}"
+    );
+    assert!(
+        ts2345[0].message_text.contains("parameter of type 'never'"),
+        "The invalid argument should instantiate Extract<typeof s, string> to never, got: {}",
+        ts2345[0].message_text
+    );
+    assert!(
+        diags.iter().all(|d| d.code != 2322),
+        "T[typeof s] should remain string, so the call result must not cascade into TS2322. Got: {diags:#?}"
+    );
+}
+
+#[test]
 fn test_path_keys_accepts_readonly_tuple_numeric_string_index() {
     let source = r#"
 type PropType<T, Path extends string> =
@@ -256,5 +534,435 @@ let c: "no_match" = r;  // should NOT error: R should be "no_match"
         !has_error(&diags, 2322),
         "Should NOT get TS2322: 'z' is not keyof Obj, so result should be 'no_match'. Got: {:?}",
         diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_constrained_infer_preserves_tuple_head_literal() {
+    let source = r#"
+type FirstString<T> = T extends [infer F extends string, ...any[]] ? F : never;
+type FS1 = FirstString<["hello", 1, true]>;
+
+const fs1: FS1 = "hello";
+"#;
+    let diags = check_strict(source);
+    assert!(
+        !has_error(&diags, 2322),
+        "Expected constrained tuple-head infer to preserve the literal type. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn named_function_parameter_infer_extracts_first_arg() {
+    let source = r#"
+type FirstArg<T> = T extends (first: infer F, ...args: any[]) => any ? F : never;
+type FA = FirstArg<(a: number, b: string) => void>;
+
+const fa: FA = 42;
+"#;
+    let diags = check_strict(source);
+    assert!(
+        !has_error(&diags, 2322),
+        "Expected named function parameter infer to extract number. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn test_constrained_infer_preserves_function_return_literal() {
+    let source = r#"
+type ReturnString<T> = T extends (...args: any[]) => (infer R extends string) ? R : never;
+type RS1 = ReturnString<() => "hello">;
+
+const rs1: RS1 = "hello";
+"#;
+    let diags = check_strict(source);
+    assert!(
+        !has_error(&diags, 2322),
+        "Expected constrained function-return infer to preserve the literal type. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn named_single_function_parameter_infer_extracts_arg() {
+    let source = r#"
+type Arg<T> = T extends (x: infer X) => any ? X : never;
+type A = Arg<(value: string) => void>;
+
+const a: A = "value";
+"#;
+    let diags = check_strict(source);
+    assert!(
+        !has_error(&diags, 2322),
+        "Expected single named function parameter infer to extract string. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn test_constrained_infer_preserves_object_property_literal() {
+    let source = r#"
+type ExtractValue<T> = T extends { value: infer V extends string | number } ? V : never;
+type EV1 = ExtractValue<{ value: "test" }>;
+
+const ev1: EV1 = "test";
+"#;
+    let diags = check_strict(source);
+    assert!(
+        !has_error(&diags, 2322),
+        "Expected constrained object-property infer to preserve the literal type. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn test_constrained_infer_object_property_constraint_failure_is_false_branch() {
+    let source = r#"
+type GetString<T> = T extends { name: infer N extends string } ? N : never;
+
+type GS1 = GetString<{ name: "Alice" }>;
+type GS2 = GetString<{ name: number }>;
+
+const ok: GS1 = "Alice";
+const bad: GS2 = "anything";
+"#;
+    let diags = check_strict(source);
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected only the failed constraint branch to reject assignment to never. Got: {diags:#?}"
+    );
+    assert!(
+        ts2322[0].message_text.contains("never"),
+        "Expected failed constrained object-property infer to evaluate to never, got: {:?}",
+        ts2322[0]
+    );
+}
+
+#[test]
+fn test_distributive_constrained_infer_filters_object_property_union_by_false_branch() {
+    let source = r#"
+type GetString<T> = T extends { name: infer N extends string } ? N : never;
+type Result = GetString<{ name: "Alice" } | { name: number }>;
+
+const ok: Result = "Alice";
+const bad: Result = undefined;
+"#;
+    let diags = check_strict(source);
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected distributive constrained infer to drop the nonmatching union member instead of adding undefined. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn test_constrained_infer_extracts_tuple_length_literal() {
+    let source = r#"
+type LengthOf<T> = T extends { length: infer L extends number } ? L : never;
+type R = LengthOf<[1, 2, 3]>;
+
+const ok: R = 3;
+const bad: R = 4;
+"#;
+    let diags = check_strict(source);
+    let ts2322 = diags.iter().filter(|d| d.code == 2322).count();
+    assert_eq!(
+        ts2322, 1,
+        "Expected constrained tuple length infer to preserve literal 3 and reject 4. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn test_constrained_infer_extracts_readonly_tuple_length_literal_with_renamed_binder() {
+    let source = r#"
+type SizeOf<T> = T extends { length: infer Size extends number } ? Size : never;
+type R = SizeOf<readonly ["a", "b"]>;
+
+const ok: R = 2;
+const bad: R = 3;
+"#;
+    let diags = check_strict(source);
+    let ts2322 = diags.iter().filter(|d| d.code == 2322).count();
+    assert_eq!(
+        ts2322, 1,
+        "Expected constrained readonly tuple length infer to preserve literal 2 and reject 3. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn test_constrained_infer_extracts_array_length_as_number() {
+    let source = r#"
+type LengthOf<T> = T extends { length: infer L extends number } ? L : never;
+type R = LengthOf<string[]>;
+
+const ok: R = 123;
+const bad: R = "nope";
+"#;
+    let diags = check_strict(source);
+    let ts2322 = diags.iter().filter(|d| d.code == 2322).count();
+    assert_eq!(
+        ts2322, 1,
+        "Expected constrained array length infer to produce number and reject string. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn named_method_parameter_infer_extracts_arg() {
+    let source = r#"
+type MethodArg<T> = T extends { method(arg: infer A): any } ? A : never;
+type A = MethodArg<{ method(value: boolean): void }>;
+
+const a: A = true;
+"#;
+    let diags = check_strict(source);
+    assert!(
+        !has_error(&diags, 2322),
+        "Expected named method parameter infer to extract boolean. Got: {diags:#?}"
+    );
+}
+
+// ── Intrinsic non-infer spans in the infer-pattern-matching path ─────────────
+//
+// When `extends_has_infer` is true (template pattern contains at least one
+// `infer` variable), tsz uses `match_infer_pattern` / `match_template_literal_string`.
+// Non-infer spans such as `${number}`, `${boolean}`, `${bigint}`, `${null}`,
+// and `${undefined}` must still match via type-aware length calculation, not
+// raw string-subtype testing.
+
+/// Reported repro: constrained `infer Sign` followed by `${number}`.
+#[test]
+fn template_intrinsic_number_after_constrained_infer_sign() {
+    let source = r#"
+type PercentageParser<S extends string> =
+  S extends `${infer Sign extends "+" | "-"}${infer Num}%`
+    ? [Sign, Num, "%"]
+    : ["", S, ""];
+
+type PP = PercentageParser<"+85%">;
+const pp: PP = ["+", "85", "%"];
+"#;
+    let diags = check_strict(source);
+    assert!(
+        diags.is_empty(),
+        "Expected PercentageParser<'+85%'> to evaluate to [\"+\", \"85\", \"%\"]. Got: {diags:?}"
+    );
+}
+
+/// Standard Type Challenges `PercentageParser` reaches the empty-string case
+/// through the false branch, not by matching adjacent `infer` spans on empty.
+#[test]
+fn percentage_parser_type_challenge_matrix_matches_tsc() {
+    let source = r#"
+type Equal<X, Y> =
+  (<T>() => T extends X ? 1 : 2) extends
+  (<T>() => T extends Y ? 1 : 2) ? true : false;
+type Expect<T extends true> = T;
+
+type PercentageParser<A extends string> =
+  A extends `${infer L}${infer R}`
+    ? L extends "+" | "-"
+      ? R extends `${infer K}%`
+        ? [L, K, "%"]
+        : [L, R, ""]
+      : A extends `${infer K}%`
+        ? ["", K, "%"]
+        : ["", A, ""]
+    : ["", A, ""];
+
+type cases = [
+  Expect<Equal<PercentageParser<"">, ["", "", ""]>>,
+  Expect<Equal<PercentageParser<"+">, ["+", "", ""]>>,
+  Expect<Equal<PercentageParser<"+85%">, ["+", "85", "%"]>>,
+  Expect<Equal<PercentageParser<"-7">, ["-", "7", ""]>>,
+  Expect<Equal<PercentageParser<"85%">, ["", "85", "%"]>>,
+  Expect<Equal<PercentageParser<"85">, ["", "85", ""]>>
+];
+"#;
+    let diags = check_strict(source);
+    assert!(
+        diags.is_empty(),
+        "Expected standard PercentageParser cases to match tsc. Got: {diags:?}"
+    );
+}
+
+/// Same pattern with a different infer variable name to prove no hardcoding.
+#[test]
+fn template_intrinsic_number_after_constrained_infer_renamed_var() {
+    let source = r#"
+type ParseSigned<S extends string> =
+  S extends `${infer Dir extends "+" | "-"}${number}`
+    ? Dir
+    : "unsigned";
+
+type R1 = ParseSigned<"+42">;
+type R2 = ParseSigned<"-7">;
+type R3 = ParseSigned<"100">;
+const r1: R1 = "+";
+const r2: R2 = "-";
+const r3: R3 = "unsigned";
+"#;
+    let diags = check_strict(source);
+    assert!(
+        diags.is_empty(),
+        "Expected ParseSigned to match +/- prefix before number. Got: {diags:?}"
+    );
+}
+
+/// `${number}` after an unconstrained infer (wildcard prefix).
+#[test]
+fn template_intrinsic_number_after_unconstrained_infer_prefix() {
+    let source = r#"
+type HasNumSuffix<S extends string> =
+  S extends `${infer _Prefix}${number}` ? true : false;
+
+type T1 = HasNumSuffix<"abc42">;
+type T2 = HasNumSuffix<"nonum">;
+const t1: T1 = true;
+const t2: T2 = false;
+"#;
+    let diags = check_strict(source);
+    assert!(
+        diags.is_empty(),
+        "Expected HasNumSuffix to detect numeric suffix. Got: {diags:?}"
+    );
+}
+
+/// `${boolean}` after infer matches "true" and "false" strings.
+#[test]
+fn template_intrinsic_boolean_after_infer() {
+    let source = r#"
+type ParseBool<S extends string> =
+  S extends `val=${infer B extends boolean}` ? B : never;
+
+type PB1 = ParseBool<"val=true">;
+type PB2 = ParseBool<"val=false">;
+type PB3 = ParseBool<"val=other">;
+const pb1: PB1 = true;
+const pb2: PB2 = false;
+declare let pb3: PB3;
+const pb3check: never = pb3;
+"#;
+    let diags = check_strict(source);
+    assert!(
+        diags.is_empty(),
+        "Expected boolean template span to match 'true'/'false' and reject other strings. Got: {diags:?}"
+    );
+}
+
+/// `${boolean}` with a renamed infer variable.
+#[test]
+fn template_intrinsic_boolean_renamed_infer_var() {
+    let source = r#"
+type ExtractFlag<S extends string> =
+  S extends `flag:${boolean}:${infer Rest}` ? Rest : never;
+
+type E1 = ExtractFlag<"flag:true:ok">;
+type E2 = ExtractFlag<"flag:false:no">;
+const e1: E1 = "ok";
+const e2: E2 = "no";
+"#;
+    let diags = check_strict(source);
+    assert!(
+        diags.is_empty(),
+        "Expected boolean span to match 'true'/'false' and capture the rest. Got: {diags:?}"
+    );
+}
+
+/// `${bigint}` after infer matches integer strings.
+#[test]
+fn template_intrinsic_bigint_after_infer() {
+    let source = r#"
+type ParseBigint<S extends string> =
+  S extends `n:${infer N extends bigint}` ? N : never;
+
+type BI1 = ParseBigint<"n:42">;
+type BI2 = ParseBigint<"n:-7">;
+type BI3 = ParseBigint<"n:abc">;
+const bi1: BI1 = 42n;
+const bi2: BI2 = -7n;
+declare let bi3: BI3;
+const bi3check: never = bi3;
+"#;
+    let diags = check_strict(source);
+    assert!(
+        diags.is_empty(),
+        "Expected bigint template span to match integer strings. Got: {diags:?}"
+    );
+}
+
+/// `${null}` span matches exactly the string "null".
+#[test]
+fn template_intrinsic_null_after_infer() {
+    let source = r#"
+type HasNull<S extends string> =
+  S extends `${infer _Prefix}null${infer _Suffix}` ? true : false;
+
+type N1 = HasNull<"prenullsuf">;
+type N2 = HasNull<"nothing">;
+const n1: N1 = true;
+const n2: N2 = false;
+"#;
+    let diags = check_strict(source);
+    assert!(
+        diags.is_empty(),
+        "Expected null span to match the literal string 'null'. Got: {diags:?}"
+    );
+}
+
+/// `${undefined}` span matches exactly the string "undefined".
+#[test]
+fn template_intrinsic_undefined_after_infer() {
+    let source = r#"
+type HasUndefined<S extends string> =
+  S extends `${infer _P}undefined${infer _Q}` ? true : false;
+
+type U1 = HasUndefined<"xundefinedy">;
+type U2 = HasUndefined<"nothing">;
+const u1: U1 = true;
+const u2: U2 = false;
+"#;
+    let diags = check_strict(source);
+    assert!(
+        diags.is_empty(),
+        "Expected undefined span to match the literal string 'undefined'. Got: {diags:?}"
+    );
+}
+
+/// `${number}` should not match non-numeric strings.
+#[test]
+fn template_intrinsic_number_rejects_non_numeric_string() {
+    let source = r#"
+type IsNumStr<S extends string> =
+  S extends `${number}` ? true : false;
+
+type G = IsNumStr<"abc">;
+const g: G = false;
+"#;
+    let diags = check_strict(source);
+    assert!(
+        diags.is_empty(),
+        "Expected '${{number}}' to reject non-numeric string 'abc'. Got: {diags:?}"
+    );
+}
+
+/// Shortest-valid-number-first matching for tsc parity in ambiguous infer patterns.
+///
+/// For `${infer A}${number}${infer B}` matching "x123y", tsc takes the
+/// shortest valid number prefix ("1"), leaving "23y" for B.  tsz must match
+/// the same non-greedy behaviour.
+#[test]
+fn template_intrinsic_number_shortest_first_tsc_parity() {
+    let source = r#"
+type SplitNum<S extends string> =
+  S extends `${infer A}${number}${infer B}` ? [A, B] : never;
+
+type S1 = SplitNum<"x123y">;
+declare let s1: S1;
+const s1check: ["x", "23y"] = s1;
+"#;
+    let diags = check_strict(source);
+    assert!(
+        diags.is_empty(),
+        "Expected SplitNum<'x123y'> to give ['x', '23y'] (shortest number first, matching tsc). Got: {diags:?}"
     );
 }

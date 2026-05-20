@@ -8,14 +8,11 @@ use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
-    /// Continuation of `compute_type_of_symbol` for type alias, class property,
-    /// variable, and alias symbol kinds.
-    ///
-    /// This is a pure code-motion split -- no logic changes.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn compute_type_of_symbol_type_alias_variable_alias(
         &mut self,
@@ -26,22 +23,14 @@ impl<'a> CheckerState<'a> {
         import_module: &Option<String>,
         import_name: &Option<String>,
         escaped_name: &str,
-        factory: &tsz_solver::TypeFactory<'_>,
+        factory: &tsz_solver::construction::TypeFactory<'_>,
     ) -> (TypeId, Vec<tsz_solver::TypeParamInfo>) {
-        // Type alias - resolve using checker's get_type_from_type_node to properly resolve symbols
         if flags & symbol_flags::TYPE_ALIAS != 0 {
-            // Compiler-provided intrinsic type aliases (e.g., `type BuiltinIteratorReturn = intrinsic`)
-            // cannot be resolved from their body—the `intrinsic` keyword has no type semantics
-            // on its own. Intercept known intrinsic names and resolve them directly.
             if escaped_name == "BuiltinIteratorReturn"
                 && self.is_compiler_builtin_iterator_return_alias(sym_id, declarations)
             {
                 return (self.builtin_iterator_return_intrinsic_type(), Vec::new());
             }
-            // When a type alias name collides with a global value declaration
-            // (e.g., user-defined `type Proxy<T>` vs global `declare var Proxy`),
-            // the merged symbol's value_declaration points to the var decl, not the
-            // type alias. We must search declarations[] to find the actual type alias.
             let decl_idx = declarations
                 .iter()
                 .copied()
@@ -120,10 +109,21 @@ impl<'a> CheckerState<'a> {
                         .declaration_arenas
                         .contains_key(&(sym_id, decl_idx));
 
-                // When a local type alias has no own type parameters but is
-                // inside a generic function (e.g., `function foo<T>() { type X = T extends ... }`),
-                // the enclosing function's type parameters must be in scope during lowering.
-                // Push them before lowering and pop after.
+                // Populate the value-side cache for merged type/value aliases
+                // so `typeof X` inside `type X = typeof X[...]` reads the
+                // const's value type instead of recursing through the alias.
+                // Skip declarations that mention the same alias from a type
+                // position (for example `const X = { ... as X }`), since that
+                // re-enters alias resolution before this body is registered
+                // and regresses #6014.
+                if (flags & symbol_flags::VALUE != 0)
+                    && !self.ctx.merged_value_types.contains_key(&sym_id)
+                    && !self.merged_alias_value_decl_refs_type_alias(sym_id)
+                    && let Some(val_type) = self.compute_value_type_for_merged_alias(sym_id)
+                {
+                    self.ctx.merged_value_types.insert(sym_id, val_type);
+                }
+
                 let enclosing_tp_updates = if type_alias.type_parameters.is_none() {
                     self.push_enclosing_type_params_for_node(decl_arena, decl_idx)
                 } else {
@@ -176,10 +176,6 @@ impl<'a> CheckerState<'a> {
                     } else {
                         self.get_type_from_type_node(type_alias.type_node)
                     };
-                    // Resolve TypeQuery references with flow narrowing while type
-                    // parameters are still in scope. This prevents false TS2304
-                    // errors for type params used as type arguments in typeof
-                    // expressions (e.g. `type Alias<U> = typeof Foo<U>`).
                     if std::ptr::eq(decl_arena, self.ctx.arena) {
                         alias_type =
                             self.resolve_type_queries_with_flow(alias_type, type_alias.type_node);
@@ -188,45 +184,30 @@ impl<'a> CheckerState<'a> {
                     (alias_type, params)
                 };
 
-                // Pop enclosing type parameters that were pushed for local type aliases.
                 self.pop_type_parameters(enclosing_tp_updates);
 
-                // Eagerly evaluate non-generic type aliases whose body is a concrete
-                // conditional type.  tsc resolves `type U = [any] extends [number] ? 1 : 0`
-                // to `1` during alias resolution so that diagnostics print the resolved
-                // type.  We do the same here: if the alias has no type parameters AND
-                // the body is evaluable (Conditional, IndexAccess, Mapped, etc.) AND it
-                // does not contain deferred type parameters, evaluate it now.
-                if params.is_empty()
-                    && crate::query_boundaries::common::is_conditional_type(
-                        self.ctx.types,
-                        alias_type,
-                    )
-                    && !crate::query_boundaries::common::contains_type_parameters(
-                        self.ctx.types,
-                        alias_type,
-                    )
-                {
-                    alias_type = self.evaluate_type_with_env(alias_type);
+                if params.is_empty() {
+                    let db = self.ctx.types;
+                    if (crate::query_boundaries::common::is_conditional_type(db, alias_type)
+                        || crate::query_boundaries::common::is_index_access_type(db, alias_type))
+                        && !crate::query_boundaries::common::contains_type_parameters(
+                            db, alias_type,
+                        )
+                    {
+                        let evaluated = self.evaluate_type_with_env(alias_type);
+                        if evaluated != alias_type {
+                            let mark_computed = !self.type_node_contains_kind(
+                                type_alias.type_node,
+                                syntax_kind_ext::TYPE_QUERY,
+                            );
+                            alias_type = evaluated;
+                            if mark_computed {
+                                self.ctx.definition_store.mark_body_as_computed(alias_type);
+                            }
+                        }
+                    }
                 }
 
-                // Check for invalid circular reference (TS2456)
-                // A type alias circularly references itself if it resolves to itself
-                // without structural wrapping (e.g., `type A = B; type B = A;`)
-                //
-                // Three detection paths:
-                // 1. is_direct_circular_reference: same-file cycles via symbol_resolution_set
-                // 2. circular_type_aliases: marked by a previous cycle member
-                // 3. is_cross_file_circular_alias: cross-file cycles by following
-                //    Lazy → body → Lazy chain through shared DefinitionStore
-                // Suppress circularity checking when the type alias declaration
-                // contains parse errors. tsc skips TS2456 for malformed
-                // declarations (e.g. `type T1<in in> = T1`) where syntax errors
-                // take priority over semantic circularity detection.
-                // Check two signals:
-                // 1. node_contains_any_parse_error (from parser error positions)
-                // 2. Empty type parameter names (parser recovery creates empty
-                //    identifiers when reserved words like `in` appear as names)
                 let has_empty_tp_name =
                     type_alias.type_parameters.as_ref().is_some_and(|tp_list| {
                         tp_list.nodes.iter().any(|&tp_idx| {
@@ -278,24 +259,11 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes, diagnostic_messages, format_message,
                     };
 
-                    // Mark this alias as circular so downstream checks (TS2313)
-                    // can detect constraints referencing it.
                     self.ctx.circular_type_aliases.insert(sym_id);
-                    // Also mark in the shared DefinitionStore for cross-file visibility.
                     if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {
                         self.ctx.definition_store.mark_circular_def(def_id);
                     }
 
-                    // Suppress TS2456 when the file has parse errors — the
-                    // circularity may be an artifact of parser recovery (e.g.,
-                    // malformed type parameter lists).  tsc does the same:
-                    // it skips semantic circularity errors when syntax errors
-                    // are present.
-                    // Suppress TS2456 when:
-                    // 1. The file has parse errors (syntax errors take priority)
-                    // 2. The type alias has an import alias partner — the apparent
-                    //    circularity is caused by the name conflict (TS2440 will
-                    //    be emitted instead during statement checking).
                     let has_import_partner = self
                         .ctx
                         .alias_partner_for(self.ctx.binder, sym_id)
@@ -370,6 +338,24 @@ impl<'a> CheckerState<'a> {
                 // "{ size: number; kind: \"sq\" }"). Mirrors the interface path above.
                 if let Some(shape) = type_environment::object_shape(self.ctx.types, alias_type) {
                     self.ctx.definition_store.set_instance_shape(def_id, shape);
+                }
+
+                // Register the alias body to its DefId so any `as X` in the
+                // file's later expressions resolves `Lazy(DefId)` to the alias
+                // body during overlap checks. The outer
+                // `get_type_of_symbol_inner` would also do this after we
+                // return, but pre-registering avoids subtle order-of-init
+                // gaps for nested lookups (#6014).
+                self.ctx
+                    .register_def_auto_params_in_envs(def_id, alias_type, params.clone());
+                // If the value declaration mentions this alias from a type
+                // position (for example `(): Alias => ...`), compute the
+                // value side after the alias body is available.
+                if (flags & symbol_flags::VALUE != 0)
+                    && !self.ctx.merged_value_types.contains_key(&sym_id)
+                    && let Some(val_type) = self.compute_value_type_for_merged_alias(sym_id)
+                {
+                    self.ctx.merged_value_types.insert(sym_id, val_type);
                 }
 
                 // Return the params that were used during lowering - this ensures
@@ -586,12 +572,14 @@ impl<'a> CheckerState<'a> {
                             return (literal_type, Vec::new());
                         }
                     }
-                    // `const k = Symbol()` — infer unique symbol type.
-                    // In TypeScript, const declarations initialized with Symbol() get
+                    // `const k = Symbol()` / `const k = Symbol.for(...)` — infer
+                    // unique symbol type. In TypeScript, unannotated const
+                    // declarations initialized with global symbol factory calls get
                     // a unique symbol type (typeof k), not the general `symbol` type.
                     if var_decl.initializer.is_some()
                         && self.is_const_variable_declaration(resolved_value_decl)
-                        && self.is_symbol_call_initializer(var_decl.initializer)
+                        && (self.is_symbol_call_initializer(var_decl.initializer)
+                            || self.is_symbol_for_call_initializer(var_decl.initializer))
                     {
                         return (
                             self.ctx
@@ -787,9 +775,6 @@ impl<'a> CheckerState<'a> {
                 && node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                 && let Some(import) = self.ctx.arena.get_import_decl(node)
             {
-                // Check for require() call FIRST — `import A = require('M')` must
-                // resolve through module_exports, not qualified symbol resolution.
-                // The qualified symbol path is for `import x = ns.member` patterns.
                 if let Some(module_specifier) =
                     self.get_require_module_specifier(import.module_specifier)
                 {
@@ -800,19 +785,14 @@ impl<'a> CheckerState<'a> {
                         return (module_type, Vec::new());
                     }
 
-                    // Resolve the canonical export surface (module-specifier variants,
-                    // cross-file tables, and export= member merging).
                     let exports_table = self.resolve_effective_module_exports(&module_specifier);
 
                     if let Some(exports_table) = exports_table {
-                        // Create an object type with all the module's exports
                         use tsz_solver::PropertyInfo;
                         let module_is_non_module_entity = self
                             .ctx
                             .module_resolves_to_non_module_entity(&module_specifier);
                         let ordered_exports = self.ordered_namespace_export_entries(&exports_table);
-                        // Record cross-file symbol targets so delegate_cross_arena_symbol_resolution
-                        // can find the correct arena for symbols from ambient modules.
                         for &(name, sym_id) in &ordered_exports {
                             self.record_cross_file_symbol_if_needed(
                                 sym_id,
@@ -844,6 +824,20 @@ impl<'a> CheckerState<'a> {
                                     Some(self.ctx.current_file_idx),
                                 )
                             });
+                        if let Some(surface) = surface.as_ref()
+                            && surface.has_commonjs_exports
+                            && surface.has_augmented_named_exports
+                            && surface.direct_export_type.is_some()
+                            && !surface.named_exports.is_empty()
+                        {
+                            let display_name =
+                                self.imported_namespace_display_module_name(&module_specifier);
+                            if let Some(type_id) =
+                                surface.to_type_id_with_display_name(self, Some(display_name))
+                            {
+                                return (type_id, Vec::new());
+                            }
+                        }
                         let mut props: Vec<PropertyInfo> = if surface
                             .as_ref()
                             .is_some_and(|s| s.has_commonjs_exports)
@@ -1272,12 +1266,13 @@ impl<'a> CheckerState<'a> {
                             props
                         };
 
-                        self.append_export_equals_import_type_namespace_props(
-                            module_name,
-                            declaring_file_idx,
-                            &exports_table,
-                            &mut props,
-                        );
+                        let export_equals_import_type_module = self
+                            .append_export_equals_import_type_namespace_props(
+                                module_name,
+                                declaring_file_idx,
+                                &exports_table,
+                                &mut props,
+                            );
 
                         // Add augmentation declarations that introduce entirely new names.
                         // If the target resolves to a non-module export= value, these names
@@ -1421,13 +1416,22 @@ impl<'a> CheckerState<'a> {
                         let preserve_namespace_display =
                             !(module_is_non_module_entity && allow_namespace_default);
                         if preserve_namespace_display {
+                            let display_module_name = export_equals_import_type_module
+                                .as_deref()
+                                .unwrap_or(module_name);
                             self.ctx.namespace_module_names.insert(
                                 namespace_type,
-                                self.imported_namespace_display_module_name(module_name),
+                                self.imported_namespace_display_module_name(display_module_name),
                             );
                         }
                         self.ctx.module_namespace_resolution_set.remove(module_name);
                         if let Some(export_equals_type) = export_equals_type {
+                            if export_equals_import_type_module.is_some()
+                                && !module_is_non_module_entity
+                                && !namespace_has_no_runtime_props
+                            {
+                                return (namespace_type, Vec::new());
+                            }
                             if module_is_non_module_entity || namespace_has_no_runtime_props {
                                 // For namespace imports of `export =` non-module values:
                                 // - Callable/constructable types (functions, classes): wrap
@@ -1971,5 +1975,21 @@ impl<'a> CheckerState<'a> {
         // Fallback: return ANY for unresolved symbols to prevent cascading errors
         // The actual "cannot find" error should already be emitted elsewhere
         (TypeId::ANY, Vec::new())
+    }
+
+    fn type_node_contains_kind(&self, root: NodeIndex, kind: u16) -> bool {
+        let mut stack = vec![root];
+        while let Some(idx) = stack.pop() {
+            if self
+                .ctx
+                .arena
+                .get(idx)
+                .is_some_and(|node| node.kind == kind)
+            {
+                return true;
+            }
+            stack.extend(self.ctx.arena.get_children(idx));
+        }
+        false
     }
 }

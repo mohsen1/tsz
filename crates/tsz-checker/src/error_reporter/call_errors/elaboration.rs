@@ -9,6 +9,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+use tsz_solver::computation::ContextualTypeContext;
 
 impl<'a> CheckerState<'a> {
     fn present_callable_property_target_display_type(&self, target_type: TypeId) -> TypeId {
@@ -57,10 +58,10 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
-                    let same_key_space = (self.is_assignable_to(param_type, candidate_keyof)
-                        && self.is_assignable_to(candidate_keyof, param_type))
-                        || self.format_type_for_assignability_message(param_type)
-                            == self.format_type_for_assignability_message(candidate_keyof);
+                    let same_key_space = self.contextual_keyof_parameter_types_share_key_space(
+                        param_type,
+                        candidate_keyof,
+                    );
                     if same_key_space
                         && query_common::type_has_displayable_name(
                             self.ctx.types.as_type_database(),
@@ -82,6 +83,26 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn contextual_keyof_parameter_types_share_key_space(
+        &mut self,
+        param_type: TypeId,
+        candidate_keyof: TypeId,
+    ) -> bool {
+        if self.types_are_mutually_assignable(param_type, candidate_keyof) {
+            return true;
+        }
+
+        self.ctx
+            .types
+            .get_display_alias(param_type)
+            .is_some_and(|alias| alias == candidate_keyof)
+    }
+
+    fn types_are_mutually_assignable(&mut self, left: TypeId, right: TypeId) -> bool {
+        self.diagnostic_relation_boolean_guard(left, right)
+            && self.diagnostic_relation_boolean_guard(right, left)
     }
 
     pub(in crate::error_reporter::call_errors) fn contextual_constraint_parameter_display(
@@ -320,8 +341,7 @@ impl<'a> CheckerState<'a> {
             query_common::instantiate_type(self.ctx.types, candidate_source_type, &substitution);
         let evaluated_candidate = self.evaluate_type_for_assignability(candidate);
         let matches_evaluated = evaluated_candidate == evaluated_param
-            || (self.is_assignable_to(evaluated_candidate, evaluated_param)
-                && self.is_assignable_to(evaluated_param, evaluated_candidate));
+            || self.types_are_mutually_assignable(evaluated_candidate, evaluated_param);
         if !(matches_evaluated
             || from_type_param_constraint
                 && query_common::object_shape_for_type(self.ctx.types, evaluated_candidate)
@@ -374,8 +394,7 @@ impl<'a> CheckerState<'a> {
 
         let evaluated_constraint = self.evaluate_type_for_assignability(raw_constraint);
         let matches_evaluated = evaluated_constraint == evaluated_param
-            || (self.is_assignable_to(evaluated_constraint, evaluated_param)
-                && self.is_assignable_to(evaluated_param, evaluated_constraint));
+            || self.types_are_mutually_assignable(evaluated_constraint, evaluated_param);
         if !matches_evaluated {
             return;
         }
@@ -591,7 +610,7 @@ impl<'a> CheckerState<'a> {
                     || branch_type == TypeId::ANY
                     || target_type == TypeId::ERROR
                     || target_type == TypeId::ANY
-                    || self.is_assignable_to(branch_type, target_type)
+                    || self.diagnostic_relation_boolean_guard(branch_type, target_type)
                 {
                     continue;
                 }
@@ -649,6 +668,102 @@ impl<'a> CheckerState<'a> {
         param_type: TypeId,
     ) -> bool {
         self.try_elaborate_object_literal_arg_error_with_source(arg_idx, param_type, None)
+    }
+
+    pub(crate) fn try_emit_polymorphic_this_object_literal_arg_errors(
+        &mut self,
+        arg_idx: NodeIndex,
+        param_type: TypeId,
+    ) -> bool {
+        let arg_idx = self.ctx.arena.skip_parenthesized_and_assertions(arg_idx);
+        let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+            return false;
+        };
+        if arg_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+        let Some(obj) = self.ctx.arena.get_literal_expr(arg_node).cloned() else {
+            return false;
+        };
+
+        let candidates = [
+            param_type,
+            self.evaluate_contextual_type(param_type),
+            self.evaluate_type_with_env(param_type),
+            self.resolve_type_for_property_access(param_type),
+            self.evaluate_type_for_assignability(param_type),
+        ];
+
+        let mut emitted = false;
+        for &elem_idx in &obj.elements.nodes {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+            let (prop_name_idx, prop_value_idx) = match elem_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                    match self.ctx.arena.get_property_assignment(elem_node) {
+                        Some(prop) => (prop.name, prop.initializer),
+                        None => continue,
+                    }
+                }
+                k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                    match self.ctx.arena.get_shorthand_property(elem_node) {
+                        Some(prop) => (prop.name, prop.name),
+                        None => continue,
+                    }
+                }
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    match self.ctx.arena.get_method_decl(elem_node) {
+                        Some(method) => (method.name, elem_idx),
+                        None => continue,
+                    }
+                }
+                _ => continue,
+            };
+
+            let is_computed_property = self
+                .ctx
+                .arena
+                .get(prop_name_idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
+            let Some(prop_name) = self
+                .object_literal_property_name_text(prop_name_idx)
+                .or_else(|| {
+                    is_computed_property
+                        .then(|| self.get_property_name_resolved(prop_name_idx))
+                        .flatten()
+                })
+            else {
+                continue;
+            };
+
+            let source_prop_type = self.get_type_of_node(prop_value_idx);
+            if source_prop_type == TypeId::ERROR || source_prop_type == TypeId::ANY {
+                continue;
+            }
+
+            for candidate in candidates {
+                let Some((target_prop_type, _)) =
+                    self.object_literal_target_property_type(candidate, prop_name_idx, &prop_name)
+                else {
+                    continue;
+                };
+                if target_prop_type == TypeId::ERROR || target_prop_type == TypeId::ANY {
+                    continue;
+                }
+                if self.diagnostic_relation_boolean_guard(source_prop_type, target_prop_type)
+                    && self.emit_polymorphic_this_property_assignment_error(
+                        source_prop_type,
+                        target_prop_type,
+                        prop_name_idx,
+                    )
+                {
+                    emitted = true;
+                    break;
+                }
+            }
+        }
+        emitted
     }
 
     /// Like `try_elaborate_object_literal_arg_error`, but accepts an optional
@@ -874,7 +989,7 @@ impl<'a> CheckerState<'a> {
                     || body_type == TypeId::ANY
                     || expected_return_type == TypeId::ERROR
                     || expected_return_type == TypeId::ANY
-                    || self.is_assignable_to(body_type, expected_return_type)
+                    || self.diagnostic_relation_boolean_guard(body_type, expected_return_type)
                 {
                     return false;
                 }
@@ -950,7 +1065,7 @@ impl<'a> CheckerState<'a> {
                     || body_type == TypeId::ANY
                     || expected_return_type == TypeId::ERROR
                     || expected_return_type == TypeId::ANY
-                    || self.is_assignable_to(body_type, expected_return_type)
+                    || self.diagnostic_relation_boolean_guard(body_type, expected_return_type)
                 {
                     return false;
                 }
@@ -1381,9 +1496,9 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            let is_iat =
-                |t| crate::query_boundaries::common::is_index_access_type(self.ctx.types, t);
-            if is_iat(target_prop_type) || is_iat(target_prop_type_for_diagnostic) {
+            if self.target_has_never_indexed_access_surface(target_prop_type)
+                || self.target_has_never_indexed_access_surface(target_prop_type_for_diagnostic)
+            {
                 continue; // tsc elaborateElementwise: keep TS2322 on outer object for generic indexed-access props
             }
 
@@ -1443,13 +1558,13 @@ impl<'a> CheckerState<'a> {
                 && cached_prop_type != TypeId::ANY
                 && target_prop_type != TypeId::ERROR
                 && target_prop_type != TypeId::ANY
-                && !self.is_assignable_to(cached_prop_type, target_prop_type)
+                && !self.diagnostic_relation_boolean_guard(cached_prop_type, target_prop_type)
             {
                 // If the cached type fails, try the literal type from the initializer.
                 // When a generic call widens literals during inference (e.g., `'name'` → string),
                 // the literal type may actually be assignable to the inferred target.
                 if let Some(literal_type) = self.literal_type_from_initializer(prop_value_idx) {
-                    if self.is_assignable_to(literal_type, target_prop_type) {
+                    if self.diagnostic_relation_boolean_guard(literal_type, target_prop_type) {
                         literal_type
                     } else {
                         cached_prop_type
@@ -1473,7 +1588,10 @@ impl<'a> CheckerState<'a> {
                         self.get_type_of_node_with_request(prop_value_idx, &contextual_request);
                     if contextual_prop_type != TypeId::ERROR
                         && contextual_prop_type != TypeId::ANY
-                        && self.is_assignable_to(contextual_prop_type, target_prop_type)
+                        && self.diagnostic_relation_boolean_guard(
+                            contextual_prop_type,
+                            target_prop_type,
+                        )
                     {
                         contextual_prop_type
                     } else {
@@ -1510,7 +1628,10 @@ impl<'a> CheckerState<'a> {
                 if let Some(duplicate_source_for_check) = duplicate_source_for_check
                     && duplicate_source_for_check != TypeId::ERROR
                     && duplicate_source_for_check != TypeId::ANY
-                    && !self.is_assignable_to(duplicate_source_for_check, target_prop_type)
+                    && !self.diagnostic_relation_boolean_guard(
+                        duplicate_source_for_check,
+                        target_prop_type,
+                    )
                 {
                     let source_prop_type_for_diagnostic =
                         crate::query_boundaries::assignability::rewrite_function_error_slots_to_any(
@@ -1548,7 +1669,7 @@ impl<'a> CheckerState<'a> {
                 && effective_source_prop != TypeId::ANY
                 && target_prop_type != TypeId::ERROR
                 && target_prop_type != TypeId::ANY
-                && !self.is_assignable_to(effective_source_prop, target_prop_type)
+                && !self.diagnostic_relation_boolean_guard(effective_source_prop, target_prop_type)
             {
                 let source_prop_type_for_diagnostic =
                     crate::query_boundaries::assignability::rewrite_function_error_slots_to_any(
@@ -1637,7 +1758,7 @@ impl<'a> CheckerState<'a> {
                         let body_type = self.get_type_of_node(func.body);
                         if body_type == TypeId::ERROR
                             || body_type == TypeId::ANY
-                            || self.is_assignable_to(body_type, expected_ret)
+                            || self.diagnostic_relation_boolean_guard(body_type, expected_ret)
                         {
                             return None;
                         }
@@ -1720,7 +1841,7 @@ impl<'a> CheckerState<'a> {
                 && source_prop_type != TypeId::ANY
                 && target_prop_type != TypeId::ERROR
                 && target_prop_type != TypeId::ANY
-                && !self.is_assignable_to(source_prop_type, target_prop_type)
+                && !self.diagnostic_relation_boolean_guard(source_prop_type, target_prop_type)
                 && self
                     .ctx
                     .arena
@@ -1743,6 +1864,13 @@ impl<'a> CheckerState<'a> {
                 elaborated = true;
                 continue;
             }
+            if self.object_literal_numeric_members_assign_to_mapped_target(
+                unwrapped_prop_value_idx,
+                target_prop_type,
+            ) {
+                elaborated = true;
+                continue;
+            }
 
             // Skip if types are unresolved
             if source_prop_type == TypeId::ERROR
@@ -1754,7 +1882,8 @@ impl<'a> CheckerState<'a> {
             }
 
             // Check if the property value type is assignable to the target property type
-            let prop_assignable = self.is_assignable_to(source_prop_type, target_prop_type);
+            let prop_assignable =
+                self.diagnostic_relation_boolean_guard(source_prop_type, target_prop_type);
             if !prop_assignable {
                 if self.try_elaborate_assignment_source_error(prop_value_idx, target_prop_type) {
                     elaborated = true;
@@ -1944,11 +2073,131 @@ impl<'a> CheckerState<'a> {
         elaborated
     }
 
-    fn target_has_indexed_access_surface(&self, target_type: TypeId) -> bool {
-        if crate::query_boundaries::common::is_index_access_type(self.ctx.types, target_type) {
-            return true;
+    fn object_literal_numeric_members_assign_to_mapped_target(
+        &mut self,
+        object_idx: NodeIndex,
+        target_type: TypeId,
+    ) -> bool {
+        if !self.type_has_mapped_alias_surface(target_type, 0) {
+            return false;
+        }
+        let Some(node) = self.ctx.arena.get(object_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+        let Some(obj) = self.ctx.arena.get_literal_expr(node).cloned() else {
+            return false;
+        };
+        if obj.elements.nodes.is_empty() {
+            return false;
         }
 
+        let mut saw_numeric_member = false;
+        for &elem_idx in &obj.elements.nodes {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                return false;
+            };
+            let (prop_name_idx, prop_value_idx) = match elem_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                    let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) else {
+                        return false;
+                    };
+                    (prop.name, prop.initializer)
+                }
+                k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                    let Some(prop) = self.ctx.arena.get_shorthand_property(elem_node) else {
+                        return false;
+                    };
+                    (prop.name, prop.name)
+                }
+                _ => return false,
+            };
+
+            let Some(prop_name) = self.object_literal_property_name_text(prop_name_idx) else {
+                return false;
+            };
+            if !tsz_solver::utils::is_numeric_literal_name(&prop_name) {
+                return false;
+            }
+            saw_numeric_member = true;
+
+            let Some((target_member_type, _)) =
+                self.object_literal_target_property_type(target_type, prop_name_idx, &prop_name)
+            else {
+                return false;
+            };
+            if target_member_type == TypeId::ERROR || target_member_type == TypeId::ANY {
+                continue;
+            }
+
+            let source_member_type = self.get_type_of_node(prop_value_idx);
+            if source_member_type == TypeId::ERROR || source_member_type == TypeId::ANY {
+                continue;
+            }
+            if !self.diagnostic_relation_boolean_guard(source_member_type, target_member_type) {
+                return false;
+            }
+        }
+
+        saw_numeric_member
+    }
+
+    fn type_has_mapped_alias_surface(&mut self, target_type: TypeId, depth: usize) -> bool {
+        if depth > 8 {
+            return false;
+        }
+        if query_common::mapped_type_id(self.ctx.types, target_type).is_some() {
+            return true;
+        }
+        if let Some(members) = query_common::union_members(self.ctx.types, target_type) {
+            return members
+                .iter()
+                .copied()
+                .filter(|&member| member != TypeId::NULL && member != TypeId::UNDEFINED)
+                .any(|member| self.type_has_mapped_alias_surface(member, depth + 1));
+        }
+        if let Some((base, _args)) = query_common::application_info(self.ctx.types, target_type)
+            && let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base)
+        {
+            let (body_type, _type_params) = self.type_reference_symbol_type_with_params(sym_id);
+            return self.type_has_mapped_alias_surface(body_type, depth + 1);
+        }
+        false
+    }
+
+    fn target_has_never_indexed_access_surface(&self, target_type: TypeId) -> bool {
+        self.type_has_never_indexed_access_surface(target_type, 0)
+    }
+
+    fn target_has_indexed_access_surface(&self, target_type: TypeId) -> bool {
+        self.type_has_indexed_access_surface(target_type, 0)
+    }
+
+    fn type_has_indexed_access_surface(&self, target_type: TypeId, depth: usize) -> bool {
+        if depth > 8 {
+            return false;
+        }
+        let db = self.ctx.types.as_type_database();
+        if crate::query_boundaries::common::index_access_types(db, target_type).is_some() {
+            return true;
+        }
+        if let Some(members) = crate::query_boundaries::common::union_members(db, target_type)
+            && members
+                .iter()
+                .any(|&member| self.type_has_indexed_access_surface(member, depth + 1))
+        {
+            return true;
+        }
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(db, target_type)
+            && members
+                .iter()
+                .any(|&member| self.type_has_indexed_access_surface(member, depth + 1))
+        {
+            return true;
+        }
         if crate::query_boundaries::common::is_generic_application(self.ctx.types, target_type)
             && let Some(def_id) = crate::query_boundaries::common::get_application_lazy_def_id(
                 self.ctx.types,
@@ -1958,7 +2207,55 @@ impl<'a> CheckerState<'a> {
             && def.kind == tsz_solver::def::DefKind::TypeAlias
             && let Some(body) = def.body
         {
-            return crate::query_boundaries::common::is_index_access_type(self.ctx.types, body);
+            return self.type_has_indexed_access_surface(body, depth + 1);
+        }
+
+        false
+    }
+
+    fn type_has_never_indexed_access_surface(&self, target_type: TypeId, depth: usize) -> bool {
+        if depth > 8 {
+            return false;
+        }
+        let db = self.ctx.types.as_type_database();
+        if let Some((object_type, _)) =
+            crate::query_boundaries::common::index_access_types(db, target_type)
+            && object_type == TypeId::NEVER
+        {
+            return true;
+        }
+        if let Some(members) = crate::query_boundaries::common::union_members(db, target_type)
+            && members
+                .iter()
+                .any(|&member| self.type_has_never_indexed_access_surface(member, depth + 1))
+        {
+            return true;
+        }
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(db, target_type)
+            && members
+                .iter()
+                .any(|&member| self.type_has_never_indexed_access_surface(member, depth + 1))
+        {
+            return true;
+        }
+        if crate::query_boundaries::common::is_generic_application(self.ctx.types, target_type)
+            && let Some(def_id) = crate::query_boundaries::common::get_application_lazy_def_id(
+                self.ctx.types,
+                target_type,
+            )
+            && let Some(def) = self.ctx.definition_store.get(def_id)
+            && def.kind == tsz_solver::def::DefKind::TypeAlias
+            && let Some(body) = def.body
+        {
+            return self.type_has_never_indexed_access_surface(body, depth + 1);
+        }
+
+        if depth == 0 {
+            let display = self.format_type_diagnostic(target_type);
+            if display.contains("never[") {
+                return true;
+            }
         }
 
         false
@@ -2127,7 +2424,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let ctx_helper = tsz_solver::ContextualTypeContext::with_expected_and_options(
+        let ctx_helper = ContextualTypeContext::with_expected_and_options(
             self.ctx.types,
             effective_param_type,
             self.ctx.compiler_options.no_implicit_any,
@@ -2230,7 +2527,8 @@ impl<'a> CheckerState<'a> {
                 && contextual_elem_type != TypeId::ANY
                 && target_element_type != TypeId::ERROR
                 && target_element_type != TypeId::ANY
-                && self.is_assignable_to(contextual_elem_type, target_element_type);
+                && self
+                    .diagnostic_relation_boolean_guard(contextual_elem_type, target_element_type);
 
             // When the target element type is an index-signature-only type
             // (e.g., `NamedTransform { [name: string]: Transform3D }`),
@@ -2288,7 +2586,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            if !self.is_assignable_to(elem_type, target_element_type) {
+            if !self.diagnostic_relation_boolean_guard(elem_type, target_element_type) {
                 let widen_source_display = self.array_elaboration_widening_required_for_display(
                     elem_type,
                     target_element_type,
@@ -2416,7 +2714,7 @@ impl<'a> CheckerState<'a> {
         if iterated_element_type == spread_expr_type {
             return false;
         }
-        if self.is_assignable_to(iterated_element_type, target_element_type) {
+        if self.diagnostic_relation_boolean_guard(iterated_element_type, target_element_type) {
             return false;
         }
 
@@ -2517,7 +2815,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            if !self.is_assignable_to(source_prop_type, target_prop_type) {
+            if !self.diagnostic_relation_boolean_guard(source_prop_type, target_prop_type) {
                 return false;
             }
         }
@@ -2579,6 +2877,10 @@ impl<'a> CheckerState<'a> {
                 return false;
             };
             if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                // Inner per-property diagnostics suppress the outer whole-object error (tsc parity).
+                if self.object_literal_has_inner_property_diagnostics(current) {
+                    return true;
+                }
                 return self.try_elaborate_object_literal_properties(current, declared_type);
             }
             if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
@@ -2599,6 +2901,34 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// True if a TS2322/TS2353/TS1360 diagnostic is anchored inside any of this object literal's property spans.
+    fn object_literal_has_inner_property_diagnostics(&self, obj_idx: NodeIndex) -> bool {
+        let Some(obj_node) = self.ctx.arena.get(obj_idx) else {
+            return false;
+        };
+        let Some(obj) = self.ctx.arena.get_literal_expr(obj_node) else {
+            return false;
+        };
+        for &elem_idx in &obj.elements.nodes {
+            let Some((start, end)) = self.ctx.get_node_span(elem_idx) else {
+                continue;
+            };
+            if self.ctx.diagnostics.iter().any(|diag| {
+                matches!(
+                    diag.code,
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                        | diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE
+                        | diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_BUT_DOES_NOT_EXIST_IN_TYPE_DID
+                        | diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_EXPECTED_TYPE
+                ) && diag.start >= start
+                    && diag.start < end
+            }) {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Elaborate array literal element mismatches for variable declarations.
     pub fn try_elaborate_initializer_elements(
         &mut self,
@@ -2613,7 +2943,7 @@ impl<'a> CheckerState<'a> {
         };
 
         // Only elaborate when the overall assignment fails.
-        if self.is_assignable_to(init_type, declared_type) {
+        if self.diagnostic_relation_boolean_guard(init_type, declared_type) {
             return false;
         }
 

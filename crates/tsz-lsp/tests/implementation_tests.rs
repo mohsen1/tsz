@@ -1,14 +1,17 @@
 use super::*;
 use tsz_binder::BinderState;
 use tsz_common::position::LineMap;
-use tsz_parser::ParserState;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 #[test]
 fn test_interface_single_implementor() {
     let source =
         "interface Animal {\n  speak(): void;\n}\nclass Dog implements Animal {\n  speak() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -31,10 +34,35 @@ fn test_interface_single_implementor() {
 }
 
 #[test]
+fn test_interface_implementation_respects_namespace_qualification() {
+    let source = "namespace A { export interface Foo {} }\nnamespace B { export interface Foo {} }\nclass C implements B.Foo {}";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        GoToImplementationProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let a_result = provider.get_implementations(root, Position::new(0, 31));
+    assert!(
+        a_result.is_none(),
+        "A.Foo should not pick up a class implementing B.Foo"
+    );
+
+    let b_result = provider.get_implementations(root, Position::new(1, 31));
+    assert!(b_result.is_some(), "B.Foo should find C");
+    let locations = b_result.unwrap();
+    assert_eq!(locations.len(), 1);
+    assert_eq!(locations[0].range.start.line, 2);
+}
+
+#[test]
 fn test_interface_multiple_implementors() {
     let source = "interface Shape {\n  area(): number;\n}\nclass Circle implements Shape {\n  area() { return 0; }\n}\nclass Square implements Shape {\n  area() { return 0; }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -58,8 +86,7 @@ fn test_interface_multiple_implementors() {
 fn test_interface_extends_interface() {
     let source =
         "interface Base {\n  id: number;\n}\ninterface Extended extends Base {\n  name: string;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -83,8 +110,7 @@ fn test_interface_extends_interface() {
 #[test]
 fn test_abstract_class_implementor() {
     let source = "abstract class Vehicle {\n  abstract drive(): void;\n}\nclass Car extends Vehicle {\n  drive() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -111,8 +137,7 @@ fn test_abstract_class_implementor() {
 #[test]
 fn test_class_extends_concrete_class() {
     let source = "class Base {\n  method() {}\n}\nclass Derived extends Base {\n  method() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -136,8 +161,7 @@ fn test_class_extends_concrete_class() {
 #[test]
 fn test_no_implementations() {
     let source = "interface Lonely {\n  value: number;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -160,8 +184,7 @@ fn test_no_implementations() {
 #[test]
 fn test_not_on_interface_or_class() {
     let source = "const x = 1;\nx + 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -185,8 +208,7 @@ fn test_not_on_interface_or_class() {
 #[test]
 fn test_interface_with_multiple_heritage_types() {
     let source = "interface A {}\ninterface B {}\nclass C implements A, B {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -213,8 +235,7 @@ fn test_interface_with_multiple_heritage_types() {
 #[test]
 fn test_position_at_semicolon() {
     let source = "interface Foo {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -238,8 +259,7 @@ fn test_position_at_semicolon() {
 #[test]
 fn test_class_chain() {
     let source = "class A {}\nclass B extends A {}\nclass C extends B {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -268,8 +288,7 @@ fn test_class_chain() {
 fn test_deep_inheritance_chain_interface() {
     // A -> B -> C: searching for A should find B (direct implementor), not C
     let source = "interface A {}\ninterface B extends A {}\ninterface C extends B {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -293,8 +312,7 @@ fn test_deep_inheritance_chain_interface() {
 #[test]
 fn test_class_implements_multiple_interfaces() {
     let source = "interface Readable {}\ninterface Writable {}\nclass Stream implements Readable, Writable {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -327,8 +345,7 @@ fn test_class_implements_multiple_interfaces() {
 #[test]
 fn test_interface_with_no_implementations_empty_body() {
     let source = "interface Empty {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -352,8 +369,7 @@ fn test_interface_with_no_implementations_empty_body() {
 fn test_position_at_interface_keyword() {
     // Cursor at the "interface" keyword itself, before the name
     let source = "interface Foo {}\nclass Bar implements Foo {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -377,8 +393,7 @@ fn test_position_at_interface_keyword() {
 #[test]
 fn test_empty_file_implementations() {
     let source = "";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -401,8 +416,7 @@ fn test_empty_file_implementations() {
 #[test]
 fn test_abstract_class_with_concrete_and_abstract_methods() {
     let source = "abstract class Base {\n  abstract go(): void;\n  stop() {}\n}\nclass Impl extends Base {\n  go() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -429,8 +443,7 @@ fn test_abstract_class_with_concrete_and_abstract_methods() {
 #[test]
 fn test_multiple_abstract_class_implementors() {
     let source = "abstract class Shape {\n  abstract area(): number;\n}\nclass Circle extends Shape {\n  area() { return 0; }\n}\nclass Rect extends Shape {\n  area() { return 0; }\n}\nclass Triangle extends Shape {\n  area() { return 0; }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -452,8 +465,7 @@ fn test_multiple_abstract_class_implementors() {
 #[test]
 fn test_find_implementations_for_name_interface() {
     let source = "interface Runnable {}\nclass Worker implements Runnable {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -472,8 +484,7 @@ fn test_find_implementations_for_name_interface() {
 #[test]
 fn test_find_implementations_for_name_no_match() {
     let source = "interface Foo {}\nclass Bar {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -494,8 +505,7 @@ fn test_find_implementations_for_name_no_match() {
 #[test]
 fn test_resolve_target_kind_for_interface() {
     let source = "interface MyInterface {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -513,8 +523,7 @@ fn test_resolve_target_kind_for_interface() {
 #[test]
 fn test_resolve_target_kind_for_class() {
     let source = "class MyClass {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -532,8 +541,7 @@ fn test_resolve_target_kind_for_class() {
 #[test]
 fn test_resolve_target_kind_for_variable_returns_none() {
     let source = "const x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -551,8 +559,7 @@ fn test_resolve_target_kind_for_variable_returns_none() {
 #[test]
 fn test_resolve_target_kind_nonexistent_name() {
     let source = "interface Foo {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -570,8 +577,7 @@ fn test_resolve_target_kind_nonexistent_name() {
 #[test]
 fn test_class_extends_abstract_with_multiple_methods() {
     let source = "abstract class Processor {\n  abstract process(): void;\n  abstract validate(): boolean;\n}\nclass MyProcessor extends Processor {\n  process() {}\n  validate() { return true; }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -595,8 +601,7 @@ fn test_class_extends_abstract_with_multiple_methods() {
 fn test_interface_with_generic_implementor() {
     let source =
         "interface Comparable<T> {}\nclass NumberComparable implements Comparable<number> {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -621,8 +626,7 @@ fn test_interface_with_generic_implementor() {
 #[test]
 fn test_interface_extends_multiple() {
     let source = "interface A {}\ninterface B {}\ninterface C extends A, B {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -649,8 +653,7 @@ fn test_interface_extends_multiple() {
 #[test]
 fn test_find_implementations_for_name_class_extends() {
     let source = "class Parent {}\nclass Child extends Parent {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -669,8 +672,7 @@ fn test_find_implementations_for_name_class_extends() {
 #[test]
 fn test_resolve_target_kind_for_abstract_class() {
     let source = "abstract class Base {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -692,8 +694,7 @@ fn test_resolve_target_kind_for_abstract_class() {
 #[test]
 fn test_resolve_target_kind_for_function_returns_none() {
     let source = "function foo() {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -711,8 +712,7 @@ fn test_resolve_target_kind_for_function_returns_none() {
 #[test]
 fn test_resolve_target_kind_for_enum_returns_none() {
     let source = "enum Color { Red, Green, Blue }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -730,8 +730,7 @@ fn test_resolve_target_kind_for_enum_returns_none() {
 #[test]
 fn test_resolve_target_kind_for_type_alias_returns_none() {
     let source = "type MyType = string;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -749,8 +748,7 @@ fn test_resolve_target_kind_for_type_alias_returns_none() {
 #[test]
 fn test_interface_with_method_signatures_implementor() {
     let source = "interface Logger {\n  log(msg: string): void;\n  warn(msg: string): void;\n  error(msg: string): void;\n}\nclass ConsoleLogger implements Logger {\n  log(msg: string) {}\n  warn(msg: string) {}\n  error(msg: string) {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -772,8 +770,7 @@ fn test_interface_with_method_signatures_implementor() {
 #[test]
 fn test_class_with_no_subclasses() {
     let source = "class Standalone {\n  method() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -796,8 +793,7 @@ fn test_class_with_no_subclasses() {
 #[test]
 fn test_abstract_class_no_implementors() {
     let source = "abstract class Orphan {\n  abstract act(): void;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -820,8 +816,7 @@ fn test_abstract_class_no_implementors() {
 #[test]
 fn test_position_at_line_start() {
     let source = "interface Foo {}\nclass Bar implements Foo {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -843,8 +838,7 @@ fn test_position_at_line_start() {
 #[test]
 fn test_position_beyond_file() {
     let source = "interface Foo {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -865,8 +859,7 @@ fn test_position_beyond_file() {
 #[test]
 fn test_find_implementations_for_abstract_class_name() {
     let source = "abstract class Handler {}\nclass ConcreteHandler extends Handler {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -889,8 +882,7 @@ fn test_find_implementations_for_abstract_class_name() {
 #[test]
 fn test_find_implementations_for_name_multiple() {
     let source = "interface Serializable {}\nclass Json implements Serializable {}\nclass Xml implements Serializable {}\nclass Yaml implements Serializable {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -912,8 +904,7 @@ fn test_find_implementations_for_name_multiple() {
 #[test]
 fn test_generic_class_extends() {
     let source = "class Base<T> {}\nclass Derived extends Base<number> {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -940,8 +931,7 @@ fn test_generic_class_extends() {
 fn test_multiple_interfaces_same_implementor() {
     let source =
         "interface A {}\ninterface B {}\ninterface C {}\nclass Multi implements A, B, C {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -965,8 +955,7 @@ fn test_multiple_interfaces_same_implementor() {
 fn test_interface_with_generic_constraint() {
     let source =
         "interface Comparable<T extends Comparable<T>> {}\nclass Num implements Comparable<Num> {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -990,8 +979,7 @@ fn test_interface_with_generic_constraint() {
 #[test]
 fn test_abstract_class_with_constructor() {
     let source = "abstract class Component {\n  constructor(public name: string) {}\n  abstract render(): void;\n}\nclass Button extends Component {\n  render() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1014,8 +1002,7 @@ fn test_abstract_class_with_constructor() {
 #[test]
 fn test_only_comments_file() {
     let source = "// just a comment\n/* block comment */";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1038,8 +1025,7 @@ fn test_only_comments_file() {
 #[test]
 fn test_interface_with_optional_members_implementor() {
     let source = "interface Config {\n  debug?: boolean;\n  port?: number;\n}\nclass AppConfig implements Config {\n  debug = true;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1065,8 +1051,7 @@ fn test_interface_with_optional_members_implementor() {
 #[test]
 fn test_abstract_class_multiple_levels() {
     let source = "abstract class Base {}\nclass Mid extends Base {}\nclass Leaf extends Mid {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1090,8 +1075,7 @@ fn test_abstract_class_multiple_levels() {
 #[test]
 fn test_interface_generic_multiple_implementors() {
     let source = "interface Repository<T> {\n  find(id: string): T;\n}\nclass UserRepo implements Repository<string> {}\nclass ItemRepo implements Repository<number> {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1113,8 +1097,7 @@ fn test_interface_generic_multiple_implementors() {
 #[test]
 fn test_class_with_static_members_extends() {
     let source = "class Base {\n  static create() {}\n}\nclass Child extends Base {\n  static create() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1137,8 +1120,7 @@ fn test_class_with_static_members_extends() {
 #[test]
 fn test_find_implementations_for_name_nonexistent() {
     let source = "interface Foo {}\nclass Bar implements Foo {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1160,8 +1142,7 @@ fn test_find_implementations_for_name_nonexistent() {
 fn test_interface_with_call_signature() {
     let source =
         "interface Callable {\n  (x: number): string;\n}\nclass MyCallable implements Callable {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1182,8 +1163,7 @@ fn test_interface_with_call_signature() {
 #[test]
 fn test_abstract_class_with_protected_method() {
     let source = "abstract class Widget {\n  protected abstract render(): void;\n}\nclass Button extends Widget {\n  protected render() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1206,8 +1186,7 @@ fn test_abstract_class_with_protected_method() {
 #[test]
 fn test_interface_with_index_signature_implementor() {
     let source = "interface StringMap {\n  [key: string]: string;\n}\nclass Headers implements StringMap {\n  [key: string]: string;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1231,8 +1210,7 @@ fn test_interface_with_index_signature_implementor() {
 #[test]
 fn test_class_extends_with_generic_constraint() {
     let source = "class Base<T extends string> {}\nclass Derived extends Base<'hello'> {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1253,8 +1231,7 @@ fn test_class_extends_with_generic_constraint() {
 #[test]
 fn test_resolve_target_kind_for_exported_interface() {
     let source = "export interface PublicApi {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1272,8 +1249,7 @@ fn test_resolve_target_kind_for_exported_interface() {
 #[test]
 fn test_resolve_target_kind_for_exported_class() {
     let source = "export class ExportedService {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1291,8 +1267,7 @@ fn test_resolve_target_kind_for_exported_class() {
 #[test]
 fn test_position_at_end_of_interface_name() {
     let source = "interface Foo {}\nclass Bar implements Foo {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1314,8 +1289,7 @@ fn test_position_at_end_of_interface_name() {
 #[test]
 fn test_interface_with_heritage_and_class_implementor() {
     let source = "interface Base {\n  id: number;\n}\ninterface Extended extends Base {\n  name: string;\n}\nclass Impl implements Extended {\n  id = 1;\n  name = 'test';\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1343,8 +1317,7 @@ fn test_interface_with_heritage_and_class_implementor() {
 #[test]
 fn test_interface_with_readonly_properties_implementor() {
     let source = "interface Config {\n  readonly host: string;\n  readonly port: number;\n}\nclass AppConfig implements Config {\n  readonly host = 'localhost';\n  readonly port = 3000;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1367,8 +1340,7 @@ fn test_interface_with_readonly_properties_implementor() {
 #[test]
 fn test_class_extends_with_constructor() {
     let source = "class Base {\n  constructor(public name: string) {}\n}\nclass Derived extends Base {\n  constructor(name: string) { super(name); }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1391,8 +1363,7 @@ fn test_class_extends_with_constructor() {
 #[test]
 fn test_resolve_target_kind_for_const_returns_none() {
     let source = "const MY_CONST = 42;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1410,8 +1381,7 @@ fn test_resolve_target_kind_for_const_returns_none() {
 #[test]
 fn test_resolve_target_kind_for_let_returns_none() {
     let source = "let x = 'hello';";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1429,8 +1399,7 @@ fn test_resolve_target_kind_for_let_returns_none() {
 #[test]
 fn test_interface_with_method_and_property_implementor() {
     let source = "interface Logger {\n  level: string;\n  log(msg: string): void;\n}\nclass ConsoleLogger implements Logger {\n  level = 'info';\n  log(msg: string) { console.log(msg); }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1455,8 +1424,7 @@ fn test_interface_with_method_and_property_implementor() {
 #[test]
 fn test_abstract_class_with_static_method() {
     let source = "abstract class Singleton {\n  static instance: Singleton;\n  abstract init(): void;\n}\nclass App extends Singleton {\n  init() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1479,8 +1447,7 @@ fn test_abstract_class_with_static_method() {
 #[test]
 fn test_class_extends_with_private_members() {
     let source = "class Parent {\n  private secret = 42;\n}\nclass Child extends Parent {\n  getValue() { return 0; }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1503,8 +1470,7 @@ fn test_class_extends_with_private_members() {
 #[test]
 fn test_interface_single_method_multiple_implementors() {
     let source = "interface Runnable {\n  run(): void;\n}\nclass Task implements Runnable {\n  run() {}\n}\nclass Job implements Runnable {\n  run() {}\n}\nclass Process implements Runnable {\n  run() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1529,8 +1495,7 @@ fn test_interface_single_method_multiple_implementors() {
 #[test]
 fn test_position_at_whitespace_between_declarations() {
     let source = "interface Foo {}\n\n\nclass Bar implements Foo {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1552,8 +1517,7 @@ fn test_position_at_whitespace_between_declarations() {
 #[test]
 fn test_resolve_target_kind_for_declare_class() {
     let source = "declare class ExternalLib {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1577,8 +1541,7 @@ fn test_resolve_target_kind_for_declare_class() {
 #[test]
 fn test_interface_extending_and_implementing() {
     let source = "interface A {\n  a(): void;\n}\ninterface B extends A {\n  b(): void;\n}\nclass C implements B {\n  a() {}\n  b() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1602,8 +1565,7 @@ fn test_interface_extending_and_implementing() {
 #[test]
 fn test_interface_with_generic_type_params_multiple() {
     let source = "interface Container<T, U> {\n  get(): T;\n  set(v: U): void;\n}\nclass Pair implements Container<string, number> {\n  get() { return ''; }\n  set(v: number) {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1627,8 +1589,7 @@ fn test_interface_with_generic_type_params_multiple() {
 fn test_class_extends_class_with_implements() {
     let source =
         "interface Loggable {}\nclass Base {}\nclass Child extends Base implements Loggable {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1652,8 +1613,7 @@ fn test_class_extends_class_with_implements() {
 #[test]
 fn test_single_line_interface_and_class() {
     let source = "interface I {} class C implements I {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1676,8 +1636,7 @@ fn test_single_line_interface_and_class() {
 #[test]
 fn test_interface_with_unicode_name() {
     let source = "interface Données {\n  valeur: number;\n}\nclass MesDonnées implements Données {\n  valeur = 0;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1697,8 +1656,7 @@ fn test_interface_with_unicode_name() {
 #[test]
 fn test_resolve_target_kind_for_interface_with_generics() {
     let source = "interface Iterable<T> { next(): T; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1716,8 +1674,7 @@ fn test_resolve_target_kind_for_interface_with_generics() {
 #[test]
 fn test_find_implementations_for_name_abstract_class() {
     let source = "abstract class Shape { abstract area(): number; }\nclass Rect extends Shape { area() { return 0; } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1736,8 +1693,7 @@ fn test_find_implementations_for_name_abstract_class() {
 #[test]
 fn test_find_implementations_for_name_concrete_class() {
     let source = "class Parent {}\nclass Child extends Parent {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1756,8 +1712,7 @@ fn test_find_implementations_for_name_concrete_class() {
 #[test]
 fn test_many_implementors_of_interface() {
     let source = "interface Handler {}\nclass A implements Handler {}\nclass B implements Handler {}\nclass C implements Handler {}\nclass D implements Handler {}\nclass E implements Handler {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1779,8 +1734,7 @@ fn test_many_implementors_of_interface() {
 #[test]
 fn test_interface_with_getter_setter() {
     let source = "interface HasValue {\n  get value(): number;\n  set value(v: number);\n}\nclass Store implements HasValue {\n  get value() { return 0; }\n  set value(v: number) {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1803,8 +1757,7 @@ fn test_interface_with_getter_setter() {
 #[test]
 fn test_position_at_closing_brace() {
     let source = "interface Foo {\n  bar(): void;\n}\nclass Baz implements Foo {\n  bar() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1826,8 +1779,7 @@ fn test_position_at_closing_brace() {
 #[test]
 fn test_abstract_class_with_property() {
     let source = "abstract class Config {\n  abstract readonly name: string;\n}\nclass AppConfig extends Config {\n  readonly name = 'app';\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1850,8 +1802,7 @@ fn test_abstract_class_with_property() {
 #[test]
 fn test_resolve_target_kind_for_default_exported_class() {
     let source = "export default class DefaultClass {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1874,8 +1825,7 @@ fn test_resolve_target_kind_for_default_exported_class() {
 #[test]
 fn test_class_with_async_methods_extends() {
     let source = "class AsyncBase {\n  async fetch() { return ''; }\n}\nclass AsyncChild extends AsyncBase {\n  async fetch() { return 'child'; }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1898,8 +1848,7 @@ fn test_class_with_async_methods_extends() {
 #[test]
 fn test_interface_with_string_index_and_implementor() {
     let source = "interface Dict {\n  [key: string]: number;\n}\nclass NumDict implements Dict {\n  [key: string]: number;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1922,8 +1871,7 @@ fn test_interface_with_string_index_and_implementor() {
 #[test]
 fn test_class_with_decorators_extends() {
     let source = "class Base {}\nclass Decorated extends Base {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1946,8 +1894,7 @@ fn test_class_with_decorators_extends() {
 #[test]
 fn test_interface_with_symbol_key_implementor() {
     let source = "interface Disposable {\n  dispose(): void;\n}\ninterface AsyncDisposable extends Disposable {\n  asyncDispose(): Promise<void>;\n}\nclass Resource implements AsyncDisposable {\n  dispose() {}\n  asyncDispose() { return Promise.resolve(); }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1975,8 +1922,7 @@ fn test_interface_with_symbol_key_implementor() {
 #[test]
 fn test_interface_with_numeric_index_implementor() {
     let source = "interface NumIndexed {\n  [index: number]: string;\n}\nclass MyArray implements NumIndexed {\n  [index: number]: string;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1993,8 +1939,7 @@ fn test_interface_with_numeric_index_implementor() {
 #[test]
 fn test_abstract_class_with_abstract_getter() {
     let source = "abstract class Shape {\n  abstract get area(): number;\n}\nclass Circle extends Shape {\n  get area() { return 0; }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2013,8 +1958,7 @@ fn test_abstract_class_with_abstract_getter() {
 fn test_class_extends_with_override_method() {
     let source =
         "class Base {\n  greet() {}\n}\nclass Derived extends Base {\n  override greet() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2031,8 +1975,7 @@ fn test_class_extends_with_override_method() {
 #[test]
 fn test_interface_with_mixed_members() {
     let source = "interface Config {\n  readonly host: string;\n  port?: number;\n  connect(): void;\n}\nclass ServerConfig implements Config {\n  host = \"localhost\";\n  connect() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2049,8 +1992,7 @@ fn test_interface_with_mixed_members() {
 #[test]
 fn test_position_at_first_char_of_interface() {
     let source = "interface Foo {}\nclass Bar implements Foo {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2067,8 +2009,7 @@ fn test_position_at_first_char_of_interface() {
 #[test]
 fn test_class_with_generic_extends_constraint() {
     let source = "class Base<T> {}\nclass Child<T extends string> extends Base<T> {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2085,8 +2026,7 @@ fn test_class_with_generic_extends_constraint() {
 #[test]
 fn test_resolve_target_kind_for_namespace() {
     let source = "namespace MyNS { export const x = 1; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2101,8 +2041,7 @@ fn test_resolve_target_kind_for_namespace() {
 #[test]
 fn test_find_implementations_for_name_with_empty_source() {
     let source = "";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2119,8 +2058,7 @@ fn test_find_implementations_for_name_with_empty_source() {
 #[test]
 fn test_interface_with_extends_and_two_implementors() {
     let source = "interface Base {\n  id: number;\n}\ninterface Extended extends Base {\n  name: string;\n}\nclass A implements Extended {\n  id = 1;\n  name = \"a\";\n}\nclass B implements Extended {\n  id = 2;\n  name = \"b\";\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2138,8 +2076,7 @@ fn test_interface_with_extends_and_two_implementors() {
 #[test]
 fn test_abstract_class_with_multiple_abstract_methods() {
     let source = "abstract class Validator {\n  abstract validate(input: string): boolean;\n  abstract describe(): string;\n}\nclass EmailValidator extends Validator {\n  validate(input: string) { return true; }\n  describe() { return \"email\"; }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2156,8 +2093,7 @@ fn test_abstract_class_with_multiple_abstract_methods() {
 #[test]
 fn test_position_at_middle_of_class_body() {
     let source = "class Foo {\n  x = 1;\n  y = 2;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2174,8 +2110,7 @@ fn test_position_at_middle_of_class_body() {
 #[test]
 fn test_interface_empty_with_multiple_implementors() {
     let source = "interface Marker {}\nclass A implements Marker {}\nclass B implements Marker {}\nclass C implements Marker {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2192,8 +2127,7 @@ fn test_interface_empty_with_multiple_implementors() {
 #[test]
 fn test_resolve_target_kind_for_abstract_class_with_methods() {
     let source = "abstract class Engine {\n  abstract start(): void;\n  stop() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2208,8 +2142,7 @@ fn test_resolve_target_kind_for_abstract_class_with_methods() {
 #[test]
 fn test_class_extends_class_with_multiple_levels() {
     let source = "class A {}\nclass B extends A {}\nclass C extends B {}\nclass D extends C {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2231,8 +2164,7 @@ fn test_class_extends_class_with_multiple_levels() {
 #[test]
 fn test_find_implementations_for_name_interface_no_implementors() {
     let source = "interface Lonely {}\nclass Unrelated {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2249,8 +2181,7 @@ fn test_find_implementations_for_name_interface_no_implementors() {
 #[test]
 fn test_interface_with_function_type_member() {
     let source = "interface Handler {\n  (event: string): void;\n}\nclass EventHandler implements Handler {\n  (event: string): void {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2266,8 +2197,7 @@ fn test_interface_with_function_type_member() {
 #[test]
 fn test_position_on_implements_keyword() {
     let source = "interface Foo {}\nclass Bar implements Foo {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2284,8 +2214,7 @@ fn test_position_on_implements_keyword() {
 #[test]
 fn test_class_with_multiple_implements_and_extends() {
     let source = "interface A {}\ninterface B {}\nclass Base {}\nclass Multi extends Base implements A, B {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);

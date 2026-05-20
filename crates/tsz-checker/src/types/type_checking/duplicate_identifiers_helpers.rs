@@ -1661,7 +1661,7 @@ impl<'a> CheckerState<'a> {
             | symbol_flags::FUNCTION
             | symbol_flags::CLASS
             | symbol_flags::ENUM;
-        if (symbol.flags & concrete_value) != 0 {
+        if symbol.has_any_flags(concrete_value) {
             return has_ambient_value_default_export;
         }
 
@@ -2185,6 +2185,10 @@ impl<'a> CheckerState<'a> {
                     | syntax_kind_ext::NAMESPACE_IMPORT
             )
         })
+    }
+
+    pub(super) fn node_is_import_alias(&self, flags: u32, idx: NodeIndex) -> bool {
+        (flags & symbol_flags::ALIAS) != 0 && self.is_import_alias_node(idx)
     }
 
     /// Emit duplicate-identifier diagnostics, defaulting to local-anchored

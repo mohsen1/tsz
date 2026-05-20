@@ -6,6 +6,7 @@
 //! even when the --module option is node16/nodenext.
 
 use tsz_checker::context::CheckerOptions;
+use tsz_checker::test_utils::check_source_with_file_is_esm;
 use tsz_common::common::ModuleKind;
 
 fn get_codes(source: &str, module: ModuleKind, file_is_esm: Option<bool>) -> Vec<u32> {
@@ -34,31 +35,18 @@ fn get_diagnostics_with_file_name(
         ..CheckerOptions::default()
     };
 
-    let mut parser =
-        tsz_parser::parser::ParserState::new(file_name.to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = tsz_binder::BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = tsz_solver::TypeInterner::new();
-    let mut checker = tsz_checker::state::CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        file_name.to_string(),
-        options,
-    );
-
-    checker.ctx.set_lib_contexts(Vec::new());
-    checker.ctx.file_is_esm = file_is_esm;
-    checker.check_source_file(root);
-
-    checker.ctx.diagnostics.clone()
+    check_source_with_file_is_esm(source, file_name, options, file_is_esm)
 }
 
 const EXPORT_ASSIGNMENT_SRC: &str = "const a = {}; export = a;";
 const NON_IDENTIFIER_EXPORT_ASSIGNMENT_SRC: &str = "const value = 1;\nexport = value + 1;\n";
+const EXPORT_AS_NAMESPACE_SRC: &str = r#"
+namespace MyLib {
+    export function test(): void {}
+}
+export as namespace MyLib;
+export {};
+"#;
 
 #[test]
 fn ts1203_emitted_for_node16_esm_file() {
@@ -117,6 +105,48 @@ fn ts1203_still_emitted_for_esnext() {
 }
 
 #[test]
+fn export_equals_with_named_export_emits_ts2309_even_when_ts1203_fires() {
+    let source = "export const named = 1;\nexport = {};\n";
+    let codes = get_codes(source, ModuleKind::ESNext, None);
+    assert!(
+        codes.contains(&1203),
+        "TS1203 should still fire for export= in ESNext, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&2309),
+        "TS2309 should fire alongside TS1203 when export= is mixed with named exports, got: {codes:?}"
+    );
+}
+
+#[test]
+fn export_equals_with_empty_export_marker_does_not_emit_ts2309() {
+    let source = "export = {};\nexport {};\n";
+    let codes = get_codes(source, ModuleKind::ESNext, None);
+    assert!(
+        codes.contains(&1203),
+        "TS1203 should still fire for export= in ESNext, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2309),
+        "empty export marker should not count as another exported element for TS2309, got: {codes:?}"
+    );
+}
+
+#[test]
+fn export_equals_with_named_export_emits_ts2309_in_commonjs() {
+    let source = "export const named = 1;\nexport = {};\n";
+    let codes = get_codes(source, ModuleKind::CommonJS, None);
+    assert!(
+        !codes.contains(&1203),
+        "TS1203 should not fire for export= in CommonJS, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&2309),
+        "TS2309 should fire when export= is mixed with named exports in CommonJS, got: {codes:?}"
+    );
+}
+
+#[test]
 fn export_assignment_identifier_does_not_emit_ts2686_for_umd_definition_site() {
     let source = r#"
 declare namespace React {
@@ -130,6 +160,32 @@ export as namespace React;
     assert!(
         diagnostics.iter().all(|diag| diag.code != 2686),
         "TS2686 should not fire on `export = React` in the defining UMD file, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn export_as_namespace_in_ts_file_emits_ts1315() {
+    let codes = get_codes(EXPORT_AS_NAMESPACE_SRC, ModuleKind::CommonJS, None);
+    assert!(
+        codes.contains(&1315),
+        "TS1315 should fire for `export as namespace` outside a declaration file, got: {codes:?}"
+    );
+}
+
+#[test]
+fn export_as_namespace_in_declaration_file_does_not_emit_ts1315() {
+    let codes = get_diagnostics_with_file_name(
+        EXPORT_AS_NAMESPACE_SRC,
+        ModuleKind::CommonJS,
+        None,
+        "test.d.ts",
+    )
+    .into_iter()
+    .map(|d| d.code)
+    .collect::<Vec<_>>();
+    assert!(
+        !codes.contains(&1315),
+        "TS1315 should not fire for `export as namespace` in a declaration file, got: {codes:?}"
     );
 }
 

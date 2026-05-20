@@ -38,9 +38,10 @@
 //! let is_object = is_type_kind(&types, type_id, TypeKind::Object);
 //! ```
 
+use crate::construction::TypeDatabase;
 use crate::def::DefId;
 use crate::types::{IntrinsicKind, StringIntrinsicKind, TupleElement, TypeParamInfo};
-use crate::{LiteralValue, SymbolRef, TypeData, TypeDatabase, TypeId};
+use crate::{LiteralValue, SymbolRef, TypeData, TypeId};
 use rustc_hash::FxHashSet;
 use std::cell::RefCell;
 
@@ -644,6 +645,24 @@ pub fn collect_lazy_def_ids(types: &dyn TypeDatabase, root: TypeId) -> Vec<DefId
     });
 
     out
+}
+
+/// Return whether `root` contains `Lazy(target_def_id)`.
+pub fn contains_lazy_def_id(types: &dyn TypeDatabase, root: TypeId, target_def_id: DefId) -> bool {
+    let mut found = false;
+
+    walk_referenced_types(types, root, |type_id| {
+        if found || type_id.is_intrinsic() {
+            return;
+        }
+        if let Some(TypeData::Lazy(def_id)) = types.lookup(type_id)
+            && def_id == target_def_id
+        {
+            found = true;
+        }
+    });
+
+    found
 }
 
 /// Check if `root` contains an Application whose base is `Lazy(target_def_id)`

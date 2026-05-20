@@ -72,6 +72,36 @@ namespace Outer {
 }
 
 #[test]
+fn ambient_module_self_import_is_not_reemitted() {
+    let result = emit_dts_with_usage_analysis(
+        r#"
+import { Observable } from "observable";
+
+(Observable as any).prototype.map = function() {};
+
+declare module "observable" {
+    interface Observable<T> {
+        map<U>(proj: (e: T) => U): Observable<U>;
+    }
+}
+"#,
+    );
+
+    assert!(
+        !result.contains("import { Observable } from \"observable\";"),
+        "ambient module self-import should be elided: {result}"
+    );
+    assert!(
+        result.contains("declare module \"observable\""),
+        "ambient module should still be emitted: {result}"
+    );
+    assert!(
+        result.contains("map<U>(proj: (e: T) => U): Observable<U>;"),
+        "module augmentation member should remain valid: {result}"
+    );
+}
+
+#[test]
 fn test_complex_generic_constraints_with_defaults() {
     let result = emit_dts(
         r#"

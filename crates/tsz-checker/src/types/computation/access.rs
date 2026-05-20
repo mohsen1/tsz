@@ -62,129 +62,6 @@ pub(crate) fn optional_chain_root(arena: &NodeArena, idx: NodeIndex) -> NodeInde
 }
 
 impl<'a> CheckerState<'a> {
-    pub(crate) fn expando_element_key_name(&mut self, key_expr_idx: NodeIndex) -> Option<String> {
-        let node = self.ctx.arena.get(key_expr_idx)?;
-        match node.kind {
-            k if k == SyntaxKind::Identifier as u16 => {
-                let ident = self.ctx.arena.get_identifier(node)?;
-                let name = &ident.escaped_text;
-
-                // Resolve through the binder the same way detect_expando_assignment
-                // does, so the key matches what was stored at bind time.
-                let binder_sym = self
-                    .ctx
-                    .binder
-                    .get_node_symbol(key_expr_idx)
-                    .or_else(|| {
-                        self.ctx
-                            .binder
-                            .resolve_identifier(self.ctx.arena, key_expr_idx)
-                    })
-                    .or_else(|| self.ctx.binder.file_locals.get(name));
-                if let Some(sym_id) = binder_sym
-                    && let Some(key) = self.resolved_const_expando_key_from_binder(sym_id, 0)
-                {
-                    return Some(key);
-                }
-
-                // Fallback: resolve through the type system for non-binder cases.
-                let prev = self.ctx.preserve_literal_types;
-                self.ctx.preserve_literal_types = true;
-                let key_type = self.get_type_of_node(key_expr_idx);
-                self.ctx.preserve_literal_types = prev;
-
-                if let Some(lit) =
-                    crate::query_boundaries::common::literal_value(self.ctx.types, key_type)
-                {
-                    return Some(match lit {
-                        tsz_solver::LiteralValue::String(s) => self.ctx.types.resolve_atom(s),
-                        tsz_solver::LiteralValue::Number(n) => n.0.to_string(),
-                        tsz_solver::LiteralValue::Boolean(b) => b.to_string(),
-                        tsz_solver::LiteralValue::BigInt(b) => self.ctx.types.resolve_atom(b),
-                    });
-                }
-
-                if let Some(sym_ref) =
-                    crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, key_type)
-                {
-                    return Some(format!("__unique_{}", sym_ref.0));
-                }
-
-                Some(name.clone())
-            }
-            k if k == SyntaxKind::StringLiteral as u16
-                || k == SyntaxKind::NumericLiteral as u16
-                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
-            {
-                self.ctx.arena.get_literal(node).map(|lit| lit.text.clone())
-            }
-            _ => None,
-        }
-    }
-
-    fn is_direct_expando_element_write_base(&self, object_expr_idx: NodeIndex) -> bool {
-        let Some(node) = self.ctx.arena.get(object_expr_idx) else {
-            return false;
-        };
-        node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            && node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-    }
-
-    fn is_expando_element_access_read(
-        &mut self,
-        object_expr_idx: NodeIndex,
-        key_expr_idx: NodeIndex,
-    ) -> bool {
-        let Some(obj_key) = property_access_chain_text_in_arena(self.ctx.arena, object_expr_idx)
-        else {
-            return false;
-        };
-        let Some(prop_key) = self.expando_element_key_name(key_expr_idx) else {
-            return false;
-        };
-
-        if self
-            .ctx
-            .binder
-            .expando_properties
-            .get(&obj_key)
-            .is_some_and(|props| {
-                props
-                    .iter()
-                    .any(|prop| self.canonical_expando_property_name(prop) == prop_key)
-            })
-        {
-            return true;
-        }
-
-        // Use global expando index for O(1) lookup instead of O(N) binder scan
-        if let Some(expando_idx) = &self.ctx.global_expando_index {
-            if expando_idx.get(&obj_key).is_some_and(|props| {
-                props
-                    .iter()
-                    .any(|prop| self.canonical_expando_property_name(prop) == prop_key)
-            }) {
-                return true;
-            }
-        } else if let Some(all_binders) = &self.ctx.all_binders {
-            for binder in all_binders.iter() {
-                if binder
-                    .expando_properties
-                    .get(&obj_key)
-                    .is_some_and(|props| {
-                        props
-                            .iter()
-                            .any(|prop| self.canonical_expando_property_name(prop) == prop_key)
-                    })
-                {
-                    return true;
-                }
-            }
-        }
-
-        false
-    }
-
     /// Get the type of an element access expression (e.g., arr[0], obj["prop"]).
     ///
     /// Handles element access with optional chaining, index signatures,
@@ -210,6 +87,7 @@ impl<'a> CheckerState<'a> {
         let Some(access) = self.ctx.arena.get_access_expr(node) else {
             return TypeId::ERROR;
         };
+        let is_value_element_access = node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION;
 
         // In parse-recovery cases like `number[]`, the bracket argument is
         // missing and the parser already reports TS1011. Don't additionally
@@ -235,6 +113,23 @@ impl<'a> CheckerState<'a> {
         self.ctx.preserve_literal_types = true;
         let index_type = self.get_type_of_node_with_request(access.name_or_argument, &read_request);
         self.ctx.preserve_literal_types = prev_preserve;
+        let index_type_for_access = literal_string
+            .as_deref()
+            .filter(|_| numeric_string_index.is_none())
+            .map(|name| self.ctx.types.literal_string(name))
+            .unwrap_or(index_type);
+
+        // When the index is a `symbol`-typed identifier, convert to a
+        // `UniqueSymbol(SymbolRef)` so the solver can match binding-identity
+        // properties stored as `__unique_<sym_id>`.  This mirrors how TypeScript
+        // resolves `ws[sym]` when `sym: symbol` was used as a computed property
+        // name in the object's type declaration.
+        let index_type_for_access = if index_type == TypeId::SYMBOL {
+            self.nonunique_symbol_index_type(access.name_or_argument)
+                .unwrap_or(index_type_for_access)
+        } else {
+            index_type_for_access
+        };
 
         // Get the type of the object. In write context, prefer the receiver's
         // declared type when it already has the indexed member, otherwise fall
@@ -350,6 +245,14 @@ impl<'a> CheckerState<'a> {
         } else {
             object_type
         };
+
+        if access.question_dot_token
+            && let Some(property_name) = literal_string.as_deref()
+            && self.split_nullish_type(object_type).0.is_none()
+        {
+            self.error_property_not_exist_at(property_name, TypeId::NEVER, access.name_or_argument);
+            return TypeId::UNDEFINED;
+        }
 
         let effective_write_result = |type_id: TypeId, write_type: Option<TypeId>| -> TypeId {
             if skip_flow_narrowing {
@@ -726,11 +629,15 @@ impl<'a> CheckerState<'a> {
                 index_type,
             )
         {
+            let display_receiver = self.display_receiver_for_generic_indexed_write(
+                pre_resolution_object_type,
+                raw_object_type,
+            );
             return self
                 .ctx
                 .types
                 .factory()
-                .index_access(pre_resolution_object_type, index_type);
+                .index_access(display_receiver, index_type);
         }
 
         // Concrete receiver indexed by a generic key (`K extends keyof Receiver`):
@@ -834,6 +741,38 @@ impl<'a> CheckerState<'a> {
         let mut result_type = None;
         let mut report_no_index = false;
         let mut use_index_signature_check = true;
+
+        if crate::query_boundaries::common::is_type_parameter(
+            self.ctx.types,
+            pre_resolution_object_type,
+        ) && crate::query_boundaries::common::is_type_parameter(self.ctx.types, index_type)
+            && crate::query_boundaries::common::type_parameter_constraint(
+                self.ctx.types,
+                index_type,
+            )
+            .is_some_and(|constraint| {
+                crate::query_boundaries::key_constraints::is_symbol_only_key_constraint(
+                    self.ctx.types,
+                    constraint,
+                )
+            })
+            && !self.is_valid_index_for_type_param(index_type, pre_resolution_object_type)
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            let index_type_str = self.format_type(index_type);
+            let object_type_str = self.format_type(pre_resolution_object_type);
+            let message = format_message(
+                diagnostic_messages::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+                &[&index_type_str, &object_type_str],
+            );
+            self.error_at_node(
+                access.expression,
+                &message,
+                diagnostic_codes::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+            );
+            result_type = Some(TypeId::ERROR);
+            use_index_signature_check = false;
+        }
 
         if result_type.is_none() {
             let resolved_pre = self.resolve_lazy_type(pre_resolution_object_type);
@@ -1327,6 +1266,9 @@ impl<'a> CheckerState<'a> {
             && !self.is_array_like_type(object_type_for_access)
         {
             let property_name = index.to_string();
+            let keep_index_signature_check = is_value_element_access
+                && self
+                    .union_has_no_common_numeric_index_surface(object_type_for_access, Some(index));
             let resolved_type = self.resolve_type_for_property_access(object_type_for_access);
             let result = self.resolve_property_access_with_env(resolved_type, &property_name);
             result_type = match result {
@@ -1335,17 +1277,23 @@ impl<'a> CheckerState<'a> {
                     write_type,
                     ..
                 } => {
-                    use_index_signature_check = false;
+                    if !keep_index_signature_check {
+                        use_index_signature_check = false;
+                    }
                     // In write context (assignment target), prefer the setter type.
                     Some(effective_write_result(type_id, write_type))
                 }
                 PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
-                    use_index_signature_check = false;
+                    if !keep_index_signature_check {
+                        use_index_signature_check = false;
+                    }
                     Some(property_type.unwrap_or(TypeId::ERROR))
                 }
                 PropertyAccessResult::IsUnknown => {
                     if self.ctx.compiler_options.strict_null_checks {
-                        use_index_signature_check = false;
+                        if !keep_index_signature_check {
+                            use_index_signature_check = false;
+                        }
                         // TS18046: 'x' is of type 'unknown'.
                         // Without strictNullChecks, unknown is treated like any.
                         if self.error_is_of_type_unknown(access.expression) {
@@ -1440,11 +1388,30 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Handle `symbol` (primitive) index on types with late-bound (computed) members.
-        // When a class declares `[expr]()` where `expr` has type `symbol`, the member
-        // is late-bound and not stored as a named property. tsc resolves `obj[expr]` to
-        // the computed member's type; we conservatively return `any` to avoid false
-        // positives like TS2722 ("Cannot invoke possibly undefined").
+        // Match const `symbol` computed members stored under stable binding keys.
+        if result_type.is_none()
+            && index_type == TypeId::SYMBOL
+            && !crate::query_boundaries::common::is_type_parameter(
+                self.ctx.types,
+                pre_resolution_object_type,
+            )
+            && let Some(property_name) =
+                self.symbol_valued_binding_property_name(access.name_or_argument, index_type)
+        {
+            let resolved_type = self.resolve_type_for_property_access(object_type_for_access);
+            let result = self.resolve_property_access_with_env(resolved_type, &property_name);
+            if let PropertyAccessResult::Success {
+                type_id,
+                write_type,
+                ..
+            } = result
+            {
+                use_index_signature_check = false;
+                result_type = Some(effective_write_result(type_id, write_type));
+            }
+        }
+
+        // Late-bound symbol members are not stored as named properties.
         if result_type.is_none()
             && index_type == TypeId::SYMBOL
             && crate::query_boundaries::common::has_late_bound_members(
@@ -1456,11 +1423,7 @@ impl<'a> CheckerState<'a> {
             use_index_signature_check = false;
         }
 
-        // Value-level element access whose index expression has type `any`.
-        // Under noUncheckedIndexedAccess, tsc routes value-level access with
-        // an `any` index through the receiver's applicable index signature, so
-        // reads still widen to `T | undefined` and writes reject `undefined`.
-        // With NUIA disabled, keep the type-level `T[any] = any` behavior.
+        // Under NUIA, value-level `any` indexes use the receiver index signature.
         if result_type.is_none()
             && index_type == TypeId::ANY
             && self.ctx.compiler_options.no_unchecked_indexed_access
@@ -1478,14 +1441,7 @@ impl<'a> CheckerState<'a> {
             use_index_signature_check = false;
         }
 
-        // MAPPED TYPE GENERIC INDEXED ACCESS
-        // When the pre-resolution object type is (or resolves to) a mapped type and the
-        // index is a generic type parameter, produce an IndexAccess(Mapped, T) and let
-        // the solver's evaluator handle template substitution via
-        // try_mapped_type_param_substitution. This avoids the eager mapped-type expansion
-        // in resolve_type_for_property_access which destroys the template relationship
-        // needed for generic indexed access (e.g., `handlers[key]` where `handlers` has
-        // type `{ [T in keyof M]?: (p: T) => void }` and `key: K extends keyof M`).
+        // Preserve mapped-type/generic-index relationships for solver evaluation.
         if result_type.is_none()
             && crate::query_boundaries::common::is_type_parameter(self.ctx.types, index_type)
         {
@@ -1631,7 +1587,24 @@ impl<'a> CheckerState<'a> {
                     .factory()
                     .index_access(pre_resolution_object_type, index_type);
             }
-            self.get_element_access_type(object_type_for_access, index_type, literal_index)
+            if skip_flow_narrowing
+                && self.ctx.exact_optional_property_types()
+                && let Some(index) = literal_index
+                && let Some(elements) = crate::query_boundaries::common::tuple_elements(
+                    self.ctx.types,
+                    object_type_for_access,
+                )
+                && let Some(element) = elements.get(index)
+                && element.optional
+                && !element.rest
+            {
+                return element.type_id;
+            }
+            self.get_element_access_type(
+                object_type_for_access,
+                index_type_for_access,
+                literal_index,
+            )
         });
 
         // NOTE: noUncheckedIndexedAccess `| undefined` addition is handled by
@@ -1723,7 +1696,7 @@ impl<'a> CheckerState<'a> {
             && !is_fresh_object_literal
             && self.should_report_no_index_signature(
                 object_type_for_access,
-                index_type,
+                index_type_for_access,
                 literal_index,
             )
         {
@@ -1778,17 +1751,15 @@ impl<'a> CheckerState<'a> {
 
         if !report_no_index
             && use_index_signature_check
-            && (result_type == TypeId::UNDEFINED
-                || crate::query_boundaries::common::is_index_access_type(
-                    self.ctx.types,
-                    result_type,
-                ))
             && crate::query_boundaries::common::intersection_members(
                 self.ctx.types,
                 pre_resolution_object_type,
             )
             .is_none()
-            && self.narrow_string_index_signature_rejects_index(object_type_for_access, index_type)
+            && self.narrow_string_index_signature_rejects_index(
+                object_type_for_access,
+                index_type_for_access,
+            )
         {
             report_no_index = true;
         }
@@ -1797,9 +1768,17 @@ impl<'a> CheckerState<'a> {
             && use_index_signature_check
             && self.union_has_missing_concrete_element_access(
                 object_type_for_access,
-                index_type,
+                index_type_for_access,
                 literal_index,
             )
+        {
+            report_no_index = true;
+        }
+
+        if !report_no_index
+            && use_index_signature_check
+            && is_value_element_access
+            && self.union_has_no_common_numeric_index_surface(object_type_for_access, literal_index)
         {
             report_no_index = true;
         }

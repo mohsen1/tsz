@@ -14,7 +14,7 @@ use super::handlers_code_fixes_utils::{
     resolve_module_path,
 };
 use tsz::lsp::Project;
-use tsz::lsp::code_actions::{CodeActionProvider, ImportCandidate};
+use tsz::lsp::code_actions::{CodeActionProvider, CodeFixRegistry, ImportCandidate};
 use tsz::lsp::position::LineMap;
 use tsz::parser::ParserState;
 
@@ -112,14 +112,7 @@ impl Server {
                 )
             })
             .collect();
-        candidates.sort_by(|a, b| {
-            let a_segments = a.module_specifier.matches('/').count();
-            let b_segments = b.module_specifier.matches('/').count();
-            a_segments
-                .cmp(&b_segments)
-                .then_with(|| a.module_specifier.len().cmp(&b.module_specifier.len()))
-                .then_with(|| a.module_specifier.cmp(&b.module_specifier))
-        });
+        reorder_import_candidates_for_package_roots(&mut candidates);
         candidates.into_iter().next().map(|c| c.module_specifier)
     }
 
@@ -1090,6 +1083,13 @@ impl Server {
         import_module_specifier_ending: Option<&str>,
         import_module_specifier_preference: Option<&str>,
     ) -> Vec<ImportCandidate> {
+        // No diagnostics → nothing can be fixed by adding an import. Skip the
+        // entire candidate scan (including the expensive "scan everything"
+        // fallback) to avoid O(project) work on getCodeFixes requests that
+        // have no import-eligible errors.
+        if diagnostics.is_empty() {
+            return Vec::new();
+        }
         let mut files = self.open_files.clone();
         let mut external_project_paths = rustc_hash::FxHashSet::default();
         for project_files in self.external_project_files.values() {
@@ -1152,8 +1152,16 @@ impl Server {
         if candidates.is_empty() {
             if fallback_names.is_empty() {
                 // Preserve legacy behavior for diagnostics whose message shape does not
-                // include a directly parseable missing identifier.
-                candidates.extend(project.get_import_candidates_for_prefix(current_file_path, ""));
+                // include a directly parseable missing identifier — but only for codes
+                // that `fixMissingImport` can actually address. Structural errors
+                // unrelated to missing imports must not trigger the O(project) full scan.
+                let has_import_eligible = diagnostics
+                    .iter()
+                    .any(|d| d.code.is_some_and(CodeFixRegistry::is_import_fix_code));
+                if has_import_eligible {
+                    candidates
+                        .extend(project.get_import_candidates_for_prefix(current_file_path, ""));
+                }
             } else {
                 for missing_name in &fallback_names {
                     candidates.extend(
@@ -1285,7 +1293,7 @@ impl Server {
             if path == current_file_path {
                 continue;
             }
-            if !path.contains("/node_modules/.pnpm/") {
+            if !path.contains("/node_modules/") {
                 continue;
             }
             for missing_name in missing_names {

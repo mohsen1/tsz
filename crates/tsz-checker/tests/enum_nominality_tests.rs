@@ -119,6 +119,23 @@ const x: E = n;  // OK: number type to enum type
     test_enum_assignability(source, 0);
 }
 
+#[test]
+fn test_typeof_enum_keyof_indexed_access_assigns_to_enum() {
+    let source = r#"
+enum Direction {
+  Up,
+  Down,
+  Left,
+  Right
+}
+
+type EnumValues = typeof Direction[keyof typeof Direction];
+declare const ev: EnumValues;
+const evCheck: Direction = ev;
+"#;
+    test_enum_assignability(source, 0);
+}
+
 // Note: Tests for rejecting arbitrary number literals (e.g., 999) assigned to
 // numeric enums are validated via conformance tests, which have full lib types.
 // The unit test checker doesn't load lib types, so enum member unions may not
@@ -146,6 +163,93 @@ enum E { A, B }
 const x: E = -1;
 ";
     test_enum_assignability(source, 1);
+}
+
+#[test]
+fn test_computed_numeric_enum_comparisons_preserve_member_overlap() {
+    // Mirrors TypeScript's `equalityWithEnumTypes`: literal enum types reject
+    // impossible numeric comparisons, and computed numeric enums still use
+    // evaluated member values for equality-overlap diagnostics.
+    let diagnostics = collect_diagnostics(
+        r"
+enum LiteralEnum {
+    a = 1,
+    b = 2,
+}
+
+enum ComputedEnum {
+    a = 1 << 0,
+    b = 1 << 1,
+}
+
+function f1(v: LiteralEnum) {
+    if (v !== 0) { v; }
+    if (v !== 1) { v; }
+    if (v !== 2) { v; }
+    if (v !== 3) { v; }
+}
+
+function f2(v: ComputedEnum) {
+    if (v !== 0) { v; }
+    if (v !== 1) { v; }
+    if (v !== 2) { v; }
+    if (v !== 3) { v; }
+}
+",
+    );
+
+    let ts2367 = diagnostics.iter().filter(|d| d.0 == 2367).count();
+    assert_eq!(
+        ts2367, 4,
+        "Expected TS2367 for non-member comparisons in both enum forms, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_computed_numeric_enum_members_do_not_assign_to_other_enum_unions() {
+    // Mirrors TypeScript's `enumLiteralAssignableToEnumInsideUnion`: enum
+    // members from a different enum can flow to another enum only through the
+    // numeric-enum compatibility path that tsc accepts. A computed enum member
+    // does not become assignable to an unrelated literal enum union just
+    // because the computed value is numeric.
+    let diagnostics = collect_diagnostics(
+        r"
+namespace X {
+    export enum Foo {
+        A, B
+    }
+}
+namespace Y {
+    export enum Foo {
+        A, B
+    }
+}
+namespace Z {
+    export enum Foo {
+        A = 1 << 1,
+        B = 1 << 2,
+    }
+}
+namespace Ka {
+    export enum Foo {
+        A = 1 << 10,
+        B = 1 << 11,
+    }
+}
+const e0: X.Foo | boolean = Y.Foo.A;
+const e1: X.Foo | boolean = Z.Foo.A;
+const e2: X.Foo.A | X.Foo.B | boolean = Z.Foo.A;
+const e3: X.Foo.B | boolean = Z.Foo.A;
+const e4: X.Foo.A | boolean = Z.Foo.A;
+const e5: Ka.Foo | boolean = Z.Foo.A;
+",
+    );
+
+    let ts2322 = diagnostics.iter().filter(|d| d.0 == 2322).count();
+    assert_eq!(
+        ts2322, 5,
+        "Expected TS2322 for the computed enum member assignments, got: {diagnostics:?}"
+    );
 }
 
 #[test]
@@ -320,4 +424,189 @@ let a: A = A.Y;
 let other: A.X = a;
 ";
     test_enum_assignability(source, 1);
+}
+
+#[test]
+fn test_numeric_enum_reverse_lookup_no_error() {
+    let diagnostics = collect_diagnostics(
+        r"
+enum Direction { Up = 0, Down = 1 }
+const up = Direction[0];
+const down = Direction[1];
+",
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors for numeric enum reverse lookup, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_mixed_enum_numeric_reverse_lookup_no_error() {
+    let diagnostics = collect_diagnostics(
+        r"
+enum Mixed { A = 0, B = 'B', C = 1, D = 'D' }
+const v0 = Mixed[0];
+const v1 = Mixed[1];
+",
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors for mixed enum numeric reverse lookup, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_mixed_enum_string_only_access_no_error() {
+    let diagnostics = collect_diagnostics(
+        r"
+enum Mixed { A = 0, B = 'B', C = 1, D = 'D' }
+const a = Mixed['A'];
+const b = Mixed['B'];
+",
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors for string-key access on mixed enum, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_numeric_enum_reverse_lookup_with_different_iteration_var() {
+    // The fix must not be tied to a specific iteration variable name — it's structural.
+    // Test auto-incremented members too.
+    let diagnostics = collect_diagnostics(
+        r"
+enum E { X, Y, Z }
+const x = E[0];
+const y = E[1];
+const z = E[2];
+",
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors for auto-increment enum reverse lookup, got: {diagnostics:?}"
+    );
+}
+
+// ── Cross-enum nominal rejection via enum-member initializer (issue #8788) ──
+
+#[test]
+fn test_cross_enum_member_initializer_is_rejected() {
+    // Exact repro from issue #8788:
+    // `const a: A = A.Val` narrows `a` to the member type A.Val.
+    // That member must not be assignable to unrelated enum B. tsc: TS2322.
+    test_enum_assignability(
+        r"
+enum A { Val = 0 }
+enum B { Val = 0 }
+const a: A = A.Val;
+const b: B = a;
+",
+        1,
+    );
+}
+
+#[test]
+fn test_cross_enum_member_initializer_different_member_name() {
+    // Adjacent case: same structure but member name is `Member` instead of `Val`.
+    // The fix must not depend on the spelling of the member name.
+    test_enum_assignability(
+        r"
+enum P { Member = 0 }
+enum Q { Member = 0 }
+const p: P = P.Member;
+const q: Q = p;
+",
+        1,
+    );
+}
+
+#[test]
+fn test_cross_enum_member_initializer_auto_incremented() {
+    // Adjacent case: auto-incremented (no explicit initializer) members.
+    test_enum_assignability(
+        r"
+enum C { Alpha, Beta }
+enum D { Alpha, Beta }
+const c: C = C.Beta;
+const d: D = c;
+",
+        1,
+    );
+}
+
+#[test]
+fn test_cross_string_enum_member_initializer_is_rejected() {
+    // Adjacent case: string-valued enums. String enums are already nominally
+    // typed, but the member-initializer path must also reject cross-enum use.
+    test_enum_assignability(
+        r#"
+enum S1 { Hello = "hello" }
+enum S2 { Hello = "hello" }
+const s1: S1 = S1.Hello;
+const s2: S2 = s1;
+"#,
+        1,
+    );
+}
+
+#[test]
+fn test_cross_enum_whole_enum_typed_variable_is_rejected() {
+    // When the variable is typed as the whole enum (not narrowed to a member),
+    // cross-enum assignment must also emit TS2322.
+    test_enum_assignability(
+        r"
+enum E1 { Foo = 0 }
+enum E2 { Foo = 0 }
+declare const e1: E1;
+const e2: E2 = e1;
+",
+        1,
+    );
+}
+
+#[test]
+fn test_cross_enum_function_parameter_is_rejected() {
+    // Cross-enum rejection must fire through function call sites (TS2345).
+    let diagnostics = collect_diagnostics(
+        r"
+enum Fruit { Apple = 0 }
+enum Color { Apple = 0 }
+function takeColor(_c: Color) {}
+const f: Fruit = Fruit.Apple;
+takeColor(f);
+",
+    );
+    let ts2345 = diagnostics.iter().filter(|d| d.0 == 2345).count();
+    assert_eq!(
+        ts2345, 1,
+        "Expected 1 TS2345 for cross-enum function argument, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_same_enum_member_initializer_is_allowed() {
+    // Positive baseline: assigning a member of the SAME enum must not error.
+    test_enum_assignability(
+        r"
+enum E { Foo = 0, Bar = 1 }
+const x: E = E.Foo;
+const y: E = x;
+",
+        0,
+    );
+}
+
+#[test]
+fn test_cross_enum_member_to_number_is_allowed() {
+    // Structural path: enum member (numeric) is still assignable to number.
+    test_enum_assignability(
+        r"
+enum Z { Item = 42 }
+const z: Z = Z.Item;
+const n: number = z;
+",
+        0,
+    );
 }

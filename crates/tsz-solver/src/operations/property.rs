@@ -2,17 +2,18 @@
 //! property access on types (obj.prop, obj["key"], etc.).
 
 use crate::caches::db::QueryDatabase;
+use crate::construction::TypeDatabase;
+use crate::objects::{ApparentMemberKind, apparent_object_member_kind};
 use crate::relations::subtype::TypeResolver;
 use crate::types::{IntrinsicKind, LiteralValue, ObjectShapeId, TypeData, TypeId};
-use crate::{ApparentMemberKind, TypeDatabase, apparent_object_member_kind};
 use std::cell::{Cell, RefCell};
 use tsz_common::interner::Atom;
 
 // Re-export readonly helpers
 pub(crate) use super::property_readonly::property_is_readonly;
 pub use super::property_readonly::{
-    is_mapped_type_with_readonly_modifier, is_readonly_index_signature,
-    is_readonly_tuple_fixed_element,
+    contains_mapped_type_with_readonly_modifier, is_mapped_type_with_readonly_modifier,
+    is_readonly_index_signature, is_readonly_tuple_fixed_element,
 };
 
 // Child module: resolution helpers (mapped types, primitives, arrays, applications, etc.)
@@ -164,6 +165,10 @@ pub struct PropertyAccessEvaluator<'a> {
     /// properties through a type parameter's constraint so that `this` is
     /// preserved for the checker to substitute with the correct receiver type.
     skip_this_binding: Cell<bool>,
+    /// When true, explicit `#private` property names may resolve named private
+    /// fields. Ordinary string/index lookups keep this false so ES-private
+    /// fields do not leak through dynamic property access.
+    allow_private_identifier_properties: Cell<bool>,
 }
 
 struct PropertyAccessGuard<'a> {
@@ -191,6 +196,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             current_prop_name: RefCell::new(None),
             current_prop_atom: RefCell::new(None),
             skip_this_binding: Cell::new(false),
+            allow_private_identifier_properties: Cell::new(false),
         }
     }
 
@@ -220,6 +226,14 @@ impl<'a> PropertyAccessEvaluator<'a> {
         self.skip_this_binding.get()
     }
 
+    pub fn set_allow_private_identifier_properties(&self, allow: bool) {
+        self.allow_private_identifier_properties.set(allow);
+    }
+
+    pub(crate) const fn allow_private_identifier_properties(&self) -> bool {
+        self.allow_private_identifier_properties.get()
+    }
+
     /// Helper to access the underlying `TypeDatabase`
     pub(crate) fn interner(&self) -> &dyn TypeDatabase {
         self.db.as_type_database()
@@ -241,7 +255,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             // Walking into Label's stored `extend` method here bakes
             // `this -> Label` into Label's stored bodies, poisoning later
             // intersection wrapping (chained `extend({a}).extend({b})`).
-            crate::substitute_this_type_at_return_position(
+            crate::instantiation::instantiate::substitute_this_type_at_return_position(
                 self.interner(),
                 Some(self.db),
                 type_id,
@@ -492,8 +506,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 let members = self.interner().type_list(members);
                 let prop_atom =
                     prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
-                let mut results = Vec::new();
-                let mut write_results = Vec::new();
+                let mut results = Vec::with_capacity(members.len());
+                let mut write_results = Vec::with_capacity(members.len());
                 let mut any_from_index = false;
                 let mut saw_deferred_any_fallback = false;
                 let mut nullable_causes = Vec::new();
@@ -690,9 +704,16 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 }
             }
 
-            // ReadonlyType and NoInfer are transparent wrappers for property access
-            TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
+            // NoInfer is a transparent wrapper for property access.
+            // ReadonlyType is transparent for non-array types, but for Array/Tuple
+            // inner types it must resolve against ReadonlyArray<T> so that mutating
+            // methods (push, pop, splice, etc.) are absent — matching tsc behaviour.
+            TypeData::NoInfer(inner) => {
                 self.resolve_property_access_inner(inner, prop_name, prop_atom)
+            }
+
+            TypeData::ReadonlyType(inner) => {
+                self.resolve_readonly_type_property(obj_type, inner, prop_name, prop_atom)
             }
 
             TypeData::TypeParameter(info) | TypeData::Infer(info) => {
@@ -973,7 +994,11 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 // Resolve the lazy type using the resolver
                 if let Some(resolved) = self.resolver().resolve_lazy(def_id, self.interner()) {
                     let resolved = if crate::contains_this_type(self.interner(), resolved) {
-                        crate::substitute_this_type(self.interner(), resolved, obj_type)
+                        crate::instantiation::instantiate::substitute_this_type(
+                            self.interner(),
+                            resolved,
+                            obj_type,
+                        )
                     } else {
                         resolved
                     };

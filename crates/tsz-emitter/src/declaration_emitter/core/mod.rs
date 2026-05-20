@@ -4,7 +4,13 @@
 mod emit_declaration_class_helpers;
 mod emit_declarations;
 mod emit_members;
+mod import_rewrites;
+mod inferred_predicate_returns;
+mod js_class_static;
+mod js_commonjs_constructor;
 mod js_emit;
+mod js_return_type_fallback;
+mod js_synthetic_members;
 mod preamble;
 mod setup;
 
@@ -12,13 +18,15 @@ use super::helpers::JsNamespaceExportAlias;
 use crate::output::source_writer::{SourcePosition, SourceWriter};
 use crate::type_cache_view::TypeCacheView;
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tsz_binder::{BinderState, SymbolId};
 use tsz_common::comments::CommentRange;
 use tsz_common::diagnostics::Diagnostic;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::NodeList;
 use tsz_parser::parser::node::NodeArena;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 pub(crate) type JsNestedModuleExportNamespaces = FxHashMap<NodeIndex, Vec<(NodeIndex, NodeIndex)>>;
 
@@ -59,13 +67,21 @@ pub struct DeclarationEmitter<'a> {
     pub(super) current_arena: Option<Arc<NodeArena>>,
     /// The current file's path (for calculating relative import paths)
     pub(super) current_file_path: Option<String>,
+    /// Parsed JSON module values keyed by resolved source path.
+    pub(super) json_module_value_cache: FxHashMap<PathBuf, Arc<serde_json::Value>>,
     /// Map of arena address -> file path (for resolving foreign symbol locations)
     pub(super) arena_to_path: FxHashMap<usize, String>,
     /// Map of file index -> file path (fallback for resolving symbol source via `decl_file_idx`)
     pub(super) file_idx_to_path: FxHashMap<u32, String>,
+    /// Canonicalized root files from the original compilation request.
+    pub(super) root_file_paths: FxHashSet<String>,
     /// Global symbol-to-arena mapping from all program files, enabling cross-file
     /// symbol source path resolution for TS2883 portability checks.
     pub(super) global_symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
+    /// In declaration bundles, duplicate global `var` declarations share the
+    /// first emitted type instead of each file independently narrowing its own
+    /// initializer.
+    pub(super) bundled_duplicate_global_var_types: FxHashMap<String, String>,
     /// Map of module → symbol names to auto-generate imports for
     /// Pre-calculated in driver where `MergedProgram` is available
     pub(super) required_imports: FxHashMap<String, Vec<String>>,
@@ -98,6 +114,15 @@ pub struct DeclarationEmitter<'a> {
     pub(super) inside_non_ambient_namespace: bool,
     /// Whether we're emitting constructor parameters (don't emit accessibility modifiers)
     pub(super) in_constructor_params: bool,
+    /// Whether we're emitting class members as the body of an anonymous
+    /// constructor object type (`{ new(...): { ...members... } }`), e.g. the
+    /// inferred return type of a function returning a class expression.
+    ///
+    /// Object-type-literal syntax does not permit class-declaration-only forms
+    /// like `readonly name = "value"` (initializer syntax). Member emit must
+    /// use `:` annotation form (`readonly name: "value"`) when this flag is
+    /// set.
+    pub(super) in_object_type_class_body: bool,
     /// Track function names that have overload signatures (to skip implementation signatures)
     pub(super) function_names_with_overloads: FxHashSet<String>,
     /// Track whether current class has constructor overloads (to skip implementation constructor)
@@ -106,6 +131,8 @@ pub struct DeclarationEmitter<'a> {
     pub(super) class_extends_another: bool,
     /// Track method names that have overload signatures in current class (to skip implementation signatures)
     pub(super) method_names_with_overloads: FxHashSet<String>,
+    /// Type parameters of the class currently being emitted (for method return type inference)
+    pub(super) current_class_type_params: Option<NodeList>,
     pub(super) all_comments: Vec<CommentRange>,
     pub(super) comment_emit_idx: usize,
     pub(super) current_statement_jsdoc_chain: Vec<String>,
@@ -135,35 +162,67 @@ pub struct DeclarationEmitter<'a> {
     /// JS local statements skipped at their original position and re-emitted at
     /// a later `export { ... }` clause to preserve declaration order.
     pub(super) js_deferred_named_export_statements: FxHashSet<NodeIndex>,
-    /// JS local renamed export declarations emitted as one trailing alias group.
+    /// JS enum declarations exported by local `export { ... }` clauses. These
+    /// are emitted near the trailing alias group to match declaration transform
+    /// ordering for JS enum syntax.
+    pub(super) js_deferred_local_export_enum_statements: FxHashSet<NodeIndex>,
+    /// JS interface declarations exported by local `export { ... }` clauses.
+    /// These are emitted near the trailing alias group to match declaration
+    /// transform ordering for JS-recovered interface syntax.
+    pub(super) js_deferred_local_export_interface_statements: FxHashSet<NodeIndex>,
+    /// Local `export { ... }` clauses consumed by deferred JS interface emit.
+    pub(super) js_skipped_local_export_interface_exports: FxHashSet<NodeIndex>,
+    /// JS local renamed export specifiers emitted as one trailing alias group.
     pub(super) js_local_export_aliases: Vec<NodeIndex>,
     /// JS local renamed export declarations skipped at their source position.
     pub(super) js_skipped_local_export_aliases: FxHashSet<NodeIndex>,
+    /// JS function declarations with signature-bearing JSDoc whose public
+    /// surface is owned by a trailing local export alias group.
+    pub(super) js_deferred_local_export_alias_function_statements: FxHashSet<NodeIndex>,
     /// Top-level JS bindings referenced by an explicit `export = name` assignment.
     pub(super) js_export_equals_names: FxHashSet<String>,
     /// JS `export = name` assignments already emitted ahead of their declaration.
     pub(super) emitted_js_export_equals_names: FxHashSet<String>,
     /// Top-level JS bindings referenced by an `export default <Identifier>` statement
-    /// where the identifier resolves to a same-file top-level declaration. tsc hoists
-    /// these `export default` lines to the very top of the emitted .d.ts.
+    /// where the identifier resolves to a same-file top-level declaration. The
+    /// default export is emitted at its source statement; the referenced local
+    /// declaration is deferred until after that statement when needed.
     pub(super) js_export_default_names: FxHashSet<String>,
-    /// JS `export default <Identifier>` statements already hoisted ahead of their
-    /// declaration so the original statement is suppressed when the loop reaches it.
+    /// JS `export default <Identifier>` statements already emitted at their source
+    /// statement so later duplicate visits can be suppressed.
     pub(super) emitted_js_export_default_names: FxHashSet<String>,
+    /// True while emitting the local declaration owned by a JS default identifier
+    /// export. This lets the normal statement visitor bypass the source-position
+    /// deferral guard for that one structured declaration.
+    pub(super) emitting_js_default_export_declaration: bool,
     /// Stable aliases for local declarations that shadow a JS export-equals root name.
     pub(super) js_shadowed_export_equals_local_aliases: FxHashMap<String, String>,
     /// JS namespace-like alias exports synthesized from expando assignments such
     /// as `foo.default = foo` and `module.exports.Bar = Bar`.
     pub(super) js_namespace_export_aliases: FxHashMap<String, Vec<JsNamespaceExportAlias>>,
+    /// Top-level JS declarations whose value is exported through a namespace
+    /// alias schedule, e.g. `Root.Member = Member`.
+    pub(super) js_deferred_namespace_alias_declarations: FxHashMap<String, Vec<NodeIndex>>,
+    /// Fast lookup for statements owned by `js_deferred_namespace_alias_declarations`.
+    pub(super) js_deferred_namespace_alias_declaration_stmts: FxHashSet<NodeIndex>,
     /// CJS export aliases for `exports.X = Y` / `module.exports.X = Y`.
     pub(super) js_cjs_export_aliases: Vec<(String, String)>,
+    /// CJS export aliases that also need a value declaration because the same
+    /// export receives additional non-alias values.
+    pub(super) js_cjs_export_alias_value_declarations: Vec<(String, String)>,
     /// Statements consumed by CJS export alias collection.
     pub(super) js_cjs_export_alias_statements: FxHashSet<NodeIndex>,
     /// Statements consumed by `module.exports = { Name1, Name2 }` object pattern.
     pub(super) js_module_exports_object_stmts: FxHashSet<NodeIndex>,
+    /// Top-level local JS function declarations consumed by
+    /// `Object.defineProperty(module.exports, "name", { value: local })` exports.
+    pub(super) js_define_property_export_local_names: FxHashSet<String>,
     /// Top-level JS `const Local = require("mod").Export` aliases used by
     /// exported inferred types and emitted as trailing import-equals aliases.
     pub(super) js_require_property_import_aliases: Vec<(String, String, String)>,
+    /// JS destructured bindings elided from a non-exporting `require("mod")`
+    /// declaration, used to elide same-file locals derived only from that import.
+    pub(super) js_elided_bare_require_binding_names: FxHashSet<String>,
     /// Deferred JS CommonJS `Root.prop = function(){}` statements re-emitted as
     /// top-level synthetic function declarations.
     /// The boolean marks whether the synthetic declaration should be exported.
@@ -183,6 +242,16 @@ pub struct DeclarationEmitter<'a> {
     pub(super) js_class_like_prototype_members: FxHashMap<String, Vec<(NodeIndex, NodeIndex)>>,
     /// Expression statements consumed by the class-like prototype heuristic (skipped during emit).
     pub(super) js_class_like_prototype_stmts: FxHashSet<NodeIndex>,
+    /// JS `Class.staticMember = value` declarations folded into a merged namespace.
+    pub(super) js_class_static_members: FxHashMap<String, Vec<(NodeIndex, NodeIndex)>>,
+    /// Expression statements consumed by the JS static-member collector.
+    pub(super) js_class_static_member_stmts: FxHashSet<NodeIndex>,
+    /// `Object.defineProperty(Class.prototype, "x", { get/set })` accessors
+    /// folded into matching JS class declarations.
+    pub(super) js_class_define_property_accessors:
+        FxHashMap<String, Vec<crate::declaration_emitter::helpers::JsClassDefinePropertyAccessor>>,
+    /// Expression statements consumed by the JS class defineProperty accessor collector.
+    pub(super) js_class_define_property_accessor_stmts: FxHashSet<NodeIndex>,
     /// JS `Clazz.method.prop = value` statements re-emitted as merged
     /// `namespace Clazz { function method(); namespace method { ... } }`.
     pub(super) js_static_method_augmentation_statements:
@@ -227,6 +296,13 @@ pub struct DeclarationEmitter<'a> {
     /// can be resolved.
     pub(super) all_enum_values:
         FxHashMap<String, FxHashMap<String, crate::enums::evaluator::EnumValue>>,
+    /// Maps `(parent_sym_id, target_name)` → local alias names for `import alias = LocalNs`
+    /// declarations (non-require import-equals). Using the parent-and-name pair as the key
+    /// avoids SymbolId ambiguity: the binder may assign different IDs to the same namespace
+    /// in exports tables vs parent-chain traversal, but both share the same parent SymbolId
+    /// and `escaped_name`. Used to substitute alias names when printing qualified type names
+    /// only when a target has a single unambiguous alias.
+    pub(super) local_namespace_alias_targets: FxHashMap<(SymbolId, String), FxHashSet<String>>,
 }
 
 pub(super) struct SourceMapState {

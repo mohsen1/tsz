@@ -3,8 +3,14 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
+source scripts/ci/suite-metadata.sh
 
-suite="${1:?usage: $0 <build|dist-binaries|unit-archive|node-harness-prep|lint|unit|unit-shard|wasm|wasm-web|wasm-all|conformance|conformance-aggregate|emit|emit-shard|emit-aggregate|fourslash|fourslash-shard|fourslash-aggregate>}"
+suite="${1:?usage: $0 $(ci_suite_usage github)}"
+if ! ci_suite_is_known github "$suite"; then
+  echo "error: unknown GitHub CI suite '${suite}'" >&2
+  echo "valid suites: $(ci_suite_list github ', ')" >&2
+  exit 2
+fi
 export _TSZ_CI_SUITE="$suite"
 export TSZ_CI_SUITE="$suite"
 export _TSZ_CI_CACHE_BUCKET="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache}}"
@@ -16,6 +22,29 @@ export CARGO_PROFILE_DIST_FAST_LTO="${CARGO_PROFILE_DIST_FAST_LTO:-false}"
 export TSZ_CI_SKIP_HOST_APT="${TSZ_CI_SKIP_HOST_APT:-1}"
 
 mkdir -p "$TSZ_CI_METRICS_DIR" "$TSZ_CI_LOG_DIR" .ci-status
+
+suite_heartbeat_pid=""
+start_suite_heartbeat() {
+  local interval="${TSZ_CI_GITHUB_SUITE_HEARTBEAT_SECONDS:-60}"
+  (
+    while true; do
+      sleep "$interval"
+      echo "github-suite ${suite} still running at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    done
+  ) &
+  suite_heartbeat_pid="$!"
+}
+
+stop_suite_heartbeat() {
+  if [[ -n "$suite_heartbeat_pid" ]]; then
+    kill "$suite_heartbeat_pid" >/dev/null 2>&1 || true
+    wait "$suite_heartbeat_pid" 2>/dev/null || true
+    suite_heartbeat_pid=""
+  fi
+}
+
+trap stop_suite_heartbeat EXIT
+start_suite_heartbeat
 
 restore_rc=0
 if [[ "${TSZ_CI_CACHE_RESTORE:-1}" == "1" ]]; then

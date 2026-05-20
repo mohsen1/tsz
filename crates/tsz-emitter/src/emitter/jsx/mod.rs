@@ -38,7 +38,10 @@ pub(super) enum JsxAttrValue {
     /// String literal attribute -- carries the node index for quote-preserving emission
     StringNode(NodeIndex),
     Bool(bool),
-    Expr(NodeIndex),
+    Expr {
+        expr: NodeIndex,
+        trailing_comment_scope: Option<NodeIndex>,
+    },
     EmptyExpression,
 }
 
@@ -91,8 +94,8 @@ pub(super) fn group_jsx_attrs(attrs: &[JsxAttrInfo]) -> Vec<AttrGroup> {
 
 /// Extract `@jsxImportSource <package>` from leading block comments.
 /// Mirrors tsc behavior: only block comments before any code are scanned, and
-/// the `@jsxImportSource` tag must be followed by a pragma boundary
-/// (whitespace or end-of-comment) — this rejects fake tags like
+/// the `@jsxImportSource` tag is ASCII-case-insensitive and must be followed by
+/// a pragma boundary (whitespace or end-of-comment) — this rejects fake tags like
 /// `@jsxImportSourcex preact` that would otherwise be misparsed as a real
 /// pragma with package `x`.
 pub(super) fn extract_jsx_import_source(source: &str) -> Option<String> {
@@ -109,24 +112,9 @@ pub(super) fn extract_jsx_import_source(source: &str) -> Option<String> {
             let comment_start = pos + 2;
             if let Some(end_offset) = text[comment_start..].find("*/") {
                 let comment_body = &text[comment_start..comment_start + end_offset];
-                let mut start = 0usize;
-                let mut after_idx: Option<usize> = None;
-                while let Some(rel) = comment_body[start..].find("@jsxImportSource") {
-                    let abs = start + rel;
-                    let after = abs + "@jsxImportSource".len();
-                    let body_bytes = comment_body.as_bytes();
-                    if after >= body_bytes.len()
-                        || (body_bytes[after] as char).is_ascii_whitespace()
-                    {
-                        after_idx = Some(after);
-                        break;
-                    }
-                    start = after;
-                    if start >= comment_body.len() {
-                        break;
-                    }
-                }
-                if let Some(after) = after_idx {
+                if let Some(after) =
+                    crate::jsx_pragmas::find_complete_pragma_tag(comment_body, "@jsxImportSource")
+                {
                     let pkg: String = comment_body[after..]
                         .trim_start()
                         .chars()
@@ -160,101 +148,6 @@ pub(super) fn extract_jsx_import_source(source: &str) -> Option<String> {
         break;
     }
     None
-}
-
-/// Extract a `@<tag> <factory>` pragma from the leading block comments,
-/// returning the factory expression (e.g. `h` or `React.createElement`).
-///
-/// Mirrors tsc's classic JSX pragma handling: only block comments before
-/// any code are scanned, the tag must be followed by a pragma boundary
-/// (whitespace), and the value is a dot-separated identifier chain. The
-/// scan stops at the first non-comment token. Issue #4010.
-fn extract_jsx_factory_like_pragma(source: &str, tag: &str) -> Option<String> {
-    let scan_limit = source.len().min(4096);
-    let text = &source[..scan_limit];
-    let bytes = text.as_bytes();
-    let mut pos = 0;
-    while pos < bytes.len() {
-        if bytes[pos].is_ascii_whitespace() {
-            pos += 1;
-            continue;
-        }
-        if pos + 1 < bytes.len() && bytes[pos] == b'/' && bytes[pos + 1] == b'*' {
-            let comment_start = pos + 2;
-            if let Some(end_offset) = text[comment_start..].find("*/") {
-                let comment_body = &text[comment_start..comment_start + end_offset];
-                let mut start = 0usize;
-                let mut after_idx: Option<usize> = None;
-                while let Some(rel) = comment_body[start..].find(tag) {
-                    let abs = start + rel;
-                    let after = abs + tag.len();
-                    let body_bytes = comment_body.as_bytes();
-                    if after >= body_bytes.len()
-                        || (body_bytes[after] as char).is_ascii_whitespace()
-                    {
-                        after_idx = Some(after);
-                        break;
-                    }
-                    start = after;
-                    if start >= comment_body.len() {
-                        break;
-                    }
-                }
-                if let Some(after) = after_idx {
-                    let factory: String = comment_body[after..]
-                        .trim_start()
-                        .chars()
-                        .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$' || *c == '.')
-                        .collect();
-                    if !factory.is_empty() && is_dotted_identifier_chain(&factory) {
-                        return Some(factory);
-                    }
-                }
-                pos = comment_start + end_offset + 2;
-            } else {
-                break;
-            }
-            continue;
-        }
-        if pos + 1 < bytes.len() && bytes[pos] == b'/' && bytes[pos + 1] == b'/' {
-            if let Some(nl) = text[pos..].find('\n') {
-                pos += nl + 1;
-            } else {
-                break;
-            }
-            continue;
-        }
-        break;
-    }
-    None
-}
-
-fn is_dotted_identifier_chain(s: &str) -> bool {
-    if s.is_empty() {
-        return false;
-    }
-    s.split('.').all(|seg| {
-        let mut chars = seg.chars();
-        let Some(first) = chars.next() else {
-            return false;
-        };
-        if !(first == '_' || first == '$' || first.is_alphabetic()) {
-            return false;
-        }
-        chars.all(|c| c == '_' || c == '$' || c.is_alphanumeric())
-    })
-}
-
-/// Extract a classic JSX `@jsx <factory>` pragma value from the file's
-/// leading comments, e.g. `/** @jsx h */` -> `Some("h")`. Issue #4010.
-pub(super) fn extract_jsx_factory(source: &str) -> Option<String> {
-    extract_jsx_factory_like_pragma(source, "@jsx")
-}
-
-/// Extract a classic JSX `@jsxFrag <factory>` pragma value from the file's
-/// leading comments, e.g. `/** @jsxFrag F */` -> `Some("F")`. Issue #4010.
-pub(super) fn extract_jsx_fragment_factory(source: &str) -> Option<String> {
-    extract_jsx_factory_like_pragma(source, "@jsxFrag")
 }
 
 // =============================================================================
@@ -673,6 +566,7 @@ pub(super) fn needs_quoting(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::process_jsx_text;
+    use crate::emitter::{JsxEmit, Printer as EmitPrinter, PrinterOptions};
     use crate::output::printer::{PrintOptions, Printer};
     use tsz_parser::ParserState;
 
@@ -683,6 +577,33 @@ mod tests {
         printer.set_source_text(source);
         printer.print(root);
         printer.finish().code
+    }
+
+    fn emit_jsx_react(source: &str) -> String {
+        let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let options = PrinterOptions {
+            jsx: JsxEmit::React,
+            ..Default::default()
+        };
+        let mut printer = EmitPrinter::with_options(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        printer.get_output().to_string()
+    }
+
+    fn emit_jsx_react_remove_comments(source: &str) -> String {
+        let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let options = PrinterOptions {
+            jsx: JsxEmit::React,
+            remove_comments: true,
+            ..Default::default()
+        };
+        let mut printer = EmitPrinter::with_options(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        printer.get_output().to_string()
     }
 
     #[test]
@@ -806,6 +727,115 @@ mod tests {
         assert!(
             !output.contains("{null}"),
             "Trailing comment should not be dropped from JSX expression.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn jsx_classic_nested_element_trailing_line_comment_is_preserved() {
+        let source = "const xs = [1];\nconst x = <ul>{xs.map(x => (<li>{x}</li> // kept\n))}</ul>;";
+        let output = emit_jsx_react(source);
+        assert!(
+            output.contains("React.createElement(\"li\", null, x) // kept"),
+            "Classic JSX transform should preserve same-line comments after nested elements.\nOutput: {output}"
+        );
+        let after_comment = &output[output
+            .find("// kept")
+            .expect("nested JSX line comment should be emitted")..];
+        assert!(
+            after_comment.starts_with("// kept\n"),
+            "Classic JSX trailing line comment must keep the source newline.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn jsx_classic_unicode_escape_component_and_member_names_are_preserved() {
+        let source = r#"const x = { video: () => null };
+const a = <Comp\u0061 x={12} />;
+const b = <x.\u0076ideo />;"#;
+        let output = emit_jsx_react(source);
+        assert!(
+            output.contains(r#"React.createElement(Comp\u0061, { x: 12 })"#),
+            "Component tag identifier escapes should be preserved in expression emit.\nOutput: {output}"
+        );
+        assert!(
+            output.contains(r#"React.createElement(x.\u0076ideo, null)"#),
+            "JSX member tag property-name escapes should be preserved in expression emit.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn jsx_classic_unicode_escape_attribute_identifier_names_are_preserved() {
+        let source = r#"const a = <video \u0073rc="" />;
+const b = <video data-\u0076ideo />;"#;
+        let output = emit_jsx_react(source);
+        assert!(
+            output.contains(r#"React.createElement("video", { \u0073rc: "" })"#),
+            "Unquoted JSX attribute identifier keys should preserve source escapes.\nOutput: {output}"
+        );
+        assert!(
+            output.contains(r#"React.createElement("video", { "data-video": true })"#),
+            "Quoted JSX attribute keys should use cooked text, not source escape spelling.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn jsx_classic_self_closing_trailing_line_comment_is_preserved() {
+        let source = "const x = (<Item value={1} /> // kept\n);";
+        let output = emit_jsx_react(source);
+        assert!(
+            output.contains("React.createElement(Item, { value: 1 }) // kept"),
+            "Classic JSX transform should preserve same-line comments after self-closing elements.\nOutput: {output}"
+        );
+        let after_comment = &output[output
+            .find("// kept")
+            .expect("self-closing JSX line comment should be emitted")..];
+        assert!(
+            after_comment.starts_with("// kept\n"),
+            "Classic JSX self-closing trailing line comment must keep the source newline.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn jsx_classic_self_closing_trailing_comment_ignores_attribute_string_slash_gt() {
+        let source = "const x = (\n  <Item label=\"/>\"\n    value={1} /> // kept\n);";
+        let output = emit_jsx_react(source);
+        assert!(
+            output.contains("React.createElement(Item, { label: \"/>\", value: 1 }) // kept"),
+            "Classic JSX transform should use the real self-closing tag end, not `/>` inside an attribute string.\nOutput: {output}"
+        );
+        let after_comment = &output[output
+            .find("// kept")
+            .expect("self-closing JSX line comment should be emitted")..];
+        assert!(
+            after_comment.starts_with("// kept\n"),
+            "Classic JSX self-closing trailing line comment must keep the source newline.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn jsx_classic_fragment_trailing_line_comment_is_preserved() {
+        let source = "const x = (<>{x}</> // kept\n);";
+        let output = emit_jsx_react(source);
+        assert!(
+            output.contains("React.createElement(React.Fragment"),
+            "Classic JSX fragment transform should emit a React.Fragment call.\nOutput: {output}"
+        );
+        let after_comment = &output[output
+            .find("// kept")
+            .expect("fragment JSX line comment should be emitted")..];
+        assert!(
+            after_comment.starts_with("// kept\n"),
+            "Classic JSX fragment trailing line comment must keep the source newline.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn jsx_classic_trailing_line_comment_honors_remove_comments() {
+        let source = "const x = (<Item value={1} /> // kept\n);";
+        let output = emit_jsx_react_remove_comments(source);
+        assert!(
+            !output.contains("// kept"),
+            "Classic JSX trailing comments should not be emitted with remove_comments.\nOutput: {output}"
         );
     }
 

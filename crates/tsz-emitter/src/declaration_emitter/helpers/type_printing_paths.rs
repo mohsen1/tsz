@@ -115,6 +115,10 @@ impl<'a> DeclarationEmitter<'a> {
                 self.package_specifier_for_package_json_path(current_path, module_path)
             {
                 package_specifier
+            } else if let Some(package_specifier) =
+                self.package_specifier_for_symlinked_dependency_path(current_path, module_path)
+            {
+                package_specifier
             } else if binder.declared_modules.contains(module_path) {
                 // Ambient module declaration `declare module "url" {}` — the
                 // module specifier is the declared name itself, which is
@@ -167,6 +171,10 @@ impl<'a> DeclarationEmitter<'a> {
                     package_specifier
                 } else if let Some(package_specifier) =
                     self.package_specifier_for_package_json_path(current_path, module_path)
+                {
+                    package_specifier
+                } else if let Some(package_specifier) =
+                    self.package_specifier_for_symlinked_dependency_path(current_path, module_path)
                 {
                     package_specifier
                 } else {
@@ -379,6 +387,12 @@ impl<'a> DeclarationEmitter<'a> {
                 return Some(package_specifier);
             }
 
+            if let Some(package_specifier) =
+                self.package_specifier_for_symlinked_dependency_path(current_path, source_path)
+            {
+                return Some(package_specifier);
+            }
+
             let rel_path = self.calculate_relative_path(current_path, source_path);
             Some(self.strip_ts_extensions(&rel_path))
         };
@@ -438,6 +452,37 @@ impl<'a> DeclarationEmitter<'a> {
                 .symbols
                 .get(sym_id)
                 .map(|symbol| symbol.escaped_name.clone());
+        }
+
+        // Check local import-equals aliases (import alias = LocalNs).
+        // Key is (parent_sym_id, escaped_name) to avoid SymbolId ambiguity: the binder
+        // may assign different IDs to the same namespace in exports vs parent-chain.
+        if let Some(sym) = binder.symbols.get(sym_id) {
+            let key = (sym.parent, sym.escaped_name.clone());
+            if let Some(alias_names) = self.local_namespace_alias_targets.get(&key) {
+                if alias_names.len() != 1 {
+                    tracing::debug!(
+                        sym_id = sym_id.0,
+                        parent = sym.parent.0,
+                        name = %sym.escaped_name,
+                        alias_count = alias_names.len(),
+                        "resolve_namespace_import_alias: ambiguous local alias target"
+                    );
+                    return None;
+                }
+                let alias_name = alias_names
+                    .iter()
+                    .next()
+                    .expect("checked alias set has exactly one entry");
+                tracing::debug!(
+                    sym_id = sym_id.0,
+                    parent = sym.parent.0,
+                    name = %sym.escaped_name,
+                    alias = %alias_name,
+                    "resolve_namespace_import_alias: local alias hit"
+                );
+                return Some(alias_name.clone());
+            }
         }
 
         let module_path = self.resolve_symbol_module_path(sym_id)?;
@@ -556,6 +601,91 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         Some(source_specifier)
+    }
+
+    pub(in crate::declaration_emitter) fn package_specifier_for_symlinked_dependency_path(
+        &self,
+        current_path: &str,
+        source_path: &str,
+    ) -> Option<String> {
+        use std::path::Path;
+
+        let current_dir = Path::new(current_path).parent()?;
+        let source_canonical = Path::new(source_path).canonicalize().ok()?;
+
+        for ancestor in current_dir.ancestors() {
+            let package_json_path = ancestor.join("package.json");
+            let Ok(package_json_text) = std::fs::read_to_string(&package_json_path) else {
+                continue;
+            };
+            let Ok(package_json) = serde_json::from_str::<serde_json::Value>(&package_json_text)
+            else {
+                continue;
+            };
+
+            for field in [
+                "dependencies",
+                "devDependencies",
+                "peerDependencies",
+                "optionalDependencies",
+            ] {
+                let Some(dependencies) =
+                    package_json.get(field).and_then(|value| value.as_object())
+                else {
+                    continue;
+                };
+
+                for package_name in dependencies.keys() {
+                    let package_link = ancestor.join("node_modules").join(package_name);
+                    let Ok(link_metadata) = std::fs::symlink_metadata(&package_link) else {
+                        continue;
+                    };
+                    if !link_metadata.file_type().is_symlink() {
+                        continue;
+                    }
+                    let Ok(package_root) = package_link.canonicalize() else {
+                        continue;
+                    };
+                    if !source_canonical.starts_with(&package_root) {
+                        continue;
+                    }
+
+                    let relative = source_canonical
+                        .strip_prefix(&package_root)
+                        .ok()?
+                        .to_string_lossy()
+                        .trim_start_matches('/')
+                        .replace('\\', "/");
+                    if relative.is_empty()
+                        || self.package_json_decl_entry_matches(&package_root, &relative)
+                    {
+                        return Some(package_name.clone());
+                    }
+
+                    let subpath = self
+                        .declaration_runtime_relative_path(&relative)
+                        .and_then(|runtime| {
+                            self.reverse_export_specifier_for_runtime_path(&package_root, &runtime)
+                        })
+                        .or_else(|| {
+                            let mut relative_path = self.strip_ts_extensions(&relative);
+                            if relative_path.ends_with("/index") {
+                                relative_path.truncate(relative_path.len() - "/index".len());
+                            } else if relative_path == "index" {
+                                relative_path.clear();
+                            }
+                            Some(relative_path)
+                        })?;
+                    let subpath = subpath.strip_prefix("./").unwrap_or(&subpath);
+                    if subpath.is_empty() {
+                        return Some(package_name.clone());
+                    }
+                    return Some(format!("{package_name}/{subpath}"));
+                }
+            }
+        }
+
+        None
     }
 
     pub(in crate::declaration_emitter) fn node_modules_package_info(
@@ -894,6 +1024,10 @@ impl<'a> DeclarationEmitter<'a> {
     ///
     /// Converts "../utils.ts" -> "../utils"
     pub(crate) fn strip_ts_extensions(&self, path: &str) -> String {
+        if let Some((base, ext)) = Self::arbitrary_extension_declaration_user_parts(path) {
+            return format!("{base}.{ext}");
+        }
+
         // Remove TypeScript and JavaScript source/declaration extensions.
         for ext in [
             ".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".tsx", ".ts", ".mts", ".cts", ".jsx", ".js",
@@ -904,6 +1038,25 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
         path.to_string()
+    }
+
+    fn arbitrary_extension_declaration_user_parts(path: &str) -> Option<(&str, &str)> {
+        let stem = path.strip_suffix(".ts")?;
+        let (base, ext) = stem.rsplit_once(".d.")?;
+        if base.is_empty() || ext.is_empty() || ext.contains('/') || ext.contains('.') {
+            return None;
+        }
+        if Self::is_recognized_inner_module_ext(ext) {
+            return None;
+        }
+        Some((base, ext))
+    }
+
+    fn is_recognized_inner_module_ext(ext: &str) -> bool {
+        matches!(
+            ext,
+            "ts" | "tsx" | "mts" | "cts" | "js" | "jsx" | "mjs" | "cjs" | "json" | "d"
+        )
     }
 
     pub(in crate::declaration_emitter) fn normalized_source_path(

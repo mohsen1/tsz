@@ -10,8 +10,8 @@ use crate::operations::core::MAX_CONSTRAINT_STEPS;
 use crate::operations::{AssignabilityChecker, CallEvaluator, MAX_CONSTRAINT_RECURSION_DEPTH};
 use crate::relations::variance::compute_type_param_variances_with_resolver;
 use crate::types::{
-    FunctionShape, MappedType, ObjectShape, ParamInfo, PropertyInfo, TemplateSpan, TupleElement,
-    TypeData, TypeId, TypeParamInfo, TypePredicate, Variance,
+    FunctionShape, IntrinsicKind, LiteralValue, MappedType, ObjectShape, ParamInfo, PropertyInfo,
+    TemplateSpan, TupleElement, TypeData, TypeId, TypeParamInfo, TypePredicate, Variance,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
@@ -456,7 +456,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             self.array_like_element_for_constraint(source),
             self.array_like_element_for_constraint(target),
         ) {
+            let prev = ctx.in_array_element_context;
+            ctx.in_array_element_context = true;
             self.constrain_types(ctx, var_map, source_elem, target_elem, priority);
+            ctx.in_array_element_context = prev;
             return;
         }
 
@@ -573,6 +576,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         self.constrain_types(ctx, var_map, *s_type, *t_type, priority);
                     }
                 }
+            }
+            // String literal source against a template literal target: extract capture groups
+            // for each TypeParameter or Infer span by pattern-matching the literal against the
+            // template. Delegates to InferenceContext::infer_from_types so both `infer T`
+            // (conditional) and `T extends string` (generic parameter) spans are handled.
+            (
+                Some(
+                    TypeData::Literal(LiteralValue::String(_))
+                    | TypeData::Intrinsic(IntrinsicKind::String),
+                ),
+                Some(TypeData::TemplateLiteral(_)),
+            ) => {
+                let _ = ctx.infer_from_types(source, target, priority);
             }
             (Some(TypeData::IndexAccess(s_obj, s_idx)), _) => {
                 let evaluated = self.interner.evaluate_index_access(s_obj, s_idx);
@@ -712,10 +728,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         if has_properties {
                             // Simple mapped type inference for { [P in K]: T }
                             // Infer constraint (K) from property name literals
+                            // (numeric-named props contribute number literals).
                             let name_literals: Vec<TypeId> = source_obj
                                 .properties
                                 .iter()
-                                .map(|p| self.interner.literal_string_atom(p.name))
+                                .map(|p| {
+                                    crate::utils::literal_key_for_property_name(
+                                        self.interner,
+                                        p.name,
+                                        p.is_string_named,
+                                    )
+                                })
                                 .collect();
                             let names_union = if name_literals.len() == 1 {
                                 name_literals[0]
@@ -1010,8 +1033,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let t_members = self.interner.type_list(t_members);
                 let mut non_nullable = None;
                 let mut count = 0;
+                let mut has_null = false;
+                let mut has_undefined = false;
+                let mut has_void = false;
                 for &member in t_members.iter() {
-                    if !is_nullish(member) {
+                    if member == TypeId::NULL {
+                        has_null = true;
+                    } else if member == TypeId::UNDEFINED {
+                        has_undefined = true;
+                    } else if member == TypeId::VOID {
+                        has_void = true;
+                    } else {
                         count += 1;
                         if count == 1 {
                             non_nullable = Some(member);
@@ -1023,6 +1055,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 if count == 1
                     && let Some(member) = non_nullable
                 {
+                    // `null <: T | null` gives no information about T; skip only
+                    // when the target union has the same fixed nullish arm.
+                    if (source == TypeId::NULL && has_null)
+                        || (source == TypeId::UNDEFINED && (has_undefined || has_void))
+                        || (source == TypeId::VOID && has_void)
+                    {
+                        return;
+                    }
                     self.constrain_types(ctx, var_map, source, member, priority);
                     return;
                 }
@@ -1064,8 +1104,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         let infer_targets = if structural_matches.len() > 1 {
                             self.filter_by_discriminant(source, &structural_matches)
                         } else {
-                            structural_matches
+                            structural_matches.clone()
                         };
+                        self.add_never_candidates_for_excluded_union_placeholders(
+                            ctx,
+                            var_map,
+                            &structural_matches,
+                            &infer_targets,
+                            priority,
+                        );
                         for member in infer_targets {
                             self.constrain_types(ctx, var_map, source, member, priority);
                         }
@@ -1147,8 +1194,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         let infer_targets = if structural_matches.len() > 1 {
                             self.filter_by_discriminant(source, &structural_matches)
                         } else {
-                            structural_matches
+                            structural_matches.clone()
                         };
+                        self.add_never_candidates_for_excluded_union_placeholders(
+                            ctx,
+                            var_map,
+                            &structural_matches,
+                            &infer_targets,
+                            priority,
+                        );
 
                         for member in infer_targets {
                             self.constrain_types(ctx, var_map, source, member, priority);
@@ -1435,11 +1489,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     }
                     // Covariant return: instantiated_source_return <: target_return
                     //
-                    // When both the source return and target return are inference
-                    // placeholders, unify them so they share candidates/bounds.
-                    // This handles chains like: compose(unbox, unlist) where
-                    // unlist's U is related to B through Array<U> = B, and C = U.
-                    // Without unification, U gets no direct candidates.
+                    // Keep source and target placeholders distinct. `constrain_types`
+                    // records the source return as evidence for the target return while
+                    // allowing the source variable to be resolved and substituted later.
+                    // Unifying here collapses source generics into outer placeholders
+                    // too early and loses higher-order generic return parameters.
                     //
                     // Skip the cap for construct signatures (see non-generic branch
                     // above for rationale).
@@ -1448,20 +1502,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     } else {
                         priority.max(crate::types::InferencePriority::ReturnType)
                     };
-                    if let (Some(&s_var), Some(&t_var)) = (
-                        combined_var_map.get(&instantiated_return),
-                        combined_var_map.get(&t_fn.return_type),
-                    ) {
-                        let _ = ctx.unify_vars(s_var, t_var);
-                    } else {
-                        self.constrain_types(
-                            ctx,
-                            &combined_var_map,
-                            instantiated_return,
-                            t_fn.return_type,
-                            return_priority,
-                        );
-                    }
+                    self.constrain_types(
+                        ctx,
+                        &combined_var_map,
+                        instantiated_return,
+                        t_fn.return_type,
+                        return_priority,
+                    );
 
                     // Constrain type predicates if both functions have them
                     self.constrain_type_predicates(
@@ -2182,9 +2229,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let Some(t_last) = target_params.last() else {
             return;
         };
-        if !t_last.rest || !var_map.contains_key(&t_last.type_id) {
+        if !t_last.rest {
             return;
         }
+        let Some(&var) = var_map.get(&t_last.type_id) else {
+            return;
+        };
         let target_fixed_count = target_params.len().saturating_sub(1);
         if source_params.len() <= target_fixed_count {
             return;
@@ -2202,14 +2252,43 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 rest: p.rest,
             })
             .collect();
+        let needs_regular_candidate = tuple_elements.iter().any(|elem| {
+            elem.optional
+                || elem.rest
+                || self.rest_tuple_element_needs_regular_candidate(elem.type_id)
+        });
         let source_tuple = self.interner.tuple(tuple_elements);
-        if let Some(&var) = var_map.get(&t_last.type_id) {
+        if needs_regular_candidate {
+            // Preserve the regular tuple candidate for optional/generic/union
+            // rest inference paths that rely on the pre-existing covariant
+            // candidate behavior.
             ctx.add_candidate(
                 var,
                 source_tuple,
                 crate::types::InferencePriority::NakedTypeVariable,
             );
+        } else {
+            // Simple fixed parameter lists should not also become covariant
+            // candidates, or an array-literal argument can erase tuple arity.
+            ctx.add_contra_candidate(
+                var,
+                source_tuple,
+                crate::types::InferencePriority::NakedTypeVariable,
+            );
         }
+    }
+
+    fn rest_tuple_element_needs_regular_candidate(&self, ty: TypeId) -> bool {
+        if crate::visitor::contains_type_parameters(self.interner.as_type_database(), ty)
+            || crate::type_queries::contains_infer_types_db(self.interner.as_type_database(), ty)
+        {
+            return true;
+        }
+
+        matches!(
+            self.interner.lookup(ty),
+            Some(TypeData::Union(_) | TypeData::Intersection(_))
+        )
     }
 
     /// For each source property, instantiate the mapped type's template by
@@ -2230,7 +2309,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
         let iter_param_name = mapped.type_param.name;
         for prop in properties {
-            let key_literal = self.interner.literal_string_atom(prop.name);
+            let key_literal = crate::utils::literal_key_for_property_name(
+                self.interner,
+                prop.name,
+                prop.is_string_named,
+            );
             let subst = TypeSubstitution::single(iter_param_name, key_literal);
             let instantiated_template = instantiate_type(self.interner, mapped.template, &subst);
             self.constrain_types(ctx, var_map, prop.type_id, instantiated_template, priority);

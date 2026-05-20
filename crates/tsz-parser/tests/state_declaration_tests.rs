@@ -642,7 +642,6 @@ fn invalid_bigint_import_specifier_preserves_missing_brace_recovery() {
 }
 
 #[test]
-#[ignore = "pre-existing: expects 2 TS1434 but parser now emits 1 after e0fc0207cd"]
 fn malformed_import_clause_recovery_surfaces_statement_level_ts1434_and_ts1128() {
     let (parser, _root) = parse_source(
         r#"import { * } from "./foo";
@@ -1228,5 +1227,296 @@ fn parse_for_typed_let_header_recovers_through_block_like_tsc() {
                 && message == "Expression expected."
         }),
         "should not emit the old TS1109 at the header close, got {fingerprints:?}"
+    );
+}
+
+fn diagnostic_fingerprints(source: &str) -> Vec<(u32, u32, u32, String)> {
+    let (parser, _root) = parse_source(source);
+    let line_map = LineMap::build(source);
+    parser
+        .get_diagnostics()
+        .iter()
+        .map(|diag| {
+            let pos = line_map.offset_to_position(diag.start, source);
+            (
+                diag.code,
+                pos.line + 1,
+                pos.character + 1,
+                diag.message.clone(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn if_condition_assignment_after_binary_reports_missing_close_but_keeps_rhs_recovery() {
+    let source = "function f() {\n  if (retValue != 0 ^=  {\n    return 1;\n  }\n}\n";
+    let fingerprints = diagnostic_fingerprints(source);
+
+    assert!(
+        fingerprints.contains(&(
+            diagnostic_codes::EXPECTED,
+            2,
+            21,
+            "')' expected.".to_string()
+        )),
+        "expected missing `)` at invalid assignment operator, got {fingerprints:?}"
+    );
+    assert!(
+        fingerprints
+            .iter()
+            .any(|(code, _, _, message)| *code == diagnostic_codes::EXPECTED
+                && message == "':' expected."),
+        "expected object-literal RHS recovery to continue, got {fingerprints:?}"
+    );
+}
+
+#[test]
+fn binary_operator_statement_start_reports_expression_expected_and_rhs_semicolon() {
+    let source = "function f() {\n  ^ value = next;\n}\n";
+    let fingerprints = diagnostic_fingerprints(source);
+
+    assert!(
+        fingerprints.contains(&(
+            diagnostic_codes::EXPRESSION_EXPECTED,
+            2,
+            3,
+            "Expression expected.".to_string()
+        )),
+        "expected TS1109 at leading binary operator, got {fingerprints:?}"
+    );
+    assert!(
+        fingerprints.contains(&(
+            diagnostic_codes::EXPECTED,
+            2,
+            11,
+            "';' expected.".to_string()
+        )),
+        "expected missing semicolon at assignment after recovered RHS, got {fingerprints:?}"
+    );
+    assert!(
+        !fingerprints.iter().any(|(code, line, col, _)| {
+            *code == diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED && *line == 2 && *col == 3
+        }),
+        "leading binary operator should not fall through to TS1128, got {fingerprints:?}"
+    );
+}
+
+#[test]
+fn orphan_case_assignment_recovers_before_following_if_header() {
+    let source = "function f() {\n  case = g();\n  if (retValue != 0) {\n  }\n}\n";
+    let fingerprints = diagnostic_fingerprints(source);
+
+    assert!(
+        fingerprints.contains(&(
+            diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+            2,
+            3,
+            "Declaration or statement expected.".to_string()
+        )),
+        "expected TS1128 at orphan case, got {fingerprints:?}"
+    );
+    assert!(
+        fingerprints.contains(&(
+            diagnostic_codes::EXPECTED,
+            3,
+            16,
+            "',' expected.".to_string()
+        )),
+        "expected comma recovery in following if header, got {fingerprints:?}"
+    );
+    assert!(
+        fingerprints.contains(&(
+            diagnostic_codes::EXPECTED,
+            3,
+            20,
+            "';' expected.".to_string()
+        )),
+        "expected semicolon recovery at following if close paren, got {fingerprints:?}"
+    );
+    assert!(
+        !fingerprints.iter().any(|(code, line, col, _)| {
+            *code == diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED && *line == 2 && *col == 8
+        }),
+        "orphan case recovery should not also report TS1128 at `=`, got {fingerprints:?}"
+    );
+}
+
+#[test]
+fn orphan_case_assignment_asi_recovery_preserves_following_if_header() {
+    let source = "function f() {\n  case = g()\n  if (retValue != 0) {\n  }\n}\n";
+    let fingerprints = diagnostic_fingerprints(source);
+
+    assert!(
+        fingerprints.contains(&(
+            diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+            2,
+            3,
+            "Declaration or statement expected.".to_string()
+        )),
+        "expected TS1128 at orphan case, got {fingerprints:?}"
+    );
+    assert!(
+        fingerprints.contains(&(
+            diagnostic_codes::EXPECTED,
+            3,
+            16,
+            "',' expected.".to_string()
+        )),
+        "ASI recovery should leave the following if header visible, got {fingerprints:?}"
+    );
+}
+
+#[test]
+fn orphan_case_assignment_asi_recovery_preserves_block_close_and_next_statement() {
+    let source = "function f() {\n  case = g()\n}\nconst after = 1;\n";
+    let (parser, root) = parse_source(source);
+    let fingerprints = diagnostic_fingerprints(source);
+    let arena = parser.get_arena();
+    let sf = arena.get_source_file_at(root).unwrap();
+
+    assert!(
+        fingerprints.iter().any(|(code, line, col, message)| {
+            *code == diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED
+                && *line == 2
+                && *col == 3
+                && message == "Declaration or statement expected."
+        }),
+        "expected TS1128 at orphan case, got {fingerprints:?}"
+    );
+    assert_eq!(
+        sf.statements.nodes.len(),
+        2,
+        "orphan case ASI recovery should not consume the block close or following const"
+    );
+    assert_eq!(
+        arena.get(sf.statements.nodes[1]).unwrap().kind,
+        syntax_kind_ext::VARIABLE_STATEMENT
+    );
+}
+
+#[test]
+fn while_missing_open_paren_before_colon_recovers_rest_tail() {
+    let source = "public Overloads( while : string, ...rest: string[]) {  &\npublic DefaultValue(value?: string = \"Hello\") { }\n";
+    let fingerprints = diagnostic_fingerprints(source);
+
+    assert!(
+        fingerprints.contains(&(
+            diagnostic_codes::ARGUMENT_EXPRESSION_EXPECTED,
+            1,
+            19,
+            "Argument expression expected.".to_string()
+        )),
+        "expected argument recovery at `while`, got {fingerprints:?}"
+    );
+    assert!(
+        fingerprints.contains(&(
+            diagnostic_codes::EXPECTED,
+            1,
+            25,
+            "'(' expected.".to_string()
+        )),
+        "expected missing `(` after `while`, got {fingerprints:?}"
+    );
+    assert!(
+        fingerprints.contains(&(
+            diagnostic_codes::EXPRESSION_EXPECTED,
+            1,
+            35,
+            "Expression expected.".to_string()
+        )),
+        "expected TS1109 at rest spread in while tail, got {fingerprints:?}"
+    );
+    assert!(
+        fingerprints.iter().any(|(code, _, _, message)| {
+            *code == diagnostic_codes::AN_ELEMENT_ACCESS_EXPRESSION_SHOULD_TAKE_AN_ARGUMENT
+                && message == "An element access expression should take an argument."
+        }),
+        "expected element-access recovery for `string[]`, got {fingerprints:?}"
+    );
+    assert!(
+        !fingerprints
+            .iter()
+            .any(|(_, _, _, message)| message == "')' expected."),
+        "while colon recovery should not report a spurious missing `)`, got {fingerprints:?}"
+    );
+}
+
+#[test]
+fn class_missing_body_at_dot_reports_stray_outer_closes_without_eof_close() {
+    let source = "namespace N {\n  class A .\n    public method1() { }\n  }\n}\nenum E { A }\n";
+    let fingerprints = diagnostic_fingerprints(source);
+
+    let stray_close_count = fingerprints
+        .iter()
+        .filter(|(code, _, _, message)| {
+            *code == diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED
+                && message == "Declaration or statement expected."
+        })
+        .count();
+    assert!(
+        stray_close_count >= 2,
+        "expected recovered stray close-brace diagnostics, got {fingerprints:?}"
+    );
+    assert!(
+        !fingerprints
+            .iter()
+            .any(|(_, _, _, message)| message == "'}' expected."),
+        "missing class body recovery should not cascade to EOF `}} expected`, got {fingerprints:?}"
+    );
+}
+
+#[test]
+fn class_missing_body_at_dot_does_not_suppress_later_eof_close_brace() {
+    let source = "namespace N {\n  class A .\n    public method1() { }\n  }\n}\nfunction f() {\n";
+    let fingerprints = diagnostic_fingerprints(source);
+
+    assert!(
+        fingerprints.iter().any(|(code, _, _, message)| {
+            *code == diagnostic_codes::EXPECTED && message == "'}' expected."
+        }),
+        "missing class body recovery should not hide a later function EOF close-brace error, got {fingerprints:?}"
+    );
+}
+
+#[test]
+fn nested_class_recovery_anchors_real_close_before_comments() {
+    let source = "class C {\n  m() {}\n  /* comment } */\n  class D {}\n}\n";
+    let member_close_pos = source.find("m() {}").expect("method") as u32 + "m() {".len() as u32;
+    let comment_close_pos =
+        source.find("comment }").expect("comment") as u32 + "comment ".len() as u32;
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+
+    assert!(
+        diags.iter().any(|diag| {
+            diag.code == diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED
+                && diag.start == member_close_pos
+        }),
+        "nested class recovery should anchor TS1128 to the previous real close brace, got {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|diag| {
+            diag.code == diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED
+                && diag.start == comment_close_pos
+        }),
+        "nested class recovery should ignore close-brace text inside comments, got {diags:?}"
+    );
+}
+
+#[test]
+fn unicode_escape_unknown_variable_name_reports_only_invalid_character() {
+    let source = "function f() {\n  var  _\\uD4A5\\u7204\\uC316\\uE59F  = local;\n}\n";
+    let fingerprints = diagnostic_fingerprints(source);
+
+    assert!(
+        fingerprints
+            .iter()
+            .any(|(code, _, _, _)| *code == diagnostic_codes::INVALID_CHARACTER),
+        "expected TS1127 for invalid escaped identifier, got {fingerprints:?}"
+    );
+    assert!(
+        !fingerprints.iter().any(|(code, _, _, _)| *code == 1134),
+        "invalid escaped identifier should not cascade to TS1134, got {fingerprints:?}"
     );
 }

@@ -1,5 +1,5 @@
 use super::lib_resolution::{
-    collect_lib_decls_with_arenas, lib_def_id_from_node, no_value_resolver,
+    collect_lib_decls_with_arenas_in_contexts, lib_def_id_from_node, no_value_resolver,
     resolve_lib_fallback_arena, resolve_lib_node_in_arenas,
 };
 use crate::state::CheckerState;
@@ -15,7 +15,7 @@ impl<'a> CheckerState<'a> {
         // and falls back to on-demand creation for symbols that semantic_defs
         // missed. This avoids silently skipping type param priming when
         // pre-population has gaps.
-        let def_id = self.ctx.get_lib_def_id(sym_id);
+        let def_id = self.ctx.get_canonical_lib_def_id(name, sym_id);
         let cached = { self.ctx.def_type_params.borrow().get(&def_id).cloned() };
         if let Some(cached) = cached {
             let cached_is_placeholder = !cached.is_empty()
@@ -37,11 +37,12 @@ impl<'a> CheckerState<'a> {
 
         // prime_lib_type_params has no user-arena context (no local augmentations),
         // so pass None for user_arena.
-        let decls_with_arenas = collect_lib_decls_with_arenas(
+        let decls_with_arenas = collect_lib_decls_with_arenas_in_contexts(
             self.ctx.binder,
             sym_id,
             &symbol.declarations,
             fallback_arena,
+            lib_contexts,
             None,
         );
         if decls_with_arenas.is_empty() {
@@ -63,7 +64,8 @@ impl<'a> CheckerState<'a> {
             )
         };
         let name_resolver = |type_name: &str| -> Option<tsz_solver::DefId> {
-            self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+            self.resolve_actual_lib_name_to_def_id_for_lowering(type_name)
+                .or_else(|| self.resolve_entity_name_text_to_def_id_for_lowering(type_name))
         };
 
         let lazy_type_params_resolver =
@@ -76,6 +78,7 @@ impl<'a> CheckerState<'a> {
             &def_id_resolver,
             &no_value_resolver,
         )
+        .with_builtin_iterator_return_type(self.builtin_iterator_return_intrinsic_type())
         .with_lazy_type_params_resolver(&lazy_type_params_resolver)
         .with_name_def_id_resolver(&name_resolver);
 

@@ -3,54 +3,120 @@
 //! Extracted from the `property` module to keep files focused and under
 //! the 2000-line checker file limit.
 
+use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
+/// Result of a readonly-assignment check.
+///
+/// The variant tells the caller whether (and how) a readonly diagnostic was
+/// emitted so the surrounding assignability check can decide whether to also
+/// emit TS2322. tsc emits TS2322 alongside TS2542 (readonly index signature
+/// writes) but suppresses it alongside TS2540 (readonly named property writes).
+///
+/// Variants are declared in priority order — `None < NamedProperty <
+/// IndexSignature` — so destructuring patterns can fold per-element results
+/// with `.max()`: an index-signature write anywhere in a pattern still
+/// requires the type-mismatch elaboration even if siblings only hit named
+/// readonly properties.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub(crate) enum ReadonlyAssignmentDiagnostic {
+    /// No readonly diagnostic was emitted for this assignment target.
+    None,
+    /// TS2540 ("Cannot assign to … read-only property") was emitted.
+    /// The surrounding assignability check should suppress TS2322.
+    NamedProperty,
+    /// TS2542 ("Index signature only permits reading") was emitted.
+    /// The surrounding assignability check should still emit TS2322.
+    IndexSignature,
+}
+
+impl ReadonlyAssignmentDiagnostic {
+    pub(crate) const fn emitted(self) -> bool {
+        !matches!(self, Self::None)
+    }
+
+    pub(crate) const fn suppresses_type_mismatch(self) -> bool {
+        matches!(self, Self::NamedProperty)
+    }
+}
+
 impl<'a> CheckerState<'a> {
-    fn check_readonly_assignment_pattern(&mut self, pattern_idx: NodeIndex) -> bool {
+    fn readonly_element_access_from_index_signature(
+        &mut self,
+        object_type: TypeId,
+        name: &str,
+    ) -> bool {
+        use crate::query_boundaries::common::PropertyAccessResult;
+        use crate::query_boundaries::common::is_readonly_tuple_fixed_element;
+
+        if name == "index signature" {
+            true
+        } else if is_readonly_tuple_fixed_element(self.ctx.types, object_type, name) {
+            false
+        } else {
+            matches!(
+                self.resolve_property_access_with_env(object_type, name),
+                PropertyAccessResult::Success {
+                    from_index_signature: true,
+                    ..
+                }
+            )
+        }
+    }
+
+    fn check_readonly_assignment_pattern(
+        &mut self,
+        pattern_idx: NodeIndex,
+    ) -> ReadonlyAssignmentDiagnostic {
         use tsz_parser::parser::syntax_kind_ext;
 
         let pattern_idx = self.ctx.arena.skip_parenthesized(pattern_idx);
         let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
-            return false;
+            return ReadonlyAssignmentDiagnostic::None;
         };
+
+        // Fold per-element diagnostics by priority (Ord on the enum). An
+        // IndexSignature anywhere keeps TS2322 alive on the destructuring
+        // assignment as a whole; otherwise a NamedProperty hit suppresses it.
+        let mut combined = ReadonlyAssignmentDiagnostic::None;
 
         match pattern_node.kind {
             syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
                 let Some(obj) = self.ctx.arena.get_literal_expr(pattern_node) else {
-                    return false;
+                    return ReadonlyAssignmentDiagnostic::None;
                 };
 
-                let mut emitted = false;
                 for &elem_idx in &obj.elements.nodes {
                     let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
                         continue;
                     };
 
                     if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
-                        emitted |= self.check_readonly_assignment_pattern_target(prop.initializer);
+                        combined = combined
+                            .max(self.check_readonly_assignment_pattern_target(prop.initializer));
                     } else if elem_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
                         if let Some(shorthand) = self.ctx.arena.get_shorthand_property(elem_node) {
-                            emitted |=
-                                self.check_readonly_assignment_pattern_target(shorthand.name);
+                            combined = combined
+                                .max(self.check_readonly_assignment_pattern_target(shorthand.name));
                         }
                     } else if elem_node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT
                         && let Some(spread) = self.ctx.arena.get_spread(elem_node)
                     {
-                        emitted |= self.check_readonly_assignment_pattern_target(spread.expression);
+                        combined = combined
+                            .max(self.check_readonly_assignment_pattern_target(spread.expression));
                     }
                 }
 
-                emitted
+                combined
             }
             syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
                 let Some(array_lit) = self.ctx.arena.get_literal_expr(pattern_node) else {
-                    return false;
+                    return ReadonlyAssignmentDiagnostic::None;
                 };
 
-                let mut emitted = false;
                 for &elem_idx in &array_lit.elements.nodes {
                     let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
                         continue;
@@ -69,22 +135,26 @@ impl<'a> CheckerState<'a> {
                     };
 
                     if let Some(target_idx) = target_idx {
-                        emitted |= self.check_readonly_assignment_pattern_target(target_idx);
+                        combined =
+                            combined.max(self.check_readonly_assignment_pattern_target(target_idx));
                     }
                 }
 
-                emitted
+                combined
             }
             _ => self.check_readonly_assignment(pattern_idx, NodeIndex::NONE),
         }
     }
 
-    fn check_readonly_assignment_pattern_target(&mut self, target_idx: NodeIndex) -> bool {
+    fn check_readonly_assignment_pattern_target(
+        &mut self,
+        target_idx: NodeIndex,
+    ) -> ReadonlyAssignmentDiagnostic {
         use tsz_scanner::SyntaxKind;
 
         let target_idx = self.ctx.arena.skip_parenthesized(target_idx);
         let Some(target_node) = self.ctx.arena.get(target_idx) else {
-            return false;
+            return ReadonlyAssignmentDiagnostic::None;
         };
 
         if let Some(bin) = self.ctx.arena.get_binary_expr(target_node)
@@ -137,25 +207,8 @@ impl<'a> CheckerState<'a> {
                         access.name_or_argument,
                         index_type,
                     ) {
-                        use crate::query_boundaries::common::PropertyAccessResult;
-                        use crate::query_boundaries::common::is_readonly_tuple_fixed_element;
-                        let from_idx_sig = if name == "index signature" {
-                            true
-                        } else if is_readonly_tuple_fixed_element(
-                            self.ctx.types,
-                            object_type,
-                            &name,
-                        ) {
-                            false
-                        } else {
-                            matches!(
-                                self.resolve_property_access_with_env(object_type, &name),
-                                PropertyAccessResult::Success {
-                                    from_index_signature: true,
-                                    ..
-                                }
-                            )
-                        };
+                        let from_idx_sig =
+                            self.readonly_element_access_from_index_signature(object_type, &name);
                         if from_idx_sig || self.is_readonly_mapped_type(object_type) {
                             self.error_readonly_index_signature_at(object_type, target_idx);
                         } else {
@@ -280,21 +333,25 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if an assignment target is a readonly property.
-    /// Reports error TS2540 if trying to assign to a readonly property.
-    /// Returns `true` if a readonly error was emitted (caller should skip further type checks).
+    ///
+    /// Reports TS2540 (named property) or TS2542 (index signature) when
+    /// applicable. The return value tells the caller both whether a readonly
+    /// diagnostic was emitted *and* which kind, so the assignability check
+    /// can suppress TS2322 only for named-property writes (TS2540) and let it
+    /// fire alongside index-signature writes (TS2542) — matching tsc.
     #[tracing::instrument(skip(self), fields(target_idx = target_idx.0))]
     pub(crate) fn check_readonly_assignment(
         &mut self,
         target_idx: NodeIndex,
         _expr_idx: NodeIndex,
-    ) -> bool {
+    ) -> ReadonlyAssignmentDiagnostic {
         use tsz_parser::parser::syntax_kind_ext;
 
         // Skip parenthesized expressions to find the underlying property access.
         // E.g., `++((M.x))` should detect that `M.x` is readonly.
         let target_idx = self.ctx.arena.skip_parenthesized(target_idx);
         let Some(target_node) = self.ctx.arena.get(target_idx) else {
-            return false;
+            return ReadonlyAssignmentDiagnostic::None;
         };
 
         match target_node.kind {
@@ -310,7 +367,7 @@ impl<'a> CheckerState<'a> {
                         || object_type == TypeId::UNKNOWN
                         || object_type == TypeId::ERROR
                     {
-                        return false;
+                        return ReadonlyAssignmentDiagnostic::None;
                     }
 
                     let index_type = self.get_type_of_node(access.name_or_argument);
@@ -327,42 +384,26 @@ impl<'a> CheckerState<'a> {
                         // Exception: readonly tuple fixed elements (e.g., v[0] on
                         // `readonly [number, number, ...number[]]`) are named properties
                         // even though resolve_array_property reports from_index_signature.
-                        use crate::query_boundaries::common::PropertyAccessResult;
-                        use crate::query_boundaries::common::is_readonly_tuple_fixed_element;
-                        let from_idx_sig = if name == "index signature" {
-                            true
-                        } else if is_readonly_tuple_fixed_element(
-                            self.ctx.types,
-                            object_type,
-                            &name,
-                        ) {
-                            false
-                        } else {
-                            matches!(
-                                self.resolve_property_access_with_env(object_type, &name),
-                                PropertyAccessResult::Success {
-                                    from_index_signature: true,
-                                    ..
-                                }
-                            )
-                        };
+                        let from_idx_sig =
+                            self.readonly_element_access_from_index_signature(object_type, &name);
                         if from_idx_sig {
                             // tsc anchors TS2542 at the full element access expression
                             self.error_readonly_index_signature_at(object_type, target_idx);
+                            return ReadonlyAssignmentDiagnostic::IndexSignature;
                         } else {
                             // tsc anchors TS2540 at the argument expression inside
                             // the brackets (e.g., the `0` in `v[0]`), not the full
                             // element access expression.
                             self.error_readonly_property_at(&name, access.name_or_argument);
+                            return ReadonlyAssignmentDiagnostic::NamedProperty;
                         }
-                        return true;
                     }
                     // Check for mapped types with explicit readonly modifier (e.g., Readonly<T>).
                     // This handles Application types like Readonly<T> where T is generic,
                     // which require TypeEnvironment evaluation to resolve the base type alias.
                     if self.is_readonly_mapped_type(object_type) {
                         self.error_readonly_index_signature_at(object_type, target_idx);
-                        return true;
+                        return ReadonlyAssignmentDiagnostic::IndexSignature;
                     }
                     // Check AST-level interface readonly for element access (obj["x"])
                     if let Some(name) = self.get_literal_string_from_node(access.name_or_argument) {
@@ -371,12 +412,12 @@ impl<'a> CheckerState<'a> {
                             && self.is_interface_property_readonly(&type_name, &name)
                         {
                             self.error_readonly_property_at(&name, access.name_or_argument);
-                            return true;
+                            return ReadonlyAssignmentDiagnostic::NamedProperty;
                         }
                         // Also check namespace const exports via element access (M["x"])
                         if self.is_namespace_const_property(access.expression, &name) {
                             self.error_readonly_property_at(&name, access.name_or_argument);
-                            return true;
+                            return ReadonlyAssignmentDiagnostic::NamedProperty;
                         }
                     }
 
@@ -387,21 +428,21 @@ impl<'a> CheckerState<'a> {
                     // (not a specific literal that would resolve to a named property).
                     if self.is_generic_indexed_write(object_type, index_type) {
                         self.error_generic_only_indexed_for_reading(object_type, target_idx);
-                        return true;
+                        return ReadonlyAssignmentDiagnostic::IndexSignature;
                     }
                 }
-                return false;
+                return ReadonlyAssignmentDiagnostic::None;
             }
-            _ => return false,
+            _ => return ReadonlyAssignmentDiagnostic::None,
         }
 
         let Some(access) = self.ctx.arena.get_access_expr(target_node) else {
-            return false;
+            return ReadonlyAssignmentDiagnostic::None;
         };
 
         // Get the property name
         let Some(name_node) = self.ctx.arena.get(access.name_or_argument) else {
-            return false;
+            return ReadonlyAssignmentDiagnostic::None;
         };
 
         // Check if this is a private identifier (method or field)
@@ -410,39 +451,52 @@ impl<'a> CheckerState<'a> {
             let prop_name = if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
                 ident.escaped_text.clone()
             } else {
-                return false;
+                return ReadonlyAssignmentDiagnostic::None;
             };
 
             // Check if this private identifier is a method (not a field)
             // by resolving the symbol and checking if any declaration is a method
             let (symbols, _) = self.resolve_private_identifier_symbols(access.name_or_argument);
             if !symbols.is_empty() {
-                let is_method = symbols.iter().any(|&sym_id| {
+                let mut is_method = false;
+                let mut has_get_accessor = false;
+                let mut has_set_accessor = false;
+
+                for &sym_id in &symbols {
                     if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                        symbol.declarations.iter().any(|&decl_idx| {
+                        has_get_accessor |=
+                            symbol.flags & tsz_binder::symbol_flags::GET_ACCESSOR != 0;
+                        has_set_accessor |=
+                            symbol.flags & tsz_binder::symbol_flags::SET_ACCESSOR != 0;
+
+                        for &decl_idx in &symbol.declarations {
                             if let Some(node) = self.ctx.arena.get(decl_idx) {
-                                return node.kind == syntax_kind_ext::METHOD_DECLARATION;
+                                is_method |= node.kind == syntax_kind_ext::METHOD_DECLARATION;
+                                has_get_accessor |= node.kind == syntax_kind_ext::GET_ACCESSOR;
+                                has_set_accessor |= node.kind == syntax_kind_ext::SET_ACCESSOR;
                             }
-                            false
-                        })
-                    } else {
-                        false
+                        }
                     }
-                });
+                }
 
                 if is_method {
                     self.error_private_method_not_writable(&prop_name, access.name_or_argument);
-                    // Return false (not true) so that the caller does NOT suppress the
-                    // assignability check. TSC emits both TS2803 (private method not
-                    // writable) AND TS2322 (type mismatch) for private method assignments.
-                    // Returning true would cause suppress_for_readonly to skip TS2322.
-                    return false;
+                    // Report None so the surrounding assignability check is NOT
+                    // suppressed: tsc emits both TS2803 (private method not
+                    // writable) and TS2322 (type mismatch) for assignments to
+                    // private methods.
+                    return ReadonlyAssignmentDiagnostic::None;
+                }
+
+                if has_get_accessor && !has_set_accessor {
+                    self.error_readonly_property_at(&prop_name, access.name_or_argument);
+                    return ReadonlyAssignmentDiagnostic::NamedProperty;
                 }
             }
         }
 
         let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
-            return false;
+            return ReadonlyAssignmentDiagnostic::None;
         };
 
         let prop_name = ident.escaped_text.clone();
@@ -452,7 +506,7 @@ impl<'a> CheckerState<'a> {
         // can't discover this. TSC treats it as `readonly globalThis: typeof globalThis`.
         if prop_name == "globalThis" && self.is_global_this_expression(access.expression) {
             self.error_readonly_property_at(&prop_name, access.name_or_argument);
-            return true;
+            return ReadonlyAssignmentDiagnostic::NamedProperty;
         }
 
         // Check if the property is an enum member (TS2540) BEFORE property existence check.
@@ -460,12 +514,13 @@ impl<'a> CheckerState<'a> {
         // they are resolved through the binder's enum symbol, not the type system.
         if self.is_enum_member_property(access.expression, &prop_name) {
             self.error_readonly_property_at(&prop_name, access.name_or_argument);
-            return true;
+            return ReadonlyAssignmentDiagnostic::NamedProperty;
         }
 
         // Get the type of the object being accessed and normalize it through
         // solver-backed evaluation before property/read-only checks.
-        let obj_type = self.get_type_of_node(access.expression);
+        let obj_type =
+            self.get_readonly_assignment_receiver_type(target_idx, access.expression, &prop_name);
         let mut readonly_check_type = self.evaluate_type_for_assignability(obj_type);
         // If evaluation produced a deferred Mapped type (e.g., from Omit/Pick),
         // resolve it through the checker's TypeEnvironment to get concrete
@@ -476,7 +531,7 @@ impl<'a> CheckerState<'a> {
         // with TS2307), skip readonly checks entirely. TSC doesn't emit TS2540 for
         // properties on `any`-typed values.
         if readonly_check_type == TypeId::ANY || readonly_check_type == TypeId::ERROR {
-            return false;
+            return ReadonlyAssignmentDiagnostic::None;
         }
 
         // Check if the property is a const export from a namespace/module (TS2540).
@@ -484,7 +539,7 @@ impl<'a> CheckerState<'a> {
         // Check before property existence, similar to enum members.
         if self.is_namespace_const_property(access.expression, &prop_name) {
             self.error_readonly_property_at(&prop_name, access.name_or_argument);
-            return true;
+            return ReadonlyAssignmentDiagnostic::NamedProperty;
         }
 
         // P1 fix: First check if the property exists on the type.
@@ -505,14 +560,14 @@ impl<'a> CheckerState<'a> {
         if !property_exists {
             // Property doesn't exist on this type - skip readonly check
             // The property existence error (TS2339) is reported elsewhere
-            return false;
+            return ReadonlyAssignmentDiagnostic::None;
         }
 
         // Namespace imports (`import * as ns`) are immutable views of module exports.
         // Any assignment to an existing property should report TS2540.
         if self.is_namespace_import_binding(access.expression) {
             self.error_readonly_property_at(&prop_name, access.name_or_argument);
-            return true;
+            return ReadonlyAssignmentDiagnostic::NamedProperty;
         }
 
         // For mapped types (e.g., Pick, Omit), check readonly through the
@@ -523,15 +578,16 @@ impl<'a> CheckerState<'a> {
             && self.is_mapped_type_property_readonly(readonly_check_type, &prop_name)
         {
             if self.is_readonly_assignment_allowed_in_constructor(&prop_name, access.expression) {
-                return false;
+                return ReadonlyAssignmentDiagnostic::None;
             }
             if prop_from_index_sig {
                 // tsc anchors TS2542 at the full property access expression, not the name
                 self.error_readonly_index_signature_at(readonly_check_type, target_idx);
+                return ReadonlyAssignmentDiagnostic::IndexSignature;
             } else {
                 self.error_readonly_property_at(&prop_name, access.name_or_argument);
+                return ReadonlyAssignmentDiagnostic::NamedProperty;
             }
-            return true;
         }
 
         // Check if the property is readonly in the object type (solver types)
@@ -539,17 +595,18 @@ impl<'a> CheckerState<'a> {
             // Special case: readonly properties can be assigned in constructors
             // if the property is declared in the current class (not inherited)
             if self.is_readonly_assignment_allowed_in_constructor(&prop_name, access.expression) {
-                return false;
+                return ReadonlyAssignmentDiagnostic::None;
             }
 
             // TS2542: use specific diagnostic for readonly index signatures
             if prop_from_index_sig {
                 // tsc anchors TS2542 at the full property access expression, not the name
                 self.error_readonly_index_signature_at(readonly_check_type, target_idx);
+                return ReadonlyAssignmentDiagnostic::IndexSignature;
             } else {
                 self.error_readonly_property_at(&prop_name, access.name_or_argument);
+                return ReadonlyAssignmentDiagnostic::NamedProperty;
             }
-            return true;
         }
 
         // Also check AST-level readonly on class properties
@@ -560,11 +617,11 @@ impl<'a> CheckerState<'a> {
             // Special case: readonly properties can be assigned in constructors
             // if the property is declared in the current class (not inherited)
             if self.is_readonly_assignment_allowed_in_constructor(&prop_name, access.expression) {
-                return false;
+                return ReadonlyAssignmentDiagnostic::None;
             }
 
             self.error_readonly_property_at(&prop_name, access.name_or_argument);
-            return true;
+            return ReadonlyAssignmentDiagnostic::NamedProperty;
         }
 
         // Check AST-level readonly on interface properties
@@ -573,59 +630,91 @@ impl<'a> CheckerState<'a> {
             && self.is_interface_property_readonly(&type_name, &prop_name)
         {
             self.error_readonly_property_at(&prop_name, access.name_or_argument);
-            return true;
+            return ReadonlyAssignmentDiagnostic::NamedProperty;
         }
 
-        false
+        ReadonlyAssignmentDiagnostic::None
     }
 
-    /// Check if an element access on a generic type parameter would be an unsafe write.
+    fn get_readonly_assignment_receiver_type(
+        &mut self,
+        target_idx: NodeIndex,
+        receiver_idx: NodeIndex,
+        prop_name: &str,
+    ) -> TypeId {
+        let receiver_no_flow_type =
+            self.get_type_of_node_with_request(receiver_idx, &TypingRequest::for_write_context());
+        let (receiver_type, _) = self.write_receiver_type_for_property_access(
+            target_idx,
+            receiver_idx,
+            Some(prop_name),
+            receiver_no_flow_type,
+            false,
+        );
+        receiver_type
+    }
+
+    /// Check if an element access on a generic type would be an unsafe write.
     ///
-    /// Returns `true` when the object type is generic and the index type is a broad
-    /// primitive key space (`string`, `number`, `symbol`, or a union of them), and
-    /// the write would flow through an index-signature-like path. In this case,
-    /// TS2862 should be emitted.
+    /// Returns `true` when the receiver's key space is genuinely generic — i.e.
+    /// the write through `obj[k]` cannot be statically checked against a
+    /// concretely declared index signature value type — so TS2862 should fire.
     ///
     /// Does NOT fire when:
     /// - The index is a specific literal (`"x"`, `1`) — resolves to a named property
     /// - The index is `keyof T` — constrains to the receiver's own key space
     /// - The index is `K extends keyof T` — a type parameter constrained to keyof
     /// - The constraint has no index signature (e.g., `{ a: string, b: number }`)
+    /// - The receiver has a *concretely declared* index signature (class body,
+    ///   interface body, or a mapped type whose key constraint is non-generic
+    ///   like `Record<string, T>`): the write flows through ordinary
+    ///   assignability and TS2322 catches any real mismatch.
     pub(crate) fn is_generic_indexed_write(
         &mut self,
         object_type: TypeId,
         index_type: TypeId,
     ) -> bool {
         use crate::query_boundaries::common as common_query;
-        use crate::query_boundaries::common::{IndexKind, IndexSignatureResolver};
 
         // Broad primitive keys definitely go through an index-signature-like path.
         if !self.is_broad_index_type(index_type) {
             return false;
         }
 
-        // Object must be a type parameter (e.g., T in `function f<T extends ...>(target: T)`)
-        if !crate::query_boundaries::state::checking::is_type_parameter(self.ctx.types, object_type)
+        let object_is_type_parameter = crate::query_boundaries::state::checking::is_type_parameter(
+            self.ctx.types,
+            object_type,
+        );
+        if !object_is_type_parameter
+            && !common_query::contains_type_parameters(self.ctx.types, object_type)
         {
-            if !common_query::contains_type_parameters(self.ctx.types, object_type) {
-                return false;
-            }
+            return false;
+        }
 
-            let evaluated_object = self.evaluate_type_with_env(object_type);
-            let resolver = IndexSignatureResolver::new(self.ctx.types);
+        // Mutable arrays and tuples are writable through numeric indexes even
+        // when their element type is generic. TS2862 is for broad writes through
+        // generic object/index-signature shapes, not Array<T>'s number index.
+        if self.is_mutable_array_like_indexed_write_target(object_type) {
+            return false;
+        }
 
-            if common_query::is_generic_mapped_type(self.ctx.types, evaluated_object)
-                || common_query::is_mapped_type(self.ctx.types, evaluated_object)
-            {
+        // Receiver is a non-type-parameter that contains free type parameters
+        // (e.g. `Dict<T>`, `Record<keyof Shape, V>`, an interface with a
+        // declared index signature, etc.). tsc emits TS2862 here only when
+        // the receiver's *key space* is genuinely deferred — i.e. the receiver
+        // is, or instantiates to, a generic mapped type whose key constraint
+        // contains a free type parameter (e.g. `{ [K in keyof T]: ... }`,
+        // `Record<keyof T, V>`).
+        //
+        // Concretely declared index signatures (class instance types,
+        // interfaces, `Record<string, V>`, etc.) reduce to `ObjectWithIndex`
+        // with a known string/number key — writes through them go through
+        // ordinary assignability and TS2322 reports any real mismatch.
+        if !object_is_type_parameter {
+            if common_query::is_generic_mapped_application(self.ctx.types, &self.ctx, object_type) {
                 return true;
             }
-
-            return if index_type == TypeId::STRING {
-                resolver.has_index_signature(evaluated_object, IndexKind::String)
-            } else {
-                resolver.has_index_signature(evaluated_object, IndexKind::String)
-                    || resolver.has_index_signature(evaluated_object, IndexKind::Number)
-            };
+            return common_query::is_generic_mapped_type(self.ctx.types, object_type);
         }
 
         // When the object IS a type parameter T, the index must reference a foreign
@@ -638,6 +727,24 @@ impl<'a> CheckerState<'a> {
         }
 
         self.constraint_has_index_signature(object_type, index_type)
+    }
+
+    fn is_mutable_array_like_indexed_write_target(&mut self, type_id: TypeId) -> bool {
+        if self.is_mutable_array_like_type(type_id) {
+            return true;
+        }
+
+        let evaluated = self.evaluate_type_with_env(type_id);
+        evaluated != type_id && self.is_mutable_array_like_type(evaluated)
+    }
+
+    fn is_mutable_array_like_type(&self, type_id: TypeId) -> bool {
+        use crate::query_boundaries::checkers::generic::{ArrayLikeKind, classify_array_like};
+
+        matches!(
+            classify_array_like(self.ctx.types, type_id),
+            ArrayLikeKind::Array(_) | ArrayLikeKind::Tuple
+        )
     }
 
     /// Returns true when the index references the receiver's own key space.
@@ -1110,6 +1217,57 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .types
             .is_readonly_index_signature(type_id, wants_string, wants_number)
+    }
+
+    pub(crate) fn readonly_assignment_suppresses_type_mismatch(
+        &mut self,
+        target_idx: NodeIndex,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let target_idx = self.ctx.arena.skip_parenthesized(target_idx);
+        let Some(target_node) = self.ctx.arena.get(target_idx) else {
+            return false;
+        };
+
+        if target_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+            return true;
+        }
+
+        let Some(access) = self.ctx.arena.get_access_expr(target_node) else {
+            return false;
+        };
+        let object_type = self.get_type_of_node(access.expression);
+        if object_type == TypeId::ANY
+            || object_type == TypeId::UNKNOWN
+            || object_type == TypeId::ERROR
+        {
+            return false;
+        }
+
+        let index_type = self.get_type_of_node(access.name_or_argument);
+        if let Some(name) =
+            self.get_readonly_element_access_name(object_type, access.name_or_argument, index_type)
+        {
+            return !self.readonly_element_access_from_index_signature(object_type, &name);
+        }
+
+        if self.is_readonly_mapped_type(object_type) {
+            return false;
+        }
+
+        if let Some(name) = self.get_literal_string_from_node(access.name_or_argument) {
+            if let Some(type_name) = self.get_declared_type_name_from_expression(access.expression)
+                && self.is_interface_property_readonly(&type_name, &name)
+            {
+                return true;
+            }
+            if self.is_namespace_const_property(access.expression, &name) {
+                return true;
+            }
+        }
+
+        false
     }
 
     pub(crate) fn get_readonly_element_access_name(

@@ -12,12 +12,16 @@
 //!
 //! Conformance test: `numericStringLiteralTypes.ts`.
 
+use std::sync::Arc;
+
 use tsz_binder::BinderState;
-use tsz_checker::context::CheckerOptions;
+use tsz_binder::lib_loader::LibFile;
+use tsz_checker::context::{CheckerOptions, LibContext};
 use tsz_checker::state::CheckerState;
-use tsz_common::common::ScriptTarget;
+use tsz_checker::test_utils::load_lib_files;
+use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn compile_and_get_diagnostic_codes(source: &str) -> Vec<u32> {
     compile_and_get_diagnostic_codes_with_options(source, CheckerOptions::default())
@@ -79,6 +83,106 @@ fn compile_and_get_diagnostic_messages_with_options(
         .into_iter()
         .map(|d| (d.code, d.message_text))
         .collect()
+}
+
+fn check_multi_file_with_libs(
+    files: &[(&str, &str)],
+    entry_file: &str,
+    options: CheckerOptions,
+    lib_files: &[Arc<LibFile>],
+) -> Vec<tsz_checker::diagnostics::Diagnostic> {
+    let mut arenas = Vec::with_capacity(files.len());
+    let mut binders = Vec::with_capacity(files.len());
+    let mut roots = Vec::with_capacity(files.len());
+    let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
+
+    for (name, source) in files {
+        let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file_with_libs(parser.get_arena(), root, lib_files);
+        arenas.push(Arc::new(parser.get_arena().clone()));
+        binders.push(Arc::new(binder));
+        roots.push(root);
+    }
+
+    let entry_idx = file_names
+        .iter()
+        .position(|name| name == entry_file)
+        .unwrap_or_else(|| panic!("entry_file {entry_file:?} not found in files"));
+    let (resolved_module_paths, resolved_modules) =
+        tsz_checker::module_resolution::build_module_resolution_maps(&file_names);
+
+    let all_arenas = Arc::new(arenas);
+    let all_binders = Arc::new(binders);
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        all_arenas[entry_idx].as_ref(),
+        all_binders[entry_idx].as_ref(),
+        &types,
+        file_names[entry_idx].clone(),
+        options,
+    );
+    checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+    checker.ctx.set_all_binders(Arc::clone(&all_binders));
+    checker.ctx.set_current_file_idx(entry_idx);
+    let lib_contexts: Vec<LibContext> = lib_files
+        .iter()
+        .map(|lib| LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    checker.ctx.set_lib_contexts(lib_contexts);
+    checker.ctx.set_actual_lib_file_count(lib_files.len());
+    checker
+        .ctx
+        .set_resolved_module_paths(Arc::new(resolved_module_paths));
+    checker.ctx.set_resolved_modules(resolved_modules);
+
+    checker.check_source_file(roots[entry_idx]);
+    checker.ctx.diagnostics.clone()
+}
+
+#[test]
+fn imported_const_array_item_type_satisfies_record_key_constraint() {
+    let libs = load_lib_files(&["es5.d.ts"]);
+    let diags = check_multi_file_with_libs(
+        &[
+            (
+                "./src/util/type-utils.ts",
+                "export type ArrayItemType<T> = T extends ReadonlyArray<infer I> ? I : never;",
+            ),
+            (
+                "./src/util/object-utils.ts",
+                "export declare function freeze<T>(obj: T): Readonly<T>;",
+            ),
+            (
+                "./src/util/log.ts",
+                r#"
+import { freeze } from './object-utils';
+import type { ArrayItemType } from './type-utils';
+
+const logLevels = ['query', 'error'] as const;
+export const LOG_LEVELS: Readonly<typeof logLevels> = freeze(logLevels);
+export type LogLevel = ArrayItemType<typeof LOG_LEVELS>;
+type Levels = Record<LogLevel, boolean>;
+"#,
+            ),
+        ],
+        "./src/util/log.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+
+    assert!(
+        !diags.iter().any(|diag| diag.code == 2344),
+        "ArrayItemType<typeof LOG_LEVELS> should satisfy Record's key constraint; got: {diags:#?}"
+    );
 }
 
 /// Mapped key K iterating `keyof T` (T a free type parameter constrained
@@ -148,6 +252,109 @@ copyValue;
     assert!(
         diagnostics.is_empty(),
         "expected no diagnostics for user-authored __unique_1 string key, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_computed_unique_prefix_property_stays_string_key() {
+    let diagnostics = compile_and_get_diagnostic_messages_with_options(
+        r#"
+export {};
+
+const propKey = "__unique_1" as const;
+const methodKey = "__unique_2" as const;
+const accessorKey = "__unique_3" as const;
+
+interface Source {
+  [propKey]: number;
+  [methodKey](): string;
+  get [accessorKey](): boolean;
+}
+
+type Assert<T extends true> = T;
+type Keys = keyof Source;
+type KeyCheck =
+  Keys extends "__unique_1" | "__unique_2" | "__unique_3"
+    ? ("__unique_1" | "__unique_2" | "__unique_3") extends Keys
+      ? true
+      : false
+    : false;
+type _Proof = Assert<KeyCheck>;
+
+declare const src: Source;
+const n: number = src[propKey];
+const s: string = src[methodKey]();
+const b: boolean = src[accessorKey];
+
+n;
+s;
+b;
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2022,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics for computed __unique_* string keys, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_mapped_literal_unique_prefix_keys_stay_string_keys() {
+    let diagnostics = compile_and_get_diagnostic_codes_with_options(
+        r#"
+export {};
+
+type Keys = "__unique_1" | "ordinary";
+type Box = { [K in Keys]: K };
+type Read<K extends keyof Box> = Box[K];
+
+type K = keyof Box;
+type Assert<T extends true> = T;
+type KeyCheck =
+  K extends "__unique_1" | "ordinary"
+    ? ("__unique_1" | "ordinary") extends K
+      ? true
+      : false
+    : false;
+type _Proof = Assert<KeyCheck>;
+
+const value: Read<"__unique_1"> = "__unique_1";
+value;
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2022,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "mapped literal __unique_* keys should remain string keys, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_type_literal_keyof_with_index_signature_uses_solver_key_space() {
+    let diagnostics = compile_and_get_diagnostic_codes(
+        r#"
+type Source = {
+  [key: string]: number;
+  0: number;
+};
+
+type Read<K extends keyof Source> = Source[K];
+type Hit = Read<string>;
+"#,
+    );
+    assert!(
+        !diagnostics.contains(&2536),
+        "index-signature key space should satisfy indexed access, got: {diagnostics:?}"
     );
 }
 
@@ -316,5 +523,32 @@ declare function pickFrom<T, K extends string | number>(
     assert!(
         !diagnostics.contains(&2344),
         "expected no TS2344 — `string | number` base satisfies the constraint without needing SYMBOL membership, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_mapped_symbol_keys_satisfy_pick_keyof_constraint() {
+    let diagnostics = compile_and_get_diagnostic_codes(
+        r#"
+declare const sym1: unique symbol;
+
+type SymbolKeys<T> = {
+  [K in keyof T]: K extends symbol ? K : never;
+}[keyof T];
+
+type Pick<T, K extends keyof T> = { [P in K]: T[P] };
+type OnlySymbolKeys<T> = Pick<T, SymbolKeys<T>>;
+
+interface Example {
+  [sym1]: number;
+  name: string;
+}
+
+type Result = OnlySymbolKeys<Example>;
+"#,
+    );
+    assert!(
+        !diagnostics.contains(&2344),
+        "expected no TS2344 for mapped symbol key extraction satisfying Pick's keyof constraint, got: {diagnostics:?}"
     );
 }

@@ -28,7 +28,7 @@ fn check_ts(source: &str) -> Vec<u32> {
     let mut binder = tsz_binder::BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let mut checker = tsz_checker::state::CheckerState::new(
         parser.get_arena(),
         &binder,

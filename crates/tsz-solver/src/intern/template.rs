@@ -179,7 +179,7 @@ impl TypeInterner {
         match self.lookup(type_id) {
             Some(TypeData::Union(list_id)) => {
                 let members = self.type_list(list_id);
-                let mut values = Vec::new();
+                let mut values = Vec::with_capacity(members.len());
                 for member in members.iter() {
                     // RECURSIVE CALL: Handle boolean-in-union and nested unions correctly
                     let member_values = self.get_string_literal_values(*member)?;
@@ -213,7 +213,7 @@ impl TypeInterner {
     /// For example: `prefix-${"a" | "b"}-suffix` -> "prefix-a-suffix" | "prefix-b-suffix"
     fn expand_template_literal_to_union(&self, spans: &[TemplateSpan]) -> TypeId {
         // Collect text parts and interpolation alternatives
-        let mut parts: Vec<Vec<String>> = Vec::new();
+        let mut parts: Vec<Vec<String>> = Vec::with_capacity(spans.len());
 
         for span in spans {
             match span {
@@ -354,22 +354,42 @@ impl TypeInterner {
                         _ => {}
                     }
 
-                    // Task #47: Remove empty string literals from interpolations
-                    // An empty string literal contributes nothing to the template
-                    if let Some(TypeData::Literal(LiteralValue::String(s))) = self.lookup(*type_id)
-                    {
-                        let s = self.resolve_atom_ref(s);
-                        if s.is_empty() {
-                            // Skip this empty string literal
-                            // Flush pending text first
-                            if let Some(text) = pending_text.take()
-                                && !text.is_empty()
-                            {
-                                normalized.push(TemplateSpan::Text(self.intern_string(&text)));
+                    // Collapse concrete literal type spans to fixed text so
+                    // `${infer L}${"-"}${infer R}` stores Text("-") not Type("-"),
+                    // enabling find/rfind separator search in infer matching.
+                    // BigInt stays as Type; evaluation handles it there.
+                    if let Some(TypeData::Literal(lit)) = self.lookup(*type_id) {
+                        let text_value: Option<String> = match lit {
+                            LiteralValue::String(atom) => {
+                                let s = self.resolve_atom_ref(atom);
+                                (!s.is_empty()).then(|| s.to_string())
                             }
-                            // Don't add the empty type span - continue to next span
-                            continue;
+                            LiteralValue::Number(n) => Some(format!("{}", n.0)),
+                            LiteralValue::Boolean(b) => Some(b.to_string()),
+                            LiteralValue::BigInt(_) => {
+                                if let Some(text) = pending_text.take()
+                                    && !text.is_empty()
+                                {
+                                    normalized.push(TemplateSpan::Text(self.intern_string(&text)));
+                                }
+                                normalized.push(TemplateSpan::Type(*type_id));
+                                continue;
+                            }
+                        };
+                        if let Some(text_value) = text_value {
+                            if let Some(ref mut pt) = pending_text {
+                                pt.push_str(&text_value);
+                                has_consecutive_texts = true;
+                            } else {
+                                pending_text = Some(text_value);
+                            }
+                        } else if let Some(text) = pending_text.take()
+                            && !text.is_empty()
+                        {
+                            normalized.push(TemplateSpan::Text(self.intern_string(&text)));
                         }
+                        changed = true;
+                        continue;
                     }
 
                     // Flush any pending text before adding a type span

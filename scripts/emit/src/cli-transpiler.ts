@@ -276,6 +276,7 @@ export class CliTranspiler {
       expectedDtsFileName?: string;
       expectedJsContent?: string | null;
       expectedDtsContent?: string | null;
+      noDtsEmitExpected?: boolean;
       lib?: string[];
     } = {}
   ): Promise<TranspileResult> {
@@ -320,6 +321,7 @@ export class CliTranspiler {
       expectedDtsFileName,
       expectedJsContent,
       expectedDtsContent,
+      noDtsEmitExpected = false,
       lib,
     } = options;
     const testName = `test_${this.counter++}`;
@@ -544,13 +546,21 @@ export class CliTranspiler {
         if (noEmitOnError && !hasJsOutput && !hasDtsOutput) {
           return { js: '', dts: declaration ? '' : null };
         }
+        if (declaration && (noDtsEmitExpected || expectedDtsContent === null) && !hasDtsOutput) {
+          // Some declaration baselines have no .d.ts output because declaration
+          // serialization itself failed (for example TS6232), without an
+          // explicit @noEmitOnError directive. Keep any JS output and let the
+          // runner verify that no DTS content was produced.
+        }
 
         // Declaration mode can fail on unresolved imports in isolated baseline snippets.
         // Retry with noCheck/noLib to still exercise declaration printer paths.
         const shouldRetryDeclarationFastPath =
           declaration &&
           (errorMsg.includes('TS2307') || errorMsg.includes('TS2304'));
-        if (declaration && hasDtsOutput) {
+        if (declaration && (noDtsEmitExpected || expectedDtsContent === null) && !hasDtsOutput) {
+          // handled above
+        } else if (declaration && hasDtsOutput) {
           // Keep the checked declaration output when the compile already emitted it.
           // Retrying with --noCheck discards semantic type information and can turn
           // otherwise-correct `.d.ts` output into `any`.

@@ -12,17 +12,17 @@
 
 use std::sync::Arc;
 
-use crate::AssignabilityChecker;
-use crate::TypeDatabase;
 use crate::caches::db::QueryDatabase;
+use crate::construction::TypeDatabase;
 use crate::def::DefId;
 use crate::diagnostics::{DynSubtypeTracer, SubtypeFailureReason};
 use crate::objects::{PropertyCollectionResult, collect_properties};
+use crate::operations::AssignabilityChecker;
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{
-    IntrinsicKind, LiteralValue, ObjectFlags, ObjectShape, SymbolRef, TemplateSpan, TypeData,
-    TypeId, TypeListId,
+    IntrinsicKind, LiteralValue, ObjectFlags, ObjectShape, PropertyInfo, SymbolRef, TemplateSpan,
+    TypeData, TypeId, TypeListId,
 };
 use crate::visitor::{
     TypeVisitor, application_id, array_element_type, callable_shape_id, conditional_type_id,
@@ -165,6 +165,15 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// Whether optional properties are exact (exclude implicit `undefined`).
     /// Default: false (legacy TS behavior).
     pub exact_optional_property_types: bool,
+    /// Strict identity mode for the readonly modifier. When true, two
+    /// otherwise-structurally-equal types whose readonly state differs are
+    /// treated as non-related. This is asymmetric to ordinary assignability,
+    /// which is permissive about readonly. Toggled inside the bidirectional
+    /// identity check used by conditional `extends` clause comparison
+    /// (the `IfEquals` pattern), where `{ readonly x: T }` and `{ x: T }` must
+    /// be observably distinct.
+    /// Default: false.
+    pub strict_readonly_identity: bool,
     /// Whether null/undefined are treated as separate types.
     /// Default: true (strict null checks).
     pub strict_null_checks: bool,
@@ -280,6 +289,25 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     pub(crate) type_param_equivalences: Vec<(TypeId, TypeId)>,
 }
 
+/// Operation-local cache statistics for [`SubtypeChecker`].
+///
+/// Owner: one subtype-checking request family. The evaluation memo is dropped
+/// with the checker or cleared by [`SubtypeChecker::reset`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SubtypeCheckerCacheStatistics {
+    /// Entries in the evaluation memo keyed by input `TypeId` and evaluation mode.
+    pub eval_entries: usize,
+    estimated_size_bytes: usize,
+}
+
+impl SubtypeCheckerCacheStatistics {
+    /// Estimated heap bytes owned by subtype checker memo tables.
+    #[must_use]
+    pub const fn estimated_size_bytes(self) -> usize {
+        self.estimated_size_bytes
+    }
+}
+
 impl<'a> SubtypeChecker<'a, NoopResolver> {
     /// Create a new `SubtypeChecker` without a resolver (basic mode).
     pub fn new(interner: &'a dyn TypeDatabase) -> Self {
@@ -300,6 +328,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             allow_bivariant_rest: false,
             allow_bivariant_param_count: false,
             exact_optional_property_types: false,
+            strict_readonly_identity: false,
             strict_null_checks: true,
             no_unchecked_indexed_access: false,
             disable_method_bivariance: false,
@@ -347,6 +376,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             allow_bivariant_rest: false,
             allow_bivariant_param_count: false,
             exact_optional_property_types: false,
+            strict_readonly_identity: false,
             strict_null_checks: true,
             no_unchecked_indexed_access: false,
             disable_method_bivariance: false,
@@ -484,9 +514,33 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.eval_cache.clear();
     }
 
-    /// Whether the recursion depth was exceeded during subtype checking.
+    /// Return entry and size accounting for this checker's operation-local caches.
+    #[must_use]
+    pub fn cache_statistics(&self) -> SubtypeCheckerCacheStatistics {
+        let eval_entries = self.eval_cache.len();
+        let estimated_size_bytes =
+            eval_entries.saturating_mul(std::mem::size_of::<((TypeId, bool), TypeId)>());
+        SubtypeCheckerCacheStatistics {
+            eval_entries,
+            estimated_size_bytes,
+        }
+    }
+
+    /// Whether any recursion limit (depth or iteration count) was exceeded.
+    ///
+    /// Use [`iteration_exceeded`] to distinguish complexity overflow (TS2859) from
+    /// stack-depth overflow (TS2321).
     pub const fn depth_exceeded(&self) -> bool {
         self.guard.is_exceeded()
+    }
+
+    /// Whether the iteration (relation-count) budget was exhausted.
+    ///
+    /// When true the caller should emit TS2859 "Excessive complexity comparing
+    /// types". When false but [`depth_exceeded`] is true, the stack depth was
+    /// exceeded and the caller should emit TS2321 "Excessive stack depth".
+    pub const fn iteration_exceeded(&self) -> bool {
+        self.guard.iteration_exceeded()
     }
 
     /// Run `f` with subtype flags configured for tsc's `isTypeIdenticalTo`
@@ -526,6 +580,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// - bit 5: `allow_void_return`
     /// - bit 6: `allow_bivariant_rest`
     /// - bit 7: `allow_bivariant_param_count`
+    /// - bit 15: `strict_readonly_identity`
     pub(crate) const fn apply_flags(mut self, flags: u16) -> Self {
         self.strict_null_checks = (flags & (1 << 0)) != 0;
         self.strict_function_types = (flags & (1 << 1)) != 0;
@@ -535,6 +590,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.allow_void_return = (flags & (1 << 5)) != 0;
         self.allow_bivariant_rest = (flags & (1 << 6)) != 0;
         self.allow_bivariant_param_count = (flags & (1 << 7)) != 0;
+        self.strict_readonly_identity = (flags & (1 << 15)) != 0;
         self.erase_generics = (flags & crate::RelationCacheKey::FLAG_NO_ERASE_GENERICS) == 0;
         self.allow_erased_generic_signature_retry =
             (flags & crate::RelationCacheKey::FLAG_ALLOW_ERASED_GENERIC_SIGNATURE_RETRY) != 0;
@@ -554,7 +610,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     pub(crate) fn bind_polymorphic_this(&self, receiver: TypeId, resolved: TypeId) -> TypeId {
         if crate::contains_this_type(self.interner, resolved) {
-            crate::substitute_this_type_cached(self.interner, self.query_db, resolved, receiver)
+            crate::instantiation::instantiate::substitute_this_type_cached(
+                self.interner,
+                self.query_db,
+                resolved,
+                receiver,
+            )
         } else {
             resolved
         }
@@ -680,6 +741,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         })
     }
 
+    fn array_source_satisfies_minimal_indexed_array_target(
+        &mut self,
+        source_elem: TypeId,
+        target_elem: TypeId,
+        target_props: &[PropertyInfo],
+    ) -> bool {
+        if !self.check_subtype(source_elem, target_elem).is_true() {
+            return false;
+        }
+
+        let length = self.interner.intern_string("length");
+        target_props.iter().all(|prop| {
+            prop.optional
+                || (prop.name == length
+                    && self.check_subtype(TypeId::NUMBER, prop.type_id).is_true())
+        })
+    }
+
     /// Inner subtype check (after cycle detection and type evaluation).
     ///
     /// Wrapped with `stacker::maybe_grow()` so that deeply recursive structural
@@ -691,9 +770,44 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         })
     }
 
+    pub(crate) fn readonly_application_or_display_alias_inner(
+        &self,
+        type_id: TypeId,
+    ) -> Option<TypeId> {
+        let app_id = application_id(self.interner, type_id).or_else(|| {
+            self.interner
+                .get_display_alias(type_id)
+                .and_then(|alias| application_id(self.interner, alias))
+        })?;
+        let app = self.interner.type_application(app_id);
+        let def_id = match self.interner.lookup(app.base) {
+            Some(TypeData::Lazy(def_id)) => Some(def_id),
+            Some(TypeData::TypeQuery(symbol_ref)) => {
+                let def_id = self.resolver.symbol_to_def_id(symbol_ref)?;
+                matches!(
+                    self.resolver.get_def_kind(def_id),
+                    Some(crate::def::DefKind::Interface | crate::def::DefKind::TypeAlias)
+                )
+                .then_some(def_id)
+            }
+            _ => None,
+        }?;
+        let name = self.resolver.get_def_name(def_id)?;
+        let inner = app.args.first().copied()?;
+        (self.interner.resolve_atom_ref(name).as_ref() == "Readonly").then_some(inner)
+    }
+
     /// Actual structural comparison -- separated so `stacker::maybe_grow` can wrap it.
     fn check_subtype_inner_impl(&mut self, source: TypeId, target: TypeId) -> SubtypeResult {
         // Types are already evaluated in check_subtype, so no need to re-evaluate here
+
+        if let Some(inner) = self.readonly_application_or_display_alias_inner(source)
+            && array_element_type(self.interner, target).is_none()
+            && tuple_list_id(self.interner, target).is_none()
+            && self.check_subtype(inner, target).is_true()
+        {
+            return SubtypeResult::True;
+        }
 
         // Without strictNullChecks, null/undefined are assignable to all types
         // including type parameters. Exception: `null` is not assignable to
@@ -956,6 +1070,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
 
             for &member in member_list.iter() {
+                if let Some(source_elem) = array_element_type(self.interner, source) {
+                    let evaluated_member = self.evaluate_type(member);
+                    if let Some(target_elem) = array_element_type(self.interner, evaluated_member)
+                        && self.check_subtype(source_elem, target_elem).is_true()
+                    {
+                        return SubtypeResult::True;
+                    }
+                }
                 if self.check_subtype(source, member).is_true() {
                     return SubtypeResult::True;
                 }
@@ -1131,6 +1253,32 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         .collect();
                     let reduced = self.interner.intersection(constraint_members);
                     if reduced != source && self.check_subtype(reduced, target).is_true() {
+                        return SubtypeResult::True;
+                    }
+                }
+            }
+
+            // Recursive array aliases can compare an array source whose element
+            // is the alias application against the alias body's union. The
+            // direct `source <: array-branch` check may fail before expanding
+            // that element alias, so compare the evaluated source element to
+            // each array branch's element type.
+            if let Some(source_elem) = array_element_type(self.interner, source).or_else(|| {
+                crate::type_queries::get_tuple_element_type_union(self.interner, source)
+            }) {
+                let source_elem_eval = self.evaluate_type(source_elem);
+                for &member in member_list.iter() {
+                    if let Some(target_elem) = array_element_type(self.interner, member)
+                        && (source_elem == target_elem
+                            || source_elem_eval == target_elem
+                            || (source_elem_eval != source_elem
+                                && self.check_subtype(source_elem_eval, target_elem).is_true())
+                            || self.recursive_array_alias_element_matches_array_interface(
+                                source_elem_eval,
+                                target_elem,
+                                target,
+                            ))
+                    {
                         return SubtypeResult::True;
                     }
                 }
@@ -1728,42 +1876,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let s_fn = self.interner.function_shape(s_fn_id);
             let t_fn = self.interner.function_shape(t_fn_id);
             return self.check_function_subtype(&s_fn, &t_fn);
-        }
-
-        // Function intrinsic as source against function/callable target:
-        // In tsc, `Function` is structurally `(...args: any[]) => any`, so
-        // `Function extends (...args: any) => any ? T : F` takes the true branch.
-        // NOTE: This only handles `TypeId::FUNCTION` (the intrinsic). The Object
-        // representation of the Function interface is handled in the conditional
-        // type evaluator's infer pattern matching, not in general subtype checking,
-        // because tsc distinguishes between conditional extends (true branch) and
-        // generic constraint satisfaction (TS2344 for Parameters<Function>).
-        if source == TypeId::FUNCTION {
-            if let Some(t_fn_id) = function_shape_id(self.interner, target) {
-                let t_fn = self.interner.function_shape(t_fn_id);
-                let function_shape = crate::types::FunctionShape {
-                    params: vec![crate::types::ParamInfo {
-                        name: None,
-                        type_id: TypeId::ANY,
-                        optional: false,
-                        rest: true,
-                    }],
-                    this_type: None,
-                    return_type: TypeId::ANY,
-                    type_params: Vec::new(),
-                    type_predicate: None,
-                    is_constructor: false,
-                    is_method: false,
-                };
-                return self.check_function_subtype(&function_shape, &t_fn);
-            }
-            if let Some(t_callable_id) = callable_shape_id(self.interner, target) {
-                let t_shape = self.interner.callable_shape(t_callable_id);
-                if !t_shape.call_signatures.is_empty() {
-                    // Function is callable, check against last call signature
-                    return SubtypeResult::True;
-                }
-            }
         }
 
         // Compatibility bridge: function-like values are assignable to interfaces
@@ -2431,6 +2543,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 {
                     return result;
                 }
+                if let Some(ref num_idx) = t_shape.number_index
+                    && let Some(elem) = array_element_type(self.interner, source).or_else(|| {
+                        crate::type_queries::get_tuple_element_type_union(self.interner, source)
+                    })
+                    && self.array_source_satisfies_minimal_indexed_array_target(
+                        elem,
+                        num_idx.value_type,
+                        &t_shape.properties,
+                    )
+                {
+                    return SubtypeResult::True;
+                }
                 // Trace: Array/tuple not compatible with indexed object with non-empty properties
                 if let Some(tracer) = &mut self.tracer
                     && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
@@ -2632,18 +2756,6 @@ pub fn is_subtype_of_with_db(db: &dyn QueryDatabase, source: TypeId, target: Typ
     checker.is_subtype_of(source, target)
 }
 
-/// Convenience function for one-off subtype checks with compiler flags.
-/// The flags are a packed u16 bitmask matching RelationCacheKey.flags.
-pub fn is_subtype_of_with_flags(
-    interner: &dyn TypeDatabase,
-    source: TypeId,
-    target: TypeId,
-    flags: u16,
-) -> bool {
-    let mut checker = SubtypeChecker::new(interner).apply_flags(flags);
-    checker.is_subtype_of(source, target)
-}
-
 // Re-enabled subtype tests - verifying API compatibility
 #[cfg(test)]
 #[path = "../../../tests/subtype_tests.rs"]
@@ -2682,9 +2794,13 @@ mod overlap_tests;
 mod intersection_optional_subtype_tests;
 
 #[cfg(test)]
+#[path = "../../../tests/intrinsic_object_tests.rs"]
+mod intrinsic_object_tests;
+
+#[cfg(test)]
 mod with_identity_check_mode_tests {
     use super::*;
-    use crate::TypeInterner;
+    use crate::construction::TypeInterner;
 
     #[test]
     fn restores_flags_after_closure() {

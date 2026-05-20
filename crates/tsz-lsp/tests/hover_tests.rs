@@ -4,9 +4,13 @@ use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_binder::lib_loader::LibFile;
 use tsz_checker::context::LibContext;
+use tsz_checker::state::CheckerState;
 use tsz_common::position::LineMap;
+use tsz_parser::NodeIndex;
 use tsz_parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_parser::parser::node::NodeAccess;
+use tsz_solver::TypeId;
+use tsz_solver::construction::TypeInterner;
 
 /// Helper to set up hover infrastructure and get hover info at a position.
 fn get_hover_at(source: &str, line: u32, col: u32) -> Option<HoverInfo> {
@@ -761,6 +765,90 @@ fn test_hover_const_assertion() {
 }
 
 #[test]
+fn test_hover_const_asserted_numeric_literal_not_error() {
+    let source = "const created = 201 as const;\ncreated;\ntype Status = typeof created;";
+
+    let decl_info = get_hover_at(source, 0, 6).expect("Should find hover for declaration");
+    assert_eq!(
+        decl_info.display_string, "const created: 201",
+        "Declaration hover should preserve the const-asserted literal type"
+    );
+
+    let ref_info = get_hover_at(source, 1, 0).expect("Should find hover for reference");
+    assert_eq!(
+        ref_info.display_string, "const created: 201",
+        "Reference hover should preserve the const-asserted literal type"
+    );
+
+    let type_query_info = get_hover_at(source, 2, 21).expect("Should find hover for type query");
+    assert_eq!(
+        type_query_info.display_string, "const created: 201",
+        "`typeof created` hover should preserve the value's const-asserted literal type"
+    );
+}
+
+#[test]
+fn test_hover_const_asserted_literal_recovers_from_error_cache() {
+    let source = "const created = 201 as const;\ntype Status = typeof created;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let interner = TypeInterner::new();
+    let line_map = LineMap::build(source);
+    let provider = HoverProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+
+    let var_decl_idx = parser
+        .get_arena()
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            let node_idx = NodeIndex(idx as u32);
+            let var_decl = parser.get_arena().get_variable_declaration(node)?;
+            (parser.get_arena().get_identifier_text(var_decl.name) == Some("created"))
+                .then_some(node_idx)
+        })
+        .expect("created declaration");
+    let var_decl = parser
+        .get_arena()
+        .get(var_decl_idx)
+        .and_then(|node| parser.get_arena().get_variable_declaration(node))
+        .expect("created declaration data");
+
+    let mut cache = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &interner,
+        "test.ts".to_string(),
+        Default::default(),
+    )
+    .extract_cache();
+    cache.node_types.insert(var_decl_idx.0, TypeId::ERROR);
+    cache
+        .node_types
+        .insert(var_decl.initializer.0, TypeId::ERROR);
+
+    let mut cache = Some(cache);
+    let info = provider
+        .get_hover(root, Position::new(1, 21), &mut cache)
+        .expect("Should find hover for type query with cached error placeholders");
+    assert_eq!(
+        info.display_string, "const created: 201",
+        "Hover should recompute a precise type when cached transient errors are present"
+    );
+}
+
+#[test]
 fn test_hover_export_function() {
     let source = "export function exported() { return true; }";
     let info = get_hover_at(source, 0, 16).expect("Should find hover for exported function");
@@ -1050,6 +1138,47 @@ fn test_hover_function_returning_void() {
         info.display_string.contains("void"),
         "Should contain void return type, got: {}",
         info.display_string
+    );
+}
+
+#[test]
+fn test_hover_overloaded_function_uses_signature_display() {
+    let source = r#"function makeLabel(value: string): { kind: "name"; value: string };
+function makeLabel(value: number): { kind: "id"; value: number };
+function makeLabel(value: string | number) {
+  return typeof value === "string"
+    ? { kind: "name", value }
+    : { kind: "id", value };
+}
+
+const named = makeLabel("compiler");"#;
+    let info =
+        get_hover_at(source, 8, 14).expect("Should find hover for overloaded function reference");
+    assert!(
+        info.display_string
+            .contains("function makeLabel(value: string): { kind: \"name\"; value: string }"),
+        "Should show the first overload signature with object return type, got: {}",
+        info.display_string
+    );
+    assert!(
+        !info.display_string.contains("function makeLabel{"),
+        "Should not concatenate the function name with raw overload object display, got: {}",
+        info.display_string
+    );
+
+    let decl_info =
+        get_hover_at(source, 0, 9).expect("Should find hover for overloaded declaration name");
+    assert!(
+        decl_info
+            .display_string
+            .contains("function makeLabel(value: string): { kind: \"name\"; value: string }"),
+        "Should show the overload signature when hovering declaration, got: {}",
+        decl_info.display_string
+    );
+    assert!(
+        !decl_info.display_string.contains("function makeLabelerror"),
+        "Should not fall back to an error display for overloaded declaration hover, got: {}",
+        decl_info.display_string
     );
 }
 
@@ -1589,4 +1718,119 @@ fn test_hover_keyword_returns_none() {
     // Hover over the 'const' keyword at col 0
     let info = get_hover_at(source, 0, 0);
     assert!(info.is_none(), "Should return None for keyword 'const'");
+}
+
+fn hover_markdown_section(info: &HoverInfo) -> String {
+    info.contents
+        .iter()
+        .find(|c: &&String| !c.starts_with("```typescript"))
+        .cloned()
+        .unwrap_or_default()
+}
+
+#[test]
+fn test_hover_jsdoc_summary_escapes_markdown_delimiters() {
+    // A user-supplied summary contains characters that would otherwise be
+    // interpreted as Markdown link syntax. The hover Markdown content must
+    // backslash-escape them so the renderer treats them as literal text.
+    let source = "/** See foo[0] for [an example](http://e) */\nfunction g() {}\ng();";
+    let info = get_hover_at(source, 2, 0).expect("Should find hover info");
+    let md = hover_markdown_section(&info);
+    assert!(
+        md.contains("foo\\[0\\]"),
+        "Bracket literals must be escaped in Markdown hover; got: {md:?}"
+    );
+    assert!(
+        md.contains("\\[an example\\]\\(http://e\\)"),
+        "Link-shaped literals must be inert in hover; got: {md:?}"
+    );
+    // The plain documentation field is rendered as text, not Markdown, so it
+    // must keep the original characters and not pick up backslashes.
+    assert!(
+        info.documentation.contains("foo[0]"),
+        "Plain documentation must keep raw text; got: {:?}",
+        info.documentation
+    );
+    assert!(
+        !info.documentation.contains("\\["),
+        "Plain documentation must not contain Markdown escapes; got: {:?}",
+        info.documentation
+    );
+}
+
+#[test]
+fn test_hover_jsdoc_param_description_escapes_markdown_delimiters() {
+    let source = "/**\n * @param a See [docs](http://e) for details\n */\nfunction g(a: number) { return a; }\ng(1);";
+    let info = get_hover_at(source, 4, 0).expect("Should find hover info");
+    let md = hover_markdown_section(&info);
+    assert!(
+        md.contains("`a` See \\[docs\\]\\(http://e\\) for details"),
+        "Parameter description must be Markdown-escaped; got: {md:?}"
+    );
+}
+
+#[test]
+fn test_hover_jsdoc_param_name_with_backtick_uses_safe_fence() {
+    // A parameter description containing a literal backtick must not be
+    // emitted as a single-fenced inline span — that would terminate the
+    // span at the first inner backtick. The renderer chooses a longer
+    // fence per CommonMark §6.1.
+    let source =
+        "/**\n * @param a a `with` backtick\n */\nfunction g(a: number) { return a; }\ng(1);";
+    let info = get_hover_at(source, 4, 0).expect("Should find hover info");
+    let md = hover_markdown_section(&info);
+    // Description's literal backticks are escaped by the prose path so the
+    // Markdown renderer shows them verbatim instead of starting an inline
+    // code span.
+    assert!(
+        md.contains("`a` a \\`with\\` backtick"),
+        "Inline backticks in @param description must be escaped; got: {md:?}"
+    );
+}
+
+#[test]
+fn test_hover_jsdoc_returns_escapes_markdown_delimiters() {
+    let source = "/**\n * @returns the result [0..n]\n */\nfunction g() { return 0; }\ng();";
+    let info = get_hover_at(source, 4, 0).expect("Should find hover info");
+    let md = hover_markdown_section(&info);
+    assert!(
+        md.contains("Returns: the result \\[0..n\\]"),
+        "@returns text must be Markdown-escaped; got: {md:?}"
+    );
+}
+
+#[test]
+fn test_hover_jsdoc_example_uses_longer_fence_when_content_has_triple_backtick() {
+    // A code block whose body contains its own triple-backtick fence must be
+    // emitted with a longer outer fence so the renderer cannot terminate the
+    // block early. Avoid embedding three backticks directly in the Rust
+    // literal — write the JSDoc literal as concatenated string pieces.
+    let triple = "```";
+    let source = format!(
+        "/**\n * @example {triple}js\n *   foo();\n * {triple}\n */\nfunction g() {{}}\ng();"
+    );
+    let info = get_hover_at(&source, 6, 0).expect("Should find hover info");
+    let md = hover_markdown_section(&info);
+    let four = "````";
+    assert!(
+        md.contains(four),
+        "Example fence must outlast the inner ``` fence; got: {md:?}"
+    );
+}
+
+#[test]
+fn test_hover_jsdoc_summary_rule_is_name_independent() {
+    // Renaming the alphanumeric portion of a summary must not change whether
+    // delimiter characters are escaped. The rule is structural (§25).
+    let make = |label: &str| format!("/** See {label}[0] */\nfunction g() {{}}\ng();");
+    for label in ["foo", "bar", "myThing", "X"] {
+        let source = make(label);
+        let info = get_hover_at(&source, 2, 0).expect("Should find hover info");
+        let md = hover_markdown_section(&info);
+        let expected = format!("See {label}\\[0\\]");
+        assert!(
+            md.contains(&expected),
+            "Bracket escape must apply regardless of identifier {label:?}; got: {md:?}"
+        );
+    }
 }

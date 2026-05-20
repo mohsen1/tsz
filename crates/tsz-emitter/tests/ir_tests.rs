@@ -213,6 +213,7 @@ fn test_ir_es5_class_iife() {
     // Test the ES5 class IIFE structure
     let class_iife = IRNode::ES5ClassIIFE {
         name: "Point".into(),
+        binding_name: None,
         base_class: None,
         super_param: None,
         body: vec![
@@ -234,6 +235,8 @@ fn test_ir_es5_class_iife() {
         ],
         weakmap_decls: vec![],
         weakmap_inits: vec![],
+        computed_prop_temp_decls: vec![],
+        computed_prop_temp_inits: vec![],
         leading_comment: None,
         deferred_static_blocks: vec![],
         deferred_block_class_alias: None,
@@ -297,8 +300,10 @@ fn test_ir_generator_body() {
 fn test_ir_awaiter_call() {
     let awaiter = IRNode::AwaiterCall {
         this_arg: Box::new(IRNode::this()),
+        needs_lexical_this_capture: false,
         hoisted_var_groups: vec![],
         promise_constructor: None,
+        multiline_callback: false,
         generator_body: Box::new(IRNode::GeneratorBody {
             has_await: false,
             cases: vec![IRGeneratorCase {

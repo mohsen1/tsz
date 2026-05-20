@@ -6,10 +6,8 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::node::CallExprData;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{
-    GuardSense, ParamInfo, SymbolRef, TypeGuard, TypeId, TypePredicate, TypePredicateTarget,
-    TypeofKind,
-};
+use tsz_solver::narrowing::{GuardSense, TypeGuard, TypeofKind};
+use tsz_solver::{ParamInfo, SymbolRef, TypeId, TypePredicate, TypePredicateTarget};
 
 use crate::state::MAX_TREE_WALK_ITERATIONS;
 
@@ -208,7 +206,7 @@ impl<'a> FlowAnalyzer<'a> {
             return pos;
         }
 
-        let result = self.compute_last_assignment_pos(reference);
+        let result = self.compute_last_assignment_pos(symbol_id, reference);
 
         // Store in shared cache
         if let Some(cache) = &self.shared_symbol_last_assignment_pos {
@@ -220,7 +218,11 @@ impl<'a> FlowAnalyzer<'a> {
 
     /// Internal: walk all flow nodes to find the position of the last reassignment.
     /// Returns 0 if no reassignment found.
-    fn compute_last_assignment_pos(&self, reference: NodeIndex) -> u32 {
+    fn compute_last_assignment_pos(
+        &self,
+        symbol_id: tsz_binder::SymbolId,
+        reference: NodeIndex,
+    ) -> u32 {
         use tsz_binder::flow_flags;
 
         let mut last_pos: u32 = 0;
@@ -251,7 +253,9 @@ impl<'a> FlowAnalyzer<'a> {
                 continue;
             }
 
-            // Check if this assignment targets our reference
+            if self.assignment_is_known_disjoint_from_symbol(flow.node, symbol_id) {
+                continue;
+            }
             if self.assignment_targets_reference(flow.node, reference) {
                 let pos = node.pos;
                 if pos > last_pos {
@@ -276,7 +280,7 @@ impl<'a> FlowAnalyzer<'a> {
     ///    of the reference".
     fn has_assignment_in_nested_closure(
         &self,
-        _symbol_id: tsz_binder::SymbolId,
+        symbol_id: tsz_binder::SymbolId,
         decl_id: NodeIndex,
         reference: NodeIndex,
     ) -> bool {
@@ -309,6 +313,9 @@ impl<'a> FlowAnalyzer<'a> {
                 continue;
             }
 
+            if self.assignment_is_known_disjoint_from_symbol(flow.node, symbol_id) {
+                continue;
+            }
             if self.assignment_targets_reference(flow.node, reference) {
                 let assign_fn = self.find_enclosing_function_node(flow.node);
                 // If the assignment's enclosing function is *different* from the
@@ -321,6 +328,15 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         false
+    }
+
+    fn assignment_is_known_disjoint_from_symbol(
+        &self,
+        assignment_node: NodeIndex,
+        target_symbol: tsz_binder::SymbolId,
+    ) -> bool {
+        self.reference_symbol(assignment_node)
+            .is_some_and(|assignment_symbol| assignment_symbol != target_symbol)
     }
 
     /// Walk the parent chain from `node_idx` to find the nearest enclosing
@@ -369,6 +385,12 @@ impl<'a> FlowAnalyzer<'a> {
 
         let decl_id = symbol.value_declaration;
         if decl_id == NodeIndex::NONE {
+            return false;
+        }
+
+        let decl_fn = self.find_enclosing_function_node(decl_id);
+        let reference_fn = self.find_enclosing_function_node(reference);
+        if decl_fn.is_some() && decl_fn == reference_fn {
             return false;
         }
 
@@ -552,7 +574,11 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         // Check for literal comparison: x === "foo", x === 42
-        if let Some(literal_type) = self.literal_comparison(bin.left, bin.right, target) {
+        // Loose equality (==) does not narrow non-nullish literals; x == null is already
+        // handled above as NullishEquality.
+        if !is_loose_equality
+            && let Some(literal_type) = self.literal_comparison(bin.left, bin.right, target)
+        {
             return Some((TypeGuard::LiteralEquality(literal_type), target, false));
         }
 
@@ -821,10 +847,20 @@ impl<'a> FlowAnalyzer<'a> {
     /// Using `interner.reference(symbol_ref)` creates `Lazy(DefId(symbol_id))`
     /// which is unresolvable; this method returns the correct `Lazy(DefId)`.
     pub(crate) fn resolve_symbol_to_lazy(&self, symbol_ref: SymbolRef) -> Option<TypeId> {
-        let env = self.type_environment.as_ref()?;
-        let env_borrowed = env.borrow();
-        let def_id = env_borrowed.symbol_to_def_id(symbol_ref)?;
-        Some(self.interner.lazy(def_id))
+        if let Some(env) = self.type_environment.as_ref() {
+            let env_borrowed = env.borrow();
+            if let Some(def_id) = env_borrowed.symbol_to_def_id(symbol_ref) {
+                return Some(self.interner.lazy(def_id));
+            }
+        }
+
+        let ctx = self.checker_context?;
+        let def_id = ctx.get_or_create_def_id(tsz_binder::SymbolId(symbol_ref.0));
+        if def_id.is_valid() {
+            Some(self.interner.lazy(def_id))
+        } else {
+            None
+        }
     }
 
     /// Check if a call is `ArrayBuffer.isView(x)` and return a predicate guard.
@@ -877,17 +913,13 @@ impl<'a> FlowAnalyzer<'a> {
             && let Some(sym_id) = self.binder.get_global_type("ArrayBufferView")
         {
             let symbol_ref = SymbolRef(sym_id.0);
-            let mut view_type = self
-                .resolve_symbol_to_lazy(symbol_ref)
-                .unwrap_or_else(|| self.interner.reference(symbol_ref));
+            let mut view_type = self.resolve_symbol_to_lazy(symbol_ref)?;
 
             // ArrayBuffer.isView narrows to ArrayBufferView with the default
             // type argument (`ArrayBufferLike`) in TypeScript's lib.
             if let Some(array_buffer_like_sym) = self.binder.get_global_type("ArrayBufferLike") {
                 let array_buffer_like_ref = SymbolRef(array_buffer_like_sym.0);
-                let array_buffer_like = self
-                    .resolve_symbol_to_lazy(array_buffer_like_ref)
-                    .unwrap_or_else(|| self.interner.reference(array_buffer_like_ref));
+                let array_buffer_like = self.resolve_symbol_to_lazy(array_buffer_like_ref)?;
 
                 view_type = self
                     .interner
@@ -1080,6 +1112,9 @@ impl<'a> FlowAnalyzer<'a> {
     ) -> Option<TypePredicate> {
         let expr = self.find_inferable_predicate_body_expression(body_idx)?;
         let expr = self.skip_parens_and_assertions(expr);
+        let expr = self
+            .inferable_predicate_alias_initializer(expr)
+            .unwrap_or(expr);
 
         if let Some(predicate) = self.try_infer_logical_or_type_predicate(expr, params_list, params)
         {
@@ -1089,8 +1124,70 @@ impl<'a> FlowAnalyzer<'a> {
         {
             return Some(predicate);
         }
+        if let Some(predicate) =
+            self.try_infer_type_parameter_strict_null_inequality(expr, params_list, params)
+        {
+            return Some(predicate);
+        }
 
         self.try_infer_type_predicate_from_guard_expression(expr, params_list, params)
+    }
+
+    fn inferable_predicate_alias_initializer(&self, expr: NodeIndex) -> Option<NodeIndex> {
+        let expr_node = self.arena.get(expr)?;
+        if expr_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let (_sym, initializer) = self.const_condition_initializer(expr)?;
+        Some(self.skip_parens_and_assertions(initializer))
+    }
+
+    fn try_infer_type_parameter_strict_null_inequality(
+        &self,
+        expr: NodeIndex,
+        params_list: &[NodeIndex],
+        params: &[ParamInfo],
+    ) -> Option<TypePredicate> {
+        let expr_node = self.arena.get(expr)?;
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let bin = self.arena.get_binary_expr(expr_node)?;
+        if bin.operator_token != SyntaxKind::ExclamationEqualsEqualsToken as u16 {
+            return None;
+        }
+        let target = self.get_comparison_target(expr)?;
+        if self.nullish_comparison(bin.left, bin.right, target) != Some(TypeId::NULL) {
+            return None;
+        }
+
+        let (param_idx, param_name) =
+            self.match_guard_target_to_parameter(target, params_list, params)?;
+        let param_type = params.get(param_idx)?.type_id;
+        if !crate::query_boundaries::common::is_type_parameter_like(self.interner, param_type) {
+            return None;
+        }
+
+        let empty_object = crate::query_boundaries::flow_analysis::empty_object_type(self.interner);
+        let object_or_undefined = crate::query_boundaries::flow_analysis::union_types(
+            self.interner,
+            vec![empty_object, TypeId::UNDEFINED],
+        );
+        let narrowed = crate::query_boundaries::flow_analysis::intersection_types(
+            self.interner,
+            vec![param_type, object_or_undefined],
+        );
+        if narrowed == param_type || matches!(narrowed, TypeId::NEVER | TypeId::ERROR | TypeId::ANY)
+        {
+            return None;
+        }
+
+        Some(TypePredicate {
+            asserts: false,
+            target: TypePredicateTarget::Identifier(param_name),
+            type_id: Some(narrowed),
+            parameter_index: Some(param_idx),
+        })
     }
 
     fn try_infer_type_predicate_from_guard_expression(

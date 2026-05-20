@@ -69,18 +69,42 @@ impl<'a> CheckerState<'a> {
         constraint: TypeId,
         arg_node: Option<tsz_parser::parser::NodeIndex>,
     ) -> bool {
-        if self.is_successful_typeof_instantiation_arg(type_arg)
-            && self.constraint_is_callable_or_constructable(constraint)
+        if self.constraint_is_callable_or_constructable(constraint)
+            && arg_node.is_some_and(|arg_idx| {
+                self.type_query_has_qualified_instantiation_node(arg_idx)
+                    && !self.is_failed_typeof_instantiation_node(arg_idx)
+            })
         {
             return true;
         }
-        let constraint_resolved = self.resolve_lazy_type(constraint);
-        if !self
-            .format_type_diagnostic(constraint_resolved)
-            .contains("new ")
+
+        let constraint_is_constructable = self.constraint_is_constructable(constraint);
+        if constraint_is_constructable
+            && arg_node
+                .is_some_and(|arg_idx| self.type_query_constructor_access_level(arg_idx).is_some())
         {
             return false;
         }
+
+        if self.is_successful_typeof_instantiation_arg(type_arg)
+            && self.constraint_is_callable_or_constructable(constraint)
+        {
+            if constraint_is_constructable
+                && self.constructor_accessibility_blocks_type_arg_constraint(type_arg, constraint)
+            {
+                return false;
+            }
+            return true;
+        }
+
+        if !constraint_is_constructable {
+            return false;
+        }
+
+        if self.constructor_accessibility_blocks_type_arg_constraint(type_arg, constraint) {
+            return false;
+        }
+
         {
             use crate::query_boundaries::common::{TypeQueryKind, classify_type_query};
 
@@ -91,10 +115,116 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
         }
-        if self.format_type_diagnostic(type_arg).starts_with("typeof ") {
-            return true;
-        }
         arg_node.is_some_and(|arg_idx| self.is_type_query_node_through_parens(arg_idx))
+    }
+
+    pub(crate) fn is_failed_typeof_instantiation_node(
+        &mut self,
+        mut arg_idx: tsz_parser::parser::NodeIndex,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        for _ in 0..10 {
+            let Some(node) = self.ctx.arena.get(arg_idx) else {
+                return false;
+            };
+            if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+                && let Some(wrapped) = self.ctx.arena.get_wrapped_type(node)
+            {
+                arg_idx = wrapped.type_node;
+                continue;
+            }
+            if node.kind != syntax_kind_ext::TYPE_QUERY {
+                return false;
+            }
+            let Some(type_query) = self.ctx.arena.get_type_query(node) else {
+                return false;
+            };
+            let has_type_args = type_query
+                .type_arguments
+                .as_ref()
+                .is_some_and(|args| !args.nodes.is_empty());
+            if !has_type_args {
+                return false;
+            }
+            let Some(args) = type_query.type_arguments.as_ref() else {
+                return false;
+            };
+            let expr_type = if self
+                .ctx
+                .arena
+                .get(type_query.expr_name)
+                .is_some_and(|expr| {
+                    expr.kind == syntax_kind_ext::QUALIFIED_NAME
+                        || expr.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                }) {
+                self.resolve_typeof_qualified_value_chain(type_query.expr_name, true)
+            } else {
+                self.get_type_of_node(type_query.expr_name)
+            };
+            return self
+                .instantiation_expression_applicability_error_type(expr_type, args.nodes.len())
+                .is_some();
+        }
+
+        false
+    }
+
+    fn type_query_has_qualified_instantiation_node(
+        &self,
+        mut arg_idx: tsz_parser::parser::NodeIndex,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        for _ in 0..10 {
+            let Some(node) = self.ctx.arena.get(arg_idx) else {
+                return false;
+            };
+            if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+                && let Some(wrapped) = self.ctx.arena.get_wrapped_type(node)
+            {
+                arg_idx = wrapped.type_node;
+                continue;
+            }
+            if node.kind != syntax_kind_ext::TYPE_QUERY {
+                return false;
+            }
+            let Some(type_query) = self.ctx.arena.get_type_query(node) else {
+                return false;
+            };
+            if type_query
+                .type_arguments
+                .as_ref()
+                .is_none_or(|args| args.nodes.is_empty())
+            {
+                return false;
+            }
+            return self
+                .ctx
+                .arena
+                .get(type_query.expr_name)
+                .is_some_and(|expr| {
+                    expr.kind == syntax_kind_ext::QUALIFIED_NAME
+                        || expr.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                });
+        }
+
+        false
+    }
+
+    pub(crate) fn constraint_is_constructable(&mut self, constraint: TypeId) -> bool {
+        let constraint = self.resolve_lazy_type(constraint);
+        crate::query_boundaries::common::construct_signatures_for_type(self.ctx.types, constraint)
+            .is_some_and(|sigs| !sigs.is_empty())
+            || {
+                let evaluated = self.evaluate_type_for_assignability(constraint);
+                evaluated != constraint
+                    && crate::query_boundaries::common::construct_signatures_for_type(
+                        self.ctx.types,
+                        evaluated,
+                    )
+                    .is_some_and(|sigs| !sigs.is_empty())
+            }
     }
 
     pub(crate) fn constraint_is_callable_or_constructable(&mut self, constraint: TypeId) -> bool {

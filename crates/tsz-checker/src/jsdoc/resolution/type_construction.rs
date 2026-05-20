@@ -628,6 +628,8 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .definition_store
             .register_type_to_def(type_id, def_id);
+        let alias_lazy = self.ctx.types.factory().lazy(def_id);
+        self.ctx.types.store_display_alias(type_id, alias_lazy);
         def_id
     }
     /// Resolve a generic JSDoc type reference: `Name<Arg1, Arg2, ...>`.
@@ -652,6 +654,16 @@ impl<'a> CheckerState<'a> {
             }
             let (body_type, type_params) = self.type_reference_symbol_type_with_params(sym_id);
             if body_type == TypeId::ERROR {
+                if !type_args.is_empty() && !type_params.is_empty() {
+                    let base_type = self.ctx.create_lazy_type_ref(sym_id);
+                    let instantiated = self
+                        .ctx
+                        .types
+                        .factory()
+                        .application(base_type, type_args.clone());
+                    self.register_jsdoc_generic_display_name(base_name, &type_args, instantiated);
+                    return Some(instantiated);
+                }
                 return None;
             }
             if type_args.is_empty() {
@@ -684,6 +696,17 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
             sym_id
+        } else if let Some(sym_id) =
+            self.resolve_identifier_symbol_from_all_binders(base_name, |_, symbol| {
+                (symbol.flags
+                    & (symbol_flags::TYPE_ALIAS
+                        | symbol_flags::CLASS
+                        | symbol_flags::INTERFACE
+                        | symbol_flags::ENUM))
+                    != 0
+            })
+        {
+            sym_id
         } else {
             let symbols = self.ctx.binder.get_symbols();
             symbols
@@ -703,6 +726,16 @@ impl<'a> CheckerState<'a> {
         };
         let (body_type, type_params) = self.type_reference_symbol_type_with_params(sym_id);
         if body_type == TypeId::ERROR {
+            if !type_args.is_empty() && !type_params.is_empty() {
+                let base_type = self.ctx.create_lazy_type_ref(sym_id);
+                let instantiated = self
+                    .ctx
+                    .types
+                    .factory()
+                    .application(base_type, type_args.clone());
+                self.register_jsdoc_generic_display_name(base_name, &type_args, instantiated);
+                return Some(instantiated);
+            }
             return None;
         }
         if type_args.is_empty() {
@@ -1596,7 +1629,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let result = if let Some(cb) = info.callback {
-            self.type_from_jsdoc_callback(cb, &type_param_infos)
+            self.type_from_jsdoc_callback(cb)
         } else {
             self.type_from_jsdoc_object_typedef(info)
         };
@@ -1615,11 +1648,7 @@ impl<'a> CheckerState<'a> {
         Some((result.unwrap_or(TypeId::ANY), type_param_infos))
     }
 
-    fn type_from_jsdoc_callback(
-        &mut self,
-        cb: JsdocCallbackInfo,
-        type_params: &[tsz_solver::TypeParamInfo],
-    ) -> Option<TypeId> {
+    fn type_from_jsdoc_callback(&mut self, cb: JsdocCallbackInfo) -> Option<TypeId> {
         let factory = self.ctx.types.factory();
         let mut params = Vec::new();
         let mut this_type = None;
@@ -1734,8 +1763,12 @@ impl<'a> CheckerState<'a> {
             TypeId::VOID
         };
 
+        // `@template` on a JSDoc callback typedef belongs to the typedef alias:
+        // `type B<T> = () => T`, not `<T>() => T`. Keeping those parameters on
+        // the function body makes alias instantiation shadow them, so `B<string>`
+        // still formats and behaves like the uninstantiated `B`.
         Some(factory.function(FunctionShape {
-            type_params: type_params.to_vec(),
+            type_params: Vec::new(),
             params,
             this_type,
             return_type,
@@ -1868,7 +1901,7 @@ mod tests {
     use super::*;
     use tsz_binder::BinderState;
     use tsz_parser::parser::ParserState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     #[test]
     fn resolve_jsdoc_assigned_value_type_sees_prototype_property_statement() {

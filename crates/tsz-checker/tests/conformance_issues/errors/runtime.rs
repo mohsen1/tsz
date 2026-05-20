@@ -1224,6 +1224,38 @@ type DeepPickWeakSet<Type, Filter> = Type extends WeakSet<infer Values>
 }
 
 #[test]
+fn test_weak_collection_infer_constraint_flows_through_recursive_alias() {
+    if !lib_files_available() {
+        return;
+    }
+
+    let accepted = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+type Primitive = string | number | boolean | bigint | symbol | undefined | null;
+type Builtin = Primitive | Function | Date | Error | RegExp;
+
+type DeepPartial<T> = T extends Exclude<Builtin, Error>
+  ? T
+  : T extends WeakSet<infer V>
+  ? WeakSet<DeepPartial<V>>
+  : T extends {}
+  ? { [K in keyof T]?: DeepPartial<T[K]> }
+  : Partial<T>;
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2017,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !has_error(&accepted, 2344),
+        "Recursive aliases should preserve hidden WeakKey constraints from WeakSet infer variables.\nActual: {accepted:?}"
+    );
+}
+
+#[test]
 fn test_no_false_ts2344_for_imported_record_indexed_access_key_constraint() {
     let diagnostics = compile_named_files_get_diagnostics_with_options(
         &[
@@ -1425,6 +1457,31 @@ function test(x: Dog | Cat) {
     );
 }
 
+/// Issue #6054: negative `instanceof` narrowing should not transitively exclude
+/// subclasses after a superclass guard exits. Tsc intentionally accepts this
+/// defensive pattern even though the subclass branch is unreachable at runtime.
+#[test]
+fn test_instanceof_negative_superclass_keeps_subclass_check_usable() {
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r"
+function checkError(e: unknown): string {
+    if (e instanceof Error) {
+        return e.message;
+    }
+    if (e instanceof TypeError) {
+        return e.message;
+    }
+    return String(e);
+}
+        ",
+    );
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Subclass instanceof branch after superclass exclusion should not narrow to never.\n\
+         Actual errors: {diagnostics:?}"
+    );
+}
+
 /// TS18013 should report the declaring class name, not the object type's class name.
 /// When `#prop` is declared in `Base` and accessed via `Derived`, the error message
 /// should say "outside class 'Base'", not "outside class 'Derived'".
@@ -1506,6 +1563,130 @@ function test(a: A2) {
     );
 }
 
+/// Shared assertion for the structural rule:
+/// TS18013 on a generic class instance must reference the declared class
+/// name (not the `"the class"` fallback) regardless of what the user named
+/// the type parameter.
+fn assert_ts18013_uses_class_name(source: &str, class_name: &str, expected_count: usize) {
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts18013_messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 18013)
+        .map(|(_, m)| m.as_str())
+        .collect();
+
+    assert_eq!(
+        ts18013_messages.len(),
+        expected_count,
+        "Should emit {expected_count} TS18013 errors.\nActual errors: {diagnostics:?}"
+    );
+    let needle = format!("'{class_name}'");
+    for msg in &ts18013_messages {
+        assert!(
+            msg.contains(&needle),
+            "TS18013 should reference the declared class {needle}, not 'the class'.\n\
+             Actual message: {msg}"
+        );
+        assert!(
+            !msg.contains("the class"),
+            "TS18013 must not fall back to 'the class'.\nActual message: {msg}"
+        );
+    }
+}
+
+/// TS18013 must use the actual class name for generic class instances
+/// (`C<number>`). The display-type-to-class resolver previously only handled
+/// uninstantiated instance types, brand-bearing object shapes, and lazy
+/// references — so a generic instance stored in its application form fell
+/// through to the `"the class"` fallback whenever the class references itself
+/// under multiple instantiations like `bar(x: C<T>)`, `baz(x: C<number>)`,
+/// which forces the instance type to stay in application form. Source:
+/// conformance test `privateNamesInGenericClasses.ts`.
+#[test]
+fn test_ts18013_uses_class_name_for_generic_class_instance() {
+    assert_ts18013_uses_class_name(
+        r#"
+class C<T> {
+    #foo: T = undefined as any;
+    #method(): T { return this.#foo; }
+    bar(x: C<T>) { return x.#foo; }
+    baz(x: C<number>) { return x.#foo; }
+    quux(x: C<string>) { return x.#foo; }
+}
+declare let a: C<number>;
+a.#foo;
+a.#method;
+        "#,
+        "C",
+        2,
+    );
+}
+
+/// Same rule with a renamed type parameter (`U` instead of `T`) and class
+/// (`Q` instead of `C`). If the fix is hardcoded to a specific identifier
+/// name, this test will fail.
+#[test]
+fn test_ts18013_uses_class_name_for_generic_class_instance_renamed_type_param() {
+    assert_ts18013_uses_class_name(
+        r#"
+class Q<U> {
+    #x: U = undefined as any;
+    #m(): U { return this.#x; }
+    self(p: Q<U>) { return p.#x; }
+    numericInst(p: Q<number>) { return p.#x; }
+    stringInst(p: Q<string>) { return p.#x; }
+}
+declare let qq: Q<number>;
+qq.#x;
+qq.#m;
+        "#,
+        "Q",
+        2,
+    );
+}
+
+/// When `#x` is declared in generic `Base<T>` and accessed via an instance of
+/// generic `Derived<number>`, TS18013 must report the *declaring* class name
+/// (`Base`), not the receiver's display name. This combines the
+/// declaring-class-name rule (`test_ts18013_reports_declaring_class_name`) with
+/// the Application-unwrap fix: the receiver is an instance of `Derived<number>`
+/// (which is `Application(Derived, [number])`), and the brand of `#x` points
+/// to `Base`. The resolver must unwrap the application and walk the class
+/// hierarchy to find `Base` as the declaring class.
+#[test]
+fn test_ts18013_declaring_class_name_for_generic_inheritance() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class Base<T> {
+    #x: T = undefined as any;
+    self(p: Base<T>) { return p.#x; }
+    numericInst(p: Base<number>) { return p.#x; }
+}
+class Derived<T> extends Base<T> {}
+declare let d: Derived<number>;
+d.#x;
+        "#,
+    );
+
+    let ts18013_messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 18013)
+        .map(|(_, m)| m.as_str())
+        .collect();
+
+    assert_eq!(
+        ts18013_messages.len(),
+        1,
+        "Should emit exactly one TS18013.\nActual errors: {diagnostics:?}"
+    );
+    assert!(
+        ts18013_messages[0].contains("'Base'"),
+        "TS18013 should reference the declaring class 'Base', not 'Derived' \
+         and not 'the class'.\nActual message: {}",
+        ts18013_messages[0]
+    );
+}
+
 /// TS2344 false positive: a generic indexed-access type argument `T[K]` whose
 /// resolved property values structurally satisfy a non-callable interface
 /// constraint should not emit TS2344. The conformance test
@@ -1533,7 +1714,6 @@ function test(a: A2) {
 /// `compiler/inferenceDoesNotAddUndefinedOrNull.ts` is the primary
 /// integration-level reproducer.
 #[test]
-#[ignore]
 fn test_no_false_ts2344_for_indexed_access_value_subtype_of_constraint() {
     let diagnostics = compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
         r#"

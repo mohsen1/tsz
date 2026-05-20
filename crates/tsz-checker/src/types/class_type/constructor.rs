@@ -10,6 +10,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+use tsz_solver::computation::ContextualTypeContext;
 use tsz_solver::{
     CallSignature, CallableShape, IndexSignature, ParamInfo, PropertyInfo, TypeId, TypeParamInfo,
     TypePredicate, Visibility,
@@ -446,42 +447,153 @@ impl<'a> CheckerState<'a> {
             cached
         } else {
             let mut inst_props: Vec<PropertyInfo> = Vec::with_capacity(member_count);
+            let mut inst_prop_names: FxHashSet<Atom> =
+                FxHashSet::with_capacity_and_hasher(member_count, Default::default());
             for &member_idx in &class.members.nodes {
                 let Some(member_node) = self.ctx.arena.get(member_idx) else {
                     continue;
                 };
-                if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
-                    continue;
+                match member_node.kind {
+                    k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                        let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
+                            continue;
+                        };
+                        if self.has_static_modifier(&prop.modifiers) {
+                            continue;
+                        }
+                        let Some(type_id) =
+                            self.effective_class_property_declared_type(member_idx, prop)
+                        else {
+                            continue;
+                        };
+                        let Some(name) = self.get_property_name_resolved(prop.name) else {
+                            continue;
+                        };
+                        let name_atom = self.ctx.types.intern_string(&name);
+                        if !inst_prop_names.insert(name_atom) {
+                            continue;
+                        }
+                        inst_props.push(PropertyInfo {
+                            name: name_atom,
+                            type_id,
+                            write_type: type_id,
+                            optional: prop.question_token,
+                            readonly: self.has_readonly_modifier(&prop.modifiers),
+                            is_method: false,
+                            is_class_prototype: false,
+                            visibility: self.get_member_visibility(&prop.modifiers, prop.name),
+                            parent_id: current_sym,
+                            declaration_order: 0,
+                            is_string_named: false,
+                            is_symbol_named: false,
+                            single_quoted_name: false,
+                        });
+                    }
+                    k if k == syntax_kind_ext::CONSTRUCTOR => {
+                        let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
+                            continue;
+                        };
+                        if ctor.body.is_none() {
+                            continue;
+                        }
+                        for &param_idx in &ctor.parameters.nodes {
+                            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                                continue;
+                            };
+                            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                                continue;
+                            };
+                            if !self.has_parameter_property_modifier(&param.modifiers) {
+                                continue;
+                            }
+                            let Some(name) = self.get_property_name(param.name) else {
+                                continue;
+                            };
+                            let name_atom = self.ctx.types.intern_string(&name);
+                            if !inst_prop_names.insert(name_atom) {
+                                continue;
+                            }
+                            let type_id = if param.type_annotation.is_some() {
+                                self.get_type_from_type_node(param.type_annotation)
+                            } else if param.initializer.is_some() {
+                                self.get_type_of_node(param.initializer)
+                            } else {
+                                TypeId::ANY
+                            };
+                            inst_props.push(PropertyInfo {
+                                name: name_atom,
+                                type_id,
+                                write_type: type_id,
+                                optional: param.question_token,
+                                readonly: self.has_readonly_modifier(&param.modifiers),
+                                is_method: false,
+                                is_class_prototype: false,
+                                visibility: self.get_visibility_from_modifiers(&param.modifiers),
+                                parent_id: current_sym,
+                                declaration_order: 0,
+                                is_string_named: false,
+                                is_symbol_named: false,
+                                single_quoted_name: false,
+                            });
+                        }
+                    }
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                        let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
+                            continue;
+                        };
+                        if self.has_static_modifier(&method.modifiers) {
+                            continue;
+                        }
+                        let Some(name) = self.get_property_name_resolved(method.name) else {
+                            continue;
+                        };
+                        let name_atom = self.ctx.types.intern_string(&name);
+                        if !inst_prop_names.insert(name_atom) {
+                            continue;
+                        }
+                        self.exclude_params_for_type_param_constraints(&method.parameters);
+                        let (type_params, type_param_updates) =
+                            self.push_type_parameters(&method.type_parameters);
+                        self.clear_excluded_params_for_type_param_constraints();
+                        let (params, this_type) =
+                            self.extract_params_from_parameter_list(&method.parameters);
+                        let (return_type, type_predicate) =
+                            self.return_type_and_predicate(method.type_annotation, &params);
+                        self.pop_type_parameters(type_param_updates);
+                        let callable_type = factory.callable(CallableShape {
+                            call_signatures: vec![CallSignature {
+                                type_params,
+                                params,
+                                this_type,
+                                return_type,
+                                type_predicate,
+                                is_method: true,
+                            }],
+                            construct_signatures: Vec::new(),
+                            properties: Vec::new(),
+                            string_index: None,
+                            number_index: None,
+                            symbol: None,
+                            is_abstract: false,
+                        });
+                        inst_props.push(PropertyInfo {
+                            name: name_atom,
+                            type_id: callable_type,
+                            write_type: callable_type,
+                            optional: method.question_token,
+                            readonly: false,
+                            is_method: true,
+                            is_class_prototype: false,
+                            visibility: self.get_member_visibility(&method.modifiers, method.name),
+                            parent_id: current_sym,
+                            declaration_order: 0,
+                            is_string_named: false,
+                            is_symbol_named: false,
+                            single_quoted_name: false,
+                        });
+                    }
+                    _ => {}
                 }
-                let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
-                    continue;
-                };
-                if self.has_static_modifier(&prop.modifiers) {
-                    continue;
-                }
-                let Some(type_id) = self.effective_class_property_declared_type(member_idx, prop)
-                else {
-                    continue;
-                };
-                let Some(name) = self.get_property_name_resolved(prop.name) else {
-                    continue;
-                };
-                let name_atom = self.ctx.types.intern_string(&name);
-                inst_props.push(PropertyInfo {
-                    name: name_atom,
-                    type_id,
-                    write_type: type_id,
-                    optional: prop.question_token,
-                    readonly: self.has_readonly_modifier(&prop.modifiers),
-                    is_method: false,
-                    is_class_prototype: false,
-                    visibility: self.get_member_visibility(&prop.modifiers, prop.name),
-                    parent_id: current_sym,
-                    declaration_order: 0,
-                    is_string_named: false,
-                    is_symbol_named: false,
-                    single_quoted_name: false,
-                });
             }
             if inst_props.is_empty() {
                 TypeId::ANY
@@ -656,10 +768,8 @@ impl<'a> CheckerState<'a> {
                         let mut has_contextual_member = false;
                         let member_ctx_type = request.contextual_type.and_then(|ctx_type| {
                             let resolved = self.evaluate_type_for_assignability(ctx_type);
-                            let ctx_helper = tsz_solver::ContextualTypeContext::with_expected(
-                                self.ctx.types,
-                                resolved,
-                            );
+                            let ctx_helper =
+                                ContextualTypeContext::with_expected(self.ctx.types, resolved);
                             ctx_helper
                                 .get_property_type(&name)
                                 .filter(|&mt| mt != TypeId::ANY && !self.type_contains_error(mt))
@@ -1412,6 +1522,15 @@ impl<'a> CheckerState<'a> {
             }
             result
         };
+        let instance_type = if class.name.is_none()
+            && instance_type == TypeId::ERROR
+            && rough_instance_return_type != TypeId::ANY
+            && rough_instance_return_type != TypeId::ERROR
+        {
+            rough_instance_return_type
+        } else {
+            instance_type
+        };
 
         // Class constructor values always expose an implicit `prototype` property
         // whose type is the class instance type.
@@ -1567,6 +1686,7 @@ impl<'a> CheckerState<'a> {
                                     &class_type_params,
                                     instance_type,
                                     None,
+                                    false,
                                 )
                             };
                         }
@@ -1673,11 +1793,13 @@ impl<'a> CheckerState<'a> {
                                 instance_type,
                             )
                         } else {
+                            let force_derived_instance = base_type_param.is_some();
                             self.remap_inherited_construct_signatures(
                                 base_constructor_type,
                                 &class_type_params,
                                 instance_type,
                                 None,
+                                force_derived_instance,
                             )
                         };
                     }
@@ -1776,6 +1898,7 @@ impl<'a> CheckerState<'a> {
                                 &class_type_params,
                                 instance_type,
                                 None,
+                                false,
                             )
                         };
                 }
@@ -2131,6 +2254,7 @@ impl<'a> CheckerState<'a> {
         class_type_params: &[TypeParamInfo],
         instance_type: TypeId,
         inherited_substitution: Option<&TypeSubstitution>,
+        force_derived_instance: bool,
     ) -> Option<Vec<CallSignature>> {
         let signatures = construct_signatures_for_type(self.ctx.types, constructor_type)?;
         if signatures.is_empty() {
@@ -2157,9 +2281,15 @@ impl<'a> CheckerState<'a> {
                         inherited_substitution
                             .map_or(t, |subst| instantiate_type(self.ctx.types, t, subst))
                     });
-                    // Preserve the base signature's type parameters so that generic
-                    // call resolution can infer them from arguments.
-                    let type_params = if sig.type_params.is_empty() {
+                    // Preserve ordinary base signature type parameters so generic
+                    // call resolution can infer them from constructor arguments.
+                    //
+                    // For mixin bases typed as a type parameter, though, inherited
+                    // constraint signature parameters (for example `Constructor<T>`)
+                    // are not owned by the returned class. Keeping them here can
+                    // shadow enclosing factory type parameters during later
+                    // instantiation, leaving returned class methods with stale `T`s.
+                    let type_params = if force_derived_instance || sig.type_params.is_empty() {
                         class_type_params.to_vec()
                     } else {
                         sig.type_params.clone()
@@ -2168,14 +2298,16 @@ impl<'a> CheckerState<'a> {
                     // and no substitution is provided yet, preserve the base's
                     // return type so generic resolution can instantiate it properly.
                     // Otherwise use the derived instance type.
-                    let return_type =
-                        if inherited_substitution.is_none() && !sig.type_params.is_empty() {
-                            sig.return_type
-                        } else {
-                            inherited_substitution.map_or(instance_type, |subst| {
-                                instantiate_type(self.ctx.types, sig.return_type, subst)
-                            })
-                        };
+                    let return_type = if !force_derived_instance
+                        && inherited_substitution.is_none()
+                        && !sig.type_params.is_empty()
+                    {
+                        sig.return_type
+                    } else {
+                        inherited_substitution.map_or(instance_type, |subst| {
+                            instantiate_type(self.ctx.types, sig.return_type, subst)
+                        })
+                    };
                     CallSignature {
                         type_params,
                         params,

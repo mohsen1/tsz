@@ -22,7 +22,7 @@
 //! ```
 //!
 use crate::CheckerContext;
-use crate::context::{CheckerOptions, RequestCacheKey, TypingRequest};
+use crate::context::{CheckerOptions, TypingRequest};
 use crate::query_boundaries::common::QueryDatabase;
 use tsz_binder::BinderState;
 use tsz_binder::SymbolId;
@@ -30,6 +30,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
+use tsz_solver::computation::TypeEnvironment;
 
 thread_local! {
     /// Shared depth counter for all cross-arena delegation points.
@@ -108,19 +109,21 @@ pub(crate) enum ParamTypeResolutionMode {
 /// to `CheckerState` methods. Captures the `TypeEnvironment` reference.
 pub(crate) struct CheckerOverrideProvider<'a, 'b> {
     checker: &'a CheckerState<'b>,
-    env: Option<&'a tsz_solver::TypeEnvironment>,
+    env: Option<&'a TypeEnvironment>,
 }
 
 impl<'a, 'b> CheckerOverrideProvider<'a, 'b> {
     pub(crate) const fn new(
         checker: &'a CheckerState<'b>,
-        env: Option<&'a tsz_solver::TypeEnvironment>,
+        env: Option<&'a TypeEnvironment>,
     ) -> Self {
         Self { checker, env }
     }
 }
 
-impl<'a, 'b> tsz_solver::AssignabilityOverrideProvider for CheckerOverrideProvider<'a, 'b> {
+impl<'a, 'b> tsz_solver::relations::compat::AssignabilityOverrideProvider
+    for CheckerOverrideProvider<'a, 'b>
+{
     fn enum_assignability_override(&self, source: TypeId, target: TypeId) -> Option<bool> {
         self.checker.enum_assignability_override(source, target)
     }
@@ -141,16 +144,6 @@ impl<'a, 'b> tsz_solver::AssignabilityOverrideProvider for CheckerOverrideProvid
 }
 
 impl<'a> CheckerState<'a> {
-    #[inline]
-    fn record_root_checker_construction() {
-        // PERF: see `docs/plan/PERFORMANCE_PLAN.md`. Count every
-        // standalone/per-file checker constructor. Child checkers created via
-        // `with_parent_cache` are counted separately with call-site attribution.
-        tsz_common::perf_counters::inc(
-            &tsz_common::perf_counters::counters().checker_state_constructed,
-        );
-    }
-
     /// Create a new `CheckerState`.
     ///
     /// # Arguments
@@ -166,7 +159,7 @@ impl<'a> CheckerState<'a> {
         file_name: String,
         compiler_options: CheckerOptions,
     ) -> Self {
-        Self::record_root_checker_construction();
+        tsz_common::perf_counters::record_checker_state_constructed();
         CheckerState {
             ctx: CheckerContext::new(arena, binder, types, file_name, compiler_options),
         }
@@ -198,7 +191,7 @@ impl<'a> CheckerState<'a> {
         compiler_options: CheckerOptions,
         definition_store: std::sync::Arc<tsz_solver::def::DefinitionStore>,
     ) -> Self {
-        Self::record_root_checker_construction();
+        tsz_common::perf_counters::record_checker_state_constructed();
         CheckerState {
             ctx: CheckerContext::new_with_shared_def_store(
                 arena,
@@ -229,7 +222,7 @@ impl<'a> CheckerState<'a> {
         cache: crate::TypeCache,
         compiler_options: CheckerOptions,
     ) -> Self {
-        Self::record_root_checker_construction();
+        tsz_common::perf_counters::record_checker_state_constructed();
         CheckerState {
             ctx: CheckerContext::with_cache(
                 arena,
@@ -340,6 +333,33 @@ impl<'a> CheckerState<'a> {
                     .get_require_module_specifier(var_decl.initializer)
                     .is_some()
         })
+    }
+
+    pub(crate) fn require_call_module_specifier_for_identifier(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<String> {
+        let sym_id = self
+            .ctx
+            .binder
+            .get_node_symbol(idx)
+            .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, idx))?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        for &decl_idx in &symbol.declarations {
+            if decl_idx.is_none() {
+                continue;
+            }
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+                continue;
+            };
+            if let Some(spec) = self.get_require_module_specifier(var_decl.initializer) {
+                return Some(spec);
+            }
+        }
+        None
     }
 
     pub(crate) fn require_call_bound_identifier_type(&mut self, idx: NodeIndex) -> Option<TypeId> {
@@ -576,26 +596,18 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Apply `this` type substitution to a method call's return type.
-    ///
-    /// When a method returns `this`, the return type should be the type of the receiver.
-    /// For `obj.method()` where method returns `this`, we substitute `ThisType` with typeof obj.
     pub(crate) fn apply_this_substitution_to_call_return(
         &mut self,
         return_type: tsz_solver::TypeId,
         call_expression: tsz_parser::parser::NodeIndex,
     ) -> tsz_solver::TypeId {
+        use crate::query_boundaries::common::substitute_this_type_at_return_position;
         use tsz_solver::TypeId;
 
-        // Fast path: intrinsic types can't contain ThisType
         if return_type.is_intrinsic() {
             return return_type;
         }
 
-        // Try to extract the receiver from the call expression.
-        // The call_expression parameter is actually the callee expression (call.expression),
-        // which for method calls is a PropertyAccessExpression.
-        // For `obj.method()`, this is `obj.method`, whose `.expression` is `obj`.
         let node = match self.ctx.arena.get(call_expression) {
             Some(n) => n,
             None => return return_type,
@@ -607,7 +619,7 @@ impl<'a> CheckerState<'a> {
                 && !self.is_this_in_nested_function_inside_class(call_expression)
                 && !self.is_this_in_static_class_member(call_expression)
             {
-                return crate::query_boundaries::common::substitute_this_type_at_return_position(
+                return substitute_this_type_at_return_position(
                     self.ctx.types,
                     return_type,
                     self.ctx.types.this_type(),
@@ -615,7 +627,7 @@ impl<'a> CheckerState<'a> {
             }
             let receiver_type = self.get_type_of_node(access.expression);
             if receiver_type != TypeId::ERROR && receiver_type != TypeId::ANY {
-                return crate::query_boundaries::common::substitute_this_type_at_return_position(
+                return substitute_this_type_at_return_position(
                     self.ctx.types,
                     return_type,
                     receiver_type,
@@ -624,12 +636,23 @@ impl<'a> CheckerState<'a> {
             if let Some(receiver_sym) = self.resolve_identifier_symbol(access.expression) {
                 let receiver_type = self.get_type_of_symbol(receiver_sym);
                 if receiver_type != TypeId::ERROR && receiver_type != TypeId::ANY {
-                    return crate::query_boundaries::common::substitute_this_type_at_return_position(
+                    return substitute_this_type_at_return_position(
                         self.ctx.types,
                         return_type,
                         receiver_type,
                     );
                 }
+            }
+        }
+
+        if let Some(callee_sym) = self.resolve_identifier_symbol(call_expression) {
+            let receiver_type = self.get_type_of_symbol(callee_sym);
+            if receiver_type != TypeId::ERROR && receiver_type != TypeId::ANY {
+                return substitute_this_type_at_return_position(
+                    self.ctx.types,
+                    return_type,
+                    receiver_type,
+                );
             }
         }
 
@@ -651,7 +674,7 @@ impl<'a> CheckerState<'a> {
         file_name: String,
         compiler_options: &CheckerOptions,
     ) -> Self {
-        Self::record_root_checker_construction();
+        tsz_common::perf_counters::record_checker_state_constructed();
         CheckerState {
             ctx: CheckerContext::with_options(arena, binder, types, file_name, compiler_options),
         }
@@ -667,7 +690,7 @@ impl<'a> CheckerState<'a> {
         file_name: String,
         compiler_options: &CheckerOptions,
     ) -> Self {
-        Self::record_root_checker_construction();
+        tsz_common::perf_counters::record_checker_state_constructed();
         CheckerState {
             ctx: CheckerContext::with_options_deferred_def_store(
                 arena,
@@ -690,7 +713,7 @@ impl<'a> CheckerState<'a> {
         compiler_options: &CheckerOptions,
         definition_store: std::sync::Arc<tsz_solver::def::DefinitionStore>,
     ) -> Self {
-        Self::record_root_checker_construction();
+        tsz_common::perf_counters::record_checker_state_constructed();
         let compiler_options = compiler_options.clone().apply_strict_defaults();
         CheckerState {
             ctx: CheckerContext::new_with_shared_def_store(
@@ -713,7 +736,7 @@ impl<'a> CheckerState<'a> {
         cache: crate::TypeCache,
         compiler_options: &CheckerOptions,
     ) -> Self {
-        Self::record_root_checker_construction();
+        tsz_common::perf_counters::record_checker_state_constructed();
         CheckerState {
             ctx: CheckerContext::with_cache_and_options(
                 arena,
@@ -740,7 +763,7 @@ impl<'a> CheckerState<'a> {
         compiler_options: CheckerOptions,
         definition_store: std::sync::Arc<tsz_solver::def::DefinitionStore>,
     ) -> Self {
-        Self::record_root_checker_construction();
+        tsz_common::perf_counters::record_checker_state_constructed();
         CheckerState {
             ctx: CheckerContext::with_cache_and_shared_def_store(
                 arena,
@@ -1033,288 +1056,7 @@ impl<'a> CheckerState<'a> {
     // Type Resolution - Core Methods
     // =========================================================================
 
-    /// Get the type of a node.
-    /// Get the type of an AST node with caching and circular reference detection.
-    ///
-    /// This is the main entry point for type computation. All type checking ultimately
-    /// flows through this function to get the type of AST nodes.
-    ///
-    /// ## Caching:
-    /// - Types are cached in `ctx.node_types` by node index
-    /// - Subsequent calls for the same node return the cached type
-    /// - Cache is checked first before computation
-    ///
-    /// ## Fuel Management:
-    /// - Consumes fuel on each call to prevent infinite loops
-    /// - Returns ERROR if fuel is exhausted (prevents type checker timeout)
-    /// - Fuel is reset between file check operations
-    ///
-    /// ## Circular Reference Detection:
-    /// - Tracks currently resolving nodes in `ctx.node_resolution_stack`
-    /// - Returns ERROR if a circular reference is detected
-    /// - Helps expose type resolution bugs early
-    ///
-    /// ## Examples:
-    /// ```typescript
-    /// let x = 42;           // Type: number
-    /// let y = x;            // Type: number (from cache)
-    /// let z = x + y;        // Types: x=number, y=number, result=number
-    /// ```
-    ///
-    /// ## Performance:
-    /// - Caching prevents redundant type computation
-    /// - Circular reference detection prevents infinite recursion
-    /// - Fuel management ensures termination even for malformed code
-    const fn request_cache_is_audited_access_kind(kind: u16) -> bool {
-        kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            || kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-    }
-
-    fn request_cache_key_for_node(
-        &mut self,
-        idx: NodeIndex,
-        request: &TypingRequest,
-    ) -> Option<RequestCacheKey> {
-        let key = RequestCacheKey::from_request(request)?;
-        let Some(node) = self.ctx.arena.get(idx) else {
-            self.ctx.request_cache_counters.contextual_cache_bypasses += 1;
-            return None;
-        };
-
-        let audited = match node.kind {
-            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
-                self.is_request_cache_safe_property_access(idx)
-            }
-            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
-                self.is_request_cache_safe_element_access(idx)
-            }
-            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
-                self.is_request_cache_safe_object_literal(idx)
-            }
-            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
-                self.is_request_cache_safe_array_literal(idx)
-            }
-            _ => false,
-        };
-
-        if !audited {
-            self.ctx.request_cache_counters.contextual_cache_bypasses += 1;
-            return None;
-        }
-
-        Some(key)
-    }
-
-    fn request_cache_lookup(
-        &mut self,
-        idx: NodeIndex,
-        kind: u16,
-        key: RequestCacheKey,
-    ) -> Option<TypeId> {
-        if Self::request_cache_is_audited_access_kind(kind) {
-            self.ctx
-                .request_cache_counters
-                .property_access_request_cache_lookups += 1;
-        }
-        if let Some(&cached) = self.ctx.request_node_types.get(&(idx.0, key)) {
-            self.ctx.request_cache_counters.request_cache_hits += 1;
-            if Self::request_cache_is_audited_access_kind(kind) {
-                self.ctx
-                    .request_cache_counters
-                    .property_access_request_cache_hits += 1;
-            }
-            return Some(cached);
-        }
-        self.ctx.request_cache_counters.request_cache_misses += 1;
-        None
-    }
-
-    fn cache_request_type(&mut self, idx: NodeIndex, key: RequestCacheKey, ty: TypeId) {
-        self.ctx.request_node_types.insert((idx.0, key), ty);
-    }
-
-    fn is_request_cache_safe_property_access(&self, idx: NodeIndex) -> bool {
-        let Some(node) = self.ctx.arena.get(idx) else {
-            return false;
-        };
-        let Some(access) = self.ctx.arena.get_access_expr(node) else {
-            return false;
-        };
-        if self.ctx.enclosing_class.is_some() || self.is_this_expression(access.expression) {
-            return false;
-        }
-        if self.is_super_expression(access.expression) {
-            return false;
-        }
-        if self
-            .ctx
-            .arena
-            .get(access.name_or_argument)
-            .is_some_and(|name| name.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16)
-        {
-            return false;
-        }
-        self.is_request_cache_safe_expression_tree(access.expression)
-    }
-
-    fn is_request_cache_safe_element_access(&self, idx: NodeIndex) -> bool {
-        let Some(node) = self.ctx.arena.get(idx) else {
-            return false;
-        };
-        let Some(access) = self.ctx.arena.get_access_expr(node) else {
-            return false;
-        };
-        if self.ctx.enclosing_class.is_some() || self.is_this_expression(access.expression) {
-            return false;
-        }
-        if self.is_super_expression(access.expression) {
-            return false;
-        }
-        self.is_request_cache_safe_expression_tree(access.expression)
-            && self.is_request_cache_safe_expression_tree(access.name_or_argument)
-    }
-
-    fn is_request_cache_safe_object_literal(&self, idx: NodeIndex) -> bool {
-        if self.ctx.in_destructuring_target
-            || self.ctx.preserve_literal_types
-            || self.current_this_type().is_some()
-        {
-            return false;
-        }
-
-        let Some(node) = self.ctx.arena.get(idx) else {
-            return false;
-        };
-        let Some(obj) = self.ctx.arena.get_literal_expr(node) else {
-            return false;
-        };
-        for &prop_idx in &obj.elements.nodes {
-            let Some(prop_node) = self.ctx.arena.get(prop_idx) else {
-                return false;
-            };
-            match prop_node.kind {
-                k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
-                    let Some(prop) = self.ctx.arena.get_property_assignment(prop_node) else {
-                        return false;
-                    };
-                    if self
-                        .ctx
-                        .arena
-                        .get(prop.name)
-                        .is_some_and(|name| name.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
-                    {
-                        return false;
-                    }
-                    if !self.is_request_cache_safe_expression_tree(prop.initializer) {
-                        return false;
-                    }
-                }
-                k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {}
-                k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => {
-                    let Some(spread) = self.ctx.arena.get_spread(prop_node) else {
-                        return false;
-                    };
-                    if !self.is_request_cache_safe_expression_tree(spread.expression) {
-                        return false;
-                    }
-                }
-                _ => return false,
-            }
-        }
-        true
-    }
-
-    fn is_request_cache_safe_array_literal(&self, idx: NodeIndex) -> bool {
-        if self.ctx.in_destructuring_target || self.ctx.preserve_literal_types {
-            return false;
-        }
-
-        let Some(node) = self.ctx.arena.get(idx) else {
-            return false;
-        };
-        let Some(array) = self.ctx.arena.get_literal_expr(node) else {
-            return false;
-        };
-        for &elem_idx in &array.elements.nodes {
-            if elem_idx.is_none() {
-                continue;
-            }
-            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
-                return false;
-            };
-            if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
-                let Some(spread) = self.ctx.arena.get_spread(elem_node) else {
-                    return false;
-                };
-                if !self.is_request_cache_safe_expression_tree(spread.expression) {
-                    return false;
-                }
-                continue;
-            }
-            if !self.is_request_cache_safe_expression_tree(elem_idx) {
-                return false;
-            }
-        }
-        true
-    }
-
-    fn is_request_cache_safe_expression_tree(&self, idx: NodeIndex) -> bool {
-        if idx.is_none() {
-            return true;
-        }
-        let Some(node) = self.ctx.arena.get(idx) else {
-            return false;
-        };
-        match node.kind {
-            k if k == tsz_scanner::SyntaxKind::Identifier as u16
-                || k == tsz_scanner::SyntaxKind::NumericLiteral as u16
-                || k == tsz_scanner::SyntaxKind::StringLiteral as u16
-                || k == tsz_scanner::SyntaxKind::TrueKeyword as u16
-                || k == tsz_scanner::SyntaxKind::FalseKeyword as u16
-                || k == tsz_scanner::SyntaxKind::NullKeyword as u16 =>
-            {
-                true
-            }
-            k if k == tsz_scanner::SyntaxKind::ThisKeyword as u16 => false,
-            k if k == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16 => true,
-            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
-                self.ctx.arena.get_parenthesized(node).is_some_and(|paren| {
-                    self.is_request_cache_safe_expression_tree(paren.expression)
-                })
-            }
-            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => self
-                .ctx
-                .arena
-                .get_unary_expr(node)
-                .is_some_and(|expr| self.is_request_cache_safe_expression_tree(expr.operand)),
-            k if k == syntax_kind_ext::AS_EXPRESSION
-                || k == syntax_kind_ext::TYPE_ASSERTION
-                || k == syntax_kind_ext::SATISFIES_EXPRESSION
-                || k == syntax_kind_ext::NON_NULL_EXPRESSION =>
-            {
-                self.ctx
-                    .arena
-                    .get_type_assertion(node)
-                    .is_some_and(|expr| self.is_request_cache_safe_expression_tree(expr.expression))
-                    || self.ctx.arena.get_unary_expr_ex(node).is_some_and(|expr| {
-                        self.is_request_cache_safe_expression_tree(expr.expression)
-                    })
-            }
-            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
-                self.is_request_cache_safe_property_access(idx)
-            }
-            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
-                self.is_request_cache_safe_element_access(idx)
-            }
-            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
-                self.is_request_cache_safe_object_literal(idx)
-            }
-            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
-                self.is_request_cache_safe_array_literal(idx)
-            }
-            _ => false,
-        }
-    }
+    // Request cache safety checks are in request_cache.rs
 
     #[inline]
     pub fn get_type_of_node(&mut self, idx: NodeIndex) -> TypeId {
@@ -1371,6 +1113,13 @@ impl<'a> CheckerState<'a> {
                 node_kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                     || node_kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
             };
+            if let Some((name, _)) = crate::dispatch_helpers::keyword_type_mapping(node_kind)
+                && self.is_keyword_type_used_as_value_position(idx)
+            {
+                use crate::query_boundaries::name_resolution::NameLookupKind;
+                self.report_wrong_meaning_diagnostic(name, idx, NameLookupKind::Type);
+                return TypeId::ERROR;
+            }
             let needs_flow_or_super =
                 is_identifier || is_this_keyword || is_super_keyword || is_access_expr;
 
@@ -1792,7 +1541,7 @@ impl<'a> CheckerState<'a> {
             };
 
             // Loop labels, switch clauses, and calls always block
-            if (flow.flags & HARD_STOP_FLAGS) != 0 {
+            if flow.has_any_flags(HARD_STOP_FLAGS) {
                 return false;
             }
 

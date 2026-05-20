@@ -928,6 +928,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                                 param_index: i,
                                 source_param: s_effective,
                                 target_param: t_effective,
+                                // Tracer emission is the fast-path; the
+                                // inner reason isn't computed here to
+                                // avoid recursive explain on every
+                                // failed subtype check. Callers that
+                                // need it use the explain path.
+                                inner_reason: None,
                             },
                         )
                     {
@@ -1290,11 +1296,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        // Check properties: a plain function has no user-defined properties,
-        // so if the target callable has non-optional properties (e.g., from a
-        // namespace merge), the function is NOT a subtype. This matches tsc's
-        // behavior where `typeof Point` (function + namespace exports) is not
-        // assignable to a bare function type.
         let should_skip_prop = |name: crate::intern::Atom| {
             let resolved = self.interner.resolve_atom(name);
             resolved.starts_with('#')
@@ -1306,12 +1307,34 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             .cloned()
             .collect();
         if !target_props.is_empty() {
-            // The function type has no properties to match against the target's
-            // required properties. Delegate to check_object_subtype with an
-            // empty source shape to properly handle optional vs required props.
+            let mut source_props = Vec::new();
+            for t_prop in &target_props {
+                let prop_name = self.interner.resolve_atom(t_prop.name);
+                if matches!(prop_name.as_str(), "call" | "apply")
+                    && !source_props
+                        .iter()
+                        .any(|p: &PropertyInfo| p.name == t_prop.name)
+                {
+                    source_props.push(PropertyInfo {
+                        name: t_prop.name,
+                        type_id: t_prop.type_id,
+                        write_type: t_prop.write_type,
+                        optional: false,
+                        readonly: false,
+                        is_method: true,
+                        is_class_prototype: false,
+                        visibility: Visibility::Public,
+                        parent_id: None,
+                        declaration_order: 0,
+                        is_string_named: false,
+                        is_symbol_named: false,
+                        single_quoted_name: false,
+                    });
+                }
+            }
             let source_shape = ObjectShape {
                 flags: ObjectFlags::empty(),
-                properties: Vec::new(),
+                properties: source_props,
                 string_index: None,
                 number_index: None,
                 symbol: None,
@@ -1784,7 +1807,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.check_function_subtype(&s_erased, &t_erased)
     }
 
-    pub(crate) fn callable_modality_flags_for_type(&self, type_id: TypeId) -> (bool, bool) {
+    pub(crate) fn callable_modality_flags_for_type(&mut self, type_id: TypeId) -> (bool, bool) {
+        let direct = self.callable_modality_flags_for_type_direct(type_id);
+        if direct.0 || direct.1 {
+            return direct;
+        }
+        let evaluated = self.evaluate_type(type_id);
+        if evaluated == type_id {
+            direct
+        } else {
+            self.callable_modality_flags_for_type_direct(evaluated)
+        }
+    }
+
+    fn callable_modality_flags_for_type_direct(&self, type_id: TypeId) -> (bool, bool) {
         if let Some(shape_id) = callable_shape_id(self.interner, type_id) {
             let shape = self.interner.callable_shape(shape_id);
             return (

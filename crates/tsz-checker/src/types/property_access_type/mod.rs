@@ -5,6 +5,8 @@ mod class_recovery;
 mod helpers;
 mod imported_array_to_enum;
 mod known_globals;
+mod nullish_access;
+mod optional_chain_cache;
 mod partial_initializer;
 mod resolve;
 

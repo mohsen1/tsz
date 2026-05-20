@@ -127,7 +127,14 @@ impl<'a> DeclarationEmitter<'a> {
         match node.kind {
             k if k == SyntaxKind::Identifier as u16 => {
                 if let Some(ident) = self.arena.get_identifier(node) {
-                    self.write(&ident.escaped_text);
+                    if let Some(canonical_name) =
+                        self.canonical_named_import_name_for_alias(node_idx)
+                    {
+                        let canonical_name = canonical_name.to_owned();
+                        self.write(&canonical_name);
+                    } else {
+                        self.write(&ident.escaped_text);
+                    }
                 }
             }
             k if k == syntax_kind_ext::TYPE_PARAMETER => {
@@ -369,6 +376,7 @@ impl<'a> DeclarationEmitter<'a> {
                     || k == syntax_kind_ext::EXPORT_ASSIGNMENT
                     || k == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
                     || self.stmt_has_export_modifier(stmt_node)
+                    || (self.source_is_js_file && self.statement_has_bare_require_call(stmt_idx))
                     || self
                         .js_supported_commonjs_named_export_for_statement(stmt_idx)
                         .is_some()
@@ -377,6 +385,96 @@ impl<'a> DeclarationEmitter<'a> {
                         .is_some()
             })
         })
+    }
+
+    pub(crate) fn source_file_has_native_esm_syntax(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> bool {
+        source_file.statements.nodes.iter().any(|&stmt_idx| {
+            self.arena.get(stmt_idx).is_some_and(|stmt_node| {
+                let k = stmt_node.kind;
+                k == syntax_kind_ext::IMPORT_DECLARATION
+                    || k == syntax_kind_ext::EXPORT_DECLARATION
+                    || (k == syntax_kind_ext::EXPORT_ASSIGNMENT
+                        && self
+                            .arena
+                            .get_export_assignment(stmt_node)
+                            .is_some_and(|assign| !assign.is_export_equals))
+                    || k == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+                    || self.stmt_has_export_modifier(stmt_node)
+            })
+        })
+    }
+
+    fn statement_has_bare_require_call(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+            return false;
+        }
+        let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+            return false;
+        };
+        var_stmt
+            .declarations
+            .nodes
+            .iter()
+            .copied()
+            .any(|decl_list_idx| {
+                let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                    return false;
+                };
+                let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                    return false;
+                };
+                decl_list
+                    .declarations
+                    .nodes
+                    .iter()
+                    .copied()
+                    .any(|decl_idx| {
+                        let Some(decl_node) = self.arena.get(decl_idx) else {
+                            return false;
+                        };
+                        let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                            return false;
+                        };
+                        self.initializer_is_bare_require_call(decl.initializer)
+                    })
+            })
+    }
+
+    pub(in crate::declaration_emitter) fn initializer_is_bare_require_call(
+        &self,
+        initializer: NodeIndex,
+    ) -> bool {
+        self.bare_require_call_module_specifier(initializer)
+            .is_some()
+    }
+
+    pub(in crate::declaration_emitter) fn bare_require_call_module_specifier(
+        &self,
+        initializer: NodeIndex,
+    ) -> Option<String> {
+        let init_node = self.arena.get(initializer)?;
+        if init_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = self.arena.get_call_expr(init_node)?;
+        if self.get_identifier_text(call.expression).as_deref() != Some("require") {
+            return None;
+        }
+        let args = call.arguments.as_ref()?;
+        let [arg_idx] = args.nodes.as_slice() else {
+            return None;
+        };
+        let arg_node = self.arena.get(*arg_idx)?;
+        if arg_node.kind != SyntaxKind::StringLiteral as u16 {
+            return None;
+        }
+        self.arena.get_literal(arg_node).map(|lit| lit.text.clone())
     }
 
     pub(crate) fn source_file_is_js(
@@ -406,6 +504,8 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         let export_targets = self.collect_js_named_export_targets(source_file);
+        let enum_targets = self.js_local_enum_targets_by_name(source_file);
+        let interface_targets = self.js_local_interface_targets_by_name(source_file);
 
         for &stmt_idx in &source_file.statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
@@ -436,63 +536,40 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
 
-            let mut foldable_names = Vec::new();
-            let mut target_statements = Vec::new();
-            let mut seen_target_statements = FxHashSet::default();
-
-            for &spec_idx in &named.elements.nodes {
-                let Some(spec_node) = self.arena.get(spec_idx) else {
-                    foldable_names.clear();
-                    target_statements.clear();
-                    break;
-                };
-                let Some(spec) = self.arena.get_specifier(spec_node) else {
-                    foldable_names.clear();
-                    target_statements.clear();
-                    break;
-                };
-                if spec.property_name.is_some() {
-                    foldable_names.clear();
-                    target_statements.clear();
-                    break;
-                }
-                let Some(name_node) = self.arena.get(spec.name) else {
-                    foldable_names.clear();
-                    target_statements.clear();
-                    break;
-                };
-                let Some(name_ident) = self.arena.get_identifier(name_node) else {
-                    foldable_names.clear();
-                    target_statements.clear();
-                    break;
-                };
-                let name = name_ident.escaped_text.clone();
-                let Some(&target_stmt_idx) = export_targets.get(&name) else {
-                    foldable_names.clear();
-                    target_statements.clear();
-                    break;
-                };
-                foldable_names.push(name);
-                if seen_target_statements.insert(target_stmt_idx) {
-                    target_statements.push(target_stmt_idx);
-                }
-            }
-
-            if foldable_names.is_empty() {
+            let Some(plan) = self.js_local_named_export_plan(
+                named,
+                &export_targets,
+                &enum_targets,
+                &interface_targets,
+            ) else {
+                continue;
+            };
+            if plan.folded_names.is_empty() {
                 continue;
             }
 
-            for name in foldable_names {
+            for name in plan.folded_names {
+                names.insert(name);
+            }
+            for name in plan.plain_interface_names {
                 names.insert(name);
             }
 
             let mut deferred_targets = Vec::new();
-            for target_stmt_idx in target_statements {
+            for interface_stmt_idx in plan.interface_statements {
+                if deferred_statements.insert(interface_stmt_idx) {
+                    deferred_targets.push(interface_stmt_idx);
+                }
+            }
+            for target_stmt_idx in plan.folded_target_statements {
                 let Some(target_stmt_node) = self.arena.get(target_stmt_idx) else {
                     continue;
                 };
-                if self.stmt_has_export_modifier(target_stmt_node)
-                    || self.statement_has_attached_jsdoc(source_file, target_stmt_node)
+                if self.stmt_has_export_modifier(target_stmt_node) {
+                    continue;
+                }
+                if target_stmt_node.kind != syntax_kind_ext::FUNCTION_DECLARATION
+                    && self.statement_has_attached_jsdoc(source_file, target_stmt_node)
                 {
                     continue;
                 }

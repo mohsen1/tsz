@@ -14,7 +14,22 @@ use tsz_common::position::Position;
 use tsz_parser::parser::node::{CallExprData, NodeAccess};
 use tsz_parser::{NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{FunctionShape, TypeData, TypeId, TypePredicateTarget, visitor};
+use tsz_solver::{
+    FunctionShape, ParamInfo, TypeData, TypeId, TypePredicateTarget, apparent_intrinsic_kind,
+    visitor,
+};
+
+use crate::intrinsic_params::{
+    IntrinsicParamSpec, IntrinsicParamTypeHint, bigint_intrinsic_method_params,
+    boolean_intrinsic_method_params, number_intrinsic_method_params,
+    string_intrinsic_method_params,
+};
+#[cfg(test)]
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 /// Represents a parameter in a signature.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -396,14 +411,30 @@ impl<'a> SignatureHelpProvider<'a> {
         } else {
             Vec::new()
         };
-        let mut signatures = self.get_signatures_from_type(
+        // For primitive intrinsic methods resolved via the no-lib fallback the type
+        // system synthesizes `(...args: any[]) => ReturnType`.  Try to build directly
+        // from the intrinsic parameter table first so we never pay the cost of
+        // `get_signatures_from_type` when the result would be discarded.
+        let intrinsic_sigs = self.try_build_intrinsic_signatures(
+            callee_expr,
             callee_type,
-            &checker,
-            effective_call_kind,
+            &mut checker,
             &callee_name,
             has_explicit_type_args,
             &explicit_type_arg_texts,
         );
+        let mut signatures = if let Some(sigs) = intrinsic_sigs {
+            sigs
+        } else {
+            self.get_signatures_from_type(
+                callee_type,
+                &checker,
+                effective_call_kind,
+                &callee_name,
+                has_explicit_type_args,
+                &explicit_type_arg_texts,
+            )
+        };
 
         if let Some(docs) = docs {
             self.apply_signature_docs(&mut signatures, &docs);
@@ -1349,11 +1380,9 @@ impl<'a> SignatureHelpProvider<'a> {
             (params, return_type)
         };
 
-        let mut parameters = Vec::new();
-        for (idx, raw) in Self::split_top_level_text(params_text, ',')
-            .into_iter()
-            .enumerate()
-        {
+        let param_parts = Self::split_top_level_text(params_text, ',');
+        let mut parameters = Vec::with_capacity(param_parts.len());
+        for (idx, raw) in param_parts.into_iter().enumerate() {
             let raw = raw.trim();
             if raw.is_empty() {
                 continue;
@@ -2401,6 +2430,10 @@ impl<'a> SignatureHelpProvider<'a> {
             let mut sigs = Vec::new();
             let include_call = call_kind == CallKind::Call || call_kind == CallKind::TaggedTemplate;
             let include_construct = call_kind == CallKind::New;
+            sigs.reserve(
+                usize::from(include_call) * shape.call_signatures.len()
+                    + usize::from(include_construct) * shape.construct_signatures.len(),
+            );
 
             if include_call {
                 // Add call signatures
@@ -2453,7 +2486,7 @@ impl<'a> SignatureHelpProvider<'a> {
         // Union of functions
         if let Some(members) = visitor::union_list_id(self.interner, type_id) {
             let members = self.interner.type_list(members);
-            let mut sigs = Vec::new();
+            let mut sigs = Vec::with_capacity(members.len());
             for &member in members.iter() {
                 sigs.extend(self.get_signatures_from_type(
                     member,
@@ -2468,6 +2501,95 @@ impl<'a> SignatureHelpProvider<'a> {
         }
 
         vec![]
+    }
+
+    /// Returns the return type when `type_id` is the synthetic apparent method type created by
+    /// `make_apparent_method_type`: a single nameless rest parameter of type `any[]`.
+    /// Distinguishes the no-lib fallback shape from real function types with a rest parameter.
+    fn synthetic_apparent_method_return_type(&self, type_id: TypeId) -> Option<TypeId> {
+        let shape_id = visitor::function_shape_id(self.interner, type_id)?;
+        let shape = self.interner.function_shape(shape_id);
+        if shape.params.len() != 1 {
+            return None;
+        }
+        let p = &shape.params[0];
+        if p.rest && p.name.is_none() && p.type_id == self.interner.array(TypeId::ANY) {
+            Some(shape.return_type)
+        } else {
+            None
+        }
+    }
+
+    /// If `callee_expr` is a property-access on a primitive intrinsic type and the
+    /// resolved callee type is the synthetic `...args: any[]` fallback, return
+    /// signatures built from the known intrinsic parameter table.
+    fn try_build_intrinsic_signatures(
+        &self,
+        callee_expr: NodeIndex,
+        callee_type: TypeId,
+        checker: &mut CheckerState,
+        callee_name: &str,
+        has_explicit_type_args: bool,
+        explicit_type_arg_texts: &[String],
+    ) -> Option<Vec<SignatureCandidate>> {
+        let return_type = self.synthetic_apparent_method_return_type(callee_type)?;
+        let callee_node = self.arena.get(callee_expr)?;
+        let access = self.arena.get_access_expr(callee_node)?;
+        let method_name = self.arena.get_identifier_text(access.name_or_argument)?;
+        let raw_obj_type = checker.get_type_of_node(access.expression);
+        let obj_type = checker.resolve_lazy_type(raw_obj_type);
+        let kind = apparent_intrinsic_kind(self.interner, obj_type)?;
+        let param_specs: &[IntrinsicParamSpec] = match kind {
+            tsz_solver::IntrinsicKind::String => string_intrinsic_method_params(method_name),
+            tsz_solver::IntrinsicKind::Number => number_intrinsic_method_params(method_name),
+            tsz_solver::IntrinsicKind::Boolean => boolean_intrinsic_method_params(method_name),
+            tsz_solver::IntrinsicKind::Bigint => bigint_intrinsic_method_params(method_name),
+            _ => None,
+        }?;
+
+        let params: Vec<ParamInfo> = param_specs
+            .iter()
+            .map(|spec| {
+                let base_ty = Self::intrinsic_param_type_hint_to_type_id(spec.ty);
+                let type_id = if spec.rest {
+                    self.interner.array(base_ty)
+                } else {
+                    base_ty
+                };
+                ParamInfo {
+                    name: Some(self.interner.intern_string(spec.name)),
+                    type_id,
+                    optional: spec.optional,
+                    rest: spec.rest,
+                }
+            })
+            .collect();
+
+        let shape = FunctionShape {
+            type_params: Vec::new(),
+            params,
+            this_type: None,
+            return_type,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        };
+
+        Some(self.signature_candidates_for_shape(
+            &shape,
+            checker,
+            false,
+            callee_name,
+            has_explicit_type_args,
+            explicit_type_arg_texts,
+        ))
+    }
+
+    const fn intrinsic_param_type_hint_to_type_id(hint: IntrinsicParamTypeHint) -> TypeId {
+        match hint {
+            IntrinsicParamTypeHint::String => TypeId::STRING,
+            IntrinsicParamTypeHint::Number => TypeId::NUMBER,
+        }
     }
 
     fn signature_candidates_for_shape(
@@ -2507,7 +2629,7 @@ impl<'a> SignatureHelpProvider<'a> {
             return vec![shape.clone()];
         };
 
-        let mut variants = Vec::new();
+        let mut variants = Vec::with_capacity(checker.ctx.types.type_list(list_id).len());
         for &member in checker.ctx.types.type_list(list_id).iter() {
             if !matches!(checker.ctx.types.lookup(member), Some(TypeData::Tuple(_))) {
                 continue;
@@ -2926,7 +3048,7 @@ impl<'a> SignatureHelpProvider<'a> {
             })
             .unwrap_or_else(|| "args".to_string());
 
-        let mut expanded = Vec::new();
+        let mut expanded = Vec::with_capacity(tuple_variants.len());
         for tuple_variant in tuple_variants {
             let Some(expanded_rest_params) =
                 Self::tuple_variant_parameters(&tuple_variant, &base_rest_name)
@@ -2935,7 +3057,8 @@ impl<'a> SignatureHelpProvider<'a> {
             };
             let mut info = base.info.clone();
             let prefix_param_count = rest_param_index.min(base.info.parameters.len());
-            let mut params = base.info.parameters[..prefix_param_count].to_vec();
+            let mut params = Vec::with_capacity(prefix_param_count + expanded_rest_params.len());
+            params.extend_from_slice(&base.info.parameters[..prefix_param_count]);
             params.extend(expanded_rest_params);
             info.parameters = params;
             let labels: Vec<&str> = info
@@ -2976,8 +3099,9 @@ impl<'a> SignatureHelpProvider<'a> {
     }
 
     fn tuple_union_variants(text: &str) -> Vec<String> {
-        let mut out = Vec::new();
-        for part in Self::split_top_level_text(text, '|') {
+        let parts = Self::split_top_level_text(text, '|');
+        let mut out = Vec::with_capacity(parts.len());
+        for part in parts {
             let trimmed = part.trim();
             if trimmed.starts_with('[') && trimmed.ends_with(']') {
                 out.push(trimmed.to_string());
@@ -2999,11 +3123,9 @@ impl<'a> SignatureHelpProvider<'a> {
             return Some(Vec::new());
         }
 
-        let mut params = Vec::new();
-        for (idx, raw) in Self::split_top_level_text(inner, ',')
-            .into_iter()
-            .enumerate()
-        {
+        let parts = Self::split_top_level_text(inner, ',');
+        let mut params = Vec::with_capacity(parts.len());
+        for (idx, raw) in parts.into_iter().enumerate() {
             let raw = raw.trim();
             if raw.is_empty() {
                 continue;
@@ -4375,10 +4497,11 @@ const fn is_ident_char(b: u8) -> bool {
 #[cfg(test)]
 mod signature_help_internal_tests {
     use super::SignatureHelpProvider;
+    use super::parse_test_source;
     use tsz_binder::BinderState;
     use tsz_common::position::{LineMap, Position};
     use tsz_parser::ParserState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     #[test]
     fn split_top_level_text_keeps_function_type_commas_grouped() {
@@ -4409,8 +4532,7 @@ mod signature_help_internal_tests {
     #[test]
     fn textual_nested_incomplete_call_prefers_inner_callee() {
         let source = "declare function foo<T>(x: T, y: T): T;\ndeclare function bar<U>(x: U, y: U): U;\nfoo(bar(";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
@@ -4451,8 +4573,7 @@ mod signature_help_internal_tests {
     #[test]
     fn nested_call_with_outer_unclosed_context_still_has_inner_signature_help() {
         let source = "declare function foo<T>(x: T, y: T): T;\ndeclare function bar<U>(x: U, y: U): U;\nfoo(bar()";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
@@ -4537,8 +4658,7 @@ mod signature_help_internal_tests {
     #[test]
     fn contextual_object_member_signature_preferred_over_outer_call() {
         let source = "interface I { m(n: number, s: string): void; }\ndeclare function takesObj(i: I): void;\ntakesObj({ m: () });";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
@@ -4564,8 +4684,7 @@ mod signature_help_internal_tests {
     #[test]
     fn contextual_variable_initializer_type_alias_and_function_type() {
         let source = "type Cb = () => void;\nconst cb: Cb = ();\nconst cb2: () => void = ();";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
@@ -4605,8 +4724,7 @@ mod signature_help_internal_tests {
         // is the initializer of a variable with a contextual function type.
         let source = "const cb2: () => void = ()";
         let cursor_offset = (source.rfind('(').expect("open paren") + 1) as u32;
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
@@ -4639,8 +4757,7 @@ mod signature_help_internal_tests {
         // parameter, which must not trigger signature help.
         let source = "function f<\nx";
         let cursor_offset = (source.find('<').expect("less than") + 1) as u32;
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
@@ -4672,8 +4789,7 @@ mod signature_help_internal_tests {
         let source = "interface Obj { optionalMethod?: (current: any) => any; }\nconst o: Obj = {\n  optionalMethod() { return {}; }\n};";
         let cursor_offset =
             (source.find("optionalMethod()").expect("call") + "optionalMethod(".len()) as u32;
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
@@ -4704,8 +4820,7 @@ mod signature_help_internal_tests {
     #[test]
     fn overload_selection_prefers_matching_string_literal_signatures() {
         let source = "function x1(x: \"hi\");\nfunction x1(y: \"bye\");\nfunction x1(z: string);\nfunction x1(a: any) {}\nx1('');\nx1('hi');\nx1('bye');";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
@@ -4751,8 +4866,7 @@ mod signature_help_internal_tests {
     #[test]
     fn generic_inference_uses_argument_literal_for_signature_display() {
         let source = "declare function f<T extends string>(a: T, b: T, c: T): void;\nf(\"x\", );";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
@@ -4781,8 +4895,7 @@ mod signature_help_internal_tests {
     #[test]
     fn no_signature_help_while_editing_identifier_before_call_open_paren() {
         let source = "/**\n * @param start The start\n * @param end The end\n * More text\n */\ndeclare function foo(start: number, end?: number);\n\nfo";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
@@ -4812,8 +4925,7 @@ mod signature_help_internal_tests {
     #[test]
     fn no_signature_help_after_closing_paren() {
         let source = "declare function foo(start: number, end?: number): void;\nfoo(10)";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
@@ -4843,8 +4955,7 @@ mod signature_help_internal_tests {
     #[test]
     fn no_signature_help_for_private_constructor_new_call() {
         let source = "class A { private constructor() {} }\nnew A(";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
@@ -4874,8 +4985,7 @@ mod signature_help_internal_tests {
     #[test]
     fn no_signature_help_for_protected_constructor_new_call() {
         let source = "class A { protected constructor() {} }\nnew A(";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);

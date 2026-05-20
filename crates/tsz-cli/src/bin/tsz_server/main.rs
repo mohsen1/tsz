@@ -43,6 +43,7 @@ mod handlers_files;
 mod handlers_info;
 mod handlers_info_alias;
 mod handlers_legacy;
+mod handlers_project_info;
 mod handlers_quickinfo;
 mod handlers_quickinfo_text;
 mod handlers_structure;
@@ -369,90 +370,57 @@ enum LegacyRequest {
 
 /// Full compiler options for a check request (expanded for tsc compatibility)
 #[derive(Clone, Debug, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 struct CheckOptions {
-    #[serde(default)]
     strict: bool,
-    #[serde(default)]
     strict_null_checks: Option<bool>,
-    #[serde(default)]
     strict_function_types: Option<bool>,
-    #[serde(default)]
     strict_bind_call_apply: Option<bool>,
-    #[serde(default)]
     strict_property_initialization: Option<bool>,
-    #[serde(default)]
     no_implicit_any: Option<bool>,
-    #[serde(default)]
     no_implicit_this: Option<bool>,
-    #[serde(default)]
     no_implicit_returns: bool,
-    #[serde(default)]
     use_unknown_in_catch_variables: Option<bool>,
-    #[serde(default)]
     always_strict: Option<bool>,
-    #[serde(default)]
     no_unused_locals: bool,
-    #[serde(default)]
     no_unused_parameters: bool,
-    #[serde(default)]
     exact_optional_property_types: bool,
-    #[serde(default)]
     no_unchecked_indexed_access: bool,
-    #[serde(default)]
     allow_unreachable_code: Option<bool>,
-    #[serde(default)]
     allow_unused_labels: Option<bool>,
-    #[serde(default)]
     no_property_access_from_index_signature: bool,
-    #[serde(default)]
     es_module_interop: bool,
-    #[serde(default)]
     allow_synthetic_default_imports: Option<bool>,
-    #[serde(default)]
     isolated_modules: bool,
-    #[serde(default)]
     no_lib: bool,
-    #[serde(default)]
     lib: Option<Vec<String>>,
-    #[serde(default, deserialize_with = "deserialize_target_option")]
+    #[serde(deserialize_with = "deserialize_target_option")]
     target: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_module_option")]
+    #[serde(deserialize_with = "deserialize_module_option")]
     module: Option<String>,
-    #[serde(default)]
     experimental_decorators: bool,
-    #[serde(default)]
     no_resolve: bool,
-    #[serde(default)]
     allow_js: bool,
-    #[serde(default)]
     check_js: bool,
-    #[serde(default)]
     resolve_json_module: bool,
-    #[serde(default)]
     no_unchecked_side_effect_imports: bool,
-    #[serde(default)]
     no_implicit_override: bool,
-    #[serde(default)]
+    downlevel_iteration: bool,
     no_fallthrough_cases_in_switch: bool,
-    #[serde(default)]
     strict_builtin_iterator_return: Option<bool>,
-    #[serde(default)]
     declaration: bool,
     // Server-protocol checker options that were previously hardcoded to false
     // when constructing `CheckerOptions`. Wiring them through fixes #3579.
-    #[serde(default)]
     verbatim_module_syntax: bool,
-    #[serde(default)]
     erasable_syntax_only: bool,
-    #[serde(default)]
     allow_importing_ts_extensions: bool,
-    #[serde(default)]
     rewrite_relative_import_extensions: bool,
-    #[serde(default)]
     allow_umd_global_access: bool,
-    #[serde(default)]
     preserve_const_enums: bool,
+    isolated_declarations: bool,
+    jsx: Option<String>,
+    jsx_import_source: Option<String>,
+    module_resolution: Option<String>,
 }
 
 /// Legacy response to client
@@ -628,7 +596,7 @@ pub(crate) struct Server {
     /// typecheck (the rename* fourslash tests time out if check.rs sees a
     /// populated `lib`).
     pub(crate) inferred_projectinfo_options:
-        Option<self::handlers_structure::InferredProjectInfoOptions>,
+        Option<self::handlers_project_info::InferredProjectInfoOptions>,
     /// Fallback auto-import gate for inferred projects (no nearby tsconfig/jsconfig).
     pub(crate) auto_imports_allowed_for_inferred_projects: bool,
     /// Whether inferred projects should be checked as `module:none`.
@@ -775,7 +743,7 @@ impl Server {
 
     fn handle_reset(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
         self.reset_session_state();
-        self.stub_response(seq, request, Some(serde_json::json!(true)))
+        self.success_response(seq, request, Some(serde_json::json!(true)))
     }
 
     // =========================================================================
@@ -1157,7 +1125,7 @@ impl Server {
             }
             "reload" => self.handle_reload(seq, &request),
             "reloadProjects" => self.handle_reload_projects(seq, &request),
-            "status" => self.stub_response(
+            "status" => self.success_response(
                 seq,
                 &request,
                 Some(serde_json::json!({"version": tsz_cli::help::TSC_VERSION})),
@@ -1167,58 +1135,53 @@ impl Server {
             }
             "compileOnSaveEmitFile" => self.handle_compile_on_save_emit_file(seq, &request),
             "saveto" => self.handle_save_to(seq, &request),
-            "exit" => TsServerResponse {
-                seq,
-                msg_type: "response".to_string(),
-                command: request.command.clone(),
-                request_seq: request.seq,
-                success: true,
-                message: None,
-                body: None,
-            },
-            _ => TsServerResponse {
-                seq,
-                msg_type: "response".to_string(),
-                command: request.command.clone(),
-                request_seq: request.seq,
-                success: false,
-                message: Some(format!("Unrecognized command: {}", request.command)),
-                body: None,
-            },
+            "exit" => self.acknowledge_response(seq, &request),
+            _ => self.unrecognized_command_response(seq, &request),
         }
     }
 
-    // Stub handlers for protocol commands — return `success: true` with
-    // empty/minimal responses for commands whose semantics ARE "no result yet"
-    // (async-acknowledged ones like `geterr`). This is the right shape when the
-    // empty body is a valid answer to the protocol question.
-    pub(crate) fn stub_response(
+    // =========================================================================
+    // tsserver response taxonomy
+    // =========================================================================
+    //
+    // Four named categories so handlers express intent at the call site and
+    // clients can distinguish them on the wire:
+    //
+    //   `success_response`      — handler computed this body.
+    //   `acknowledge_response`  — async-acknowledged; real payload arrives
+    //                             via events (e.g. `geterr`).
+    //   `unimplemented_response`— recognized but not built yet; success: false.
+    //   `unsupported_response`  — recognized but intentionally out of scope;
+    //                             success: false.
+    //
+    // The dispatch fall-through adds a fifth shape,
+    // `unrecognized_command_response`, for command strings we don't know at
+    // all.
+
+    /// Handler computed `body`. Empty bodies are legitimate answers
+    /// ("no fixes apply here") and stay `success: true`.
+    pub(crate) fn success_response(
         &self,
         seq: u64,
         request: &TsServerRequest,
         body: Option<serde_json::Value>,
     ) -> TsServerResponse {
-        TsServerResponse {
-            seq,
-            msg_type: "response".to_string(),
-            command: request.command.clone(),
-            request_seq: request.seq,
-            success: true,
-            message: None,
-            body,
-        }
+        self.build_response(seq, request, true, None, body)
     }
 
-    /// Return `success: false` with an explicit "not implemented" reason for
-    /// protocol commands that this server has not implemented yet.
-    ///
-    /// Distinguishes "feature unimplemented" from "feature produced an empty
-    /// result" — the prior `stub_response` collapsed both into `success: true`,
-    /// leaving clients no way to tell why a command returned nothing. New
-    /// unimplemented handlers should call this instead of `stub_response`.
-    ///
-    /// Robustness audit (PR #H, item 8 in
-    /// `docs/architecture/ROBUSTNESS_AUDIT_2026-04-26.md`).
+    /// Async-acknowledged: the real payload was already enqueued as
+    /// protocol events; the response carries only the ack.
+    pub(crate) fn acknowledge_response(
+        &self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        self.success_response(seq, request, None)
+    }
+
+    /// Recognized command that has no implementation yet.
+    // No production call site yet — kept as part of the taxonomy so future
+    // stub handlers can mark themselves honest without re-deriving the shape.
     #[allow(dead_code)]
     pub(crate) fn unimplemented_response(
         &self,
@@ -1226,17 +1189,67 @@ impl Server {
         request: &TsServerRequest,
         reason: &str,
     ) -> TsServerResponse {
+        self.capability_error_response(seq, request, "not implemented", reason)
+    }
+
+    /// Recognized command that tsz intentionally does not support
+    /// (e.g. plugin-host or debug-only protocol commands).
+    pub(crate) fn unsupported_response(
+        &self,
+        seq: u64,
+        request: &TsServerRequest,
+        reason: &str,
+    ) -> TsServerResponse {
+        self.capability_error_response(seq, request, "not supported", reason)
+    }
+
+    /// Command string is not in our dispatch table at all.
+    fn unrecognized_command_response(
+        &self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        self.build_response(
+            seq,
+            request,
+            false,
+            Some(format!("Unrecognized command: {}", request.command)),
+            None,
+        )
+    }
+
+    fn capability_error_response(
+        &self,
+        seq: u64,
+        request: &TsServerRequest,
+        verb: &str,
+        reason: &str,
+    ) -> TsServerResponse {
+        self.build_response(
+            seq,
+            request,
+            false,
+            Some(format!("Command '{}' is {verb}: {reason}", request.command)),
+            None,
+        )
+    }
+
+    pub(crate) fn build_response(
+        &self,
+        seq: u64,
+        request: &TsServerRequest,
+        success: bool,
+        message: Option<String>,
+        body: Option<serde_json::Value>,
+    ) -> TsServerResponse {
         TsServerResponse {
             seq,
             msg_type: "response".to_string(),
             command: request.command.clone(),
             request_seq: request.seq,
-            success: false,
-            message: Some(format!(
-                "Command '{}' is not implemented: {reason}",
-                request.command
-            )),
-            body: None,
+            success,
+            message,
+            body,
         }
     }
 }

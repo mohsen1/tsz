@@ -13,9 +13,10 @@ use crate::instantiation::instantiate::fill_application_defaults;
 use crate::types::{MappedModifier, MappedType, TypeData, TypeParamInfo, Visibility};
 use crate::types::{MappedTypeId, SymbolRef, TypeApplicationId, TypeId};
 use crate::visitor::{
-    application_id, contains_type_parameter_named, index_access_parts, intersection_list_id,
-    is_empty_object_type, keyof_inner_type, lazy_def_id, literal_value, mapped_type_id,
-    object_shape_id, object_with_index_shape_id, type_param_info, union_list_id,
+    application_id, array_element_type, contains_type_parameter_named, index_access_parts,
+    intersection_list_id, is_empty_object_type, keyof_inner_type, lazy_def_id, literal_value,
+    mapped_type_id, object_shape_id, object_with_index_shape_id, tuple_list_id, type_param_info,
+    union_list_id,
 };
 use crate::visitors::visitor_predicates::is_primitive_type;
 
@@ -706,6 +707,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         let def_id = self.application_base_def_id(s_app.base)?;
 
+        // Conditional type alias self-comparisons require structural expansion
+        // with recursion identity tracking (tsc's `getRecursionIdentity`
+        // mechanism). When arguments differ, keep the variance path available
+        // so genuine leaf mismatches are not hidden by a DefId-only cycle.
+        if s_app.args == t_app.args && self.is_conditional_alias_base_inline(s_app.base) {
+            return None;
+        }
+
         // Arity normalization: when both applications share the same base but have
         // different arg counts (e.g., Generator<T, void, any> vs Generator<T>),
         // fill in type parameter defaults to normalize both to the same arity.
@@ -743,10 +752,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
                 computed
             });
-        // T<X> <: T<any> is always True when any-propagation is enabled — skip
-        // variance computation entirely rather than risking structural expansion.
+        // T<X> <: T<any> and T<any> <: T<X> are always true when
+        // any-propagation is enabled; skip variance computation entirely rather
+        // than risking structural expansion.
         let allow_any = self.any_propagation.allows_any_at_depth(self.guard.depth());
-        if allow_any && t_args.iter().all(|a| a.is_any()) {
+        if allow_any && (s_args.iter().all(|a| a.is_any()) || t_args.iter().all(|a| a.is_any())) {
             return Some(SubtypeResult::True);
         }
 
@@ -915,7 +925,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// without requiring concrete expansion. This resolves the base type alias/interface
     /// body and instantiates it with the provided type arguments.
     fn try_resolve_application_body(&mut self, app_id: TypeApplicationId) -> Option<TypeId> {
-        use crate::TypeSubstitution;
+        use crate::instantiation::instantiate::TypeSubstitution;
 
         let app = self.interner.type_application(app_id);
 
@@ -950,14 +960,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         let substitution = TypeSubstitution::from_args(self.interner, &type_params, &app.args);
         let app_type = self.interner.application(app.base, app.args.clone());
-        let mut instantiated = crate::instantiate_type_cached(
+        let mut instantiated = crate::instantiation::instantiate::instantiate_type_cached(
             self.interner,
             self.query_db,
             effective_body,
             &substitution,
         );
         if crate::contains_this_type(self.interner, instantiated) {
-            instantiated = crate::substitute_this_type_cached(
+            instantiated = crate::instantiation::instantiate::substitute_this_type_cached(
                 self.interner,
                 self.query_db,
                 instantiated,
@@ -977,6 +987,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target: TypeId,
         app_id: TypeApplicationId,
     ) -> SubtypeResult {
+        if self.is_readonly_application_assignable_to_target(app_id, target) {
+            return SubtypeResult::True;
+        }
+
         match self.try_expand_application(app_id) {
             Some(expanded) => self.check_subtype(expanded, target),
             None => {
@@ -988,6 +1002,34 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
             }
         }
+    }
+
+    fn is_readonly_application_assignable_to_target(
+        &mut self,
+        app_id: TypeApplicationId,
+        target: TypeId,
+    ) -> bool {
+        if array_element_type(self.interner, target).is_some()
+            || tuple_list_id(self.interner, target).is_some()
+        {
+            return false;
+        }
+
+        let app = self.interner.type_application(app_id);
+        let Some(def_id) = self.application_base_def_id(app.base) else {
+            return false;
+        };
+        let Some(name) = self.resolver.get_def_name(def_id) else {
+            return false;
+        };
+        if self.interner.resolve_atom_ref(name).as_ref() != "Readonly" {
+            return false;
+        }
+        let Some(&inner) = app.args.first() else {
+            return false;
+        };
+
+        self.check_subtype(inner, target).is_true()
     }
 
     /// Check source to Application expansion (one-sided Application case).
@@ -1002,6 +1044,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target: TypeId,
         app_id: TypeApplicationId,
     ) -> SubtypeResult {
+        if let Some(inner) = self.readonly_application_or_display_alias_inner(source)
+            && array_element_type(self.interner, target).is_none()
+            && tuple_list_id(self.interner, target).is_none()
+            && self.check_subtype(inner, target).is_true()
+        {
+            return SubtypeResult::True;
+        }
+
         match self.try_expand_application(app_id) {
             Some(expanded) => {
                 let expanded_result = self.check_subtype(source, expanded);
@@ -1329,7 +1379,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     pub(crate) fn check_source_to_mapped_expansion(
         &mut self,
         source: TypeId,
-        _target: TypeId,
+        target: TypeId,
         mapped_id: MappedTypeId,
     ) -> SubtypeResult {
         // Try distributing homomorphic mapped types over intersection arguments
@@ -1372,6 +1422,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // and the mapped type doesn't remove optional.
                 if self.check_source_to_homomorphic_mapped(source, mapped_id) {
                     return SubtypeResult::True;
+                }
+
+                let mapped = self.interner.get_mapped(mapped_id);
+                if mapped.constraint == TypeId::ANY
+                    && mapped.name_type.is_none()
+                    && mapped.template == TypeId::NEVER
+                {
+                    let evaluated = self.evaluate_type(target);
+                    if evaluated != target {
+                        let result = self.check_subtype(source, evaluated);
+                        if result.is_true() {
+                            return result;
+                        }
+                    }
                 }
 
                 SubtypeResult::False
@@ -1535,7 +1599,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     fn try_expand_mapped_with_constraint(&mut self, mapped_id: MappedTypeId) -> Option<TypeId> {
-        use crate::{TypeSubstitution, instantiate_type};
+        use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
         let mapped = self.interner.get_mapped(mapped_id);
         if let Some(TypeData::KeyOf(source)) = self.interner.lookup(mapped.constraint)
             && let Some(TypeData::TypeParameter(param)) = self.interner.lookup(source)
@@ -1580,7 +1644,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Returns None if the application cannot be expanded (missing type params or body).
     ///
     pub(crate) fn try_expand_application(&mut self, app_id: TypeApplicationId) -> Option<TypeId> {
-        use crate::TypeSubstitution;
+        use crate::instantiation::instantiate::TypeSubstitution;
 
         let app = self.interner.type_application(app_id);
 
@@ -1657,14 +1721,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let substitution = TypeSubstitution::from_args(self.interner, &type_params, &app.args);
         let app_type = self.interner.application(app.base, app.args.clone());
 
-        let mut instantiated = crate::instantiate_type_cached(
+        let mut instantiated = crate::instantiation::instantiate::instantiate_type_cached(
             self.interner,
             self.query_db,
             effective_body,
             &substitution,
         );
         if crate::contains_this_type(self.interner, instantiated) {
-            instantiated = crate::substitute_this_type_cached(
+            instantiated = crate::instantiation::instantiate::substitute_this_type_cached(
                 self.interner,
                 self.query_db,
                 instantiated,
@@ -1672,15 +1736,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             );
         }
 
-        Some(instantiated)
+        // Evaluate the instantiated body before returning. When the distributive
+        // conditional path in TypeInstantiator distributes a union-typed parameter
+        // over conditional branches, it produces a union of unevaluated Conditional
+        // nodes. Those Conditionals must be evaluated here so the SubtypeChecker
+        // sees concrete types (tuples, objects, etc.) rather than structural
+        // Conditional nodes that it cannot directly compare to source types.
+        let evaluated = self.evaluate_type(instantiated);
+        Some(if evaluated != instantiated {
+            evaluated
+        } else {
+            instantiated
+        })
     }
 
     /// Try to expand a Mapped type to its structural form.
     /// Returns None if the mapped type cannot be expanded (unresolvable constraint).
     pub(crate) fn try_expand_mapped(&mut self, mapped_id: MappedTypeId) -> Option<TypeId> {
-        use crate::{
-            LiteralValue, MappedModifier, PropertyInfo, TypeSubstitution, instantiate_type,
-        };
+        use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+        use crate::{LiteralValue, MappedModifier, PropertyInfo};
 
         let mapped = self.interner.get_mapped(mapped_id);
 
@@ -1956,7 +2030,7 @@ pub(crate) struct FlattenedMapped {
 /// Returns None if the mapped type isn't in homomorphic form (e.g., has name remapping,
 /// or template isn't `X[K]` where K is the iteration param).
 pub(crate) fn flatten_mapped_chain(
-    interner: &dyn crate::TypeDatabase,
+    interner: &dyn crate::construction::TypeDatabase,
     mapped_id: MappedTypeId,
 ) -> Option<FlattenedMapped> {
     use crate::types::MappedModifier;
@@ -2022,7 +2096,7 @@ pub(crate) fn flatten_mapped_chain(
 /// to mapped types that filter keys via as-clauses, since all properties in the
 /// result type are also properties of T with the same types.
 pub(crate) fn is_filtering_name_type(
-    interner: &dyn crate::TypeDatabase,
+    interner: &dyn crate::construction::TypeDatabase,
     name_type: TypeId,
     mapped: &MappedType,
 ) -> bool {
@@ -2047,7 +2121,7 @@ pub(crate) fn is_filtering_name_type(
 
 /// Check if a type is a type parameter with the given name.
 fn is_type_param_with_name(
-    interner: &dyn crate::TypeDatabase,
+    interner: &dyn crate::construction::TypeDatabase,
     type_id: TypeId,
     name: tsz_common::interner::Atom,
 ) -> bool {

@@ -66,6 +66,58 @@ impl<'a> Printer<'a> {
                 || inner.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS)
         {
             let unwrapped_kind = self.unwrap_type_assertion_kind(paren.expression);
+            // Parens around an optional-chain expression in *access position*
+            // are load-bearing: `(foo?.m).length` short-circuits to
+            // `undefined.length` (TypeError) when foo is nullish, while
+            // `foo?.m.length` short-circuits the whole chain to `undefined`.
+            // Stripping the parens around `(foo?.m as any).length` would
+            // silently change the semantics. The optional-chain bit lives on
+            // CALL_EXPRESSION / PROPERTY_ACCESS / ELEMENT_ACCESS nodes; peel
+            // the type-assertion chain and check the underlying node's flag.
+            let unwrapped_is_optional_chain = {
+                let mut idx = paren.expression;
+                let mut result = None;
+                while let Some(n) = self.arena.get(idx) {
+                    match n.kind {
+                        k if k == syntax_kind_ext::TYPE_ASSERTION
+                            || k == syntax_kind_ext::AS_EXPRESSION
+                            || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+                        {
+                            if let Some(ta) = self.arena.get_type_assertion(n) {
+                                idx = ta.expression;
+                            } else {
+                                break;
+                            }
+                        }
+                        _ => {
+                            // The OPTIONAL_CHAIN flag may only be set on the
+                            // outermost chain node; for property-access /
+                            // element-access / call inner nodes we additionally
+                            // check `question_dot_token` so the whole subtree
+                            // is recognized as part of an optional chain.
+                            let is_chain = n.is_optional_chain()
+                                || self
+                                    .arena
+                                    .get_access_expr(n)
+                                    .is_some_and(|a| a.question_dot_token)
+                                || self
+                                    .arena
+                                    .get_call_expr(n)
+                                    .is_some_and(|_| n.is_optional_chain());
+                            result = Some(is_chain);
+                            break;
+                        }
+                    }
+                }
+                result.unwrap_or(false)
+            };
+            if unwrapped_is_optional_chain && self.paren_in_access_position {
+                // Emit with parens preserved.
+                self.write("(");
+                self.emit(paren.expression);
+                self.write(")");
+                return;
+            }
             // Only strip parens if the unwrapped expression is a simple primary that
             // cannot change meaning without parens: identifiers, property access,
             // element access, `this`, template literals, literals, class/function expr.

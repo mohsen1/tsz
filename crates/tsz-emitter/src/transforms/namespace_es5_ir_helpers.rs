@@ -14,68 +14,7 @@ use crate::transforms::ir::IRMethodName;
 /// Value declarations are: variables, functions, classes, enums, sub-namespaces.
 /// Type-only declarations (interfaces, type aliases) don't count.
 pub(super) fn body_has_value_declarations(arena: &NodeArena, body_idx: NodeIndex) -> bool {
-    let Some(body_node) = arena.get(body_idx) else {
-        return false;
-    };
-
-    let Some(block_data) = arena.get_module_block(body_node) else {
-        return false;
-    };
-
-    let Some(stmts) = block_data.statements.as_ref() else {
-        return false;
-    };
-
-    for &stmt_idx in &stmts.nodes {
-        let Some(stmt_node) = arena.get(stmt_idx) else {
-            continue;
-        };
-
-        match stmt_node.kind {
-            k if k == syntax_kind_ext::VARIABLE_STATEMENT
-                || k == syntax_kind_ext::FUNCTION_DECLARATION
-                || k == syntax_kind_ext::CLASS_DECLARATION
-                || k == syntax_kind_ext::ENUM_DECLARATION =>
-            {
-                return true;
-            }
-            k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                // Recursively check nested namespaces when they contain runtime members.
-                if let Some(ns_data) = arena.get_module(stmt_node)
-                    && body_has_value_declarations(arena, ns_data.body)
-                {
-                    return true;
-                }
-            }
-            k if k == syntax_kind_ext::EXPORT_DECLARATION => {
-                // Check if the exported declaration is a value declaration
-                if let Some(export_data) = arena.get_export_decl(stmt_node)
-                    && let Some(inner_node) = arena.get(export_data.export_clause)
-                {
-                    match inner_node.kind {
-                        k if k == syntax_kind_ext::VARIABLE_STATEMENT
-                            || k == syntax_kind_ext::FUNCTION_DECLARATION
-                            || k == syntax_kind_ext::CLASS_DECLARATION
-                            || k == syntax_kind_ext::ENUM_DECLARATION =>
-                        {
-                            return true;
-                        }
-                        k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                            if let Some(ns_data) = arena.get_module(inner_node)
-                                && body_has_value_declarations(arena, ns_data.body)
-                            {
-                                return true;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    false
+    crate::transforms::emit_utils::module_body_has_runtime_value_declarations(arena, body_idx)
 }
 
 /// Check if an IR node is a comment (standalone or trailing).
@@ -115,7 +54,16 @@ pub(super) fn convert_function_parameters(
         .filter_map(|&p| {
             let param_node = arena.get(p)?;
             let param = arena.get_parameter_at(p)?;
-            let name = get_identifier_text(arena, param.name)?;
+            let name = get_identifier_text(arena, param.name)
+                .filter(|name| !name.is_empty())
+                .or_else(|| {
+                    recovered_parameter_name_from_type_or_range(
+                        arena,
+                        source_text?,
+                        p,
+                        param.type_annotation,
+                    )
+                })?;
             let rest = param.dot_dot_dot_token;
             // Convert default value if present
             let default_value = (param.initializer.is_some())
@@ -132,6 +80,64 @@ pub(super) fn convert_function_parameters(
             })
         })
         .collect()
+}
+
+pub(super) fn recover_empty_function_parameters_from_header(
+    arena: &NodeArena,
+    source_text: Option<&str>,
+    func_idx: NodeIndex,
+    body_idx: NodeIndex,
+) -> Option<Vec<IRParam>> {
+    let source_text = source_text?;
+    let func_node = arena.get(func_idx)?;
+    let body_node = arena.get(body_idx)?;
+    let header =
+        crate::safe_slice::slice(source_text, func_node.pos as usize, body_node.pos as usize)
+            .ok()?;
+    let open_offset = header.find('(')?;
+    let close_offset = header.rfind(')')?;
+    if close_offset <= open_offset {
+        return None;
+    }
+    let raw = header.get(open_offset + 1..close_offset)?;
+    recovered_parameter_name_from_colon_header(raw).map(|name| vec![IRParam::new(name)])
+}
+
+fn recovered_parameter_name_from_type_or_range(
+    arena: &NodeArena,
+    source_text: &str,
+    param_idx: NodeIndex,
+    type_annotation: NodeIndex,
+) -> Option<String> {
+    let raw = arena
+        .get(type_annotation)
+        .and_then(|type_node| {
+            crate::safe_slice::slice(source_text, type_node.pos as usize, type_node.end as usize)
+                .ok()
+        })
+        .or_else(|| {
+            arena.get(param_idx).and_then(|param_node| {
+                crate::safe_slice::slice(
+                    source_text,
+                    param_node.pos as usize,
+                    param_node.end as usize,
+                )
+                .ok()
+            })
+        })?;
+
+    raw.trim_matches(|ch: char| ch == ':' || ch.is_whitespace())
+        .split(|ch: char| !matches!(ch, '_' | '$') && !ch.is_ascii_alphanumeric())
+        .find(|part| !part.is_empty())
+        .map(str::to_string)
+}
+
+fn recovered_parameter_name_from_colon_header(raw: &str) -> Option<String> {
+    let after_colon = raw.trim().strip_prefix(':')?;
+    after_colon
+        .split(|ch: char| !matches!(ch, '_' | '$') && !ch.is_ascii_alphanumeric())
+        .find(|part| !part.is_empty())
+        .map(str::to_string)
 }
 
 fn extract_parameter_leading_comment(
@@ -357,6 +363,19 @@ pub(super) fn convert_exported_variable_declarations(
                     if let Some(name_node) = arena.get(decl.name)
                         && is_binding_pattern_kind(name_node.kind)
                     {
+                        if let Some((assignment, temps)) =
+                            convert_simple_exported_binding_declaration(
+                                arena,
+                                ns_name,
+                                decl.name,
+                                decl.initializer,
+                            )
+                        {
+                            hoisted_temps.extend(temps);
+                            result.push(assignment);
+                            continue;
+                        }
+
                         let temp =
                             crate::transforms::emit_utils::next_temp_var_name(&mut temp_counter);
                         let converter = AstToIr::new(arena);
@@ -423,6 +442,69 @@ pub(super) fn convert_exported_variable_declarations(
 const fn is_binding_pattern_kind(kind: u16) -> bool {
     kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
         || kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+}
+
+fn convert_simple_exported_binding_declaration(
+    arena: &NodeArena,
+    ns_name: &str,
+    pattern_idx: NodeIndex,
+    initializer: NodeIndex,
+) -> Option<(IRNode, Vec<String>)> {
+    let pattern_node = arena.get(pattern_idx)?;
+    let pattern = arena.get_binding_pattern(pattern_node)?;
+
+    let mut binding = None;
+    for (index, &element_idx) in pattern.elements.nodes.iter().enumerate() {
+        let element_node = arena.get(element_idx)?;
+        if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+            continue;
+        }
+        let element = arena.get_binding_element(element_node)?;
+        if element.dot_dot_dot_token || element.initializer.is_some() || binding.is_some() {
+            return None;
+        }
+
+        let name = get_identifier_text(arena, element.name)?;
+        let access = if pattern_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
+            SimpleBindingAccess::Element(index)
+        } else {
+            let prop_idx = if element.property_name.is_some() {
+                element.property_name
+            } else {
+                element.name
+            };
+            SimpleBindingAccess::Property(binding_property_name_text(arena, prop_idx)?)
+        };
+        binding = Some((name, access));
+    }
+
+    let (name, access) = binding?;
+    if !can_inline_single_namespace_binding_initializer(arena, initializer) {
+        return None;
+    }
+    let converter = AstToIr::new(arena);
+    let source = converter.convert_expression(initializer);
+    let temps = converter.take_hoisted_temps();
+    let value = match access {
+        SimpleBindingAccess::Property(prop_name) => IRNode::prop(source, prop_name),
+        SimpleBindingAccess::Element(index) => {
+            IRNode::elem(source, IRNode::number(index.to_string()))
+        }
+    };
+
+    Some((
+        IRNode::NamespaceExport {
+            namespace: ns_name.to_string().into(),
+            name: name.into(),
+            value: Box::new(value),
+        },
+        temps,
+    ))
+}
+
+enum SimpleBindingAccess {
+    Property(String),
+    Element(usize),
 }
 
 fn emit_namespace_binding_pattern_assignments(
@@ -574,6 +656,17 @@ fn binding_property_name_text(arena: &NodeArena, idx: NodeIndex) -> Option<Strin
         return Some(ident.escaped_text.clone());
     }
     arena.get_literal(node).map(|lit| lit.text.clone())
+}
+
+fn can_inline_single_namespace_binding_initializer(arena: &NodeArena, idx: NodeIndex) -> bool {
+    let Some(node) = arena.get(idx) else {
+        return false;
+    };
+
+    node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+        || node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+        || node.is_string_literal()
+        || node.is_numeric_literal()
 }
 
 /// Convert variable declarations to proper IR (`VarDecl` nodes)
@@ -1038,6 +1131,240 @@ pub(super) fn namespace_body_by_name(
     }
 
     None
+}
+
+pub(super) fn entity_path_has_runtime_value(arena: &NodeArena, path: &[String]) -> Option<bool> {
+    entity_path_has_runtime_value_with_depth(arena, path, 0)
+}
+
+fn entity_path_has_runtime_value_with_depth(
+    arena: &NodeArena,
+    path: &[String],
+    depth: usize,
+) -> Option<bool> {
+    if path.is_empty() {
+        return None;
+    }
+    if depth > 16 {
+        return Some(true);
+    }
+
+    if path.len() >= 2 {
+        let namespace_path = &path[..path.len() - 1];
+        let member_name = path.last()?;
+        if let Some(body) = namespace_body_by_name(arena, namespace_path)
+            && let Some(runtime) =
+                namespace_member_has_runtime_value(arena, body, namespace_path, member_name, depth)
+        {
+            return Some(runtime);
+        }
+    }
+
+    namespace_body_by_name(arena, path).map(|body| namespace_body_has_runtime_value(arena, body))
+}
+
+fn namespace_member_has_runtime_value(
+    arena: &NodeArena,
+    body_idx: NodeIndex,
+    namespace_path: &[String],
+    name: &str,
+    depth: usize,
+) -> Option<bool> {
+    let body_node = arena.get(body_idx)?;
+
+    if let Some(module) = arena.get_module(body_node) {
+        if get_identifier_text(arena, module.name).as_deref() == Some(name) {
+            return Some(namespace_body_has_runtime_value(arena, module.body));
+        }
+        return namespace_member_has_runtime_value(arena, module.body, namespace_path, name, depth);
+    }
+
+    let block_data = arena.get_module_block(body_node)?;
+    let stmts = block_data.statements.as_ref()?;
+    let mut matched_type_only = false;
+
+    for &stmt_idx in &stmts.nodes {
+        let Some(stmt_node) = arena.get(stmt_idx) else {
+            continue;
+        };
+        if let Some(runtime) =
+            statement_has_runtime_value_for_name(arena, stmt_node, name, namespace_path, depth)
+        {
+            if runtime {
+                return Some(true);
+            }
+            matched_type_only = true;
+        }
+    }
+
+    matched_type_only.then_some(false)
+}
+
+fn namespace_body_has_runtime_value(arena: &NodeArena, body_idx: NodeIndex) -> bool {
+    let Some(body_node) = arena.get(body_idx) else {
+        return false;
+    };
+
+    if let Some(module) = arena.get_module(body_node) {
+        return namespace_body_has_runtime_value(arena, module.body);
+    }
+
+    let Some(block_data) = arena.get_module_block(body_node) else {
+        return false;
+    };
+    let Some(stmts) = block_data.statements.as_ref() else {
+        return false;
+    };
+
+    stmts.nodes.iter().any(|&stmt_idx| {
+        arena
+            .get(stmt_idx)
+            .is_some_and(|stmt_node| statement_has_any_runtime_value(arena, stmt_node))
+    })
+}
+
+fn statement_has_runtime_value_for_name(
+    arena: &NodeArena,
+    stmt_node: &Node,
+    name: &str,
+    namespace_path: &[String],
+    depth: usize,
+) -> Option<bool> {
+    match stmt_node.kind {
+        k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+            let export = arena.get_export_decl(stmt_node)?;
+            let inner = arena.get(export.export_clause)?;
+            statement_has_runtime_value_for_name(arena, inner, name, namespace_path, depth)
+        }
+        k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+            let import = arena.get_import_decl(stmt_node)?;
+            if get_identifier_text(arena, import.import_clause).as_deref() != Some(name) {
+                return None;
+            }
+            let target_parts = collect_qualified_name_parts(arena, import.module_specifier)?;
+            if !namespace_path.is_empty() {
+                let mut relative_parts = namespace_path.to_vec();
+                relative_parts.extend(target_parts.iter().cloned());
+                if let Some(runtime) =
+                    entity_path_has_runtime_value_with_depth(arena, &relative_parts, depth + 1)
+                {
+                    return Some(runtime);
+                }
+            }
+            Some(
+                entity_path_has_runtime_value_with_depth(arena, &target_parts, depth + 1)
+                    .unwrap_or(true),
+            )
+        }
+        k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+            let iface = arena.get_interface(stmt_node)?;
+            (get_identifier_text(arena, iface.name).as_deref() == Some(name)).then_some(false)
+        }
+        k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+            let alias = arena.get_type_alias(stmt_node)?;
+            (get_identifier_text(arena, alias.name).as_deref() == Some(name)).then_some(false)
+        }
+        k if k == syntax_kind_ext::ENUM_DECLARATION => {
+            let enum_decl = arena.get_enum(stmt_node)?;
+            if get_identifier_text(arena, enum_decl.name).as_deref() != Some(name) {
+                return None;
+            }
+            Some(!arena.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword))
+        }
+        k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+            let func = arena.get_function(stmt_node)?;
+            (get_identifier_text(arena, func.name).as_deref() == Some(name)).then_some(true)
+        }
+        k if k == syntax_kind_ext::CLASS_DECLARATION => {
+            let class = arena.get_class(stmt_node)?;
+            (get_identifier_text(arena, class.name).as_deref() == Some(name)).then_some(true)
+        }
+        k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+            variable_statement_declares_name(arena, stmt_node, name).then_some(true)
+        }
+        k if k == syntax_kind_ext::MODULE_DECLARATION => {
+            let module = arena.get_module(stmt_node)?;
+            if get_identifier_text(arena, module.name).as_deref() != Some(name) {
+                return None;
+            }
+            Some(namespace_body_has_runtime_value(arena, module.body))
+        }
+        _ => None,
+    }
+}
+
+fn statement_has_any_runtime_value(arena: &NodeArena, stmt_node: &Node) -> bool {
+    match stmt_node.kind {
+        k if k == syntax_kind_ext::EXPORT_DECLARATION => arena
+            .get_export_decl(stmt_node)
+            .and_then(|export| arena.get(export.export_clause))
+            .is_some_and(|inner| statement_has_any_runtime_value(arena, inner)),
+        k if k == syntax_kind_ext::VARIABLE_STATEMENT
+            || k == syntax_kind_ext::FUNCTION_DECLARATION
+            || k == syntax_kind_ext::CLASS_DECLARATION =>
+        {
+            true
+        }
+        k if k == syntax_kind_ext::ENUM_DECLARATION => {
+            arena.get_enum(stmt_node).is_some_and(|enum_decl| {
+                !arena.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword)
+            })
+        }
+        k if k == syntax_kind_ext::MODULE_DECLARATION => arena
+            .get_module(stmt_node)
+            .is_some_and(|module| namespace_body_has_runtime_value(arena, module.body)),
+        _ => false,
+    }
+}
+
+fn variable_statement_declares_name(arena: &NodeArena, stmt_node: &Node, name: &str) -> bool {
+    let Some(var_data) = arena.get_variable(stmt_node) else {
+        return false;
+    };
+
+    var_data.declarations.nodes.iter().any(|&decl_list_idx| {
+        let Some(decl_list_node) = arena.get(decl_list_idx) else {
+            return false;
+        };
+        let Some(decl_list) = arena.get_variable(decl_list_node) else {
+            return false;
+        };
+        decl_list.declarations.nodes.iter().any(|&decl_idx| {
+            arena
+                .get_variable_declaration_at(decl_idx)
+                .is_some_and(|decl| binding_name_contains(arena, decl.name, name))
+        })
+    })
+}
+
+fn binding_name_contains(arena: &NodeArena, name_idx: NodeIndex, expected: &str) -> bool {
+    let Some(node) = arena.get(name_idx) else {
+        return false;
+    };
+    if let Some(ident) = arena.get_identifier(node) {
+        return ident.escaped_text == expected;
+    }
+    if is_binding_pattern_kind(node.kind)
+        && let Some(pattern) = arena.get_binding_pattern(node)
+    {
+        return pattern.elements.nodes.iter().any(|&elem_idx| {
+            arena
+                .get_binding_element_at(elem_idx)
+                .is_some_and(|element| binding_name_contains(arena, element.name, expected))
+        });
+    }
+    false
+}
+
+pub(super) fn ir_access_path(node: &IRNode) -> Option<String> {
+    match node {
+        IRNode::Identifier(name) => Some(name.to_string()),
+        IRNode::PropertyAccess { object, property } => {
+            let object_path = ir_access_path(object)?;
+            Some(format!("{object_path}.{property}"))
+        }
+        _ => None,
+    }
 }
 
 pub(super) fn collect_module_decl_parts_for_body_lookup(

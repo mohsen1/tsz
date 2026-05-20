@@ -1,117 +1,19 @@
 {
-  "timestamp": "2026-05-09T11:24:48Z",
-  "git_sha": "85e92945975e98018c5b70045844a0e14e72e594",
+  "timestamp": "2026-05-15T09:57:00Z",
+  "git_sha": "d718764",
   "summary": {
     "total_tests": 12582,
-    "passed": 12537,
-    "failed": 45,
-    "pass_rate": 99.6
+    "passed": 12582,
+    "failed": 0,
+    "pass_rate": 100.0
   },
   "areas_by_pass_rate": [
     {
-      "area": "types/conditional",
-      "total": 10,
-      "passed": 8,
-      "failed": 2,
-      "pass_rate": 80.0
-    },
-    {
-      "area": "classes",
-      "total": 16,
-      "passed": 15,
-      "failed": 1,
-      "pass_rate": 93.75
-    },
-    {
-      "area": "expressions/typeSatisfaction",
-      "total": 16,
-      "passed": 15,
-      "failed": 1,
-      "pass_rate": 93.75
-    },
-    {
-      "area": "expressions/functionCalls",
-      "total": 24,
-      "passed": 23,
-      "failed": 1,
-      "pass_rate": 95.83
-    },
-    {
-      "area": "types/intersection",
-      "total": 24,
-      "passed": 23,
-      "failed": 1,
-      "pass_rate": 95.83
-    },
-    {
-      "area": "types/spread",
-      "total": 25,
-      "passed": 24,
-      "failed": 1,
-      "pass_rate": 96.0
-    },
-    {
-      "area": "types/mapped",
-      "total": 26,
-      "passed": 25,
-      "failed": 1,
-      "pass_rate": 96.15
-    },
-    {
-      "area": "types/members",
-      "total": 34,
-      "passed": 33,
-      "failed": 1,
-      "pass_rate": 97.06
-    },
-    {
-      "area": "types/tuple",
-      "total": 34,
-      "passed": 33,
-      "failed": 1,
-      "pass_rate": 97.06
-    },
-    {
-      "area": "types/typeParameters",
-      "total": 46,
-      "passed": 45,
-      "failed": 1,
-      "pass_rate": 97.83
-    },
-    {
-      "area": "salsa",
-      "total": 191,
-      "passed": 189,
-      "failed": 2,
-      "pass_rate": 98.95
-    },
-    {
-      "area": "types/typeRelationships",
-      "total": 264,
-      "passed": 262,
-      "failed": 2,
-      "pass_rate": 99.24
-    },
-    {
-      "area": "jsx",
-      "total": 195,
-      "passed": 194,
-      "failed": 1,
-      "pass_rate": 99.49
-    },
-    {
-      "area": "classes/members",
-      "total": 198,
-      "passed": 197,
-      "failed": 1,
-      "pass_rate": 99.49
-    },
-    {
       "area": "compiler",
       "total": 6520,
-      "passed": 6496,
-      "failed": 24,
-      "pass_rate": 99.63
+      "passed": 6520,
+      "failed": 0,
+      "pass_rate": 100.0
     },
     {
       "area": "ambient",
@@ -142,6 +44,13 @@
       "pass_rate": 100.0
     },
     {
+      "area": "classes",
+      "total": 16,
+      "passed": 16,
+      "failed": 0,
+      "pass_rate": 100.0
+    },
+    {
       "area": "classes/classDeclarations",
       "total": 67,
       "passed": 67,
@@ -166,6 +75,13 @@
       "area": "classes/constructorDeclarations",
       "total": 39,
       "passed": 39,
+      "failed": 0,
+      "pass_rate": 100.0
+    },
+    {
+      "area": "classes/members",
+      "total": 198,
+      "passed": 198,
       "failed": 0,
       "pass_rate": 100.0
     },
@@ -394,6 +310,13 @@
       "pass_rate": 100.0
     },
     {
+      "area": "expressions/functionCalls",
+      "total": 24,
+      "passed": 24,
+      "failed": 0,
+      "pass_rate": 100.0
+    },
+    {
       "area": "expressions/nullishCoalescingOperator",
       "total": 20,
       "passed": 20,
@@ -411,6 +334,13 @@
       "area": "expressions/typeGuards",
       "total": 63,
       "passed": 63,
+      "failed": 0,
+      "pass_rate": 100.0
+    },
+    {
+      "area": "expressions/typeSatisfaction",
+      "total": 16,
+      "passed": 16,
       "failed": 0,
       "pass_rate": 100.0
     },
@@ -527,6 +457,13 @@
       "pass_rate": 100.0
     },
     {
+      "area": "jsx",
+      "total": 195,
+      "passed": 195,
+      "failed": 0,
+      "pass_rate": 100.0
+    },
+    {
       "area": "moduleResolution",
       "total": 42,
       "passed": 42,
@@ -597,6 +534,13 @@
       "pass_rate": 100.0
     },
     {
+      "area": "salsa",
+      "total": 191,
+      "passed": 191,
+      "failed": 0,
+      "pass_rate": 100.0
+    },
+    {
       "area": "scanner/ecmascript5",
       "total": 27,
       "passed": 27,
@@ -632,6 +576,13 @@
       "pass_rate": 100.0
     },
     {
+      "area": "types/conditional",
+      "total": 10,
+      "passed": 10,
+      "failed": 0,
+      "pass_rate": 100.0
+    },
+    {
       "area": "types/contextualTypes",
       "total": 19,
       "passed": 19,
@@ -646,9 +597,30 @@
       "pass_rate": 100.0
     },
     {
+      "area": "types/intersection",
+      "total": 24,
+      "passed": 24,
+      "failed": 0,
+      "pass_rate": 100.0
+    },
+    {
       "area": "types/literal",
       "total": 44,
       "passed": 44,
+      "failed": 0,
+      "pass_rate": 100.0
+    },
+    {
+      "area": "types/mapped",
+      "total": 26,
+      "passed": 26,
+      "failed": 0,
+      "pass_rate": 100.0
+    },
+    {
+      "area": "types/members",
+      "total": 34,
+      "passed": 34,
       "failed": 0,
       "pass_rate": 100.0
     },
@@ -688,6 +660,13 @@
       "pass_rate": 100.0
     },
     {
+      "area": "types/spread",
+      "total": 25,
+      "passed": 25,
+      "failed": 0,
+      "pass_rate": 100.0
+    },
+    {
       "area": "types/stringLiteral",
       "total": 33,
       "passed": 33,
@@ -702,9 +681,30 @@
       "pass_rate": 100.0
     },
     {
+      "area": "types/tuple",
+      "total": 34,
+      "passed": 34,
+      "failed": 0,
+      "pass_rate": 100.0
+    },
+    {
       "area": "types/typeAliases",
       "total": 15,
       "passed": 15,
+      "failed": 0,
+      "pass_rate": 100.0
+    },
+    {
+      "area": "types/typeParameters",
+      "total": 46,
+      "passed": 46,
+      "failed": 0,
+      "pass_rate": 100.0
+    },
+    {
+      "area": "types/typeRelationships",
+      "total": 264,
+      "passed": 264,
       "failed": 0,
       "pass_rate": 100.0
     },
@@ -728,7 +728,7 @@
     "false_positive": 0,
     "all_missing": 0,
     "wrong_code": 0,
-    "fingerprint_only": 45,
+    "fingerprint_only": 0,
     "same_code_count_drift": 0,
     "close_to_passing": 0
   }

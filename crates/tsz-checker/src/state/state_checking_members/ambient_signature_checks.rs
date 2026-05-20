@@ -3,7 +3,7 @@
 //! For overload compatibility, signature utilities, and implicit-any return checks,
 //! see [`super::overload_compatibility`].
 
-use crate::context::TypingRequest;
+use crate::context::{TypingRequest, speculation::DiagnosticSpeculationSnapshot};
 use crate::query_boundaries::common::ContextualTypeContext;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -11,20 +11,6 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    fn contextual_class_member_type_from_request(
-        &mut self,
-        request: &TypingRequest,
-        member_name: NodeIndex,
-    ) -> Option<TypeId> {
-        let ctx_type = request.contextual_type?;
-        let prop_name = self.get_property_name(member_name)?;
-        let resolved_ctx = self.evaluate_type_for_assignability(ctx_type);
-        let ctx_helper = ContextualTypeContext::with_expected(self.ctx.types, resolved_ctx);
-        ctx_helper
-            .get_property_type(&prop_name)
-            .filter(|&ty| ty != TypeId::ANY && !self.type_contains_error(ty))
-    }
-
     #[allow(dead_code)]
     pub(crate) fn check_property_declaration(&mut self, member_idx: NodeIndex) {
         self.check_property_declaration_with_request(member_idx, &TypingRequest::NONE);
@@ -332,7 +318,9 @@ impl<'a> CheckerState<'a> {
             self.check_await_expression(prop.initializer);
         }
 
-        let effective_declared_type = self.effective_class_property_declared_type(member_idx, prop);
+        // Use the relation-shape declared type here so a fresh-symbol
+        // initializer can flow into a `static readonly: unique symbol`.
+        let effective_declared_type = self.class_property_relation_declared_type(member_idx, prop);
         let contextual_member_type =
             self.contextual_class_member_type_from_request(request, prop.name);
         let mut inferred_initializer_type = None;
@@ -397,8 +385,9 @@ impl<'a> CheckerState<'a> {
             } else {
                 request.read().contextual_opt(None)
             };
-            let initializer_snap = self.ctx.snapshot_diagnostics();
+            let initializer_snap = DiagnosticSpeculationSnapshot::new(&self.ctx);
             let init_type = self.get_type_of_node_with_request(prop.initializer, &request);
+            self.check_direct_class_expression_initializer(prop.initializer, &request);
             inferred_initializer_type = Some(init_type);
 
             if self.ctx.no_implicit_any()
@@ -408,7 +397,7 @@ impl<'a> CheckerState<'a> {
                 && let Some(member_name) = self.get_member_name_display_text(prop.name)
             {
                 self.suppress_circular_initializer_relation_diagnostics(
-                    &initializer_snap,
+                    initializer_snap,
                     prop.initializer,
                 );
                 self.error_at_node_msg(
@@ -694,7 +683,12 @@ impl<'a> CheckerState<'a> {
             );
             ctx_helper.get_this_type()
         });
-        let implicit_this_type = prototype_owner_this_type.or(contextual_this_type);
+        let explicit_this_type = self
+            .get_explicit_this_type_annotation(&method.parameters.nodes)
+            .map(|ann_idx| self.get_type_from_type_node(ann_idx));
+        let implicit_this_type = explicit_this_type
+            .or(prototype_owner_this_type)
+            .or(contextual_this_type);
         let mut pushed_this_type = false;
         if let Some(this_type) = implicit_this_type {
             self.ctx.this_type_stack.push(this_type);
@@ -801,6 +795,15 @@ impl<'a> CheckerState<'a> {
         let is_async = self.has_async_modifier(&method.modifiers);
         let is_generator = method.asterisk_token;
 
+        // TS1064/TS1055/TS2705: parity with fn declarations (issue #4762).
+        self.check_async_return_type_is_promise(
+            has_type_annotation,
+            is_async,
+            is_generator,
+            return_type,
+            method.type_annotation,
+        );
+
         // Check method body
         if method.body.is_some() {
             if !has_type_annotation {
@@ -816,17 +819,8 @@ impl<'a> CheckerState<'a> {
                     }
                     let promise_base = self
                         .ctx
-                        .binder
-                        .file_locals
-                        .get("Promise")
+                        .lib_promise_sym_id()
                         .map(|sym_id| self.ctx.create_lazy_type_ref(sym_id))
-                        .or_else(|| {
-                            let lib_binders = self.get_lib_binders();
-                            self.ctx
-                                .binder
-                                .get_global_type_with_libs("Promise", &lib_binders)
-                                .map(|sym_id| self.ctx.create_lazy_type_ref(sym_id))
-                        })
                         .unwrap_or(TypeId::PROMISE_BASE);
                     return_type = self
                         .ctx
@@ -993,8 +987,11 @@ impl<'a> CheckerState<'a> {
             } else if self.ctx.no_implicit_returns()
                 && has_return
                 && falls_through
-                && !self
-                    .should_skip_no_implicit_return_check(check_return_type, has_type_annotation)
+                && !self.should_skip_no_implicit_return_check(
+                    check_return_type,
+                    has_type_annotation,
+                    is_generator,
+                )
             {
                 // TS7030: noImplicitReturns - not all code paths return a value
                 // TSC points TS7030 to: return type annotation > method name > node itself
@@ -1267,8 +1264,10 @@ impl<'a> CheckerState<'a> {
         for &param_idx in &ctor.parameters.nodes {
             if let Some(param_node) = self.ctx.arena.get(param_idx)
                 && let Some(param) = self.ctx.arena.get_parameter(param_node)
-                && let Some(name_text) = self.node_text(param.name)
-                && name_text == "static"
+                && let Some(name_node) = self.ctx.arena.get(param.name)
+                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                && ident.escaped_text == "static"
+                && ident.original_text.is_none()
             {
                 self.ctx.error(
                             param_node.pos,
@@ -1816,6 +1815,7 @@ impl<'a> CheckerState<'a> {
                     && !self.should_skip_no_implicit_return_check(
                         check_return_type,
                         has_type_annotation,
+                        false, // accessors cannot be generators
                     )
                 {
                     // TS7030: noImplicitReturns - not all code paths return a value
@@ -1857,60 +1857,55 @@ impl<'a> CheckerState<'a> {
             .is_some()
     }
 
-    /// TS2808: Check that a getter is at least as accessible as its paired setter.
-    ///
-    /// Accessibility ordering: public(3) > protected(2) > private(1).
-    /// If the getter is less accessible than the setter, emit TS2808.
     fn check_getter_setter_accessibility(
         &mut self,
         getter: &tsz_parser::parser::node::AccessorData,
     ) {
-        let Some(ref class_info) = self.ctx.enclosing_class else {
-            return;
-        };
-
         let getter_name = match self.get_property_name(getter.name) {
             Some(n) => n,
             None => return,
         };
 
-        // Find the paired setter
-        let member_nodes = class_info.member_nodes.clone();
-        for &member_idx in &member_nodes {
-            let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                continue;
+        let should_error = {
+            let Some(ref class_info) = self.ctx.enclosing_class else {
+                return;
             };
-            if member_node.kind != syntax_kind_ext::SET_ACCESSOR {
-                continue;
-            }
-            let Some(setter) = self.ctx.arena.get_accessor(member_node) else {
-                continue;
-            };
-            let Some(setter_name) = self.get_property_name(setter.name) else {
-                continue;
-            };
-            if setter_name != getter_name {
-                continue;
-            }
+            let mut should_error = false;
+            for &member_idx in &class_info.member_nodes {
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    continue;
+                };
+                if member_node.kind != syntax_kind_ext::SET_ACCESSOR {
+                    continue;
+                }
+                let Some(setter) = self.ctx.arena.get_accessor(member_node) else {
+                    continue;
+                };
+                let Some(setter_name) = self.get_property_name(setter.name) else {
+                    continue;
+                };
+                if setter_name != getter_name {
+                    continue;
+                }
 
-            // Found paired setter — compare accessibility
-            let getter_level = self.accessibility_level(&getter.modifiers);
-            let setter_level = self.accessibility_level(&setter.modifiers);
-
-            if getter_level < setter_level {
-                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                self.error_at_node(
-                    getter.name,
-                    diagnostic_messages::A_GET_ACCESSOR_MUST_BE_AT_LEAST_AS_ACCESSIBLE_AS_THE_SETTER,
-                    diagnostic_codes::A_GET_ACCESSOR_MUST_BE_AT_LEAST_AS_ACCESSIBLE_AS_THE_SETTER,
-                );
+                let getter_level = self.accessibility_level(&getter.modifiers);
+                let setter_level = self.accessibility_level(&setter.modifiers);
+                should_error = getter_level < setter_level;
+                break;
             }
-            return;
+            should_error
+        };
+
+        if should_error {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.error_at_node(
+                getter.name,
+                diagnostic_messages::A_GET_ACCESSOR_MUST_BE_AT_LEAST_AS_ACCESSIBLE_AS_THE_SETTER,
+                diagnostic_codes::A_GET_ACCESSOR_MUST_BE_AT_LEAST_AS_ACCESSIBLE_AS_THE_SETTER,
+            );
         }
     }
 
-    /// Get the accessibility level for comparing getter/setter pairs.
-    /// Returns: 3 for public (default), 2 for protected, 1 for private.
     fn accessibility_level(&self, modifiers: &Option<tsz_parser::parser::NodeList>) -> u8 {
         if self.has_private_modifier(modifiers) {
             1
@@ -1921,54 +1916,52 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// TS2808 (setter side): Check that the paired getter is at least as accessible.
-    ///
-    /// tsc emits TS2808 on both the getter and setter, so this method emits on the setter.
     fn check_setter_getter_accessibility(
         &mut self,
         setter: &tsz_parser::parser::node::AccessorData,
     ) {
-        let Some(ref class_info) = self.ctx.enclosing_class else {
-            return;
-        };
-
         let setter_name = match self.get_property_name(setter.name) {
             Some(n) => n,
             None => return,
         };
 
-        // Find the paired getter
-        let member_nodes = class_info.member_nodes.clone();
-        for &member_idx in &member_nodes {
-            let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                continue;
+        let should_error = {
+            let Some(ref class_info) = self.ctx.enclosing_class else {
+                return;
             };
-            if member_node.kind != syntax_kind_ext::GET_ACCESSOR {
-                continue;
-            }
-            let Some(getter) = self.ctx.arena.get_accessor(member_node) else {
-                continue;
-            };
-            let Some(getter_name) = self.get_property_name(getter.name) else {
-                continue;
-            };
-            if getter_name != setter_name {
-                continue;
-            }
+            let mut should_error = false;
+            for &member_idx in &class_info.member_nodes {
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    continue;
+                };
+                if member_node.kind != syntax_kind_ext::GET_ACCESSOR {
+                    continue;
+                }
+                let Some(getter) = self.ctx.arena.get_accessor(member_node) else {
+                    continue;
+                };
+                let Some(getter_name) = self.get_property_name(getter.name) else {
+                    continue;
+                };
+                if getter_name != setter_name {
+                    continue;
+                }
 
-            // Found paired getter — compare accessibility
-            let getter_level = self.accessibility_level(&getter.modifiers);
-            let setter_level = self.accessibility_level(&setter.modifiers);
-
-            if getter_level < setter_level {
-                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                self.error_at_node(
-                    setter.name,
-                    diagnostic_messages::A_GET_ACCESSOR_MUST_BE_AT_LEAST_AS_ACCESSIBLE_AS_THE_SETTER,
-                    diagnostic_codes::A_GET_ACCESSOR_MUST_BE_AT_LEAST_AS_ACCESSIBLE_AS_THE_SETTER,
-                );
+                let getter_level = self.accessibility_level(&getter.modifiers);
+                let setter_level = self.accessibility_level(&setter.modifiers);
+                should_error = getter_level < setter_level;
+                break;
             }
-            return;
+            should_error
+        };
+
+        if should_error {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.error_at_node(
+                setter.name,
+                diagnostic_messages::A_GET_ACCESSOR_MUST_BE_AT_LEAST_AS_ACCESSIBLE_AS_THE_SETTER,
+                diagnostic_codes::A_GET_ACCESSOR_MUST_BE_AT_LEAST_AS_ACCESSIBLE_AS_THE_SETTER,
+            );
         }
     }
 

@@ -1,5 +1,5 @@
 use super::*;
-use crate::TypeInterner;
+use crate::construction::TypeInterner;
 use crate::types::{
     LiteralValue, OrderedFloat, PropertyInfo, SymbolRef, TypeData, TypeParamInfo, Visibility,
 };
@@ -10,7 +10,10 @@ fn test_widen_string_literal() {
     let string_lit = interner.intern(TypeData::Literal(LiteralValue::String(
         interner.intern_string("hello"),
     )));
-    let widened = widen_type(&interner as &dyn crate::TypeDatabase, string_lit);
+    let widened = widen_type(
+        &interner as &dyn crate::construction::TypeDatabase,
+        string_lit,
+    );
     assert_eq!(widened, TypeId::STRING);
 }
 
@@ -18,7 +21,10 @@ fn test_widen_string_literal() {
 fn test_widen_number_literal() {
     let interner = TypeInterner::new();
     let number_lit = interner.intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(42.0))));
-    let widened = widen_type(&interner as &dyn crate::TypeDatabase, number_lit);
+    let widened = widen_type(
+        &interner as &dyn crate::construction::TypeDatabase,
+        number_lit,
+    );
     assert_eq!(widened, TypeId::NUMBER);
 }
 
@@ -26,7 +32,10 @@ fn test_widen_number_literal() {
 fn test_widen_boolean_literal() {
     let interner = TypeInterner::new();
     let bool_lit = interner.intern(TypeData::Literal(LiteralValue::Boolean(true)));
-    let widened = widen_type(&interner as &dyn crate::TypeDatabase, bool_lit);
+    let widened = widen_type(
+        &interner as &dyn crate::construction::TypeDatabase,
+        bool_lit,
+    );
     assert_eq!(widened, TypeId::BOOLEAN);
 }
 
@@ -37,7 +46,7 @@ fn test_widen_union() {
     let lit2 = interner.intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(2.0))));
     let union = interner.union(vec![lit1, lit2]);
 
-    let widened = widen_type(&interner as &dyn crate::TypeDatabase, union);
+    let widened = widen_type(&interner as &dyn crate::construction::TypeDatabase, union);
     // After widening, we get number | number which dedups to number
     assert_eq!(widened, TypeId::NUMBER);
 }
@@ -245,6 +254,113 @@ fn test_widen_readonly_property_preserved() {
         interner.lookup(b.type_id),
         Some(TypeData::Literal(_))
     ));
+}
+
+#[test]
+fn test_widen_readonly_nested_object_widens_inner_literals() {
+    // Synthetic readonly property shape: the outer `nested` is readonly,
+    // but the INNER `p: 1` still widens to `number`. The readonly modifier
+    // only preserves primitive literals on its direct value, not literals
+    // nested inside compound types.
+    let interner = TypeInterner::new();
+    let inner_props = vec![PropertyInfo {
+        name: interner.intern_string("p"),
+        type_id: interner.literal_number(1.0),
+        write_type: interner.literal_number(1.0),
+        optional: false,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+        is_symbol_named: false,
+        single_quoted_name: false,
+    }];
+    let inner_obj = interner.object(inner_props);
+
+    let outer_props = vec![PropertyInfo {
+        name: interner.intern_string("nested"),
+        type_id: inner_obj,
+        write_type: inner_obj,
+        optional: false,
+        readonly: true,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+        is_symbol_named: false,
+        single_quoted_name: false,
+    }];
+    let outer_obj = interner.object(outer_props);
+
+    let widened = widen_type(&interner, outer_obj);
+    let outer_shape = match interner.lookup(widened).unwrap() {
+        TypeData::Object(id) | TypeData::ObjectWithIndex(id) => interner.object_shape(id),
+        _ => panic!("Expected outer object"),
+    };
+    assert_eq!(outer_shape.properties.len(), 1);
+    assert!(
+        outer_shape.properties[0].readonly,
+        "outer 'nested' should still be readonly"
+    );
+    let inner_shape = match interner.lookup(outer_shape.properties[0].type_id).unwrap() {
+        TypeData::Object(id) | TypeData::ObjectWithIndex(id) => interner.object_shape(id),
+        _ => panic!("Expected inner object even on readonly parent"),
+    };
+    assert_eq!(
+        inner_shape.properties[0].type_id,
+        TypeId::NUMBER,
+        "inner 'p' must widen to number even when its parent property is readonly"
+    );
+}
+
+#[test]
+fn test_widen_readonly_array_widens_element_type() {
+    // Synthetic readonly array property: the inner element literals widen
+    // even though the outer property is readonly.
+    let interner = TypeInterner::new();
+    let lit1 = interner.literal_number(1.0);
+    let lit2 = interner.literal_number(2.0);
+    let lit3 = interner.literal_number(3.0);
+    let union = interner.union(vec![lit1, lit2, lit3]);
+    let arr = interner.array(union);
+
+    let outer_props = vec![PropertyInfo {
+        name: interner.intern_string("arr"),
+        type_id: arr,
+        write_type: arr,
+        optional: false,
+        readonly: true,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+        is_symbol_named: false,
+        single_quoted_name: false,
+    }];
+    let outer_obj = interner.object(outer_props);
+
+    let widened = widen_type(&interner, outer_obj);
+    let outer_shape = match interner.lookup(widened).unwrap() {
+        TypeData::Object(id) | TypeData::ObjectWithIndex(id) => interner.object_shape(id),
+        _ => panic!("Expected outer object"),
+    };
+    assert!(outer_shape.properties[0].readonly);
+    let elem = match interner.lookup(outer_shape.properties[0].type_id).unwrap() {
+        TypeData::Array(e) => e,
+        _ => panic!("Expected array on readonly property"),
+    };
+    assert_eq!(
+        elem,
+        TypeId::NUMBER,
+        "array element widens to number even when the array property is readonly"
+    );
 }
 
 // ============================================================================

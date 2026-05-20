@@ -7,7 +7,9 @@
 mod children;
 mod core;
 
-pub use self::core::{ScopeCache, ScopeCacheStats, ScopeWalker};
+pub use self::core::{
+    ScopeCache, ScopeCacheStats, ScopeWalker, scope_cache_entries, scope_cache_estimated_size_bytes,
+};
 
 #[cfg(test)]
 #[path = "../../tests/resolver_tests.rs"]

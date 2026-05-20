@@ -1,4 +1,9 @@
 use super::*;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 #[test]
 fn test_same_file_symbol_module_path_is_none() {
@@ -8,8 +13,7 @@ namespace m1 {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
     let current_arena = Arc::new(parser.arena.clone());
@@ -47,8 +51,7 @@ export function middle() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
 
@@ -108,8 +111,7 @@ export function middle() {
 
 #[test]
 fn test_structural_setter_only_property_uses_write_type() {
-    let mut parser = ParserState::new("test.ts".to_string(), "".to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source("");
     let binder = BinderState::new();
 
     let interner = TypeInterner::new();
@@ -140,9 +142,41 @@ fn test_structural_setter_only_property_uses_write_type() {
 }
 
 #[test]
+fn test_structural_authored_split_accessor_uses_get_set() {
+    let (parser, _root) = parse_test_source("");
+    let binder = BinderState::new();
+
+    let interner = TypeInterner::new();
+    let x_atom = interner.intern_string("x");
+    let mut accessor = PropertyInfo::new(x_atom, TypeId::STRING);
+    accessor.write_type = TypeId::NUMBER;
+    accessor.declaration_order = 1;
+
+    let point_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: vec![accessor],
+        string_index: None,
+        number_index: None,
+        symbol: None,
+    });
+
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let printed = emitter.print_type_id(point_type);
+
+    assert!(
+        printed.contains("get x(): string;"),
+        "Expected authored split accessor getter to stay in declaration emit: {printed}"
+    );
+    assert!(
+        printed.contains("set x(arg: number);"),
+        "Expected authored split accessor setter to stay in declaration emit: {printed}"
+    );
+}
+
+#[test]
 fn test_foreign_global_lazy_type_application_keeps_alias_name() {
-    let mut parser = ParserState::new("test.ts".to_string(), "".to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source("");
 
     let mut foreign_parser = ParserState::new(
         "lib.es2019.array.d.ts".to_string(),
@@ -243,8 +277,7 @@ export function wrapClass(param: any) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
 
@@ -311,8 +344,7 @@ declare class Base {}
 export class Derived extends mixin(Base) {}
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
 
@@ -369,8 +401,7 @@ declare function getGreeterBase(): GreeterConstructor;
 export default class extends getGreeterBase() {}
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
 
@@ -424,8 +455,7 @@ declare function getBase(): any;
 export class Derived extends getBase()<string, number> {}
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
 
@@ -472,8 +502,7 @@ declare function getBase(): typeof LocalBase;
 export class Derived extends getBase()<string, number> {}
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
 
@@ -538,8 +567,7 @@ export class XmlElement2 extends Mixin(
     }) {}
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
 
@@ -609,12 +637,137 @@ export const Mixed = mixin(Unmixed);
     );
 
     assert!(
-        output.contains("} & typeof Unmixed;"),
-        "Expected mixin constructor type to preserve base static side: {output}"
+        output.contains(
+            "export declare const Mixed: {\n    new (...args: any[]): {\n        bar: number;\n    };\n} & typeof Unmixed;"
+        ),
+        "Expected mixin constructor object type to preserve base static side: {output}"
     );
     assert!(
         !output.contains("foo: number;\n        bar: number;"),
         "Inherited base instance fields should stay behind typeof base intersection: {output}"
+    );
+}
+
+#[test]
+fn test_abstract_local_class_mixin_preserves_abstract_constructor_intersection() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+interface Constructor<C> { new (...args: any[]): C; }
+
+function mixin<B extends Constructor<{}>>(Base: B) {
+    abstract class PrivateMixed extends Base {
+        abstract bar: number;
+    }
+    return PrivateMixed;
+}
+
+export class Unmixed {}
+export const Mixed = mixin(Unmixed);
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "export declare const Mixed: (abstract new (...args: any[]) => {\n    bar: number;\n}) & typeof Unmixed;"
+        ),
+        "Expected abstract mixin constructor type to preserve abstract new syntax: {output}"
+    );
+    assert!(
+        !output.contains("new (...args: any[]):"),
+        "Abstract returned local classes should not be forced into object construct-signature form: {output}"
+    );
+}
+
+#[test]
+fn test_abstract_constructor_with_static_members_parenthesizes_in_intersection() {
+    let (parser, _root) = parse_test_source("");
+    let binder = BinderState::new();
+    let interner = TypeInterner::new();
+
+    let x = interner.intern_string("x");
+    let mixin_method = interner.intern_string("mixinMethod");
+    let static_mixin_method = interner.intern_string("staticMixinMethod");
+    let args = interner.intern_string("args");
+
+    let void_method = interner.function(FunctionShape::new(Vec::new(), TypeId::VOID));
+    let instance_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: vec![PropertyInfo::method(mixin_method, void_method)],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::ANY,
+            readonly: false,
+            param_name: Some(x),
+        }),
+        number_index: None,
+        symbol: None,
+    });
+    let constructor_type = interner.callable(CallableShape {
+        call_signatures: Vec::new(),
+        construct_signatures: vec![CallSignature::new(
+            vec![ParamInfo {
+                name: Some(args),
+                type_id: interner.array(TypeId::ANY),
+                optional: false,
+                rest: true,
+            }],
+            instance_type,
+        )],
+        properties: vec![PropertyInfo::method(static_mixin_method, void_method)],
+        string_index: None,
+        number_index: None,
+        symbol: None,
+        is_abstract: true,
+    });
+    let intersection = interner.intersection(vec![constructor_type, TypeId::STRING]);
+
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let printed = emitter.print_type_id(intersection);
+
+    assert!(
+        printed.starts_with("((abstract new (...args: any[]) => {"),
+        "Expected constructor/static intersection to be parenthesized before the next intersection member: {printed}"
+    );
+    assert!(
+        printed.contains("[x: string]: any;"),
+        "Expected the abstract constructor return shape to preserve its index signature: {printed}"
+    );
+    assert!(
+        printed.ends_with("}) & string"),
+        "Expected static members to stay in a separate intersection arm: {printed}"
+    );
+}
+
+#[test]
+fn test_returned_local_class_mixin_auto_accessor_uses_get_set_in_constructor_object() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+function mixin<T extends { new (...args: any[]): {} }>(Base: T) {
+    return class extends Base {
+        accessor name = "";
+    };
+}
+
+class BaseClass {
+    accessor name = "";
+}
+
+class MyClass extends mixin(BaseClass) {
+    accessor name = "";
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "declare function mixin<T extends {\n    new (...args: any[]): {};\n}>(Base: T): {\n    new (...args: any[]): {\n        get name(): string;\n        set name(arg: string);\n    };\n} & T;"
+        ),
+        "Expected returned auto-accessor class function type to use get/set members: {output}"
+    );
+    assert!(
+        output.contains("declare class BaseClass {\n    accessor name: string;\n}"),
+        "Declared classes should keep source auto-accessor syntax: {output}"
     );
 }
 
@@ -644,8 +797,7 @@ declare function getLocalClass<T>(c: T): typeof LocalClass;
 export class MyClass extends getLocalClass<LocalInterface>(undefined)<string, number> {}
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
 
@@ -711,8 +863,7 @@ namespace Test {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
 
@@ -781,8 +932,7 @@ export class A {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
 
@@ -852,8 +1002,7 @@ export class A {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
 
@@ -911,8 +1060,7 @@ export class A {
 
 #[test]
 fn test_synthesized_computed_method_index_signatures_widen_nested_literal_returns() {
-    let mut parser = ParserState::new("test.ts".to_string(), "".to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source("");
     let binder = BinderState::new();
 
     let interner = TypeInterner::new();
@@ -1015,8 +1163,7 @@ const Value = class {
 };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
 
@@ -1097,8 +1244,7 @@ export namespace C {
 export const value = null as any;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
 
@@ -1153,8 +1299,7 @@ export namespace C {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
 
@@ -1195,8 +1340,7 @@ export namespace C {
 
 #[test]
 fn test_type_application_elides_trailing_default_type_argument() {
-    let mut parser = ParserState::new("test.ts".to_string(), "".to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source("");
     let binder = BinderState::new();
 
     let interner = TypeInterner::new();
@@ -1314,8 +1458,7 @@ export function wrapper<T>(value: T) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
 
@@ -1463,4 +1606,464 @@ fn test_inexact_optional_mapped_intersection_simplifies_for_inferred_emit() {
         simplified,
         "(x: {\n    foo?: string | undefined;\n    baz?: undefined;\n} & {\n    bar: number;\n}) => null"
     );
+}
+
+// Diagnostic test: verify that import-equals alias inside a namespace populates
+// local_namespace_alias_targets with the correct (parent_sym_id, name) key.
+#[test]
+fn test_nested_namespace_import_equals_alias_target_stored() {
+    let source = r#"
+export namespace m1 {
+    export namespace inner {
+        export class c1 {}
+    }
+    import alias = inner;
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+
+    // prepare_import_metadata triggers collect_import_metadata_from_statements,
+    // which must recurse through the EXPORT_DECLARATION wrapper that the TSZ
+    // parser places around `export namespace m1 { ... }`.
+    emitter.prepare_import_metadata(root);
+
+    let stored: Vec<_> = emitter.local_namespace_alias_targets.iter().collect();
+    assert!(
+        !stored.is_empty(),
+        "local_namespace_alias_targets should be non-empty after prepare_import_metadata; \
+         got nothing (EXPORT_DECLARATION wrapper was likely not traversed)"
+    );
+
+    // The alias `import alias = inner` should be listed for (m1_sym.parent, "inner").
+    let m1_id = binder.file_locals.get("m1").expect("Expected 'm1' symbol");
+    let inner_sym_id = binder
+        .symbols
+        .get(m1_id)
+        .and_then(|m1_sym| m1_sym.exports.as_ref())
+        .and_then(|exports| exports.get("inner"))
+        .expect("Expected 'inner' symbol to be an export of m1");
+
+    let inner_sym = binder
+        .symbols
+        .get(inner_sym_id)
+        .expect("Expected 'inner' symbol to exist");
+
+    let key = (inner_sym.parent, "inner".to_string());
+    let alias_names = emitter.local_namespace_alias_targets.get(&key);
+
+    assert!(
+        alias_names.is_some_and(|names| names.contains("alias")),
+        "Expected (inner.parent, 'inner') to include 'alias' in local_namespace_alias_targets. \
+         stored keys: {stored:?}, inner_sym.parent = {:?}",
+        inner_sym.parent
+    );
+}
+
+// Diagnostic test: verify alias lookup works for top-level import-equals (global scope).
+#[test]
+fn test_toplevel_namespace_import_equals_alias_target_stored() {
+    let source = r#"
+export namespace glo_M1_public {
+    export class c1 {}
+}
+import glo_im1_private = glo_M1_public;
+"#;
+
+    let (parser, root) = parse_test_source(source);
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+
+    emitter.prepare_import_metadata(root);
+
+    let stored: Vec<_> = emitter.local_namespace_alias_targets.iter().collect();
+    assert!(
+        !stored.is_empty(),
+        "Expected local_namespace_alias_targets to be non-empty. Got nothing. stored: {stored:?}"
+    );
+
+    // glo_M1_public is at top-level; its parent should be SymbolId::NONE
+    let glo_sym_id = binder
+        .file_locals
+        .get("glo_M1_public")
+        .expect("Expected 'glo_M1_public' symbol");
+    let glo_sym = binder
+        .symbols
+        .get(glo_sym_id)
+        .expect("Expected 'glo_M1_public' symbol to exist");
+
+    let key = (glo_sym.parent, "glo_M1_public".to_string());
+    let alias_names = emitter.local_namespace_alias_targets.get(&key);
+
+    assert!(
+        alias_names.is_some_and(|names| names.contains("glo_im1_private")),
+        "Expected (glo_M1_public.parent={:?}, 'glo_M1_public') to include 'glo_im1_private'. \
+         stored: {stored:?}",
+        glo_sym.parent
+    );
+}
+
+#[test]
+fn test_duplicate_namespace_import_equals_alias_targets_are_ambiguous() {
+    let source = r#"
+namespace N {
+    export class C {}
+}
+import A = N;
+import B = N;
+"#;
+
+    let (parser, root) = parse_test_source(source);
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+
+    emitter.prepare_import_metadata(root);
+
+    let n_sym_id = binder.file_locals.get("N").expect("Expected 'N' symbol");
+    let n_sym = binder
+        .symbols
+        .get(n_sym_id)
+        .expect("Expected 'N' symbol to exist");
+    let key = (n_sym.parent, "N".to_string());
+    let alias_names = emitter
+        .local_namespace_alias_targets
+        .get(&key)
+        .expect("Expected aliases for namespace N");
+
+    assert!(
+        alias_names.contains("A") && alias_names.contains("B"),
+        "Expected both duplicate aliases to be tracked. aliases: {alias_names:?}"
+    );
+    assert_eq!(
+        emitter.resolve_namespace_import_alias(n_sym_id),
+        None,
+        "Expected duplicate local aliases for the same namespace target to be ambiguous"
+    );
+}
+
+// =============================================================================
+// Anonymous constructor object type body — property initializer syntax
+// =============================================================================
+//
+// Structural rule: when a function returns a class expression and the
+// declaration emit synthesizes an anonymous constructor object type
+// (`{ new (...args: any[]): { ...members... } }`), the body of that
+// constructor object type is an *object type literal*, not a class
+// declaration. Object type literals do not permit `name = value`
+// initializer syntax — only `name: T` annotation syntax. Member emit
+// must follow object-type-literal rules in that context.
+//
+// These tests cover at least two literal kinds (string, number, boolean)
+// and two binding-variable names so the structural fix is not keyed on
+// a particular identifier or literal value spelling.
+
+#[test]
+fn test_anon_ctor_object_type_readonly_string_literal_uses_colon_not_eq() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Constructor<T = {}> = new (...args: any[]) => T;
+function Tagged<B extends Constructor>(Base: B) {
+    return class extends Base {
+        readonly tag = "hello";
+    };
+}
+class Item {}
+export const TaggedItem = Tagged(Item);
+"#,
+    );
+
+    assert!(
+        output.contains("readonly tag: \"hello\""),
+        "Expected `readonly tag: \"hello\"` colon form in anonymous constructor object type: {output}"
+    );
+    assert!(
+        !output.contains("readonly tag = "),
+        "Expected no `=` initializer form in object type literal: {output}"
+    );
+}
+
+#[test]
+fn test_anon_ctor_object_type_readonly_number_literal_uses_colon_not_eq() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Constructor<T = {}> = new (...args: any[]) => T;
+function Stamped<C extends Constructor>(Source: C) {
+    return class extends Source {
+        readonly version = 42;
+        readonly count = 0;
+    };
+}
+class Doc {}
+export const StampedDoc = Stamped(Doc);
+"#,
+    );
+
+    assert!(
+        output.contains("readonly version: 42"),
+        "Expected number literal `readonly version: 42` colon form: {output}"
+    );
+    assert!(
+        output.contains("readonly count: 0"),
+        "Expected number literal `readonly count: 0` colon form: {output}"
+    );
+    assert!(
+        !output.contains("readonly version = ") && !output.contains("readonly count = "),
+        "Expected no `=` initializer form for object-type-literal numeric properties: {output}"
+    );
+}
+
+#[test]
+fn test_anon_ctor_object_type_readonly_boolean_literal_uses_colon_not_eq() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Constructor<T = {}> = new (...args: any[]) => T;
+function Flagged<TBase extends Constructor>(Base: TBase) {
+    return class extends Base {
+        readonly enabled = true;
+        readonly hidden = false;
+    };
+}
+class Widget {}
+export const FlaggedWidget = Flagged(Widget);
+"#,
+    );
+
+    assert!(
+        output.contains("readonly enabled: true"),
+        "Expected `readonly enabled: true` colon form: {output}"
+    );
+    assert!(
+        output.contains("readonly hidden: false"),
+        "Expected `readonly hidden: false` colon form: {output}"
+    );
+    assert!(
+        !output.contains("readonly enabled = ") && !output.contains("readonly hidden = "),
+        "Expected no `=` initializer form for object-type-literal boolean properties: {output}"
+    );
+}
+
+#[test]
+fn test_anon_ctor_object_type_static_readonly_literal_uses_colon_not_eq() {
+    // Static members emitted into the constructor object type's outer
+    // intersection arm (`{ new(...): { ... }; readonly STATIC_NAME: ... }`)
+    // are also in object-type-literal context and must use `:` form.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Constructor<T = {}> = new (...args: any[]) => T;
+function Branded<B extends Constructor>(Base: B) {
+    return class extends Base {
+        static readonly BRAND = "MyBrand";
+        static readonly VERSION = 1;
+    };
+}
+class Thing {}
+export const BrandedThing = Branded(Thing);
+"#,
+    );
+
+    assert!(
+        output.contains("readonly BRAND: \"MyBrand\""),
+        "Expected static `readonly BRAND: \"MyBrand\"` colon form: {output}"
+    );
+    assert!(
+        output.contains("readonly VERSION: 1"),
+        "Expected static `readonly VERSION: 1` colon form: {output}"
+    );
+    assert!(
+        !output.contains("readonly BRAND = ") && !output.contains("readonly VERSION = "),
+        "Expected no `=` initializer form for static members in object type literal: {output}"
+    );
+}
+
+#[test]
+fn test_top_level_class_declaration_still_uses_eq_initializer_form() {
+    // Negative case: regular class declarations (not inside an anonymous
+    // constructor object type) must still emit `readonly name = value`
+    // to match tsc's class-declaration emit, so the fix does not over-apply.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export class Direct {
+    readonly tag = "hello";
+    readonly version = 42;
+    readonly enabled = true;
+    static readonly BRAND = "MyBrand";
+}
+"#,
+    );
+
+    assert!(
+        output.contains("readonly tag = \"hello\""),
+        "Expected top-level class to keep `readonly tag = \"hello\"` initializer form: {output}"
+    );
+    assert!(
+        output.contains("readonly version = 42"),
+        "Expected top-level class to keep `readonly version = 42` initializer form: {output}"
+    );
+    assert!(
+        output.contains("readonly enabled = true"),
+        "Expected top-level class to keep `readonly enabled = true` initializer form: {output}"
+    );
+    assert!(
+        output.contains("readonly BRAND = \"MyBrand\""),
+        "Expected top-level class to keep `static readonly BRAND = \"MyBrand\"`: {output}"
+    );
+}
+
+fn build_abstract_constructor_with_index_sig(
+    interner: &TypeInterner,
+    method_name: &str,
+) -> tsz_solver::TypeId {
+    let args = interner.intern_string("args");
+    let method = interner.intern_string(method_name);
+    let x = interner.intern_string("x");
+    let void_fn = interner.function(FunctionShape::new(Vec::new(), TypeId::VOID));
+    let instance_shape = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: vec![PropertyInfo::method(method, void_fn)],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::ANY,
+            readonly: false,
+            param_name: Some(x),
+        }),
+        number_index: None,
+        symbol: None,
+    });
+    interner.callable(CallableShape {
+        call_signatures: Vec::new(),
+        construct_signatures: vec![CallSignature::new(
+            vec![ParamInfo {
+                name: Some(args),
+                type_id: interner.array(TypeId::ANY),
+                optional: false,
+                rest: true,
+            }],
+            instance_shape,
+        )],
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: None,
+        is_abstract: true,
+    })
+}
+
+fn find_call_by_callee<'a>(
+    arena: &tsz_parser::parser::node::NodeArena,
+    callee_name: &str,
+) -> NodeIndex {
+    arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+                return None;
+            }
+            let call = arena.get_call_expr(node)?;
+            (arena.get_identifier_text(call.expression) == Some(callee_name))
+                .then_some(NodeIndex(idx as u32))
+        })
+        .unwrap_or_else(|| panic!("missing call expression for callee `{callee_name}`"))
+}
+
+#[test]
+fn test_mixin_call_prefers_solver_type_for_index_signature() {
+    // When the checker's type cache has a TypeId for a mixin call expression,
+    // the emitter must use it directly. Text-based reconstruction cannot reproduce
+    // call-site refinements like `[x: string]: any` from abstract constructor constraints.
+    let source = r#"
+type AbstractConstructor<T = {}> = abstract new (...args: any[]) => T;
+function Mixin<TBase extends AbstractConstructor>(base: TBase) {
+    abstract class Mixed extends base {
+        abstract mixinMethod(): void;
+    }
+    return Mixed;
+}
+abstract class AbstractBase {}
+export const C = Mixin(AbstractBase);
+"#;
+    let (parser, root) = parse_test_source(source);
+    let call_idx = find_call_by_callee(&parser.arena, "Mixin");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let solver_type = build_abstract_constructor_with_index_sig(&interner, "mixinMethod");
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache.node_types.insert(call_idx.0, solver_type);
+
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let type_text = emitter
+        .call_expression_source_return_type_text(call_idx)
+        .expect("expected call return type text");
+
+    assert!(
+        type_text.contains("[x: string]: any"),
+        "Solver TypeId with index signature should be used when cached: {type_text}"
+    );
+    assert!(
+        type_text.contains("mixinMethod"),
+        "Own instance members must be preserved alongside the index signature: {type_text}"
+    );
+}
+
+#[test]
+fn test_mixin_call_solver_path_is_name_independent() {
+    // The solver-preference path keys on TypeId, not type-parameter spelling.
+    // Renaming `TBase` to `T` or `K` must not change whether the index signature appears.
+    for tparam in ["TBase", "T", "K"] {
+        let source = format!(
+            r#"
+type AC = abstract new (...args: any[]) => any;
+function M<{tparam} extends AC>(base: {tparam}) {{
+    abstract class Mix extends base {{ abstract m(): void; }}
+    return Mix;
+}}
+abstract class B {{}}
+export const C = M(B);
+"#
+        );
+        let (parser, root) = parse_test_source(&source);
+        let call_idx = find_call_by_callee(&parser.arena, "M");
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(&parser.arena, root);
+
+        let interner = TypeInterner::new();
+        let solver_type = build_abstract_constructor_with_index_sig(&interner, "m");
+
+        let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+        type_cache.node_types.insert(call_idx.0, solver_type);
+
+        let emitter =
+            DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+        let type_text = emitter
+            .call_expression_source_return_type_text(call_idx)
+            .expect("expected call return type text");
+
+        assert!(
+            type_text.contains("[x: string]: any"),
+            "Type param name `{tparam}` should not affect index-signature emission: {type_text}"
+        );
+    }
 }

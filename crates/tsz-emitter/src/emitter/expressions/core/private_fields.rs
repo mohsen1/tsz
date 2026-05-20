@@ -1,6 +1,6 @@
 use super::super::super::{Printer, get_operator_text};
 use crate::transforms::private_fields_es5::get_private_field_name;
-use tsz_parser::parser::{NodeIndex, node::Node, syntax_kind_ext};
+use tsz_parser::parser::{NodeIndex, NodeList, node::Node, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
 /// Result of extracting a private field access from a (possibly parenthesized) node.
@@ -13,7 +13,7 @@ struct PrivateFieldAccess {
     weakmap_name: String,
 }
 
-enum DeleteOptionalChainSegment {
+enum OptionalChainSegment {
     Property(NodeIndex),
     Element(NodeIndex),
 }
@@ -464,9 +464,10 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        // ES5: lower assignment destructuring patterns
-        if self.ctx.target_es5
-            && binary.operator_token == SyntaxKind::EqualsToken as u16
+        // Lower assignment destructuring when ES5 syntax requires it, or when
+        // CommonJS live export targets require chained `exports.X = ...`
+        // assignments that cannot be represented inside native destructuring.
+        if binary.operator_token == SyntaxKind::EqualsToken as u16
             && let Some(left_node) = self.arena.get(binary.left)
             && matches!(
                 left_node.kind,
@@ -475,6 +476,8 @@ impl<'a> Printer<'a> {
                     | syntax_kind_ext::ARRAY_BINDING_PATTERN
                     | syntax_kind_ext::OBJECT_BINDING_PATTERN
             )
+            && (self.ctx.target_es5
+                || self.assignment_pattern_has_commonjs_live_export_target(binary.left))
         {
             self.emit_assignment_destructuring_es5(left_node, binary.right);
             return;
@@ -548,7 +551,11 @@ impl<'a> Printer<'a> {
             self.ctx.flags.optional_chain_needs_parens = true;
             self.ctx.flags.nullish_coalescing_needs_parens = true;
         }
-        if self.assignment_left_is_recovered_super(binary.left, binary.operator_token) {
+        if self.is_assignment_operator(binary.operator_token)
+            && self.emit_commonjs_live_export_assignment_target(binary.left)
+        {
+            // The live export chain emitted the left-hand side.
+        } else if self.assignment_left_is_recovered_super(binary.left, binary.operator_token) {
             self.write("super.");
         } else {
             self.emit(binary.left);
@@ -751,20 +758,24 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        if self.in_system_execute_body
-            && (unary.operator == SyntaxKind::PlusPlusToken as u16
-                || unary.operator == SyntaxKind::MinusMinusToken as u16)
+        if (unary.operator == SyntaxKind::PlusPlusToken as u16
+            || unary.operator == SyntaxKind::MinusMinusToken as u16)
             && let Some(operand_node) = self.arena.get(unary.operand)
             && operand_node.kind == SyntaxKind::Identifier as u16
         {
             let local_name = self.get_identifier_text_idx(unary.operand);
-            if let Some(export_name) = self.system_reexported_names.get(&local_name).cloned() {
-                self.write("exports_1(\"");
-                self.write(&export_name);
-                self.write("\", ");
-                self.write(get_operator_text(unary.operator));
-                self.write(&local_name);
-                self.write(")");
+            if self.in_system_execute_body {
+                if let Some(export_name) = self.system_reexported_names.get(&local_name).cloned() {
+                    self.write("exports_1(\"");
+                    self.write(&export_name);
+                    self.write("\", ");
+                    self.write(get_operator_text(unary.operator));
+                    self.write(&local_name);
+                    self.write(")");
+                    return;
+                }
+            }
+            if self.emit_cjs_live_export_prefix_unary(&local_name, unary.operator) {
                 return;
             }
         }
@@ -774,6 +785,20 @@ impl<'a> Printer<'a> {
             && self.emit_delete_optional_chain(unary.operand)
         {
             return;
+        }
+
+        if (unary.operator == SyntaxKind::PlusPlusToken as u16
+            || unary.operator == SyntaxKind::MinusMinusToken as u16)
+            && !self.ctx.options.target.supports_es2020()
+        {
+            let mut tail = Vec::new();
+            if let Some((access_kind, base, name_or_argument)) =
+                self.collect_update_optional_access(unary.operand, &mut tail)
+            {
+                self.write(get_operator_text(unary.operator));
+                self.emit_update_optional_access(access_kind, base, name_or_argument, &tail);
+                return;
+            }
         }
 
         self.write(get_operator_text(unary.operator));
@@ -823,7 +848,7 @@ impl<'a> Printer<'a> {
     fn emit_delete_optional_chain_inner(
         &mut self,
         idx: NodeIndex,
-        tail: &mut Vec<DeleteOptionalChainSegment>,
+        tail: &mut Vec<OptionalChainSegment>,
     ) -> bool {
         let Some(node) = self.arena.get(idx) else {
             return false;
@@ -860,11 +885,9 @@ impl<'a> Printer<'a> {
             }
 
             if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                tail.push(DeleteOptionalChainSegment::Property(
-                    access.name_or_argument,
-                ));
+                tail.push(OptionalChainSegment::Property(access.name_or_argument));
             } else {
-                tail.push(DeleteOptionalChainSegment::Element(access.name_or_argument));
+                tail.push(OptionalChainSegment::Element(access.name_or_argument));
             }
             return self.emit_delete_optional_chain_inner(access.expression, tail);
         }
@@ -877,7 +900,7 @@ impl<'a> Printer<'a> {
         access_kind: u16,
         base: NodeIndex,
         name_or_argument: NodeIndex,
-        tail: &[DeleteOptionalChainSegment],
+        tail: &[OptionalChainSegment],
     ) {
         if self.is_simple_nullish_expression(base) {
             self.emit(base);
@@ -885,8 +908,8 @@ impl<'a> Printer<'a> {
             self.emit(base);
             self.write(" === void 0 ? true : delete ");
             self.emit(base);
-            self.emit_delete_optional_access_segment(access_kind, name_or_argument);
-            self.emit_delete_optional_chain_tail(tail);
+            self.emit_optional_access_segment(access_kind, name_or_argument);
+            self.emit_optional_chain_tail(tail);
             return;
         }
 
@@ -906,36 +929,97 @@ impl<'a> Printer<'a> {
         self.write(&base_temp);
         self.write(" === void 0 ? true : delete ");
         self.write(&base_temp);
-        self.emit_delete_optional_access_segment(access_kind, name_or_argument);
-        self.emit_delete_optional_chain_tail(tail);
+        self.emit_optional_access_segment(access_kind, name_or_argument);
+        self.emit_optional_chain_tail(tail);
     }
 
-    fn emit_delete_optional_access_segment(
+    fn collect_update_optional_access(
+        &self,
+        idx: NodeIndex,
+        tail: &mut Vec<OptionalChainSegment>,
+    ) -> Option<(u16, NodeIndex, NodeIndex)> {
+        let node = self.arena.get(idx)?;
+
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+            && let Some(paren) = self.arena.get_parenthesized(node)
+        {
+            return self.collect_update_optional_access(paren.expression, tail);
+        }
+
+        if (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            && let Some(access) = self.arena.get_access_expr(node)
+        {
+            if access.question_dot_token {
+                return Some((node.kind, access.expression, access.name_or_argument));
+            }
+
+            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                tail.push(OptionalChainSegment::Property(access.name_or_argument));
+            } else {
+                tail.push(OptionalChainSegment::Element(access.name_or_argument));
+            }
+            return self.collect_update_optional_access(access.expression, tail);
+        }
+
+        None
+    }
+
+    fn emit_update_optional_access(
         &mut self,
         access_kind: u16,
+        base: NodeIndex,
         name_or_argument: NodeIndex,
+        tail: &[OptionalChainSegment],
     ) {
+        self.parenthesized(|this| {
+            if this.is_simple_nullish_expression(base) {
+                this.emit(base);
+                this.write(" === null || ");
+                this.emit(base);
+                this.write(" === void 0 ? void 0 : ");
+                this.emit(base);
+                this.emit_optional_access_segment(access_kind, name_or_argument);
+                this.emit_optional_chain_tail(tail);
+            } else {
+                let base_temp = this.make_unique_name_hoisted();
+                this.parenthesized(|this| {
+                    this.write(&base_temp);
+                    this.write(" = ");
+                    this.emit(base);
+                });
+                this.write(" === null || ");
+                this.write(&base_temp);
+                this.write(" === void 0 ? void 0 : ");
+                this.write(&base_temp);
+                this.emit_optional_access_segment(access_kind, name_or_argument);
+                this.emit_optional_chain_tail(tail);
+            }
+        });
+    }
+
+    fn emit_optional_access_segment(&mut self, access_kind: u16, name_or_argument: NodeIndex) {
         if access_kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
             self.write(".");
             self.emit_property_name_without_import_substitution(name_or_argument);
         } else {
-            self.write("[");
+            self.open_bracket();
             self.emit(name_or_argument);
-            self.write("]");
+            self.close_bracket();
         }
     }
 
-    fn emit_delete_optional_chain_tail(&mut self, tail: &[DeleteOptionalChainSegment]) {
+    fn emit_optional_chain_tail(&mut self, tail: &[OptionalChainSegment]) {
         for segment in tail.iter().rev() {
             match segment {
-                DeleteOptionalChainSegment::Property(name) => {
+                OptionalChainSegment::Property(name) => {
                     self.write(".");
                     self.emit_property_name_without_import_substitution(*name);
                 }
-                DeleteOptionalChainSegment::Element(argument) => {
-                    self.write("[");
+                OptionalChainSegment::Element(argument) => {
+                    self.open_bracket();
                     self.emit(*argument);
-                    self.write("]");
+                    self.close_bracket();
                 }
             }
         }
@@ -958,6 +1042,35 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if (unary.operator == SyntaxKind::PlusPlusToken as u16
+            || unary.operator == SyntaxKind::MinusMinusToken as u16)
+            && !self.ctx.options.target.supports_es2020()
+        {
+            let mut tail = Vec::new();
+            if let Some((access_kind, base, name_or_argument)) =
+                self.collect_update_optional_access(unary.operand, &mut tail)
+            {
+                self.emit_update_optional_access(access_kind, base, name_or_argument, &tail);
+                if let Some(operand_node) = self.arena.get(unary.operand) {
+                    self.map_token_after_skipping_whitespace(operand_node.end, node.end);
+                }
+                self.write(get_operator_text(unary.operator));
+                return;
+            }
+        }
+
+        if (unary.operator == SyntaxKind::PlusPlusToken as u16
+            || unary.operator == SyntaxKind::MinusMinusToken as u16)
+            && let Some(operand_node) = self.arena.get(unary.operand)
+            && operand_node.kind == SyntaxKind::Identifier as u16
+        {
+            let local_name = self.get_identifier_text_idx(unary.operand);
+            let is_statement = self.ctx.flags.in_statement_expression;
+            if self.emit_cjs_live_export_postfix_unary(&local_name, unary.operator, is_statement) {
+                return;
+            }
+        }
+
         // When lowering optional chains or nullish coalescing (e.g., `o?.a++`, `(a ?? b)++`),
         // the ternary must be wrapped in parens to preserve precedence.
         let prev_optional = self.ctx.flags.optional_chain_needs_parens;
@@ -978,6 +1091,12 @@ impl<'a> Printer<'a> {
         let Some(call) = self.arena.get_call_expr(node) else {
             return;
         };
+
+        if !self.ctx.options.target.supports_es2020()
+            && self.emit_invalid_new_optional_chain(call.expression, call.arguments.as_ref())
+        {
+            return;
+        }
 
         // Private field new: `new this.#C()` → `new (__classPrivateFieldGet(this, _C_C, "f"))()`
         let needs_private_parens = !self.private_field_weakmaps.is_empty()
@@ -1034,6 +1153,82 @@ impl<'a> Printer<'a> {
         if self.new_expression_has_explicit_parens(node, call.expression) {
             self.write("()");
         }
+    }
+
+    fn emit_invalid_new_optional_chain(
+        &mut self,
+        callee: NodeIndex,
+        args: Option<&NodeList>,
+    ) -> bool {
+        let mut tail = Vec::new();
+        let Some((access_kind, base, name_or_argument)) =
+            self.collect_invalid_new_optional_access(callee, &mut tail)
+        else {
+            return false;
+        };
+
+        let needs_parens = self.ctx.flags.optional_chain_needs_parens;
+        if needs_parens {
+            self.open_paren();
+            self.ctx.flags.optional_chain_needs_parens = false;
+        }
+        let temp = self.make_unique_name_hoisted();
+        self.open_paren();
+        self.write(&temp);
+        self.write(" = new ");
+        let prev_new = self.paren_in_new_callee;
+        self.paren_in_new_callee = true;
+        self.emit(base);
+        self.paren_in_new_callee = prev_new;
+        self.close_paren();
+        self.write(" === null || ");
+        self.write(&temp);
+        self.write(" === void 0 ? void 0 : ");
+        self.write(&temp);
+        self.emit_optional_access_segment(access_kind, name_or_argument);
+        self.emit_optional_chain_tail(&tail);
+        if let Some(args) = args {
+            self.open_paren();
+            let valid_args: Vec<_> = args.nodes.iter().copied().filter(|n| n.is_some()).collect();
+            self.emit_comma_separated(&valid_args);
+            self.close_paren();
+        }
+        if needs_parens {
+            self.close_paren();
+        }
+        true
+    }
+
+    fn collect_invalid_new_optional_access(
+        &self,
+        idx: NodeIndex,
+        tail: &mut Vec<OptionalChainSegment>,
+    ) -> Option<(u16, NodeIndex, NodeIndex)> {
+        let node = self.arena.get(idx)?;
+
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+            && let Some(paren) = self.arena.get_parenthesized(node)
+        {
+            return self.collect_invalid_new_optional_access(paren.expression, tail);
+        }
+
+        if (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            && let Some(access) = self.arena.get_access_expr(node)
+        {
+            if access.question_dot_token {
+                return Some((node.kind, access.expression, access.name_or_argument));
+            }
+
+            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                tail.push(OptionalChainSegment::Property(access.name_or_argument));
+            } else {
+                tail.push(OptionalChainSegment::Element(access.name_or_argument));
+            }
+            return self.collect_invalid_new_optional_access(access.expression, tail);
+        }
+
+        None
     }
 
     fn emit_invalid_new_type_assertion_callee(&mut self, expression: NodeIndex) -> bool {

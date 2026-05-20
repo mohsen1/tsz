@@ -8,10 +8,12 @@
 //! at the LSP server layer.
 
 use crate::rename::{TextEdit, WorkspaceEdit};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
+use tsz_binder::SymbolId;
 use tsz_parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 
 use super::code_action_provider::{CodeAction, CodeActionKind, CodeActionProvider};
 use tsz_common::position::Range;
@@ -99,7 +101,13 @@ impl<'a> CodeActionProvider<'a> {
             format!("{new_file_name}.{extension}")
         };
 
+        let target_imports = self.imports_used_by_moved_declaration(root, decl_idx);
+
         let mut export_text = String::new();
+        if !target_imports.is_empty() {
+            export_text.push_str(&target_imports);
+            export_text.push('\n');
+        }
         if !decl_text.contains("export ") {
             export_text.push_str("export ");
         }
@@ -214,6 +222,185 @@ impl<'a> CodeActionProvider<'a> {
             }
         }
         None
+    }
+
+    fn imports_used_by_moved_declaration(&self, root: NodeIndex, decl_idx: NodeIndex) -> String {
+        let used_import_symbols = self.identifier_symbols_in_subtree(decl_idx);
+        if used_import_symbols.is_empty() {
+            return String::new();
+        }
+
+        let Some(source_node) = self.arena.get(root) else {
+            return String::new();
+        };
+        let Some(source_data) = self.arena.get_source_file(source_node) else {
+            return String::new();
+        };
+
+        let mut imports = Vec::new();
+        for &stmt_idx in &source_data.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::IMPORT_DECLARATION {
+                continue;
+            }
+            if let Some(import_text) = self.render_used_import(stmt_node, &used_import_symbols) {
+                imports.push(import_text);
+            }
+        }
+
+        if imports.is_empty() {
+            String::new()
+        } else {
+            format!("{}\n", imports.join("\n"))
+        }
+    }
+
+    fn identifier_symbols_in_subtree(
+        &self,
+        root: NodeIndex,
+    ) -> FxHashMap<String, FxHashSet<SymbolId>> {
+        let mut symbols_by_name: FxHashMap<String, FxHashSet<SymbolId>> = FxHashMap::default();
+        let mut stack = vec![root];
+        while let Some(idx) = stack.pop() {
+            let Some(node) = self.arena.get(idx) else {
+                continue;
+            };
+            if node.kind == SyntaxKind::Identifier as u16
+                && let Some(text) = self.arena.get_identifier_text(idx)
+                && let Some(symbol) = self.binder.resolve_identifier(self.arena, idx)
+            {
+                symbols_by_name
+                    .entry(text.to_string())
+                    .or_default()
+                    .insert(symbol);
+            }
+            stack.extend(self.arena.get_children(idx));
+        }
+        symbols_by_name
+    }
+
+    fn render_used_import(
+        &self,
+        import_node: &tsz_parser::parser::node::Node,
+        used_import_symbols: &FxHashMap<String, FxHashSet<SymbolId>>,
+    ) -> Option<String> {
+        let import_data = self.arena.get_import_decl(import_node)?;
+        if !import_data.import_clause.is_some() {
+            return None;
+        }
+        let clause_node = self.arena.get(import_data.import_clause)?;
+        let clause = self.arena.get_import_clause(clause_node)?;
+
+        let mut parts = Vec::new();
+        if clause.name.is_some()
+            && let Some(default_name) = self.arena.get_identifier_text(clause.name)
+            && self.imported_binding_is_used(clause.name, default_name, used_import_symbols)
+        {
+            parts.push(default_name.to_string());
+        }
+
+        if clause.named_bindings.is_some() {
+            let bindings_node = self.arena.get(clause.named_bindings)?;
+            if bindings_node.kind == SyntaxKind::Identifier as u16 {
+                if let Some(namespace_name) = self.arena.get_identifier_text(clause.named_bindings)
+                    && self.imported_binding_is_used(
+                        clause.named_bindings,
+                        namespace_name,
+                        used_import_symbols,
+                    )
+                {
+                    parts.push(format!("* as {namespace_name}"));
+                }
+            } else if let Some(named) = self.arena.get_named_imports(bindings_node) {
+                let mut items = Vec::new();
+                for &spec_idx in &named.elements.nodes {
+                    let spec_node = self.arena.get(spec_idx)?;
+                    let spec = self.arena.get_specifier(spec_node)?;
+                    let import_ident = if spec.property_name.is_some() {
+                        spec.property_name
+                    } else {
+                        spec.name
+                    };
+                    let local_ident = if spec.name.is_some() {
+                        spec.name
+                    } else {
+                        spec.property_name
+                    };
+                    let import_name = self.arena.get_identifier_text(import_ident)?;
+                    let local_name = self.arena.get_identifier_text(local_ident)?;
+                    if !self.imported_binding_is_used(local_ident, local_name, used_import_symbols)
+                    {
+                        continue;
+                    }
+
+                    let mut item = String::new();
+                    if spec.is_type_only && !clause.is_type_only {
+                        item.push_str("type ");
+                    }
+                    if import_name == local_name {
+                        item.push_str(import_name);
+                    } else {
+                        item.push_str(import_name);
+                        item.push_str(" as ");
+                        item.push_str(local_name);
+                    }
+                    items.push(item);
+                }
+                if !items.is_empty() {
+                    parts.push(format!("{{ {} }}", items.join(", ")));
+                }
+            }
+        }
+
+        if parts.is_empty() {
+            return None;
+        }
+
+        let module_node = self.arena.get(import_data.module_specifier)?;
+        let module_text = self
+            .source
+            .get(module_node.pos as usize..module_node.end as usize)?;
+
+        let mut import_text = String::new();
+        import_text.push_str("import ");
+        if clause.is_type_only {
+            import_text.push_str("type ");
+        }
+        import_text.push_str(&parts.join(", "));
+        import_text.push_str(" from ");
+        import_text.push_str(module_text);
+        import_text.push(';');
+        Some(import_text)
+    }
+
+    fn imported_binding_is_used(
+        &self,
+        local_ident: NodeIndex,
+        local_name: &str,
+        used_import_symbols: &FxHashMap<String, FxHashSet<SymbolId>>,
+    ) -> bool {
+        let Some(used_symbols) = used_import_symbols.get(local_name) else {
+            return false;
+        };
+        let Some(import_symbol) = self
+            .binder
+            .node_symbols
+            .get(&local_ident.0)
+            .copied()
+            .or_else(|| self.binder.file_locals.get(local_name))
+        else {
+            return false;
+        };
+
+        if used_symbols.contains(&import_symbol) {
+            return true;
+        }
+
+        self.binder
+            .resolve_import_symbol(import_symbol)
+            .is_some_and(|target_symbol| used_symbols.contains(&target_symbol))
     }
 
     /// Find the position after the last import statement for inserting new imports.

@@ -68,17 +68,37 @@ impl Project {
     /// Mark a file as open in the editor.
     ///
     /// Open files are never evicted. Call this when the LSP receives
-    /// `textDocument/didOpen`.
+    /// `textDocument/didOpen`. Also promotes the file to "focused" so
+    /// fuzzy ranking in workspace-symbol search prefers nearby files.
     pub fn mark_file_open(&mut self, file_name: &str) {
         self.open_files.insert(file_name.to_string());
+        self.focused_file = Some(file_name.to_string());
     }
 
     /// Mark a file as closed in the editor.
     ///
     /// Closed files become eligible for eviction. Call this when the LSP
-    /// receives `textDocument/didClose`.
+    /// receives `textDocument/didClose`. If the closed file was focused,
+    /// the focus is cleared.
     pub fn mark_file_closed(&mut self, file_name: &str) {
         self.open_files.remove(file_name);
+        if self.focused_file.as_deref() == Some(file_name) {
+            self.focused_file = None;
+        }
+    }
+
+    /// Record the file the editor is currently focused on.
+    ///
+    /// Call this from any LSP request that carries a `textDocument.uri`
+    /// (`didChange`, `hover`, `definition`, `completion`, ...). The hint
+    /// is used as a tie-breaker for fuzzy-ranked workspace-symbol search.
+    pub fn set_focused_file(&mut self, file_name: &str) {
+        self.focused_file = Some(file_name.to_string());
+    }
+
+    /// Get the currently focused file, if any.
+    pub fn focused_file(&self) -> Option<&str> {
+        self.focused_file.as_deref()
     }
 
     /// Whether a file is currently open in the editor.

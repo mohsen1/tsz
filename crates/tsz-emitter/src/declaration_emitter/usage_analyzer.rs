@@ -1,5 +1,3 @@
-//! Usage Analyzer for Import/Export Elision
-//!
 //! Analyzes exported declarations to determine which imports are actually used
 //! in the public API surface. This prevents "Module not found" errors by eliding
 //! unused imports from .d.ts files, matching TypeScript's behavior.
@@ -21,15 +19,24 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 use tsz_solver::visitor;
 
+use crate::transforms::emit_utils::string_literal_text;
 use crate::type_cache_view::TypeCacheView;
 
+mod ambient_module;
+mod public_surface;
 mod type_walk;
 mod value_references;
 
 pub(super) type SolverTypeId = tsz_solver::TypeId;
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct UsageAnalyzerSourceFlags {
+    pub source_is_js_file: bool,
+    pub source_is_declaration_file: bool,
+}
 
 /// Tracks how a symbol is used - as a type, a value, or both.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,10 +104,14 @@ pub struct UsageAnalyzer<'a> {
     current_file_path: Option<String>,
     /// Whether the current source file is JavaScript.
     source_is_js_file: bool,
+    /// Whether the current source file is already a declaration file.
+    source_is_declaration_file: bool,
     /// Set of symbols from other modules that need imports
     foreign_symbols: FxHashSet<SymbolId>,
     /// Context flag: true when we're in a value position (expression, typeof)
     in_value_pos: bool,
+    /// String-literal ambient module currently being analyzed, if any.
+    current_ambient_module_specifier: Option<String>,
 }
 
 impl<'a> UsageAnalyzer<'a> {
@@ -113,7 +124,7 @@ impl<'a> UsageAnalyzer<'a> {
         current_arena: Arc<NodeArena>,
         current_file_path: Option<String>,
         import_name_map: &'a FxHashMap<String, SymbolId>,
-        source_is_js_file: bool,
+        source_flags: UsageAnalyzerSourceFlags,
     ) -> Self {
         Self {
             arena,
@@ -128,9 +139,11 @@ impl<'a> UsageAnalyzer<'a> {
             memoizing_types: FxHashSet::default(),
             current_arena,
             current_file_path,
-            source_is_js_file,
+            source_is_js_file: source_flags.source_is_js_file,
+            source_is_declaration_file: source_flags.source_is_declaration_file,
             foreign_symbols: FxHashSet::default(),
             in_value_pos: false,
+            current_ambient_module_specifier: None,
         }
     }
 
@@ -268,14 +281,11 @@ impl<'a> UsageAnalyzer<'a> {
                             }
                         }
                         // Default export with expression: export default new A()
-                        // Keep constructor references for `new A()` surfaces, but
-                        // do not retain private call helpers for `f()`; the
-                        // declaration emitter retains the inferred return type's
-                        // symbols before pruning.
+                        // Prefer the construct return type as the public surface.
+                        // Fall back to the constructor reference only when type
+                        // info cannot expose an instance type.
                         k if k == syntax_kind_ext::NEW_EXPRESSION => {
-                            let callee =
-                                self.unwrap_export_default_expression(export.export_clause);
-                            self.analyze_entity_name(callee);
+                            self.analyze_export_default_new_expression(export.export_clause);
                         }
                         k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
                             self.analyze_export_default_object_literal_value_references(
@@ -291,11 +301,34 @@ impl<'a> UsageAnalyzer<'a> {
             k if k == syntax_kind_ext::EXPORT_ASSIGNMENT => {
                 self.analyze_export_assignment(stmt_idx);
             }
+            k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
+                self.analyze_commonjs_assignment_public_surface(stmt_idx)
+            }
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                self.analyze_module_declaration(stmt_idx);
+                if self.module_declaration_contributes_public_surface(stmt_idx) {
+                    self.analyze_module_declaration(stmt_idx);
+                }
             }
             _ => {}
         }
+    }
+
+    fn module_declaration_contributes_public_surface(&self, module_idx: NodeIndex) -> bool {
+        let Some(module_node) = self.arena.get(module_idx) else {
+            return false;
+        };
+        let Some(module) = self.arena.get_module(module_node) else {
+            return false;
+        };
+
+        if self.source_is_declaration_file || !self.binder.is_external_module() {
+            return true;
+        }
+        if self.is_ambient_module_body_name(module.name) {
+            return true;
+        }
+
+        self.statement_has_export_modifier(module_node)
     }
 
     fn analyze_module_declaration(&mut self, module_idx: NodeIndex) {
@@ -306,16 +339,97 @@ impl<'a> UsageAnalyzer<'a> {
             return;
         };
 
+        let previous_ambient_module_specifier = self.current_ambient_module_specifier.clone();
+        if let Some(module_specifier) = string_literal_text(self.arena, module.name) {
+            self.current_ambient_module_specifier = Some(module_specifier);
+        }
+
         if let Some(body_node) = self.arena.get(module.body) {
             if let Some(module_block) = self.arena.get_module_block(body_node) {
                 if let Some(ref stmts) = module_block.statements {
                     for &stmt_idx in &stmts.nodes {
-                        self.analyze_statement(stmt_idx);
+                        if self.is_ambient_module_body_name(module.name) {
+                            self.analyze_ambient_module_member_statement(stmt_idx);
+                        } else if self.source_is_declaration_file
+                            || self.namespace_statement_contributes_public_surface(stmt_idx)
+                        {
+                            self.analyze_statement(stmt_idx);
+                        }
                     }
                 }
             } else if let Some(_nested_module) = self.arena.get_module(body_node) {
                 self.analyze_module_declaration(module.body);
             }
+        }
+
+        self.current_ambient_module_specifier = previous_ambient_module_specifier;
+    }
+
+    fn namespace_statement_contributes_public_surface(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+            || stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+            || stmt_node.kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+        {
+            return true;
+        }
+        self.statement_has_export_modifier(stmt_node)
+    }
+
+    fn statement_has_export_modifier(&self, stmt_node: &tsz_parser::parser::node::Node) -> bool {
+        match stmt_node.kind {
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                self.arena.get_function(stmt_node).is_some_and(|func| {
+                    self.arena
+                        .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword)
+                })
+            }
+            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                self.arena.get_class(stmt_node).is_some_and(|class| {
+                    self.arena
+                        .has_modifier(&class.modifiers, SyntaxKind::ExportKeyword)
+                })
+            }
+            k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                self.arena.get_interface(stmt_node).is_some_and(|iface| {
+                    self.arena
+                        .has_modifier(&iface.modifiers, SyntaxKind::ExportKeyword)
+                })
+            }
+            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                self.arena.get_type_alias(stmt_node).is_some_and(|alias| {
+                    self.arena
+                        .has_modifier(&alias.modifiers, SyntaxKind::ExportKeyword)
+                })
+            }
+            k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                self.arena.get_enum(stmt_node).is_some_and(|enum_data| {
+                    self.arena
+                        .has_modifier(&enum_data.modifiers, SyntaxKind::ExportKeyword)
+                })
+            }
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                self.arena.get_variable(stmt_node).is_some_and(|var_stmt| {
+                    self.arena
+                        .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
+                })
+            }
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                self.arena.get_module(stmt_node).is_some_and(|module| {
+                    self.arena
+                        .has_modifier(&module.modifiers, SyntaxKind::ExportKeyword)
+                })
+            }
+            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => self
+                .arena
+                .get_import_decl(stmt_node)
+                .is_some_and(|import_decl| {
+                    self.arena
+                        .has_modifier(&import_decl.modifiers, SyntaxKind::ExportKeyword)
+                }),
+            _ => false,
         }
     }
 
@@ -380,10 +494,63 @@ impl<'a> UsageAnalyzer<'a> {
         };
         // Mark the expression as used (could be a type or value reference)
         if export_assign.expression.is_some() {
-            let expr_idx = self.unwrap_export_default_expression(export_assign.expression);
+            let expr_idx = export_assign.expression;
+            if self
+                .arena
+                .get(expr_idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::NEW_EXPRESSION)
+            {
+                self.analyze_export_default_new_expression(expr_idx);
+                return;
+            }
+            let expr_idx = self.unwrap_export_default_expression(expr_idx);
             self.analyze_reference_as_value_and_type(expr_idx);
             self.analyze_export_default_object_literal_value_references(expr_idx);
         }
+    }
+
+    fn analyze_export_default_new_expression(&mut self, expr_idx: NodeIndex) {
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return;
+        };
+        let Some(new_expr) = self.arena.get_call_expr(expr_node) else {
+            return;
+        };
+        if self.walk_construct_return_type_for_new_expression(new_expr.expression) {
+            return;
+        }
+        self.analyze_entity_name(new_expr.expression);
+    }
+
+    fn walk_construct_return_type_for_new_expression(&mut self, callee_idx: NodeIndex) -> bool {
+        let Some(constructor_type) = self
+            .type_cache
+            .node_types
+            .get(&callee_idx.0)
+            .copied()
+            .or_else(|| self.symbol_cached_type(callee_idx))
+        else {
+            return false;
+        };
+        let Some(return_type) = tsz_solver::type_queries::construct_return_type_for_type(
+            self.type_interner,
+            constructor_type,
+        ) else {
+            return false;
+        };
+        if matches!(
+            return_type,
+            tsz_solver::TypeId::ANY | tsz_solver::TypeId::UNKNOWN | tsz_solver::TypeId::ERROR
+        ) {
+            return false;
+        }
+        self.walk_type_id(return_type);
+        true
+    }
+
+    fn symbol_cached_type(&self, node_idx: NodeIndex) -> Option<tsz_solver::TypeId> {
+        let sym_id = self.binder.node_symbols.get(&node_idx.0)?;
+        self.type_cache.symbol_types.get(sym_id).copied()
     }
 
     fn analyze_export_default_object_literal_value_references(&mut self, expr_idx: NodeIndex) {
@@ -693,18 +860,6 @@ impl<'a> UsageAnalyzer<'a> {
         }
     }
 
-    fn analyze_expression_public_surface(&mut self, expr_idx: NodeIndex) {
-        let expr_idx = self
-            .arena
-            .skip_parenthesized_and_assertions_and_comma(expr_idx);
-        let Some(expr_node) = self.arena.get(expr_idx) else {
-            return;
-        };
-        if expr_node.kind == syntax_kind_ext::CLASS_EXPRESSION {
-            self.analyze_class_declaration(expr_idx);
-        }
-    }
-
     /// Analyze a class declaration.
     fn analyze_class_declaration(&mut self, class_idx: NodeIndex) {
         let Some(class_node) = self.arena.get(class_idx) else {
@@ -758,7 +913,6 @@ impl<'a> UsageAnalyzer<'a> {
         }
     }
 
-    /// Analyze a property declaration.
     fn analyze_property_declaration(&mut self, prop_idx: NodeIndex) {
         let Some(prop_node) = self.arena.get(prop_idx) else {
             return;
@@ -775,11 +929,11 @@ impl<'a> UsageAnalyzer<'a> {
             || self.member_has_private_identifier_name(prop.name);
 
         if !is_private {
-            // Walk type annotation (explicit or inferred)
             if prop.type_annotation.is_some() {
                 self.analyze_type_node(prop.type_annotation);
             } else {
                 self.walk_inferred_type(prop_idx);
+                self.analyze_export_default_initializer_reference(prop.initializer);
             }
         }
 
@@ -836,7 +990,6 @@ impl<'a> UsageAnalyzer<'a> {
         }
     }
 
-    /// Analyze a constructor.
     fn analyze_constructor(&mut self, ctor_idx: NodeIndex) {
         let Some(ctor_node) = self.arena.get(ctor_idx) else {
             return;
@@ -853,13 +1006,12 @@ impl<'a> UsageAnalyzer<'a> {
             return;
         }
 
-        // Walk parameters (public and protected constructors)
         for &param_idx in &ctor.parameters.nodes {
             self.analyze_parameter(param_idx);
         }
+        self.analyze_constructor_public_surface_assignments(ctor.body);
     }
 
-    /// Analyze an accessor (getter/setter).
     fn analyze_accessor(&mut self, accessor_idx: NodeIndex) {
         let Some(accessor_node) = self.arena.get(accessor_idx) else {
             return;
@@ -1171,7 +1323,11 @@ impl<'a> UsageAnalyzer<'a> {
         // dependencies.  `analyze_local_import_equals_dependency` is
         // safe to call unconditionally — it only marks symbols whose
         // declarations are ImportEqualsDeclaration nodes.
-        if decl.type_annotation.is_none() && decl.initializer.is_some() && has_inferred_type {
+        if decl.type_annotation.is_none()
+            && decl.initializer.is_some()
+            && has_inferred_type
+            && !initializer_is_call_expression
+        {
             let callee = self.unwrap_export_default_expression(decl.initializer);
             self.analyze_local_import_equals_dependency(callee);
             if callee != decl.initializer {
@@ -1736,7 +1892,12 @@ impl<'a> UsageAnalyzer<'a> {
                     UsageKind::TYPE
                 };
                 if let Some(&sym_id) = self.binder.node_symbols.get(&name_idx.0) {
-                    self.mark_symbol_used(sym_id, kind);
+                    let should_mark = self.arena.get_identifier(name_node).is_none_or(|ident| {
+                        !self.is_current_ambient_module_self_import(sym_id, &ident.escaped_text)
+                    });
+                    if should_mark {
+                        self.mark_symbol_used(sym_id, kind);
+                    }
                     if kind == UsageKind::TYPE
                         && self.binder.symbols.get(sym_id).is_some_and(|symbol| {
                             symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_PARAMETER)
@@ -1765,10 +1926,16 @@ impl<'a> UsageAnalyzer<'a> {
                         }
                     }
                     if let Some(&sym_id) = self.import_name_map.get(&ident.escaped_text) {
-                        self.mark_symbol_used(sym_id, kind);
+                        if !self.is_current_ambient_module_self_import(sym_id, &ident.escaped_text)
+                        {
+                            self.mark_symbol_used(sym_id, kind);
+                        }
                     }
                     if let Some(sym_id) = self.binder.file_locals.get(&ident.escaped_text) {
-                        self.mark_symbol_used(sym_id, kind);
+                        if !self.is_current_ambient_module_self_import(sym_id, &ident.escaped_text)
+                        {
+                            self.mark_symbol_used(sym_id, kind);
+                        }
                     }
                     // Also check namespace/module scope tables, since the
                     // symbol may live in a parent namespace scope rather than
@@ -1778,7 +1945,11 @@ impl<'a> UsageAnalyzer<'a> {
                     // `export {};` scope markers).
                     for scope in self.binder.scopes.iter() {
                         if let Some(sym_id) = scope.table.get(&ident.escaped_text) {
-                            self.mark_symbol_used(sym_id, kind);
+                            if !self
+                                .is_current_ambient_module_self_import(sym_id, &ident.escaped_text)
+                            {
+                                self.mark_symbol_used(sym_id, kind);
+                            }
                         }
                     }
                 }
@@ -1801,6 +1972,29 @@ impl<'a> UsageAnalyzer<'a> {
             }
             _ => {}
         }
+    }
+
+    fn is_current_ambient_module_self_import(&self, sym_id: SymbolId, ident: &str) -> bool {
+        let Some(module_specifier) = self.current_ambient_module_specifier.as_deref() else {
+            return false;
+        };
+        let Some(symbol) = self.binder.symbols.get(sym_id) else {
+            return false;
+        };
+        if symbol.import_module.as_deref() != Some(module_specifier) {
+            return false;
+        }
+
+        // An unaliased `import { Observable } from "observable"` is redundant
+        // inside `declare module "observable"` because the declaration body is
+        // already scoped to that ambient module. Aliased imports still need to
+        // count as usages because the alias is not introduced by the module body.
+        symbol
+            .import_name
+            .as_deref()
+            .unwrap_or(&symbol.escaped_name)
+            == ident
+            && symbol.escaped_name == ident
     }
 
     fn analyze_entity_name_qualifier(&mut self, name_idx: NodeIndex) {
@@ -1935,6 +2129,9 @@ impl<'a> UsageAnalyzer<'a> {
                 }
                 k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                     self.analyze_function_declaration(decl_idx)
+                }
+                k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                    self.analyze_module_declaration(decl_idx)
                 }
                 _ => {}
             }

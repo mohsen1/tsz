@@ -5,14 +5,14 @@
 
 use super::{FlowAnalyzer, PropertyKey};
 use crate::query_boundaries::common::{
-    enum_components, is_assignment_operator as boundary_is_assignment_operator,
-    is_compound_assignment_operator, map_compound_assignment_to_binary,
+    is_assignment_operator as boundary_is_assignment_operator, is_compound_assignment_operator,
+    is_logical_compound_assignment_operator, map_compound_assignment_to_binary,
 };
 use crate::query_boundaries::flow_analysis::{
-    array_type, enum_member_domain, evaluate_application_type, fallback_compound_assignment_result,
-    get_array_element_type, get_lazy_def_id, is_assignable, is_assignable_with_env,
+    array_type, fallback_compound_assignment_result, get_array_element_type,
     tuple_elements_for_type, union_members_for_type, widen_literal_to_primitive,
 };
+use crate::query_boundaries::type_computation::core::BinaryOpResult;
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::node::NodeAccess;
@@ -72,16 +72,86 @@ impl<'a> FlowAnalyzer<'a> {
             return Some(assigned_type);
         }
 
-        let Some(read_target_type) = self.node_types.and_then(|nt| nt.get(&target.0).copied())
-        else {
+        if let Some((read_type, write_type)) = self.access_reference_split_read_write_type(target) {
+            if read_type.is_any_unknown_or_error()
+                || self.is_assignable_to_strict_null(assigned_type, read_type)
+            {
+                return Some(assigned_type);
+            }
+
+            if write_type.is_any_unknown_or_error()
+                || self.is_assignable_to_strict_null(assigned_type, write_type)
+            {
+                return None;
+            }
+        }
+
+        let Some(target_type) = self.node_types.and_then(|nt| nt.get(&target.0).copied()) else {
             return Some(assigned_type);
         };
-        if read_target_type.is_any_unknown_or_error() {
+        if target_type.is_any_unknown_or_error() {
             return Some(assigned_type);
         }
 
-        self.is_assignable_to(assigned_type, read_target_type)
+        self.is_assignable_to(assigned_type, target_type)
             .then_some(assigned_type)
+    }
+
+    fn access_reference_split_read_write_type(
+        &self,
+        target: NodeIndex,
+    ) -> Option<(TypeId, TypeId)> {
+        let target_node = self.arena.get(target)?;
+        let access = self.arena.get_access_expr(target_node)?;
+
+        let name_atom = if target_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let ident = self.arena.get_identifier_at(access.name_or_argument)?;
+            self.interner.intern_string(&ident.escaped_text)
+        } else if target_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+            self.literal_atom_from_node_or_type(access.name_or_argument)?
+        } else {
+            return None;
+        };
+
+        let node_types = self.node_types?;
+        let base_type = if let Some(&base_type) = node_types.get(&access.expression.0) {
+            base_type
+        } else if let Some(this_type) = self.concrete_this_type
+            && let Some(base_node) = self.arena.get(access.expression)
+            && base_node.kind == SyntaxKind::ThisKeyword as u16
+        {
+            this_type
+        } else {
+            return None;
+        };
+
+        let prop_name = self.interner.resolve_atom_ref(name_atom);
+        let access_result = if let Some(env_ref) = &self.type_environment {
+            let env = env_ref.borrow();
+            crate::query_boundaries::property_access::resolve_property_access_with_resolver(
+                self.interner,
+                &*env,
+                base_type,
+                prop_name.as_ref(),
+                self.interner.no_unchecked_indexed_access(),
+            )
+        } else {
+            crate::query_boundaries::property_access::resolve_property_access_with_options(
+                self.interner,
+                base_type,
+                prop_name.as_ref(),
+                self.interner.no_unchecked_indexed_access(),
+            )
+        };
+
+        match access_result {
+            crate::query_boundaries::common::PropertyAccessResult::Success {
+                type_id,
+                write_type: Some(write_type),
+                from_index_signature: false,
+            } if write_type != type_id => Some((type_id, write_type)),
+            _ => None,
+        }
     }
 
     fn node_contains_descendant(&self, ancestor: NodeIndex, mut descendant: NodeIndex) -> bool {
@@ -236,7 +306,6 @@ impl<'a> FlowAnalyzer<'a> {
                     if self.is_access_reference(target) {
                         return None;
                     }
-                    use crate::query_boundaries::type_computation::core::BinaryOpResult;
 
                     // When node_types is not available, use heuristics for flow narrowing
                     if self.node_types.is_none() {
@@ -247,23 +316,17 @@ impl<'a> FlowAnalyzer<'a> {
                         );
                     }
 
-                    if crate::query_boundaries::common::is_logical_compound_assignment_operator(
-                        bin.operator_token,
-                    ) {
+                    if is_logical_compound_assignment_operator(bin.operator_token) {
                         // For logical assignments (&&=, ||=, ??=), the post-assignment
                         // type of the LHS must reflect the full expression semantics:
-                        //   x ??= y  →  NonNullable<x> | typeof y
-                        //   x ||= y  →  Truthy<x> | typeof y
-                        //   x &&= y  →  Falsy<x> | typeof y
-                        // Use the expression result type (from the entire binary expr
-                        // node), not just the RHS type. This ensures that after
-                        // `f ??= expr`, the flow type of `f` excludes null/undefined.
+                        //   x ??= y  -> NonNullable<x> | typeof y
+                        //   x ||= y  -> Truthy<x> | typeof y
+                        //   x &&= y  -> Falsy<x> | typeof y
                         if let Some(node_types) = self.node_types
                             && let Some(&expr_type) = node_types.get(&assignment_node.0)
                         {
                             return Some(expr_type);
                         }
-                        // Fallback to RHS type if expression type not available
                         if let Some(node_types) = self.node_types
                             && let Some(&rhs_type) = node_types.get(&bin.right.0)
                         {
@@ -272,35 +335,34 @@ impl<'a> FlowAnalyzer<'a> {
                         return None;
                     }
 
-                    // Get LHS type (current narrowed type of the variable)
+                    if let Some(node_types) = self.node_types
+                        && let Some(&expr_type) = node_types.get(&assignment_node.0)
+                    {
+                        if expr_type.is_any_unknown_or_error() {
+                            return Some(TypeId::ANY);
+                        }
+                        return Some(expr_type);
+                    }
+
                     let left_type = if let Some(node_types) = self.node_types
                         && let Some(&lhs_type) = node_types.get(&bin.left.0)
                     {
                         lhs_type
                     } else {
-                        // Fall back - shouldn't happen due to the check above
                         return None;
                     };
-
-                    // Get RHS type
                     let right_type = if let Some(node_types) = self.node_types
                         && let Some(&rhs_type) = node_types.get(&bin.right.0)
                     {
                         rhs_type
                     } else {
-                        // Fall back - shouldn't happen due to the check above
                         return None;
                     };
-
-                    // Map compound assignment operator to binary operator
                     let op_str = map_compound_assignment_to_binary(bin.operator_token)?;
-
-                    // Evaluate the binary operation to get result type
                     let evaluator =
                         crate::query_boundaries::common::new_binary_op_evaluator(self.interner);
                     return match evaluator.evaluate(left_type, right_type, op_str) {
                         BinaryOpResult::Success(result) => Some(result),
-                        // For type errors, return ANY to prevent cascading errors
                         BinaryOpResult::TypeError { .. } => Some(TypeId::ANY),
                     };
                 }
@@ -388,7 +450,7 @@ impl<'a> FlowAnalyzer<'a> {
                 if (literal_type == TypeId::NULL || literal_type == TypeId::UNDEFINED)
                     && let Some(annotation_type) =
                         self.annotation_type_from_assignment_node(assignment_node, target)
-                    && !self.is_assignable_to_strict_null(literal_type, annotation_type)
+                    && !self.annotation_type_allows_nullish(annotation_type, literal_type)
                 {
                     return None;
                 }
@@ -443,7 +505,7 @@ impl<'a> FlowAnalyzer<'a> {
             if let Some(nullish_type) = self.nullish_literal_type(rhs) {
                 if let Some(annotation_type) =
                     self.annotation_type_from_assignment_node(assignment_node, target)
-                    && !self.is_assignable_to_strict_null(nullish_type, annotation_type)
+                    && !self.annotation_type_allows_nullish(annotation_type, nullish_type)
                 {
                     return None;
                 }
@@ -580,6 +642,33 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         None
+    }
+
+    fn annotation_type_allows_nullish(
+        &self,
+        annotation_type: TypeId,
+        nullish_type: TypeId,
+    ) -> bool {
+        if self.is_assignable_to_strict_null(nullish_type, annotation_type) {
+            return true;
+        }
+        if matches!(
+            annotation_type,
+            TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR
+        ) {
+            return true;
+        }
+        if annotation_type == nullish_type {
+            return true;
+        }
+        if nullish_type == TypeId::UNDEFINED && annotation_type == TypeId::VOID {
+            return true;
+        }
+        union_members_for_type(self.interner, annotation_type).is_some_and(|members| {
+            members
+                .iter()
+                .any(|&member| self.annotation_type_allows_nullish(member, nullish_type))
+        })
     }
 
     fn get_destructuring_assigned_type_for_reference(
@@ -1684,86 +1773,21 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     pub(crate) fn narrow_assignment(&self, initial_type: TypeId, assigned_type: TypeId) -> TypeId {
-        if initial_type == TypeId::ANY
-            || initial_type == TypeId::ERROR
-            || initial_type == TypeId::UNKNOWN
-        {
-            return initial_type;
-        }
-
-        // Resolve/evaluate the initial type for union member filtering and enum
-        // checks. IMPORTANT: preserve the original initial_type for non-union
-        // return paths. evaluate_application_type converts Application types to
-        // their structural Object form, destroying the generic identity needed
-        // for variance-based assignability rejection. For non-union types (like
-        // Promise<Foo>), we must return the ORIGINAL Application type, not the
-        // evaluated Object form.
-        let resolved_initial = self.resolve_assignment_reduction_type(initial_type);
-
-        // For enum types, narrow directly to the assigned type when it is
-        // assignable to the enum AND the assignment preserves enum-member
-        // identity. This keeps `let e: E = E.ONE` narrowed to `E.ONE`
-        // (not decomposed to `0`), while `let e: E = 1` keeps the declared
-        // enum type `E` so that a subsequent cross-enum assignment like
-        // `let f: F = e` still triggers TS2322 (numeric-enum nominal mismatch).
-        if enum_member_domain(self.interner, resolved_initial) != resolved_initial {
-            let assigned_resolved = self.resolve_assignment_reduction_type(assigned_type);
-            if !is_assignable(self.interner, assigned_resolved, resolved_initial) {
-                return initial_type;
-            }
-            return self.narrow_enum_assignment_target(
-                resolved_initial,
-                assigned_resolved,
+        if let Some(env) = &self.type_environment {
+            let env = env.borrow();
+            crate::query_boundaries::flow_analysis::narrow_assignment(
+                self.interner,
+                Some(&env),
                 initial_type,
-            );
-        }
-
-        let members_opt = union_members_for_type(self.interner, resolved_initial);
-        let members = match members_opt {
-            Some(m) => m,
-            // Non-union types: return the ORIGINAL type (not the resolved/evaluated
-            // form) to preserve Application type identity for variance checking.
-            None => return initial_type,
-        };
-
-        if members.len() <= 1 {
-            return initial_type;
-        }
-
-        // Resolve Lazy(DefId) types to their concrete representations via the
-        // TypeEnvironment before structural subtype comparison. node_types may
-        // store unevaluated type alias references when a variable was inferred
-        // (no annotation), while union members are already resolved. Without this,
-        // the bare SubtypeChecker used by are_types_mutually_subtype cannot match
-        // a Lazy(DefId) against a concrete Object type, causing narrowing to fail.
-        let assigned_type = self.resolve_assignment_reduction_type(assigned_type);
-
-        // Match tsc's getAssignmentReducedType: keep union members where the
-        // assigned type is assignable to the member. This is one-way
-        // assignability (`typeMaybeAssignableTo(assignedType, member)` in tsc),
-        // NOT mutual subtype. One-way is essential for cases like:
-        //   - `let b: 0|1|9; [b] = [0];` → b narrows to 0 (0 <: 0)
-        //   - `let c: string|number; c = 0;` → c narrows to number (0 <: number)
-        let assigned_members = union_members_for_type(self.interner, assigned_type);
-        let mut kept = Vec::new();
-        for &m in &members {
-            let assignable_to_member = assigned_members.as_ref().is_some_and(|sources| {
-                sources
-                    .iter()
-                    .any(|&source| self.assignment_source_assignable_to_member(source, m))
-            }) || self
-                .assignment_source_assignable_to_member(assigned_type, m);
-            if assignable_to_member {
-                kept.push(m);
-            }
-        }
-
-        if kept.is_empty() {
-            initial_type
-        } else if kept.len() == 1 {
-            kept[0]
+                assigned_type,
+            )
         } else {
-            crate::query_boundaries::flow_analysis::union_types(self.interner, kept)
+            crate::query_boundaries::flow_analysis::narrow_assignment(
+                self.interner,
+                None,
+                initial_type,
+                assigned_type,
+            )
         }
     }
 
@@ -1771,31 +1795,15 @@ impl<'a> FlowAnalyzer<'a> {
     /// `TypeEnvironment`. Returns the original type if not lazy or if the
     /// environment is unavailable / doesn't contain the DefId.
     pub(super) fn resolve_lazy_via_env(&self, type_id: TypeId) -> TypeId {
-        if let Some(def_id) = get_lazy_def_id(self.interner, type_id) {
-            if let Some(env) = self.type_environment {
-                env.borrow().get_def(def_id).unwrap_or(type_id)
-            } else {
-                type_id
-            }
-        } else {
-            type_id
-        }
-    }
-
-    fn resolve_assignment_reduction_type(&self, type_id: TypeId) -> TypeId {
-        let resolved = self.resolve_lazy_via_env(type_id);
-        let Some(env) = &self.type_environment else {
-            return resolved;
-        };
-        let env = env.borrow();
-        evaluate_application_type(self.interner, &env, resolved)
-    }
-
-    fn assignment_source_assignable_to_member(&self, source: TypeId, member: TypeId) -> bool {
         if let Some(env) = &self.type_environment {
-            is_assignable_with_env(self.interner, &env.borrow(), source, member, true)
+            let env = env.borrow();
+            crate::query_boundaries::flow::resolve_lazy_def_with_env(
+                self.interner,
+                Some(&env),
+                type_id,
+            )
         } else {
-            is_assignable(self.interner, source, member)
+            crate::query_boundaries::flow::resolve_lazy_def_with_env(self.interner, None, type_id)
         }
     }
 
@@ -1813,36 +1821,23 @@ impl<'a> FlowAnalyzer<'a> {
         assigned_resolved: TypeId,
         initial_type: TypeId,
     ) -> TypeId {
-        let Some((initial_def, _)) = enum_components(self.interner, initial_resolved) else {
-            return initial_type;
-        };
-        if self.assigned_value_preserves_enum_identity(assigned_resolved, initial_def) {
-            assigned_resolved
+        if let Some(env) = &self.type_environment {
+            let env = env.borrow();
+            crate::query_boundaries::flow_analysis::narrow_enum_assignment_target(
+                self.interner,
+                Some(&env),
+                initial_resolved,
+                assigned_resolved,
+                initial_type,
+            )
         } else {
-            initial_type
+            crate::query_boundaries::flow_analysis::narrow_enum_assignment_target(
+                self.interner,
+                None,
+                initial_resolved,
+                assigned_resolved,
+                initial_type,
+            )
         }
-    }
-
-    pub(crate) fn assigned_value_preserves_enum_identity(
-        &self,
-        assigned_type: TypeId,
-        initial_enum_def: tsz_solver::def::DefId,
-    ) -> bool {
-        if let Some(members) = union_members_for_type(self.interner, assigned_type) {
-            return !members.is_empty()
-                && members
-                    .iter()
-                    .all(|&m| self.assigned_value_preserves_enum_identity(m, initial_enum_def));
-        }
-        let Some((def_id, _)) = enum_components(self.interner, assigned_type) else {
-            return false;
-        };
-        if def_id == initial_enum_def {
-            return true;
-        }
-        let Some(env) = &self.type_environment else {
-            return false;
-        };
-        env.borrow().get_enum_parent(def_id) == Some(initial_enum_def)
     }
 }

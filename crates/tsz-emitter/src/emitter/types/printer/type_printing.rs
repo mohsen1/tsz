@@ -367,6 +367,15 @@ impl<'a> TypePrinter<'a> {
             return true;
         }
 
+        // Type-literal and interface accessors have no parent class symbol, so
+        // the parent_id check below cannot detect them. Synthetic structural
+        // setter-only properties use an undefined read type as an absent-read
+        // sentinel; keep those in property-signature form so the write type is
+        // used as the declaration surface.
+        if property.has_split_accessor() && property.type_id != TypeId::UNDEFINED {
+            return true;
+        }
+
         let Some(parent_id) = property.parent_id else {
             return false;
         };
@@ -929,18 +938,6 @@ impl<'a> TypePrinter<'a> {
             parts.push(part);
         }
 
-        if let Some(indent) = self.indent_level
-            && elements.iter().any(|elem| elem.name.is_some())
-        {
-            let member_indent = "    ".repeat((indent + 1) as usize);
-            let closing_indent = "    ".repeat(indent as usize);
-            let lines: Vec<String> = parts
-                .iter()
-                .map(|part| format!("{member_indent}{part}"))
-                .collect();
-            return format!("[\n{}\n{closing_indent}]", lines.join(",\n"));
-        }
-
         format!("[{}]", parts.join(", "))
     }
 
@@ -1090,17 +1087,17 @@ impl<'a> TypePrinter<'a> {
             );
         }
 
-        // Collect all signatures (call + construct)
-        let mut parts = Vec::new();
-
+        let mut signature_parts = Vec::new();
         for sig in &callable.call_signatures {
-            parts.push(self.print_call_signature(sig, false, false));
+            signature_parts.push(self.print_call_signature(sig, false, false));
         }
         for sig in &callable.construct_signatures {
-            parts.push(self.print_call_signature(sig, true, callable.is_abstract));
+            signature_parts.push(self.print_call_signature(sig, true, callable.is_abstract));
         }
 
-        // Add index signatures (tsc emits these before properties)
+        let mut member_parts = Vec::new();
+
+        // Add index signatures (tsc emits these before properties).
         if let Some(ref idx) = callable.number_index {
             let readonly = if idx.readonly { "readonly " } else { "" };
             let param = idx
@@ -1108,7 +1105,7 @@ impl<'a> TypePrinter<'a> {
                 .map(|a| self.resolve_atom(a))
                 .unwrap_or_else(|| "x".to_string());
             let widened = self.widen_synthesized_method_return_type(idx.value_type);
-            parts.push(format!(
+            member_parts.push(format!(
                 "{}[{}: number]: {}",
                 readonly,
                 param,
@@ -1122,7 +1119,7 @@ impl<'a> TypePrinter<'a> {
                 .map(|a| self.resolve_atom(a))
                 .unwrap_or_else(|| "x".to_string());
             let widened = self.widen_synthesized_method_return_type(idx.value_type);
-            parts.push(format!(
+            member_parts.push(format!(
                 "{}[{}: string]: {}",
                 readonly,
                 param,
@@ -1140,18 +1137,18 @@ impl<'a> TypePrinter<'a> {
             if prop.is_method
                 && let Some(method_str) = self.print_property_as_method(prop, callable.symbol)
             {
-                parts.push(method_str);
+                member_parts.push(method_str);
                 continue;
             }
 
             if let Some(accessors) = self.print_property_as_accessors(prop) {
-                parts.extend(accessors);
+                member_parts.extend(accessors);
                 continue;
             }
 
             let readonly = if prop.readonly { "readonly " } else { "" };
             let optional = if prop.optional { "?" } else { "" };
-            parts.push(format!(
+            member_parts.push(format!(
                 "{}{}{}: {}",
                 readonly,
                 self.declaration_property_name_text(prop),
@@ -1160,11 +1157,30 @@ impl<'a> TypePrinter<'a> {
             ));
         }
 
+        if callable.is_abstract
+            && callable.call_signatures.is_empty()
+            && callable.construct_signatures.len() == 1
+            && !member_parts.is_empty()
+        {
+            let constructor_type = self.print_construct_signature_arrow(
+                &callable.construct_signatures[0],
+                callable.is_abstract,
+            );
+            let member_type = self.format_type_literal_parts(&member_parts);
+            return format!("({constructor_type}) & {member_type}");
+        }
+
+        let mut parts = signature_parts;
+        parts.extend(member_parts);
+
         if parts.is_empty() {
             return "{}".to_string();
         }
 
-        // Multi-line format when indent context is set
+        self.format_type_literal_parts(&parts)
+    }
+
+    fn format_type_literal_parts(&self, parts: &[String]) -> String {
         if let Some(indent) = self.indent_level {
             let member_indent = "    ".repeat((indent + 1) as usize);
             let closing_indent = "    ".repeat(indent as usize);
@@ -1383,6 +1399,16 @@ impl<'a> TypePrinter<'a> {
             .iter()
             .any(|property| !self.property_is_hidden_in_declaration_shape(property));
 
+        if callable.is_abstract
+            && callable.call_signatures.is_empty()
+            && callable.construct_signatures.len() == 1
+            && (has_properties
+                || callable.string_index.is_some()
+                || callable.number_index.is_some())
+        {
+            return true;
+        }
+
         callable.symbol.is_none()
             && !has_properties
             && callable.string_index.is_none()
@@ -1555,6 +1581,12 @@ impl<'a> TypePrinter<'a> {
                 let mut nested = self.clone();
                 nested.current_depth += 1;
                 return nested.print_type(symbol_type);
+            }
+            if !needs_typeof
+                && self.type_param_scope_contains_name(&symbol.escaped_name)
+                && self.global_class_symbol_can_use_global_this(sym_id)
+            {
+                return format!("globalThis.{}", symbol.escaped_name);
             }
             if let Some(name) = self.print_named_symbol_reference(sym_id, needs_typeof) {
                 return name;
@@ -1971,6 +2003,14 @@ impl<'a> TypePrinter<'a> {
     }
 
     pub(crate) fn intersection_member_priority(&self, type_id: TypeId) -> u8 {
+        if let Some(app_id) = visitor::application_id(self.interner, type_id) {
+            let app = self.interner.type_application(app_id);
+            if self.type_reference_base_is_nameable(app.base) {
+                return 0;
+            }
+            return 1;
+        }
+
         if visitor::type_param_info(self.interner, type_id).is_some() {
             return 2;
         }
@@ -1995,10 +2035,38 @@ impl<'a> TypePrinter<'a> {
             if let Some(sym_id) = shape.symbol {
                 return u8::from(self.is_symbol_visible(sym_id) || self.symbol_is_nameable(sym_id));
             }
-            return 0;
+            return 1;
         }
 
         1
+    }
+
+    fn type_reference_base_is_nameable(&self, type_id: TypeId) -> bool {
+        if let Some(def_id) = visitor::lazy_def_id(self.interner, type_id)
+            && let Some(cache) = self.type_cache
+        {
+            if let Some(&sym_id) = cache.def_to_symbol.get(&def_id) {
+                return self.is_symbol_visible(sym_id) || self.symbol_is_nameable(sym_id);
+            }
+            return cache.def_to_name.contains_key(&def_id);
+        }
+
+        if let Some(sym_ref) = visitor::type_query_symbol(self.interner, type_id) {
+            let sym_id = SymbolId(sym_ref.0);
+            return self.is_symbol_visible(sym_id) || self.symbol_is_nameable(sym_id);
+        }
+
+        if let Some(callable_id) = visitor::callable_shape_id(self.interner, type_id) {
+            let callable = self.interner.callable_shape(callable_id);
+            return callable.symbol.is_some_and(|sym_id| {
+                self.is_symbol_visible(sym_id) || self.symbol_is_nameable(sym_id)
+            });
+        }
+
+        visitor::object_shape_id(self.interner, type_id)
+            .or_else(|| visitor::object_with_index_shape_id(self.interner, type_id))
+            .and_then(|shape_id| self.interner.object_shape(shape_id).symbol)
+            .is_some_and(|sym_id| self.is_symbol_visible(sym_id) || self.symbol_is_nameable(sym_id))
     }
 
     pub(crate) fn print_enum(&self, def_id: tsz_solver::def::DefId, _members_id: TypeId) -> String {
@@ -2025,6 +2093,12 @@ impl<'a> TypePrinter<'a> {
         } else {
             self.print_type(app.base)
         };
+        if Self::is_parameters_utility_name(&base_text)
+            && app.args.len() == 1
+            && let Some(tuple_text) = self.print_parameters_utility_tuple(app.args[0])
+        {
+            return tuple_text;
+        }
 
         if app.args.is_empty() {
             base_text
@@ -2042,6 +2116,149 @@ impl<'a> TypePrinter<'a> {
                 format!("{base_text}<{}>", args.join(", "))
             }
         }
+    }
+
+    fn is_parameters_utility_name(type_text: &str) -> bool {
+        type_text
+            .trim()
+            .rsplit(['.', ' '])
+            .next()
+            .is_some_and(|name| name == "Parameters")
+    }
+
+    fn print_parameters_utility_tuple(&self, arg: TypeId) -> Option<String> {
+        if let Some(func_id) = visitor::function_shape_id(self.interner, arg) {
+            let func = self.interner.function_shape(func_id);
+            return Some(self.print_parameters_tuple_elements(&func.params));
+        }
+
+        if let Some(callable_id) = visitor::callable_shape_id(self.interner, arg) {
+            let callable = self.interner.callable_shape(callable_id);
+            if callable.call_signatures.len() == 1 && callable.construct_signatures.is_empty() {
+                return Some(
+                    self.print_parameters_tuple_elements(&callable.call_signatures[0].params),
+                );
+            }
+        }
+
+        self.print_parameters_tuple_from_function_text(&self.print_type(arg))
+    }
+
+    fn print_parameters_tuple_elements(&self, params: &[tsz_solver::types::ParamInfo]) -> String {
+        let mut parts = Vec::with_capacity(params.len());
+        for param in params {
+            let mut part = String::new();
+            if let Some(name) = param.name {
+                if param.rest {
+                    part.push_str("...");
+                }
+                part.push_str(&self.resolve_atom(name));
+                if param.optional {
+                    part.push('?');
+                }
+                part.push_str(": ");
+            } else if param.rest {
+                part.push_str("...");
+            }
+
+            let display_type = if param.optional {
+                self.optional_param_display_type(param.type_id)
+            } else {
+                param.type_id
+            };
+            part.push_str(&self.print_type(display_type));
+            if param.name.is_none() && param.optional && !param.rest {
+                part.push('?');
+            }
+            parts.push(part);
+        }
+
+        format!("[{}]", parts.join(", "))
+    }
+
+    fn print_parameters_tuple_from_function_text(&self, type_text: &str) -> Option<String> {
+        let trimmed = type_text.trim();
+        let arrow_idx = Self::find_top_level_arrow_in_type_text(trimmed)?;
+        let head = trimmed.get(..arrow_idx)?.trim_end();
+        let open_idx = head.rfind('(')?;
+        let params_text = head.get(open_idx + 1..)?.strip_suffix(')')?.trim();
+        if params_text.is_empty() {
+            return Some("[]".to_string());
+        }
+        let parts = Self::split_top_level_commas_in_type_text(params_text)
+            .into_iter()
+            .map(str::trim)
+            .collect::<Vec<_>>();
+        Some(format!("[{}]", parts.join(", ")))
+    }
+
+    fn find_top_level_arrow_in_type_text(text: &str) -> Option<usize> {
+        let bytes = text.as_bytes();
+        let mut paren_depth = 0usize;
+        let mut bracket_depth = 0usize;
+        let mut brace_depth = 0usize;
+        let mut angle_depth = 0usize;
+        let mut i = 0usize;
+        while i + 1 < bytes.len() {
+            match bytes[i] {
+                b'(' => paren_depth += 1,
+                b')' => paren_depth = paren_depth.saturating_sub(1),
+                b'[' => bracket_depth += 1,
+                b']' => bracket_depth = bracket_depth.saturating_sub(1),
+                b'{' => brace_depth += 1,
+                b'}' => brace_depth = brace_depth.saturating_sub(1),
+                b'<' => angle_depth += 1,
+                b'>' => angle_depth = angle_depth.saturating_sub(1),
+                b'=' if bytes[i + 1] == b'>'
+                    && paren_depth == 0
+                    && bracket_depth == 0
+                    && brace_depth == 0
+                    && angle_depth == 0 =>
+                {
+                    return Some(i);
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        None
+    }
+
+    fn split_top_level_commas_in_type_text(text: &str) -> Vec<&str> {
+        let mut parts = Vec::new();
+        let mut start = 0usize;
+        let mut paren_depth = 0usize;
+        let mut bracket_depth = 0usize;
+        let mut brace_depth = 0usize;
+        let mut angle_depth = 0usize;
+
+        for (idx, byte) in text.bytes().enumerate() {
+            match byte {
+                b'(' => paren_depth += 1,
+                b')' => paren_depth = paren_depth.saturating_sub(1),
+                b'[' => bracket_depth += 1,
+                b']' => bracket_depth = bracket_depth.saturating_sub(1),
+                b'{' => brace_depth += 1,
+                b'}' => brace_depth = brace_depth.saturating_sub(1),
+                b'<' => angle_depth += 1,
+                b'>' => angle_depth = angle_depth.saturating_sub(1),
+                b',' if paren_depth == 0
+                    && bracket_depth == 0
+                    && brace_depth == 0
+                    && angle_depth == 0 =>
+                {
+                    if let Some(part) = text.get(start..idx) {
+                        parts.push(part);
+                    }
+                    start = idx + 1;
+                }
+                _ => {}
+            }
+        }
+        if let Some(part) = text.get(start..) {
+            parts.push(part);
+        }
+        parts
     }
 
     fn visible_type_application_arg_count(&self, base: TypeId, args: &[TypeId]) -> usize {
@@ -2404,8 +2621,8 @@ impl<'a> TypePrinter<'a> {
 
 #[cfg(test)]
 mod tests {
-    use tsz_solver::TypeInterner;
-    use tsz_solver::types::{TypeId, TypeParamInfo};
+    use tsz_solver::construction::TypeInterner;
+    use tsz_solver::types::{TupleElement, TypeId, TypeParamInfo};
 
     use super::TypePrinter;
 
@@ -2498,5 +2715,45 @@ mod tests {
             "`get${Capitalize<string & K>}`"
         );
         assert_eq!(TypePrinter::mapped_name_type_text("asserts T"), "asserts T");
+    }
+
+    #[test]
+    fn labeled_tuple_typeids_print_compact_even_with_indent() {
+        // Declaration AST tuple nodes own source trivia such as member JSDoc and
+        // choose multiline output there. Solver tuple `TypeId`s only carry the
+        // public tuple shape, so labels alone should not force multiline text.
+        let interner = TypeInterner::new();
+        let elem = interner.intern_string("elem");
+        let index = interner.intern_string("index");
+        let tuple = interner.tuple(vec![
+            TupleElement {
+                type_id: TypeId::OBJECT,
+                name: Some(elem),
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: TypeId::NUMBER,
+                name: Some(index),
+                optional: false,
+                rest: false,
+            },
+        ]);
+
+        let printed = TypePrinter::new(&interner)
+            .with_indent_level(1)
+            .print_type(tuple);
+        assert_eq!(printed, "[elem: object, index: number]");
+
+        let nested = interner.tuple(vec![TupleElement {
+            type_id: tuple,
+            name: None,
+            optional: false,
+            rest: false,
+        }]);
+        let printed = TypePrinter::new(&interner)
+            .with_indent_level(1)
+            .print_type(nested);
+        assert_eq!(printed, "[[elem: object, index: number]]");
     }
 }

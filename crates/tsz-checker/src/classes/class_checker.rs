@@ -11,6 +11,7 @@ use crate::query_boundaries::class::{
 use crate::query_boundaries::common::TypeSubstitution;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -53,16 +54,8 @@ fn needs_property_name_quotes(name: &str) -> bool {
     }
 }
 
-fn base_class_name_for_diagnostic(name: &str) -> Cow<'_, str> {
-    if let Some(type_arg) = name
-        .strip_prefix("Iterator<")
-        .and_then(|rest| rest.strip_suffix('>'))
-        && !type_arg.contains(',')
-    {
-        Cow::Owned(format!("Iterator<{type_arg}, undefined, unknown>"))
-    } else {
-        Cow::Borrowed(name)
-    }
+const fn base_class_name_for_diagnostic(name: &str) -> Cow<'_, str> {
+    Cow::Borrowed(name)
 }
 
 /// Extracted info about a single class member (property, method, or accessor).
@@ -1348,19 +1341,20 @@ impl<'a> CheckerState<'a> {
                 // Handle both cases:
                 // 1. ExpressionWithTypeArguments (e.g., Base<T>)
                 // 2. Simple Identifier (e.g., Base)
-                let (expr_idx, type_arguments) =
+                let (expr_idx, type_arguments, heritage_expr_for_type_idx) =
                     if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node) {
                         (
                             expr_type_args.expression,
                             expr_type_args.type_arguments.as_ref(),
+                            expr_type_args.expression,
                         )
                     } else if let Some(call_expr) = self.ctx.arena.get_call_expr(type_node) {
-                        (call_expr.expression, None)
+                        (call_expr.expression, None, type_idx)
                     } else {
                         // For simple identifiers without type arguments, the type_node itself is the identifier
-                        (type_idx, None)
+                        (type_idx, None, type_idx)
                     };
-                heritage_expr_idx = Some(type_idx);
+                heritage_expr_idx = Some(heritage_expr_for_type_idx);
                 heritage_type_idx = Some(type_idx);
                 if let Some(args) = type_arguments {
                     base_type_argument_nodes = Some(args.nodes.clone());
@@ -1461,24 +1455,51 @@ impl<'a> CheckerState<'a> {
             if let Some(h_expr_idx) = heritage_expr_idx {
                 let type_arguments =
                     heritage_type_idx.and_then(|tidx| resolve_heritage_type_args(self, tidx));
+                if self.heritage_call_has_invalid_mixin_constructor_constraint(h_expr_idx)
+                    && let Some(base_static_type) =
+                        self.base_constructor_type_from_expression(h_expr_idx, type_arguments)
+                {
+                    self.error_at_node(
+                        class_data.name,
+                        &format!(
+                            "Class static side 'typeof {derived_class_name}' incorrectly extends base class static side '{}'.",
+                            self.format_type(base_static_type)
+                        ),
+                        diagnostic_codes::CLASS_STATIC_SIDE_INCORRECTLY_EXTENDS_BASE_CLASS_STATIC_SIDE,
+                    );
+                }
                 if let Some(instance_type) =
                     self.base_instance_type_from_expression(h_expr_idx, type_arguments)
                 {
                     let heritage_sym_id = self.resolve_heritage_symbol(h_expr_idx);
+                    let is_actual_lib_iterator =
+                        self.heritage_reference_is_actual_lib_iterator(h_expr_idx);
+                    let heritage_sym_id_for_display = self
+                        .heritage_symbol_id_for_expression_display(
+                            heritage_sym_id,
+                            is_actual_lib_iterator,
+                        );
                     // Use intersection display name if available (preserves "I1 & I2"
                     // instead of showing merged "{ m1: ...; m2: ... }")
-                    let type_base_name = self
-                        .format_heritage_class_symbol_reference(heritage_sym_id, type_arguments)
-                        .or_else(|| {
-                            self.intersection_instance_display_name(h_expr_idx, type_arguments)
-                        })
-                        .unwrap_or_else(|| {
-                            self.format_heritage_instance_display(
-                                instance_type,
-                                h_expr_idx,
-                                type_arguments,
-                            )
-                        });
+                    let type_base_name = if is_actual_lib_iterator {
+                        self.format_builtin_iterator_reference_with_type_arguments(type_arguments)
+                    } else {
+                        None
+                    }
+                    .or_else(|| {
+                        self.format_heritage_class_symbol_reference(
+                            heritage_sym_id_for_display,
+                            type_arguments,
+                        )
+                    })
+                    .or_else(|| self.intersection_instance_display_name(h_expr_idx, type_arguments))
+                    .unwrap_or_else(|| {
+                        self.format_heritage_instance_display(
+                            instance_type,
+                            h_expr_idx,
+                            type_arguments,
+                        )
+                    });
                     let base_instance_member_names =
                         self.collect_property_names_from_type(instance_type);
                     let base_static_type =
@@ -1534,18 +1555,32 @@ impl<'a> CheckerState<'a> {
                     self.base_instance_type_from_expression(h_expr_idx, type_arguments)
                 {
                     let heritage_sym_id = self.resolve_heritage_symbol(h_expr_idx);
-                    let type_base_name = self
-                        .format_heritage_class_symbol_reference(heritage_sym_id, type_arguments)
-                        .or_else(|| {
-                            self.intersection_instance_display_name(h_expr_idx, type_arguments)
-                        })
-                        .unwrap_or_else(|| {
-                            self.format_heritage_instance_display(
-                                instance_type,
-                                h_expr_idx,
-                                type_arguments,
-                            )
-                        });
+                    let is_actual_lib_iterator =
+                        self.heritage_reference_is_actual_lib_iterator(h_expr_idx);
+                    let heritage_sym_id_for_display = self
+                        .heritage_symbol_id_for_expression_display(
+                            heritage_sym_id,
+                            is_actual_lib_iterator,
+                        );
+                    let type_base_name = if is_actual_lib_iterator {
+                        self.format_builtin_iterator_reference_with_type_arguments(type_arguments)
+                    } else {
+                        None
+                    }
+                    .or_else(|| {
+                        self.format_heritage_class_symbol_reference(
+                            heritage_sym_id_for_display,
+                            type_arguments,
+                        )
+                    })
+                    .or_else(|| self.intersection_instance_display_name(h_expr_idx, type_arguments))
+                    .unwrap_or_else(|| {
+                        self.format_heritage_instance_display(
+                            instance_type,
+                            h_expr_idx,
+                            type_arguments,
+                        )
+                    });
                     let base_instance_member_names =
                         self.collect_property_names_from_type(instance_type);
                     let base_static_type =
@@ -1586,15 +1621,13 @@ impl<'a> CheckerState<'a> {
 
         let (base_type_params, base_type_param_updates) =
             self.push_type_parameters(&base_class.type_parameters);
-        let base_name_without_args = base_class_name
-            .split_once('<')
-            .map_or(base_class_name.as_str(), |(name, _)| name)
-            .to_string();
+        let base_is_actual_lib_iterator = heritage_expr_idx
+            .is_some_and(|expr_idx| self.heritage_reference_is_actual_lib_iterator(expr_idx));
         if type_args.len() < base_type_params.len() {
             for (param_index, param) in base_type_params.iter().enumerate().skip(type_args.len()) {
-                let fallback = if base_name_without_args == "Iterator" && param_index == 1 {
+                let fallback = if base_is_actual_lib_iterator && param_index == 1 {
                     TypeId::UNDEFINED
-                } else if base_name_without_args == "Iterator" && param_index == 2 {
+                } else if base_is_actual_lib_iterator && param_index == 2 {
                     TypeId::UNKNOWN
                 } else {
                     param
@@ -1620,7 +1653,7 @@ impl<'a> CheckerState<'a> {
                 base_class_name.truncate(lt_pos);
             }
             let mut display_type_args = type_args.clone();
-            if base_name_without_args == "Iterator" {
+            if base_is_actual_lib_iterator {
                 if display_type_args.len() < 2 {
                     display_type_args.push(TypeId::UNDEFINED);
                 }
@@ -1670,6 +1703,15 @@ impl<'a> CheckerState<'a> {
         let mut accessor_mismatch_reported: rustc_hash::FxHashSet<String> =
             rustc_hash::FxHashSet::default();
         let mut class_extends_error_reported = false;
+
+        // For overloaded methods, the implementation signature is internal and
+        // may be intentionally wider than the visible overload set. The
+        // per-node TS2416 check below would compare the impl against the base
+        // and falsely flag it; instead we compare the combined CallableShapes.
+        let (derived_instance_method_overloads, derived_static_method_overloads) =
+            self.build_class_method_overload_types(class_data);
+        let mut overload_compat_checked: rustc_hash::FxHashSet<(String, bool)> =
+            rustc_hash::FxHashSet::default();
 
         // Check each member in the derived class
         for &member_idx in &class_data.members.nodes {
@@ -2071,6 +2113,32 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            // Overloaded-method compat: when either side has multiple
+            // declarations of this name, swap the impl/overload-sig node's
+            // type for the externally-visible `CallableShape` and run the
+            // compat check once per name.
+            if is_method
+                && self.check_overloaded_method_compat(
+                    &member_name,
+                    member_type,
+                    member_name_idx,
+                    is_static,
+                    &derived_class_name,
+                    &base_class_name,
+                    &base_info,
+                    &base_chain_summary,
+                    if is_static {
+                        &derived_static_method_overloads
+                    } else {
+                        &derived_instance_method_overloads
+                    },
+                    &substitution,
+                    &mut overload_compat_checked,
+                )
+            {
+                continue;
+            }
+
             // Skip type compatibility for overload signatures. tsc checks
             // inheritance using the combined overloaded type from the symbol,
             // not individual AST declarations.  Individual overloads may be
@@ -2231,6 +2299,77 @@ impl<'a> CheckerState<'a> {
         self.pop_type_parameters(derived_type_param_updates);
     }
 
+    /// TS2416 type compat for overloaded methods: when this method has
+    /// multiple declarations on either the derived or base side, swap the
+    /// per-AST-node signature for the externally-visible `CallableShape`
+    /// (the overload sigs, or — when no bodyless overload sigs exist — the
+    /// single implementation signature). Returns `true` if the method was
+    /// recognized as overloaded and handled here, so the per-node compat
+    /// check should be skipped for every declaration of this name in the
+    /// derived class.
+    #[allow(clippy::too_many_arguments)]
+    fn check_overloaded_method_compat(
+        &mut self,
+        member_name: &str,
+        member_type: TypeId,
+        member_name_idx: NodeIndex,
+        is_static: bool,
+        derived_class_name: &str,
+        base_class_name: &str,
+        base_info: &ClassMemberInfo,
+        base_chain_summary: &ClassChainSummary,
+        derived_overloads: &rustc_hash::FxHashMap<String, TypeId>,
+        substitution: &crate::query_boundaries::common::TypeSubstitution,
+        overload_compat_checked: &mut rustc_hash::FxHashSet<(String, bool)>,
+    ) -> bool {
+        use crate::query_boundaries::common::instantiate_type;
+
+        let derived_overload_type = derived_overloads.get(member_name).copied();
+        let base_overload_type = base_chain_summary.method_overload_type(member_name, is_static);
+        if derived_overload_type.is_none() && base_overload_type.is_none() {
+            return false;
+        }
+        if !overload_compat_checked.insert((member_name.to_string(), is_static)) {
+            return true;
+        }
+
+        let derived_combined = derived_overload_type.unwrap_or(member_type);
+        let base_combined = base_overload_type.unwrap_or(base_info.type_id);
+        let base_combined = instantiate_type(self.ctx.types, base_combined, substitution);
+        let resolved_member_type = self.resolve_type_query_type(derived_combined);
+        let resolved_base_type = self.resolve_type_query_type(base_combined);
+        if resolved_member_type == TypeId::ANY
+            || resolved_base_type == TypeId::ANY
+            || !should_report_member_type_mismatch_bivariant(
+                self,
+                resolved_member_type,
+                resolved_base_type,
+                member_name_idx,
+            )
+        {
+            return true;
+        }
+
+        let member_type_str = self.format_type(resolved_member_type);
+        let base_type_str = self.format_type(resolved_base_type);
+        let display_name = format_property_name_for_diagnostic(member_name);
+        let base_class_display_name = base_class_name_for_diagnostic(base_class_name);
+        self.error_at_node(
+            member_name_idx,
+            &format!(
+                "Property '{display_name}' in type '{derived_class_name}' is not assignable to the same property in base type '{base_class_display_name}'."
+            ),
+            diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
+        );
+        self.report_type_not_assignable_detail(
+            member_name_idx,
+            &member_type_str,
+            &base_type_str,
+            diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
+        );
+        true
+    }
+
     /// Check constructor parameter properties against base class members for
     /// type and visibility compatibility (TS2415).
     ///
@@ -2245,7 +2384,7 @@ impl<'a> CheckerState<'a> {
         base_chain_summary: &ClassChainSummary,
         derived_class_name: &str,
         base_class_name: &str,
-        substitution: &tsz_solver::TypeSubstitution,
+        substitution: &TypeSubstitution,
     ) {
         use crate::query_boundaries::common::instantiate_type;
 
@@ -2469,6 +2608,140 @@ impl<'a> CheckerState<'a> {
             name.push_str(&param_names.join(", "));
             name.push('>');
         }
+    }
+
+    pub(crate) fn class_symbol_is_actual_lib_iterator(&self, sym_id: tsz_binder::SymbolId) -> bool {
+        self.get_symbol_globally(sym_id).is_some_and(|symbol| {
+            symbol.escaped_name == "Iterator"
+                && self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+        })
+    }
+
+    pub(crate) fn heritage_reference_is_actual_lib_iterator(&self, expr_idx: NodeIndex) -> bool {
+        let resolved_sym = self.resolve_heritage_symbol(expr_idx);
+        let Some(name) = self.ctx.arena.get_identifier_text(expr_idx) else {
+            return false;
+        };
+        if name != "Iterator" {
+            return false;
+        }
+        if self.current_file_import_binds_name(name) {
+            return false;
+        }
+        if resolved_sym.is_some_and(|sym_id| self.class_symbol_is_actual_lib_iterator(sym_id)) {
+            return true;
+        }
+        if let Some(sym_id) = self.resolve_identifier_symbol(expr_idx) {
+            return self.class_symbol_is_actual_lib_iterator(sym_id);
+        }
+        if resolved_sym.is_some() {
+            return false;
+        }
+        if self
+            .ctx
+            .binder
+            .file_locals
+            .get(name)
+            .is_some_and(|sym_id| !self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id))
+        {
+            return false;
+        }
+
+        self.ctx.actual_lib_context_has_bare_name(name)
+            && !self.ctx.file_local_type_shadow_for_lib_name(name)
+            && !self.file_local_import_alias_shadows_lib_name(name)
+    }
+
+    pub(crate) fn heritage_symbol_id_for_expression_display(
+        &self,
+        sym_id: Option<tsz_binder::SymbolId>,
+        is_actual_lib_iterator: bool,
+    ) -> Option<tsz_binder::SymbolId> {
+        let sym_id = sym_id?;
+        if self.class_symbol_is_actual_lib_iterator(sym_id) && !is_actual_lib_iterator {
+            return None;
+        }
+        Some(sym_id)
+    }
+
+    fn file_local_import_alias_shadows_lib_name(&self, name: &str) -> bool {
+        use tsz_binder::symbol_flags;
+
+        if !self.ctx.binder.is_external_module() {
+            return false;
+        }
+
+        self.ctx.binder.file_locals.get(name).is_some_and(|sym_id| {
+            if self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id) {
+                return self.current_file_import_binds_name(name);
+            }
+
+            self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                symbol.import_module.is_some() && symbol.has_any_flags(symbol_flags::ALIAS)
+            })
+        }) || self.current_file_import_binds_name(name)
+    }
+
+    fn current_file_import_binds_name(&self, name: &str) -> bool {
+        let Some(source_file) = self.ctx.arena.source_files.first() else {
+            return false;
+        };
+
+        source_file.statements.nodes.iter().any(|&stmt_idx| {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                return false;
+            };
+            if stmt_node.kind != syntax_kind_ext::IMPORT_DECLARATION {
+                return false;
+            }
+            let Some(import_decl) = self.ctx.arena.get_import_decl(stmt_node) else {
+                return false;
+            };
+            let Some(clause_node) = self.ctx.arena.get(import_decl.import_clause) else {
+                return false;
+            };
+            let Some(clause) = self.ctx.arena.get_import_clause(clause_node) else {
+                return false;
+            };
+
+            if self.ctx.arena.get_identifier_text(clause.name) == Some(name) {
+                return true;
+            }
+
+            let Some(bindings_node) = self.ctx.arena.get(clause.named_bindings) else {
+                return false;
+            };
+            if bindings_node.kind == syntax_kind_ext::NAMESPACE_IMPORT {
+                return self
+                    .ctx
+                    .arena
+                    .get_named_imports(bindings_node)
+                    .is_some_and(|ns| self.ctx.arena.get_identifier_text(ns.name) == Some(name));
+            }
+            if bindings_node.kind != syntax_kind_ext::NAMED_IMPORTS {
+                return false;
+            }
+
+            self.ctx
+                .arena
+                .get_named_imports(bindings_node)
+                .is_some_and(|named| {
+                    named.elements.nodes.iter().any(|&spec_idx| {
+                        let Some(spec_node) = self.ctx.arena.get(spec_idx) else {
+                            return false;
+                        };
+                        let Some(spec) = self.ctx.arena.get_specifier(spec_node) else {
+                            return false;
+                        };
+                        let local_name_idx = if spec.name.is_some() {
+                            spec.name
+                        } else {
+                            spec.property_name
+                        };
+                        self.ctx.arena.get_identifier_text(local_name_idx) == Some(name)
+                    })
+                })
+        })
     }
 
     /// Walk the inheritance chain from `class_idx` upward and compose type parameter

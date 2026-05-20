@@ -7,8 +7,9 @@
 //! type-checking scenarios, allowing the checker layer to handle types
 //! without directly matching on `TypeData`.
 
+use crate::construction::TypeDatabase;
 use crate::def::DefId;
-use crate::{LiteralValue, TypeData, TypeDatabase, TypeId};
+use crate::{LiteralValue, TypeData, TypeId};
 use rustc_hash::FxHashSet;
 use std::cell::RefCell;
 
@@ -1310,9 +1311,17 @@ pub fn classify_for_property_access_resolution(
         TypeData::Intersection(list_id) => {
             PropertyAccessResolutionKind::Intersection(db.type_list(list_id))
         }
-        TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
-            PropertyAccessResolutionKind::Readonly(inner)
+        TypeData::ReadonlyType(inner) => {
+            // Array/Tuple inner: keep the wrapper intact so resolve_readonly_type_property
+            // blocks mutating methods. Object inner types are transparent (wrapper stripped).
+            match db.lookup(inner) {
+                Some(TypeData::Array(_) | TypeData::Tuple(_)) => {
+                    PropertyAccessResolutionKind::Resolved
+                }
+                _ => PropertyAccessResolutionKind::Readonly(inner),
+            }
         }
+        TypeData::NoInfer(inner) => PropertyAccessResolutionKind::Readonly(inner),
         TypeData::Function(_) | TypeData::Callable(_) => PropertyAccessResolutionKind::FunctionLike,
         _ => PropertyAccessResolutionKind::Resolved,
     }
@@ -1486,7 +1495,7 @@ mod tests {
 
     #[test]
     fn branded_primitive_intersections_are_valid_index_types() {
-        let interner = crate::TypeInterner::new();
+        let interner = crate::construction::TypeInterner::new();
         let brand = interner.object(vec![]);
 
         let branded_string = interner.intersection(vec![TypeId::STRING, brand]);
@@ -1504,7 +1513,7 @@ mod tests {
 
     #[test]
     fn object_only_intersections_remain_invalid_index_types() {
-        let interner = crate::TypeInterner::new();
+        let interner = crate::construction::TypeInterner::new();
         let left = interner.object(vec![]);
         let right = interner.object(vec![]);
         let object_intersection = interner.intersection(vec![left, right]);
@@ -1662,7 +1671,7 @@ mod tests {
     /// resolve to `Literal(Boolean)` and must widen to BOOLEAN.
     #[test]
     fn widen_literal_to_primitive_widens_boolean_intrinsics() {
-        let interner = crate::TypeInterner::new();
+        let interner = crate::construction::TypeInterner::new();
         assert_eq!(
             widen_literal_to_primitive(&interner, TypeId::BOOLEAN_TRUE),
             TypeId::BOOLEAN

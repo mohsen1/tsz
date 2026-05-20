@@ -1,5 +1,6 @@
 //! Diagnostics collection and per-file checking orchestration for the compilation driver.
 
+use super::check_module_graph::*;
 use super::check_utils::*;
 use super::*;
 use tsz::checker::context::RequestCacheCounters;
@@ -74,9 +75,8 @@ fn checker_lookup_resolution_mode(
 pub(super) struct CollectDiagnosticsResult {
     pub diagnostics: Vec<Diagnostic>,
     pub request_cache_counters: RequestCacheCounters,
-    /// Aggregate query-cache statistics from the sequential path's shared `QueryCache`.
-    /// `None` in the parallel path (each thread has its own short-lived cache).
-    pub query_cache_stats: Option<tsz_solver::QueryCacheStatistics>,
+    /// Aggregate query-cache statistics from the selected checking path.
+    pub query_cache_stats: Option<tsz_solver::construction::QueryCacheStatistics>,
     /// Aggregate definition-store statistics (populated for `--extendedDiagnostics`).
     pub def_store_stats: Option<tsz_solver::StoreStatistics>,
     /// Module dependency graph statistics (populated for `--extendedDiagnostics`).
@@ -89,10 +89,125 @@ pub(super) struct CheckerLibSet {
     pub(super) contexts: Arc<Vec<LibContext>>,
 }
 
-/// Check if a filename is a TypeScript declaration file (.d.ts, .d.cts, .d.mts).
+/// Check if a filename is a TypeScript declaration file (`.d.ts`, `.d.cts`,
+/// `.d.mts`, or `.d.<ext>.ts`).
 fn is_declaration_file(name: &str) -> bool {
     tsz::module_resolver::ModuleExtension::from_path(std::path::Path::new(name)).is_declaration()
 }
+
+#[cfg(test)]
+thread_local! {
+    static FILE_SESSION_REUSE_TEST_OVERRIDE: std::cell::Cell<Option<bool>> =
+        const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+fn file_session_reuse_test_override() -> Option<bool> {
+    FILE_SESSION_REUSE_TEST_OVERRIDE.with(std::cell::Cell::get)
+}
+
+// File-session reuse policy.
+//
+// Previously this defaulted to ON for all batch CLI projects (PRs #6870
+// sequential and #6893 parallel), optimising the counter `state_constructed`
+// on 40-400 file projects. At 1k+ files the reuse path regresses wall time by
+// 4-14x; see PR #7521 and
+// `docs/architecture/LSP_PERF_EXPERIMENTS_2026-05-16.md`. Measurements across
+// the full scale-cliff matrix (monorepo-001..006) show reuse OFF is faster at
+// every large fixture size we tested:
+//
+//   101 files:    1.5x faster off
+//   1,010 files:  3.9x faster off
+//   5,099 files:  4.6x faster off
+//   5,251 files:  5.4x faster off (cross-pkg mapped types)
+//   10,299 files: only finishes with reuse off (E8 1.47 M LOC synthetic)
+//
+// Tiny generated apps are a different regime where sequential fresh-checker
+// setup dominates, but the reuse path is still not byte-identical for every
+// conformance shape (alias display and checked-JS prototype evidence can
+// observe retained state). Keep reuse opt-in until that semantic gap closes.
+// Two env knobs remain:
+//   * `TSZ_FILE_SESSION_REUSE=1` opts back in (legacy explicit-opt-in knob
+//     from the pre-#6870 era).
+//   * `TSZ_DISABLE_FILE_SESSION_REUSE=1` continues to force off, preserving
+//     scripts that already pin the off behaviour. Takes precedence over
+//     the enable knob.
+//
+// The LSP server binaries (`tsz_lsp`, `tsz_server`) do not consume this
+// driver and are unaffected — they reuse state through the `tsz-lsp`
+// `Project` API by construction.
+
+const FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES: usize = 32;
+
+/// Pure policy function so tests can assert the env-var rules without
+/// touching process-global state. `disable_set` is true when
+/// `TSZ_DISABLE_FILE_SESSION_REUSE` is present in the environment;
+/// `enable_set` is true when `TSZ_FILE_SESSION_REUSE` is present.
+const fn file_session_reuse_from_env(disable_set: bool, enable_set: bool) -> bool {
+    if disable_set {
+        return false;
+    }
+    enable_set
+}
+
+const fn file_session_reuse_from_workload(
+    disable_set: bool,
+    enable_set: bool,
+    _work_item_count: usize,
+) -> bool {
+    if disable_set {
+        return false;
+    }
+    if enable_set {
+        return true;
+    }
+    false
+}
+
+fn file_session_reuse_requested(work_item_count: usize) -> bool {
+    #[cfg(test)]
+    if let Some(enabled) = file_session_reuse_test_override() {
+        return enabled;
+    }
+
+    file_session_reuse_from_workload(
+        std::env::var_os("TSZ_DISABLE_FILE_SESSION_REUSE").is_some(),
+        std::env::var_os("TSZ_FILE_SESSION_REUSE").is_some(),
+        work_item_count,
+    )
+}
+
+fn parallel_file_session_reuse_requested() -> bool {
+    #[cfg(test)]
+    if let Some(enabled) = file_session_reuse_test_override() {
+        return enabled;
+    }
+
+    file_session_reuse_from_env(
+        std::env::var_os("TSZ_DISABLE_FILE_SESSION_REUSE").is_some(),
+        std::env::var_os("TSZ_FILE_SESSION_REUSE").is_some(),
+    )
+}
+
+const fn needs_separate_boxed_prime_checker(
+    no_emit: bool,
+    emit_declarations: bool,
+    reuse_requested: bool,
+    file_count: usize,
+    has_libs: bool,
+) -> bool {
+    if file_count == 0 || !has_libs {
+        return false;
+    }
+
+    let reused_checker_covers_prime = no_emit
+        && !emit_declarations
+        && reuse_requested
+        && file_count <= FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES;
+    !reused_checker_covers_prime
+}
+
+const FILE_SESSION_REUSE_PARALLEL_CHUNK_SIZE: usize = 8;
 
 fn should_apply_duplicate_package_redirect(importing_file: &Path) -> bool {
     importing_file
@@ -110,7 +225,7 @@ fn should_apply_duplicate_package_redirect(importing_file: &Path) -> bool {
 /// Build a fresh checker-facing lib set from the already-loaded lib sources so program
 /// binding and checker lib resolution stay isolated without requiring disk reloads.
 pub(super) fn load_checker_libs(lib_files: &[Arc<LibFile>]) -> CheckerLibSet {
-    let files = parallel::clone_lib_files_for_checker(lib_files);
+    let files = parallel::clone_lib_files_for_checker(lib_files, lib_files.len() > 1);
     let contexts = files
         .iter()
         .map(|lib| LibContext {
@@ -176,6 +291,9 @@ fn keep_checker_diagnostic_when_program_has_real_syntax_errors(code: u32) -> boo
     // program has a real syntax error, but it still reports declaration-name
     // diagnostics such as TS2427/TS2457 alongside parse errors because the parser
     // accepts those names and defers validation to the checker.
+    if code == 1315 {
+        return false;
+    }
     code < 2000
         || tsz::checker::diagnostics::is_js_grammar_diagnostic(code)
         || is_reserved_type_name_declaration_diagnostic(code)
@@ -370,7 +488,20 @@ fn post_process_checker_diagnostics(
     }
 }
 
+const LARGE_WILDCARD_BARREL_EXPORTS: usize = 32;
+
+fn has_large_wildcard_barrel(program: &MergedProgram, work_items: &[usize]) -> bool {
+    work_items.iter().any(|&file_idx| {
+        program
+            .files
+            .get(file_idx)
+            .and_then(|file| program.wildcard_reexports.get(&file.file_name))
+            .is_some_and(|sources| sources.len() >= LARGE_WILDCARD_BARREL_EXPORTS)
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 pub(super) fn collect_diagnostics(
     program: &MergedProgram,
     options: &ResolvedCompilerOptions,
@@ -382,8 +513,40 @@ pub(super) fn collect_diagnostics(
     has_deprecation_diagnostics: bool,
     collect_compile_stats: bool,
 ) -> CollectDiagnosticsResult {
+    collect_diagnostics_with_source_resolutions(
+        program,
+        options,
+        base_dir,
+        cache,
+        checker_libs,
+        typescript_dom_replacement_globals,
+        type_cache_output,
+        has_deprecation_diagnostics,
+        collect_compile_stats,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn collect_diagnostics_with_source_resolutions(
+    program: &MergedProgram,
+    options: &ResolvedCompilerOptions,
+    base_dir: &Path,
+    cache: Option<&mut CompilationCache>,
+    checker_libs: &CheckerLibSet,
+    typescript_dom_replacement_globals: (bool, bool, bool),
+    type_cache_output: &std::sync::Mutex<FxHashMap<PathBuf, TypeCache>>,
+    has_deprecation_diagnostics: bool,
+    collect_compile_stats: bool,
+    source_module_resolutions: Option<
+        &FxHashMap<SourceModuleResolutionKey, SourceModuleResolution>,
+    >,
+) -> CollectDiagnosticsResult {
     let _collect_span =
         tracing::info_span!("collect_diagnostics", files = program.files.len()).entered();
+    // Production CLI semantic diagnostics are scheduled here. Lower-level
+    // helpers in `tsz::parallel` stay reusable infrastructure unless this
+    // driver opts into changed CLI behavior.
     #[cfg(not(target_arch = "wasm32"))]
     tsz::parallel::ensure_rayon_global_pool();
 
@@ -467,21 +630,41 @@ pub(super) fn collect_diagnostics(
         Option<tsz::module_resolver::ImportingModuleKind>,
     );
 
-    // AST traversal is pure read-only and embarrassingly parallel: each file
-    // independently scans its own arena. Doing this up-front in parallel lets
-    // the subsequent (sequential) module-resolution loop iterate over a
-    // pre-built `Vec<Vec<...>>` instead of interleaving the AST scan with
-    // the resolution-cache mutation. On large repos this turns N sequential
-    // AST passes into one N-way parallel pass.
+    // AST traversal is pure read-only: each file independently scans its own
+    // arena. Doing this up-front lets the subsequent (sequential)
+    // module-resolution loop iterate over a pre-built `Vec<Vec<...>>` instead
+    // of interleaving the AST scan with resolution-cache mutation. Tiny
+    // projects stay sequential because there is less work than Rayon scheduler
+    // overhead; larger repos keep the N-way parallel pass.
     let cached_module_specifiers: Vec<Vec<CachedModuleSpecifier>> = {
-        use rayon::prelude::*;
         let _span =
             tracing::info_span!("collect_module_specifiers", files = program.files.len()).entered();
-        program
-            .files
-            .par_iter()
-            .map(|file| collect_module_specifiers(&file.arena, file.source_file))
-            .collect()
+        if program.files.len() <= FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES {
+            program
+                .files
+                .iter()
+                .map(|file| {
+                    collect_module_specifiers_for_check(
+                        &file.arena,
+                        file.source_file,
+                        file.is_external_module,
+                    )
+                })
+                .collect()
+        } else {
+            use rayon::prelude::*;
+            program
+                .files
+                .par_iter()
+                .map(|file| {
+                    collect_module_specifiers_for_check(
+                        &file.arena,
+                        file.source_file,
+                        file.is_external_module,
+                    )
+                })
+                .collect()
+        }
     };
 
     // Duplicate package redirect map
@@ -536,6 +719,21 @@ pub(super) fn collect_diagnostics(
     // This is consumer-side only: `MergedProgram` retains both fields unchanged.
     let skeleton_for_ambient: Option<&tsz::parallel::SkeletonIndex> =
         program.skeleton_index.as_ref();
+    let wildcard_ambient_modules_for_resolution = source_module_resolutions.and_then(|_| {
+        let has_wildcard_ambient = program
+            .declared_modules
+            .iter()
+            .chain(program.shorthand_ambient_modules.iter())
+            .any(|name| name.contains('*'));
+        has_wildcard_ambient.then(|| {
+            tsz::checker::context::GlobalDeclaredModules::from_module_names(
+                program
+                    .declared_modules
+                    .iter()
+                    .chain(program.shorthand_ambient_modules.iter()),
+            )
+        })
+    });
     {
         let _span = tracing::info_span!("build_resolved_module_maps").entered();
         for (file_idx, file) in program.files.iter().enumerate() {
@@ -567,6 +765,53 @@ pub(super) fn collect_diagnostics(
                     *resolution_mode_override,
                 );
                 let request_kind_key = checker_resolution_request_kind(*import_kind);
+                if let Some(discovered) = source_module_resolutions.and_then(|resolutions| {
+                    resolutions.get(&SourceModuleResolutionKey {
+                        containing_file: file_path.to_path_buf(),
+                        specifier: specifier.clone(),
+                        import_kind: *import_kind,
+                        resolution_mode_override: *resolution_mode_override,
+                    })
+                }) {
+                    resolved_module_specifiers.insert((file_idx, specifier.clone()));
+                    let canonical = if should_apply_duplicate_package_redirect(file_path) {
+                        package_redirects
+                            .get(&discovered.canonical_path)
+                            .cloned()
+                            .unwrap_or_else(|| discovered.canonical_path.clone())
+                    } else {
+                        discovered.canonical_path.clone()
+                    };
+                    if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
+                        resolved_module_paths.insert((file_idx, specifier.clone()), target_idx);
+                        resolved_module_request_paths.insert(
+                            (
+                                file_idx,
+                                specifier.clone(),
+                                request_mode_key,
+                                request_kind_key,
+                            ),
+                            target_idx,
+                        );
+                        if discovered.resolved_using_ts_extension {
+                            resolved_module_ts_extension_flags
+                                .insert((file_idx, specifier.clone()), true);
+                        }
+                    }
+                    continue;
+                }
+
+                // Source discovery has already tried to map this specifier to a
+                // source/declaration file. If it failed and a program-wide
+                // ambient wildcard (for example `*.svg`) covers the specifier,
+                // treat it as ambient without repeating the filesystem probe.
+                if wildcard_ambient_modules_for_resolution
+                    .as_ref()
+                    .is_some_and(|modules| modules.matches_wildcard(specifier))
+                {
+                    resolved_module_specifiers.insert((file_idx, specifier.clone()));
+                    continue;
+                }
 
                 let result = module_resolver.lookup(
                     &request,
@@ -631,10 +876,11 @@ pub(super) fn collect_diagnostics(
                     );
                 }
 
-                // Map resolved path to file index
-                // NOTE: Only mark as resolved if there's NO error. When there's a resolution
-                // error (TS2307, etc.), the module should NOT be in resolved_module_specifiers
-                // so that the checker will emit the appropriate error.
+                // Map resolved path to file index.
+                // Only mark as resolved when there is no error. When there is a
+                // resolution error (TS2307, TS6263, etc.) the module should NOT
+                // be in resolved_module_specifiers so that the checker emits the
+                // appropriate diagnostic without triggering additional member checks.
                 if outcome.error.is_none() {
                     if let Some(ref resolved_path) = outcome.resolved_path {
                         resolved_module_specifiers.insert((file_idx, specifier.clone()));
@@ -746,46 +992,58 @@ pub(super) fn collect_diagnostics(
         use rayon::prelude::*;
         let _span = tracing::info_span!("per_file_ts7016_diagnostics", files = program.files.len())
             .entered();
-        program
-            .files
-            .par_iter()
-            .enumerate()
-            .map(|(file_idx, file)| {
-                let mut diags = Vec::new();
-                for (specifier, spec_node, import_kind, _) in &cached_module_specifiers[file_idx] {
-                    if !matches!(import_kind, tsz::module_resolver::ImportKind::CjsRequire) {
-                        continue;
-                    }
-                    if let Some(error) = resolved_module_errors.get(&(file_idx, specifier.clone()))
+        let has_cjs_require_specifier = cached_module_specifiers.iter().any(|specifiers| {
+            specifiers.iter().any(|(_, _, import_kind, _)| {
+                matches!(import_kind, tsz::module_resolver::ImportKind::CjsRequire)
+            })
+        });
+        if !has_cjs_require_specifier {
+            vec![Vec::new(); program.files.len()]
+        } else {
+            program
+                .files
+                .par_iter()
+                .enumerate()
+                .map(|(file_idx, file)| {
+                    let mut diags = Vec::new();
+                    for (specifier, spec_node, import_kind, _) in
+                        &cached_module_specifiers[file_idx]
                     {
-                        if error.code != 7016 {
+                        if !matches!(import_kind, tsz::module_resolver::ImportKind::CjsRequire) {
                             continue;
                         }
-                        // Find the string literal argument of the require() call for the span.
-                        let (start, length) = if let Some(node) = file.arena.get(*spec_node)
-                            && let Some(call) = file.arena.get_call_expr(node)
-                            && let Some(args) = call.arguments.as_ref()
-                            && let Some(&arg_idx) = args.nodes.first()
-                            && let Some(arg_node) = file.arena.get(arg_idx)
+                        if let Some(error) =
+                            resolved_module_errors.get(&(file_idx, specifier.clone()))
                         {
-                            (arg_node.pos, arg_node.end.saturating_sub(arg_node.pos))
-                        } else if let Some(node) = file.arena.get(*spec_node) {
-                            (node.pos, node.end.saturating_sub(node.pos))
-                        } else {
-                            continue;
-                        };
-                        diags.push(Diagnostic::error(
-                            &file.file_name,
-                            start,
-                            length,
-                            &error.message,
-                            error.code,
-                        ));
+                            if error.code != 7016 {
+                                continue;
+                            }
+                            // Find the string literal argument of the require() call for the span.
+                            let (start, length) = if let Some(node) = file.arena.get(*spec_node)
+                                && let Some(call) = file.arena.get_call_expr(node)
+                                && let Some(args) = call.arguments.as_ref()
+                                && let Some(&arg_idx) = args.nodes.first()
+                                && let Some(arg_node) = file.arena.get(arg_idx)
+                            {
+                                (arg_node.pos, arg_node.end.saturating_sub(arg_node.pos))
+                            } else if let Some(node) = file.arena.get(*spec_node) {
+                                (node.pos, node.end.saturating_sub(node.pos))
+                            } else {
+                                continue;
+                            };
+                            diags.push(Diagnostic::error(
+                                &file.file_name,
+                                start,
+                                length,
+                                &error.message,
+                                error.code,
+                            ));
+                        }
                     }
-                }
-                diags
-            })
-            .collect()
+                    diags
+                })
+                .collect()
+        }
     };
     let per_file_ts7016_diagnostics = Arc::new(per_file_ts7016_diagnostics);
 
@@ -937,7 +1195,72 @@ pub(super) fn collect_diagnostics(
         return CollectDiagnosticsResult {
             diagnostics,
             request_cache_counters,
-            query_cache_stats: Some(tsz_solver::QueryCacheStatistics::default()),
+            query_cache_stats: Some(tsz_solver::construction::QueryCacheStatistics::default()),
+            def_store_stats: None,
+            module_dep_stats,
+        };
+    }
+
+    // `skipLibCheck` skips semantic checking for declaration files, but the
+    // normal checker setup below still builds project-wide checker state before
+    // discovering that every work item is skipped. Utility-type packages such
+    // as type-fest are often pure `.d.ts` projects with `skipLibCheck`; for
+    // pure no-emit checks, parse/module diagnostics are the only remaining
+    // output. Return before constructing checker binders, `ProgramContext`, the
+    // shared `DefinitionStore`, and lib recheck baselines. Mixed projects stay
+    // on the normal path so `.ts` files can still consume declaration exports.
+    if options.no_emit
+        && options.skip_lib_check
+        && !options.emit_declarations
+        && program
+            .files
+            .iter()
+            .all(|file| is_declaration_file(&file.file_name))
+    {
+        use rayon::prelude::*;
+
+        let mut diagnostics: Vec<Diagnostic> = program
+            .files
+            .par_iter()
+            .map(|file| {
+                collect_no_check_file_diagnostics(file, options, program_has_real_syntax_errors)
+            })
+            .flatten()
+            .collect();
+
+        for (file_idx, file_diags) in per_file_ts7016_diagnostics.iter().enumerate() {
+            diagnostics.extend(file_diags.iter().cloned());
+            if let Some(file) = program.files.get(file_idx) {
+                used_paths.insert(PathBuf::from(&file.file_name));
+            }
+        }
+
+        if let Some(c) = cache {
+            c.type_caches.retain(|path, _| used_paths.contains(path));
+            c.diagnostics.retain(|path, _| used_paths.contains(path));
+            c.export_hashes.retain(|path, _| used_paths.contains(path));
+        }
+
+        diagnostics.extend(detect_missing_tslib_helper_diagnostics(
+            program,
+            options,
+            base_dir,
+            &file_is_esm_map,
+        ));
+
+        let module_dep_stats = if collect_compile_stats {
+            Some(compute_module_dependency_stats(
+                program.files.len(),
+                resolved_module_paths.as_ref(),
+            ))
+        } else {
+            None
+        };
+
+        return CollectDiagnosticsResult {
+            diagnostics,
+            request_cache_counters,
+            query_cache_stats: Some(tsz_solver::construction::QueryCacheStatistics::default()),
             def_store_stats: None,
             module_dep_stats,
         };
@@ -945,32 +1268,62 @@ pub(super) fn collect_diagnostics(
 
     // Pre-compute merged augmentations once for all binder reconstruction paths.
     let merged_augmentations = MergedAugmentations::from_program(program);
-    let affected_lib_interfaces = affected_lib_interface_names(program, checker_libs);
-    let affected_lib_extension_interfaces =
-        affected_lib_extension_interface_names(program, checker_libs, &affected_lib_interfaces);
-    let baseline_lib_datetimeformatpart_interfaces =
-        baseline_lib_datetimeformatpart_spelling_interface_names(checker_libs);
+    let can_recheck_checker_libs =
+        !options.no_check && !options.skip_lib_check && !checker_libs.files.is_empty();
+    let affected_lib_interfaces = if can_recheck_checker_libs {
+        affected_lib_interface_names(program, checker_libs)
+    } else {
+        FxHashSet::default()
+    };
+    let affected_lib_extension_interfaces = if can_recheck_checker_libs {
+        affected_lib_extension_interface_names(program, checker_libs, &affected_lib_interfaces)
+    } else {
+        FxHashSet::default()
+    };
+    let baseline_lib_datetimeformatpart_interfaces = if can_recheck_checker_libs {
+        baseline_lib_datetimeformatpart_spelling_interface_names(checker_libs)
+    } else {
+        FxHashSet::default()
+    };
 
     // Pre-create all binders for cross-file resolution.
     let all_binders: Arc<Vec<Arc<BinderState>>> = {
-        use rayon::prelude::*;
         let _span =
             tracing::info_span!("build_cross_file_binders", files = program.files.len()).entered();
-        Arc::new(
-            program
-                .files
-                .par_iter()
-                .enumerate()
-                .map(|(file_idx, file)| {
-                    Arc::new(create_cross_file_lookup_binder_with_augmentations(
-                        file,
-                        program,
-                        file_idx,
-                        &merged_augmentations,
-                    ))
-                })
-                .collect(),
-        )
+        if program.files.len() <= FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES {
+            Arc::new(
+                program
+                    .files
+                    .iter()
+                    .enumerate()
+                    .map(|(file_idx, file)| {
+                        Arc::new(create_cross_file_lookup_binder_with_augmentations(
+                            file,
+                            program,
+                            file_idx,
+                            &merged_augmentations,
+                        ))
+                    })
+                    .collect(),
+            )
+        } else {
+            use rayon::prelude::*;
+            Arc::new(
+                program
+                    .files
+                    .par_iter()
+                    .enumerate()
+                    .map(|(file_idx, file)| {
+                        Arc::new(create_cross_file_lookup_binder_with_augmentations(
+                            file,
+                            program,
+                            file_idx,
+                            &merged_augmentations,
+                        ))
+                    })
+                    .collect(),
+            )
+        }
     };
 
     // Extract is_external_module from BoundFile to preserve state across file bindings.
@@ -1062,24 +1415,13 @@ pub(super) fn collect_diagnostics(
         } else if !program.declared_modules.is_empty()
             || !program.shorthand_ambient_modules.is_empty()
         {
-            let mut exact: FxHashSet<String> = FxHashSet::default();
-            let mut patterns: Vec<String> = Vec::new();
-            for name in program
-                .declared_modules
-                .iter()
-                .chain(program.shorthand_ambient_modules.iter())
-            {
-                let normalized = name.trim_matches('"').trim_matches('\'');
-                if normalized.contains('*') {
-                    patterns.push(normalized.to_string());
-                } else {
-                    exact.insert(normalized.to_string());
-                }
-            }
-            patterns.sort();
-            patterns.dedup();
             Some(Arc::new(
-                tsz::checker::context::GlobalDeclaredModules::from_skeleton(exact, patterns),
+                tsz::checker::context::GlobalDeclaredModules::from_module_names(
+                    program
+                        .declared_modules
+                        .iter()
+                        .chain(program.shorthand_ambient_modules.iter()),
+                ),
             ))
         } else {
             None
@@ -1098,7 +1440,7 @@ pub(super) fn collect_diagnostics(
     // the legacy `Vec<(file_idx, ModuleAugmentation)>` shape so checker
     // consumers (`module_augmentation.rs`, `property_access_augmentation.rs`)
     // see no behavior change. The legacy per-binder loop in
-    // `ProjectEnv::build_global_indices` is skipped when this is `Some`.
+    // `ProgramContext::build_global_indices` is skipped when this is `Some`.
     let skeleton_module_augmentations_index: Option<
         tsz::checker::context::GlobalModuleAugmentationsIndex,
     > = program
@@ -1111,7 +1453,7 @@ pub(super) fn collect_diagnostics(
     // (with a StableLocation) at extract time; this projection rehydrates
     // them into the legacy `Vec<(SymbolId, file_idx)>` shape so checker
     // consumers (`module_augmentation.rs`) see no behavior change. The legacy
-    // per-binder loop in `ProjectEnv::build_global_indices` is skipped when
+    // per-binder loop in `ProgramContext::build_global_indices` is skipped when
     // this is `Some`.
     let skeleton_augmentation_targets_index: Option<
         tsz::checker::context::GlobalAugmentationTargetsIndex,
@@ -1128,7 +1470,7 @@ pub(super) fn collect_diagnostics(
     // `module_entity.rs`, `type_resolution/module.rs`) see no behavior
     // change. The legacy `module_binder_index` push lines inside the
     // per-binder `module_exports.iter()` loop in
-    // `ProjectEnv::build_global_indices` are skipped when this is `Some`.
+    // `ProgramContext::build_global_indices` are skipped when this is `Some`.
     let skeleton_module_binder_index: Option<Arc<FxHashMap<String, Vec<usize>>>> = program
         .skeleton_index
         .as_ref()
@@ -1144,7 +1486,7 @@ pub(super) fn collect_diagnostics(
     // `state/type_resolution/module.rs`, `state/type_resolution/import_type.rs`)
     // see no behavior change. The legacy inner
     // `for (export_name, sym_id) in exports.iter()` push loop in
-    // `ProjectEnv::build_global_indices` is skipped when this is `Some`.
+    // `ProgramContext::build_global_indices` is skipped when this is `Some`.
     //
     // SymbolId-coupling note: unlike PR #1145 (file-locals index, closed for
     // a regression), this projection does NOT extract pre-merge local
@@ -1170,18 +1512,18 @@ pub(super) fn collect_diagnostics(
     let program_wildcard_reexports = Arc::clone(&program.wildcard_reexports);
     let program_wildcard_reexports_type_only = Arc::clone(&program.wildcard_reexports_type_only);
     // `program.module_exports` is already `Arc`-wrapped on `MergedProgram`;
-    // cheap atomic clone for ProjectEnv install.
+    // cheap atomic clone for ProgramContext install.
     let program_module_exports = Arc::clone(&program.module_exports);
     // Same rationale for `program.cross_file_node_symbols`: the merged
     // program already owns the outer map behind `Arc`, so installing it into
-    // the shared ProjectEnv is an O(1) clone instead of deep-cloning the
+    // the shared ProgramContext is an O(1) clone instead of deep-cloning the
     // `FxHashMap<usize, Arc<...>>` before re-sharing it.
     let program_cross_file_node_symbols = Arc::clone(&program.cross_file_node_symbols);
     // Same rationale for `program.alias_partners`: a single shared
     // FxHashMap<SymbolId, SymbolId> beats N per-binder deep-clones.
     let program_alias_partners = Arc::clone(&program.alias_partners);
 
-    let mut project_env = tsz::checker::context::ProjectEnv {
+    let mut program_context = tsz::checker::context::ProgramContext {
         lib_contexts: Arc::clone(&checker_libs.contexts),
         all_arenas: Arc::clone(&all_arenas),
         all_binders: Arc::clone(&all_binders),
@@ -1207,18 +1549,20 @@ pub(super) fn collect_diagnostics(
         program_module_exports: Some(program_module_exports),
         program_cross_file_node_symbols: Some(program_cross_file_node_symbols),
         program_alias_partners: Some(program_alias_partners),
+        cross_file_type_params_cache: std::env::var_os("TSZ_CROSS_FILE_TYPE_PARAMS_CACHE")
+            .map(|_| Arc::new(dashmap::DashMap::new())),
         ..Default::default()
     };
     // Use fingerprint-aware rebuild when a skeleton index is available.
     // On the first build this always rebuilds; on subsequent incremental builds
     // with the same skeleton fingerprint the O(N) binder scan is skipped.
     if let Some(ref skel) = program.skeleton_index {
-        project_env.build_global_indices_if_changed(skel.fingerprint);
+        program_context.build_global_indices_if_changed(skel.fingerprint);
     } else {
-        project_env.build_global_indices();
+        program_context.build_global_indices();
     }
     // Build the shared SymbolId→file-index map once; shared via Arc across all checkers.
-    project_env.build_global_symbol_file_index();
+    program_context.build_global_symbol_file_index();
 
     // Create a shared DefinitionStore for all parallel checkers.
     // CRITICAL: All parallel checkers MUST share the same DefinitionStore so that
@@ -1233,12 +1577,23 @@ pub(super) fn collect_diagnostics(
             ),
         );
         shared_store.init_file_locks(program.files.len());
-        project_env.shared_definition_store = Some(shared_store);
+        program_context.shared_definition_store = Some(shared_store);
     }
 
-    // Prime Array<T> base type with global augmentations before any file checks.
-    // The prime checker uses the shared DefinitionStore (via project_env.apply_to).
-    if !program.files.is_empty() && !checker_libs.contexts.is_empty() {
+    let shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>> =
+        Arc::new(dashmap::DashMap::new());
+
+    // Prime Array<T> base type with global augmentations before fresh-checker
+    // file checks. Tiny no-emit batches use the sequential reused-checker
+    // path; that real checker primes itself before checking the first file, so
+    // a separate prime checker would duplicate the same setup.
+    if needs_separate_boxed_prime_checker(
+        options.no_emit,
+        options.emit_declarations,
+        file_session_reuse_requested(program.files.len()),
+        program.files.len(),
+        !checker_libs.contexts.is_empty(),
+    ) {
         let prime_idx = 0;
         let file = &program.files[prime_idx];
         let binder = parallel::create_binder_from_bound_file(file, program, prime_idx);
@@ -1249,7 +1604,8 @@ pub(super) fn collect_diagnostics(
             file.file_name.clone(),
             &options.checker,
         );
-        project_env.apply_to(&mut checker.ctx);
+        checker.ctx.shared_lib_type_cache = Some(Arc::clone(&shared_lib_cache));
+        program_context.apply_to(&mut checker.ctx);
         checker.prime_boxed_types();
     }
 
@@ -1265,8 +1621,7 @@ pub(super) fn collect_diagnostics(
     // module-only TS files (no `declare global`, no interface that augments
     // a lib type) this removes a fixed ~30-lib-file recheck tax that was
     // dominating the per-invocation floor (~380–430ms on tiny files).
-    let needs_lib_recheck = !options.no_check
-        && !checker_libs.files.is_empty()
+    let needs_lib_recheck = can_recheck_checker_libs
         && (!affected_lib_interfaces.is_empty() || !affected_lib_extension_interfaces.is_empty());
     let baseline_lib_diagnostics = if needs_lib_recheck {
         collect_checker_lib_baseline_fingerprints(
@@ -1275,27 +1630,31 @@ pub(super) fn collect_diagnostics(
             checker_libs,
             &affected_lib_interfaces,
             &affected_lib_extension_interfaces,
-            &project_env,
+            &program_context,
         )
     } else {
         FxHashSet::default()
     };
-    let baseline_lib_datetimeformatpart_diagnostics =
-        if !options.no_check && !baseline_lib_datetimeformatpart_interfaces.is_empty() {
-            let mut diagnostics = collect_checker_lib_baseline_diagnostics_for_codes(
-                program,
-                options,
-                checker_libs,
-                &baseline_lib_datetimeformatpart_interfaces,
-                &FxHashSet::default(),
-                &project_env,
-                &[2552],
-            );
-            diagnostics.retain(is_datetimeformatpart_spelling_baseline_diagnostic);
-            diagnostics
-        } else {
-            Vec::new()
-        };
+    let baseline_lib_datetimeformatpart_diagnostics = if can_recheck_checker_libs
+        && !options.lib_is_default
+        && !has_esnext_umbrella_lib(checker_libs)
+        && should_preserve_datetimeformatpart_spelling_baseline(checker_libs)
+        && !baseline_lib_datetimeformatpart_interfaces.is_empty()
+    {
+        let mut diagnostics = collect_checker_lib_baseline_diagnostics_for_codes(
+            program,
+            options,
+            checker_libs,
+            &baseline_lib_datetimeformatpart_interfaces,
+            &FxHashSet::default(),
+            &program_context,
+            &[2552],
+        );
+        diagnostics.retain(is_datetimeformatpart_spelling_baseline_diagnostic);
+        diagnostics
+    } else {
+        Vec::new()
+    };
 
     // --- SMART INVALIDATION: Work Queue Algorithm ---
     // Only type-check files that have changed or depend on files with changed export signatures
@@ -1322,18 +1681,16 @@ pub(super) fn collect_diagnostics(
 
     // --- FILE CHECKING ---
     //
-    // Two paths:
+    // CLI semantic diagnostics are scheduled here rather than through the core
+    // `check_files_parallel` helper. That keeps command-mode policy, diagnostic
+    // filtering, cache invalidation, and checker reuse in the driver.
+    //
+    // Two driver paths:
     // 1. Non-cached (first build, CI): Check ALL files in parallel using rayon.
     //    No dependency cascade needed since we're checking everything.
     // 2. Cached (watch mode): Sequential work queue with export-hash-based
     //    dependency cascade for incremental invalidation.
 
-    // Accumulates query-cache statistics from whichever path is taken.
-    // Both branches unconditionally set this, so the initial value is never read.
-    #[allow(unused_assignments)]
-    let mut aggregated_qc_stats: Option<tsz_solver::QueryCacheStatistics> = None;
-    #[allow(unused_assignments)]
-    let mut aggregated_ds_stats: Option<tsz_solver::StoreStatistics> = None;
     let checker_lib_file_env = CheckerLibFileCheckEnv {
         program,
         options,
@@ -1341,12 +1698,12 @@ pub(super) fn collect_diagnostics(
         affected_interfaces: &affected_lib_interfaces,
         extension_interfaces: &affected_lib_extension_interfaces,
         merged_augmentations: &merged_augmentations,
-        project_env: &project_env,
+        program_context: &program_context,
         program_has_real_syntax_errors,
         program_has_unsupported_js_root,
     };
 
-    if cache.is_none() {
+    let (query_cache_stats, aggregated_ds_stats) = if cache.is_none() {
         // --- PARALLEL PATH: No cache, check all files concurrently ---
         let _parallel_span =
             tracing::info_span!("parallel_check_files", files = work_queue.len()).entered();
@@ -1409,15 +1766,34 @@ pub(super) fn collect_diagnostics(
         // Skip extraction in that case and let per-file state drop as soon
         // as checking finishes.
         let extract_type_cache = !options.no_emit || options.emit_declarations;
-        let shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>> =
-            Arc::new(dashmap::DashMap::new());
-
         // Create shared cross-file query cache for multi-file projects.
         // Eliminates redundant type evaluations and relation checks across files.
         let shared_query_cache = if work_items.len() > 1 {
-            Some(tsz_solver::SharedQueryCache::new())
+            Some(tsz_solver::construction::SharedQueryCache::new())
         } else {
             None
+        };
+
+        let check_file_with_fresh_checker = |file_idx: usize| {
+            let binder = build_checker_binder(file_idx);
+            let context = CheckFileForParallelContext {
+                file_idx,
+                binder,
+                program,
+                compiler_options: &compiler_options,
+                program_context: &program_context,
+                resolved_modules_per_file: &resolved_modules_per_file,
+                shared_lib_cache: Arc::clone(&shared_lib_cache),
+                shared_query_cache: shared_query_cache.as_ref(),
+                no_check,
+                check_js,
+                explicit_check_js_false,
+                skip_lib_check,
+                program_has_real_syntax_errors,
+                program_has_unsupported_js_root,
+                extract_type_cache,
+            };
+            check_file_for_parallel(context)
         };
 
         // Check all files in parallel — each file gets its own CheckerState and QueryCache.
@@ -1425,37 +1801,101 @@ pub(super) fn collect_diagnostics(
         #[cfg(not(target_arch = "wasm32"))]
         let file_results: Vec<CheckFileResult> = {
             use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
-            // Use sequential checking for small projects (<=8 files) to avoid
-            // non-deterministic false positives from concurrent type interning.
-            // The TypeInterner uses DashMap for thread-safe access, but concurrent
-            // type evaluation can produce different results depending on thread
-            // scheduling when multiple files resolve the same lib or package
-            // declaration types. Sequential checking is also faster for small
-            // projects due to avoiding rayon thread pool overhead.
-            if work_items.len() <= 8 {
+            // Use sequential checking for small projects to avoid Rayon overhead
+            // and non-deterministic false positives from concurrent type
+            // interning. The `TypeInterner` uses `DashMap` for thread-safe
+            // access, but concurrent type evaluation can still observe
+            // dependency and lib/package declaration shapes in scheduler order.
+            //
+            // A slightly wider small-project lane also covers cross-file JSX
+            // namespace/global declaration discovery and checked-JS
+            // CommonJS/JSDoc constructor evidence. Importer files can otherwise
+            // observe incomplete dependency shapes and emit flaky TS2339
+            // diagnostics.
+            let reuse_requested = file_session_reuse_requested(work_items.len());
+            let parallel_reuse_requested = parallel_file_session_reuse_requested();
+            let has_parallel_order_sensitive_global_lib =
+                has_parallel_order_sensitive_global_lib(checker_libs);
+            let use_sequential_checking = work_items.len() <= 32
+                || has_large_wildcard_barrel(program, &work_items)
+                // DOM-style global declarations are order-sensitive with
+                // multiple concurrent checker contexts. Keep those projects
+                // on the deterministic single-worker path until global
+                // lookup state is fully parallel-stable.
+                || has_parallel_order_sensitive_global_lib
+                // Fresh per-file checkers can observe project-level lib/global
+                // state in scheduler order when run concurrently. If the
+                // session-reuse path is explicitly disabled, keep the fallback
+                // deterministic by using fresh checkers sequentially.
+                || !reuse_requested;
+            // T2.1.B (`PERFORMANCE_PLAN.md` §6 PR table): the sequential
+            // no-emit path *can* construct one `CheckerState` and re-target
+            // it across files via `CheckerContext::switch_to_file` instead
+            // of constructing one per file. As of PR #7521 + the experiment
+            // doc at `docs/architecture/LSP_PERF_EXPERIMENTS_2026-05-16.md`,
+            // this remains OPT-IN (`TSZ_FILE_SESSION_REUSE=1`) because the
+            // reuse path regresses wall time 4-14x at 1k+ files and is not yet
+            // byte-identical for all tiny conformance shapes. The fresh-checker
+            // branch below (`check_file_with_fresh_checker`) remains the default.
+            // This flag applies to the sequential branch here; the parallel
+            // branch below has its own chunked worker-reuse path with the
+            // same opt-in default.
+            // `extract_type_cache=true` (set when `--emit` or
+            // `--declaration` is on) consumes the `CheckerState` per
+            // file via `extract_cache(self)`. The reuse path holds
+            // ONE `CheckerState` across the whole loop, so it can't
+            // call the consuming variant. Pinning `--noEmit` runs is
+            // exactly the bench/profiling scenario T2.1.B is built
+            // for, so this restriction matches the use case rather
+            // than narrowing it.
+            let use_file_session_reuse =
+                use_sequential_checking && !extract_type_cache && reuse_requested;
+            if use_file_session_reuse {
+                check_files_sequentially_with_reuse(
+                    &work_items,
+                    program,
+                    &compiler_options,
+                    &program_context,
+                    &resolved_modules_per_file,
+                    Arc::clone(&shared_lib_cache),
+                    shared_query_cache.as_ref(),
+                    no_check,
+                    check_js,
+                    explicit_check_js_false,
+                    skip_lib_check,
+                    program_has_real_syntax_errors,
+                    program_has_unsupported_js_root,
+                    extract_type_cache,
+                    build_checker_binder,
+                )
+            } else if !use_sequential_checking && !extract_type_cache && parallel_reuse_requested {
+                // T2.1.C follow-up: parallel chunked worker reuse is
+                // opt-in via `TSZ_FILE_SESSION_REUSE=1` (was default-on
+                // before PR #7521; see comment above on
+                // `file_session_reuse_requested`).
+                tsz::parallel::ensure_rayon_global_pool();
+                check_files_in_parallel_chunks_with_reuse(
+                    &work_items,
+                    program,
+                    &compiler_options,
+                    &program_context,
+                    &resolved_modules_per_file,
+                    Arc::clone(&shared_lib_cache),
+                    shared_query_cache.as_ref(),
+                    no_check,
+                    check_js,
+                    explicit_check_js_false,
+                    skip_lib_check,
+                    program_has_real_syntax_errors,
+                    program_has_unsupported_js_root,
+                    extract_type_cache,
+                    FILE_SESSION_REUSE_PARALLEL_CHUNK_SIZE,
+                    &build_checker_binder,
+                )
+            } else if use_sequential_checking {
                 work_items
                     .iter()
-                    .map(|&file_idx| {
-                        let binder = build_checker_binder(file_idx);
-                        let context = CheckFileForParallelContext {
-                            file_idx,
-                            binder,
-                            program,
-                            compiler_options: &compiler_options,
-                            project_env: &project_env,
-                            resolved_modules_per_file: &resolved_modules_per_file,
-                            shared_lib_cache: Arc::clone(&shared_lib_cache),
-                            shared_query_cache: shared_query_cache.as_ref(),
-                            no_check,
-                            check_js,
-                            explicit_check_js_false,
-                            skip_lib_check,
-                            program_has_real_syntax_errors,
-                            program_has_unsupported_js_root,
-                            extract_type_cache,
-                        };
-                        check_file_for_parallel(context)
-                    })
+                    .map(|&file_idx| check_file_with_fresh_checker(file_idx))
                     .collect()
             } else {
                 tsz::parallel::ensure_rayon_global_pool();
@@ -1474,27 +1914,7 @@ pub(super) fn collect_diagnostics(
                 work_items
                     .par_iter()
                     .with_min_len(1)
-                    .map(|&file_idx| {
-                        let binder = build_checker_binder(file_idx);
-                        let context = CheckFileForParallelContext {
-                            file_idx,
-                            binder,
-                            program,
-                            compiler_options: &compiler_options,
-                            project_env: &project_env,
-                            resolved_modules_per_file: &resolved_modules_per_file,
-                            shared_lib_cache: Arc::clone(&shared_lib_cache),
-                            shared_query_cache: shared_query_cache.as_ref(),
-                            no_check,
-                            check_js,
-                            explicit_check_js_false,
-                            skip_lib_check,
-                            program_has_real_syntax_errors,
-                            program_has_unsupported_js_root,
-                            extract_type_cache,
-                        };
-                        check_file_for_parallel(context)
-                    })
+                    .map(|&file_idx| check_file_with_fresh_checker(file_idx))
                     .collect()
             }
         };
@@ -1502,34 +1922,14 @@ pub(super) fn collect_diagnostics(
         #[cfg(target_arch = "wasm32")]
         let file_results: Vec<CheckFileResult> = work_items
             .iter()
-            .map(|&file_idx| {
-                let binder = build_checker_binder(file_idx);
-                let context = CheckFileForParallelContext {
-                    file_idx,
-                    binder,
-                    program,
-                    compiler_options: &compiler_options,
-                    project_env: &project_env,
-                    resolved_modules_per_file: &resolved_modules_per_file,
-                    shared_lib_cache: Arc::clone(&shared_lib_cache),
-                    shared_query_cache: shared_query_cache.as_ref(),
-                    no_check,
-                    check_js,
-                    explicit_check_js_false,
-                    skip_lib_check,
-                    program_has_real_syntax_errors,
-                    program_has_unsupported_js_root,
-                    extract_type_cache,
-                };
-                check_file_for_parallel(context)
-            })
+            .map(|&file_idx| check_file_with_fresh_checker(file_idx))
             .collect();
 
         // Aggregate per-file query cache statistics. DefinitionStore stats
         // come from the shared store computed once after the loop (workers
         // all see the same shared store, so summing per-file was both
         // wasted work and N× inflated).
-        let mut parallel_qc_stats = tsz_solver::QueryCacheStatistics::default();
+        let mut parallel_qc_stats = tsz_solver::construction::QueryCacheStatistics::default();
         let parallel_ds_stats = tsz_solver::StoreStatistics::default();
         {
             let mut tc_out = type_cache_output
@@ -1575,12 +1975,11 @@ pub(super) fn collect_diagnostics(
                 parallel_qc_stats.merge(&query_cache.statistics());
             }
         }
-        aggregated_qc_stats = Some(parallel_qc_stats);
         // PERF: `DefinitionStore::statistics()` walks every entry (and
         // `estimated_size_bytes()` walks again) — only worth paying for
         // when --diagnostics or --extendedDiagnostics is requested.
-        aggregated_ds_stats = if collect_compile_stats {
-            project_env
+        let aggregated_ds_stats = if collect_compile_stats {
+            program_context
                 .shared_definition_store
                 .as_ref()
                 .map(|store| store.statistics())
@@ -1588,6 +1987,7 @@ pub(super) fn collect_diagnostics(
         } else {
             None
         };
+        (Some(parallel_qc_stats), aggregated_ds_stats)
     } else {
         // --- SEQUENTIAL PATH: Cached build with dependency cascade ---
         // Fallback used only when no shared_definition_store exists (e.g.,
@@ -1675,11 +2075,14 @@ pub(super) fn collect_diagnostics(
                 )
             };
             checker.ctx.report_unresolved_imports = true;
-            project_env.apply_to(&mut checker.ctx);
+            program_context.apply_to(&mut checker.ctx);
 
             // Per-file state that varies across files:
             checker.ctx.set_current_file_idx(file_idx);
-            checker.ctx.file_is_esm = project_env.file_is_esm_map.get(&file.file_name).copied();
+            checker.ctx.file_is_esm = program_context
+                .file_is_esm_map
+                .get(&file.file_name)
+                .copied();
 
             // Use the per-file pre-bucketed map; see the parallel path for the
             // O(N²) → O(1) rationale. `Arc::clone` here is a single atomic
@@ -1818,10 +2221,12 @@ pub(super) fn collect_diagnostics(
                 file_diagnostics.retain(|d| !is_checker_grammar_code_suppressed_in_js(d.code));
             }
 
-            // Apply @ts-expect-error / @ts-ignore directive suppression.
-            // tsc suppresses all diagnostics on the line following such directives
-            // and emits TS2578 for unused @ts-expect-error directives.
-            if let Some(source) = file.arena.get_source_file_at(file.source_file) {
+            // Apply @ts-expect-error / @ts-ignore directive suppression only
+            // when type checking ran. Under `--noCheck`, parse and JS grammar
+            // diagnostics still surface in tsc and directives do not hide them.
+            if !options.no_check
+                && let Some(source) = file.arena.get_source_file_at(file.source_file)
+            {
                 apply_ts_directive_suppression(
                     &file.file_name,
                     source.text.as_ref(),
@@ -1836,7 +2241,7 @@ pub(super) fn collect_diagnostics(
             // invalidation decisions in both CLI and LSP.
             let checker_counters = checker.ctx.request_cache_counters;
             // PERF: Skip per-file `definition_store.statistics()`. When
-            // `project_env.shared_definition_store` is set, every per-file
+            // `program_context.shared_definition_store` is set, every per-file
             // checker.ctx.definition_store is `Arc::clone` of the SAME shared
             // store — calling .statistics() per file iterates that shared
             // store N times and produces N× inflated counts. The parallel
@@ -1887,12 +2292,12 @@ pub(super) fn collect_diagnostics(
             }
         }
         // Sequential path: single shared QueryCache — capture stats after all files.
-        aggregated_qc_stats = Some(query_cache.statistics());
+        let query_cache_stats = Some(query_cache.statistics());
         // PERF: skip the shared DefinitionStore stats walk unless --diagnostics
         // / --extendedDiagnostics actually consumes them. Matches the parallel
         // path's gating above.
-        aggregated_ds_stats = if collect_compile_stats {
-            project_env
+        let aggregated_ds_stats = if collect_compile_stats {
+            program_context
                 .shared_definition_store
                 .as_ref()
                 .map(|store| store.statistics())
@@ -1900,7 +2305,8 @@ pub(super) fn collect_diagnostics(
         } else {
             None
         };
-    }
+        (query_cache_stats, aggregated_ds_stats)
+    };
 
     // Collect diagnostics from cache for all files
     // This includes both checked files (now in cache) and unchecked files (cached from previous run)
@@ -1943,12 +2349,6 @@ pub(super) fn collect_diagnostics(
     ));
     diagnostics.extend(baseline_lib_datetimeformatpart_diagnostics);
 
-    // Use the aggregated query-cache statistics. In the parallel path, these
-    // are merged from all per-file caches. In the sequential path, they come
-    // from the shared query_cache. Fall back to the top-level query_cache stats
-    // if neither path set the aggregated stats (shouldn't happen in practice).
-    let query_cache_stats = aggregated_qc_stats.or_else(|| Some(query_cache.statistics()));
-
     // Compute module dependency graph statistics for --extendedDiagnostics.
     // PERF: Skip the SCC computation entirely when the CLI won't print stats.
     // tarjan_scc + adjacency dedup is O(V+E) and adj allocates a Vec<Vec<usize>>
@@ -1971,251 +2371,6 @@ pub(super) fn collect_diagnostics(
     }
 }
 
-fn compute_module_dependency_stats(
-    file_count: usize,
-    resolved_module_paths: &FxHashMap<(usize, String), usize>,
-) -> super::ModuleDependencyStats {
-    // Build a deduplicated adjacency list from resolved_module_paths.
-    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); file_count];
-    let mut edge_count: usize = 0;
-    for ((src, _specifier), &tgt) in resolved_module_paths {
-        if *src < file_count && tgt < file_count && !adj[*src].contains(&tgt) {
-            adj[*src].push(tgt);
-            edge_count += 1;
-        }
-    }
-    let sccs = tarjan_scc(file_count, &adj);
-    let cycles: Vec<&Vec<usize>> = sccs.iter().filter(|scc| scc.len() > 1).collect();
-    let import_cycles = cycles.len();
-    let largest_cycle_size = cycles.iter().map(|c| c.len()).max().unwrap_or(0);
-    super::ModuleDependencyStats {
-        file_count,
-        dependency_edges: edge_count,
-        import_cycles,
-        largest_cycle_size,
-    }
-}
-
-/// Tarjan's algorithm for finding strongly connected components.
-///
-/// Returns SCCs in reverse topological order. Each SCC is a `Vec<usize>` of node indices.
-/// Import cycles correspond to SCCs with more than one node.
-fn tarjan_scc(n: usize, adj: &[Vec<usize>]) -> Vec<Vec<usize>> {
-    struct State<'a> {
-        adj: &'a [Vec<usize>],
-        index_counter: usize,
-        stack: Vec<usize>,
-        on_stack: Vec<bool>,
-        indices: Vec<Option<usize>>,
-        lowlinks: Vec<usize>,
-        result: Vec<Vec<usize>>,
-    }
-
-    fn strongconnect(v: usize, state: &mut State<'_>) {
-        state.indices[v] = Some(state.index_counter);
-        state.lowlinks[v] = state.index_counter;
-        state.index_counter += 1;
-        state.stack.push(v);
-        state.on_stack[v] = true;
-
-        for &w in &state.adj[v] {
-            if state.indices[w].is_none() {
-                strongconnect(w, state);
-                state.lowlinks[v] = state.lowlinks[v].min(state.lowlinks[w]);
-            } else if state.on_stack[w] {
-                state.lowlinks[v] = state.lowlinks[v].min(state.indices[w].unwrap());
-            }
-        }
-
-        if state.lowlinks[v] == state.indices[v].unwrap() {
-            let mut scc = Vec::new();
-            loop {
-                let w = state.stack.pop().unwrap();
-                state.on_stack[w] = false;
-                scc.push(w);
-                if w == v {
-                    break;
-                }
-            }
-            state.result.push(scc);
-        }
-    }
-
-    let mut state = State {
-        adj,
-        index_counter: 0,
-        stack: Vec::new(),
-        on_stack: vec![false; n],
-        indices: vec![None; n],
-        lowlinks: vec![0; n],
-        result: Vec::new(),
-    };
-
-    for v in 0..n {
-        if state.indices[v].is_none() {
-            strongconnect(v, &mut state);
-        }
-    }
-
-    state.result
-}
-
-fn propagate_module_export_maps(
-    binder: &mut BinderState,
-    specifier: &str,
-    target_idx: usize,
-    program: &MergedProgram,
-    resolved_module_paths: &FxHashMap<(usize, String), usize>,
-) {
-    let mut worklist: Vec<(String, usize)> = vec![(specifier.to_owned(), target_idx)];
-    let mut seen: rustc_hash::FxHashSet<(String, usize)> = rustc_hash::FxHashSet::default();
-
-    while let Some((current_specifier, current_target_idx)) = worklist.pop() {
-        if !seen.insert((current_specifier.clone(), current_target_idx)) {
-            continue;
-        }
-
-        let target_file_name = &program.files[current_target_idx].file_name;
-
-        if let Some(exports) = program.module_exports.get(target_file_name).cloned() {
-            Arc::make_mut(&mut binder.module_exports).insert(current_specifier.clone(), exports);
-        }
-        if let Some(wildcards) = program.wildcard_reexports.get(target_file_name).cloned() {
-            Arc::make_mut(&mut binder.wildcard_reexports)
-                .insert(current_specifier.clone(), wildcards.clone());
-        }
-        if let Some(type_only_flags) = program
-            .wildcard_reexports_type_only
-            .get(target_file_name)
-            .cloned()
-        {
-            Arc::make_mut(&mut binder.wildcard_reexports_type_only)
-                .insert(current_specifier.clone(), type_only_flags);
-        }
-        if let Some(reexports) = program.reexports.get(target_file_name).cloned() {
-            Arc::make_mut(&mut binder.reexports).insert(current_specifier.clone(), reexports);
-        }
-
-        if let Some(source_modules) = program.wildcard_reexports.get(target_file_name).cloned() {
-            for source_module in source_modules {
-                if let Some(&source_target_idx) =
-                    resolved_module_paths.get(&(current_target_idx, source_module.clone()))
-                {
-                    worklist.push((source_module, source_target_idx));
-                }
-            }
-        }
-
-        // Also follow named re-exports: `export { X } from './other'`
-        // Extract unique source modules from the re-export map so the
-        // importing file's binder receives transitive exports.
-        if let Some(file_reexports) = program.reexports.get(target_file_name).cloned() {
-            let mut reexport_sources: rustc_hash::FxHashSet<String> =
-                rustc_hash::FxHashSet::default();
-            for (source_module, _) in file_reexports.values() {
-                reexport_sources.insert(source_module.clone());
-            }
-            for source_module in reexport_sources {
-                if let Some(&source_target_idx) =
-                    resolved_module_paths.get(&(current_target_idx, source_module.clone()))
-                {
-                    worklist.push((source_module, source_target_idx));
-                }
-            }
-        }
-    }
-}
-
-/// Compute a topological ordering of file indices based on resolved module dependencies.
-///
-/// Given `resolved_module_paths` mapping `(source_file_idx, specifier) -> target_file_idx`,
-/// this produces a dependency-first ordering: files with no dependencies come first,
-/// followed by files that depend only on already-listed files.
-///
-/// If cycles exist, the cycle participants are appended at the end in their original
-/// order (matching tsc behavior which gracefully handles circular imports).
-///
-/// Only file indices present in `file_indices` are included in the output.
-fn topological_file_order(
-    file_indices: &[usize],
-    resolved_module_paths: &FxHashMap<(usize, String), usize>,
-) -> Vec<usize> {
-    if file_indices.len() <= 1 {
-        return file_indices.to_vec();
-    }
-
-    // Build adjacency list: src -> [targets it imports].
-    // Edge A -> B means "A depends on B" (A imports B).
-    let file_set: FxHashSet<usize> = file_indices.iter().copied().collect();
-    let mut deps: FxHashMap<usize, Vec<usize>> = FxHashMap::default();
-    for &idx in file_indices {
-        deps.insert(idx, Vec::new());
-    }
-    for (&(src, _), &target) in resolved_module_paths.iter() {
-        if file_set.contains(&src) && file_set.contains(&target) && src != target {
-            deps.entry(src).or_default().push(target);
-        }
-    }
-
-    // Kahn's algorithm on the dependency graph.
-    // We want dependencies first: if A imports B, B should appear before A.
-    // in_degree[x] = number of imports x has (edges leaving x in the dep graph).
-    // Nodes with in_degree 0 have no imports and can be processed first.
-    let mut in_degree: FxHashMap<usize, usize> = FxHashMap::default();
-    // reverse_deps[B] = [A, ...] means "A depends on B"
-    let mut reverse_deps: FxHashMap<usize, Vec<usize>> = FxHashMap::default();
-    for &idx in file_indices {
-        in_degree.insert(idx, 0);
-        reverse_deps.insert(idx, Vec::new());
-    }
-    for (&src, dep_list) in &deps {
-        for &dep in dep_list {
-            if dep != src {
-                reverse_deps.entry(dep).or_default().push(src);
-                *in_degree.entry(src).or_default() += 1;
-            }
-        }
-    }
-
-    // Seed queue with nodes that have no dependencies, in sorted order for determinism.
-    let mut queue: VecDeque<usize> = VecDeque::new();
-    let mut sorted_indices: Vec<usize> = file_indices.to_vec();
-    sorted_indices.sort_unstable();
-    for &idx in &sorted_indices {
-        if in_degree[&idx] == 0 {
-            queue.push_back(idx);
-        }
-    }
-
-    let mut result = Vec::with_capacity(file_indices.len());
-    while let Some(node) = queue.pop_front() {
-        result.push(node);
-        if let Some(dependents) = reverse_deps.get(&node) {
-            let mut sorted_dependents = dependents.clone();
-            sorted_dependents.sort_unstable();
-            for &dependent in &sorted_dependents {
-                let deg = in_degree.get_mut(&dependent).unwrap();
-                *deg -= 1;
-                if *deg == 0 {
-                    queue.push_back(dependent);
-                }
-            }
-        }
-    }
-
-    // If cycles exist, append remaining nodes in their original order.
-    if result.len() < file_indices.len() {
-        let in_result: FxHashSet<usize> = result.iter().copied().collect();
-        for &idx in file_indices {
-            if !in_result.contains(&idx) {
-                result.push(idx);
-            }
-        }
-    }
-
-    result
-}
-
 pub(super) struct CheckFileForParallelContext<'a> {
     file_idx: usize,
     binder: BinderState,
@@ -2225,7 +2380,7 @@ pub(super) struct CheckFileForParallelContext<'a> {
     /// `all_binders`, skeleton indices, `symbol_file_targets`, `resolved_module_paths/errors`,
     /// `is_external_module_by_file`, `file_is_esm_map`, `typescript_dom_replacement_globals`,
     /// and `has_deprecation_diagnostics` fields.
-    project_env: &'a tsz::checker::context::ProjectEnv,
+    program_context: &'a tsz::checker::context::ProgramContext,
     /// Per-file pre-bucketed resolved module specifiers (indexed by `file_idx`).
     /// Replaces a previous per-file scan over the program-wide
     /// `resolved_module_specifiers` set, which made each per-file checker
@@ -2235,7 +2390,7 @@ pub(super) struct CheckFileForParallelContext<'a> {
     shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>>,
     /// Shared cross-file query cache for multi-file projects.
     /// Eliminates redundant type evaluations and relation checks across files.
-    shared_query_cache: Option<&'a tsz_solver::SharedQueryCache>,
+    shared_query_cache: Option<&'a tsz_solver::construction::SharedQueryCache>,
     no_check: bool,
     check_js: bool,
     /// `true` when `checkJs: false` was explicitly specified in compiler options.
@@ -2270,6 +2425,81 @@ fn collect_no_check_file_diagnostics(
     )
 }
 
+/// Per-file `CheckerContext` configuration extracted from
+/// `check_file_for_parallel`. Sets the fields that vary across files in
+/// a program — file index, ESM-ness, resolved modules, and the seven
+/// parse-diagnostic-derived fields the checker reads to suppress or
+/// classify diagnostics in syntax-error files.
+///
+/// The split between construction and per-file configuration is the
+/// seam `PERFORMANCE_PLAN.md` §6 T2.1.B's sequential session-reuse
+/// path will plug into: construct the `CheckerContext` once, then
+/// repeatedly call this helper, `check_source_file()`, and
+/// `reset_for_next_file()` rather than constructing a fresh
+/// `CheckerState` per file.
+///
+/// This commit only does the extraction; the reuse loop itself is a
+/// separate sub-PR.
+///
+/// Pure refactor: the field assignments and their derivations are
+/// byte-for-byte identical to the inline version, so default behavior
+/// is unchanged.
+fn configure_checker_per_file<'a>(
+    ctx: &mut tsz::checker::context::CheckerContext<'a>,
+    file: &tsz::parallel::BoundFile,
+    file_idx: usize,
+    program_context: &tsz::checker::context::ProgramContext,
+    resolved_modules: Arc<rustc_hash::FxHashSet<String>>,
+    program_has_real_syntax_errors: bool,
+) {
+    ctx.set_current_file_idx(file_idx);
+    ctx.file_is_esm = program_context
+        .file_is_esm_map
+        .get(&file.file_name)
+        .copied();
+    ctx.resolved_modules = Some(resolved_modules);
+    // TSC suppresses many semantic diagnostics across the whole program when any
+    // file has a real syntax parse error; mirror that behavior using the program-level
+    // flag so that diagnostics like TS1361/TS1362 do not leak from syntax-error files.
+    ctx.has_parse_errors = program_has_real_syntax_errors;
+    // Exclude grammar checks that don't affect AST structure from
+    // has_syntax_parse_errors so we match TSC's hasParseDiagnostics() behavior.
+    //   TS1009 - Trailing comma (checker grammar error in TSC)
+    //   TS1014 - Rest parameter must be last (grammar check, AST is valid)
+    //   TS1185 - Merge conflict marker (not a real parse failure)
+    ctx.has_syntax_parse_errors = file
+        .parse_diagnostics
+        .iter()
+        .any(|d| !is_non_suppressing_parse_error(d.code));
+    ctx.syntax_parse_error_positions = file
+        .parse_diagnostics
+        .iter()
+        .filter(|d| !is_non_suppressing_parse_error(d.code))
+        .map(|d| d.start)
+        .collect();
+    ctx.all_parse_error_positions = file.parse_diagnostics.iter().map(|d| d.start).collect();
+    ctx.nullable_type_parse_error_positions = file
+        .parse_diagnostics
+        .iter()
+        .filter(|d| (d.code == 17019 || d.code == 17020) && d.message.contains("'?'"))
+        .map(|d| d.start)
+        .collect();
+    ctx.has_real_syntax_errors = file
+        .parse_diagnostics
+        .iter()
+        .any(|d| is_real_syntax_error(d.code));
+    ctx.has_structural_parse_errors = file
+        .parse_diagnostics
+        .iter()
+        .any(|d| is_structural_parse_error(d.code));
+    ctx.real_syntax_error_positions = file
+        .parse_diagnostics
+        .iter()
+        .filter(|d| is_real_syntax_error(d.code))
+        .map(|d| d.start)
+        .collect();
+}
+
 /// Result of checking a single file for the parallel checking path: diagnostics,
 /// optional `TypeCache` snapshot, per-file request counters, and solver
 /// query-cache / definition-store statistics aggregated by the caller.
@@ -2277,7 +2507,7 @@ pub(super) type CheckFileResult = (
     Vec<Diagnostic>,
     Option<TypeCache>,
     RequestCacheCounters,
-    tsz_solver::QueryCacheStatistics,
+    tsz_solver::construction::QueryCacheStatistics,
     tsz_solver::StoreStatistics,
 );
 
@@ -2287,121 +2517,43 @@ pub(super) type CheckFileResult = (
 /// Each invocation creates its own `CheckerState` (with its own mutable context)
 /// and its own `QueryCache` (using `RefCell`/`Cell` for zero-overhead single-threaded caching).
 /// The `TypeInterner` is shared across threads via `DashMap` (thread-safe).
-pub(super) fn check_file_for_parallel<'a>(
-    context: CheckFileForParallelContext<'a>,
-) -> CheckFileResult {
-    let CheckFileForParallelContext {
-        file_idx,
-        binder,
-        program,
-        compiler_options,
-        project_env,
-        resolved_modules_per_file,
-        shared_lib_cache,
-        shared_query_cache,
-        no_check,
-        check_js,
-        explicit_check_js_false,
-        skip_lib_check,
-        program_has_real_syntax_errors,
-        program_has_unsupported_js_root,
-        extract_type_cache,
-    } = context;
-    let file = &program.files[file_idx];
-    // skipLibCheck: skip type checking of declaration files (.d.ts, .d.cts, .d.mts)
-    if skip_lib_check && is_declaration_file(&file.file_name) {
-        return (
-            Vec::new(),
-            None,
-            RequestCacheCounters::default(),
-            tsz_solver::QueryCacheStatistics::default(),
-            tsz_solver::StoreStatistics::default(),
-        );
-    }
-
-    // Create a per-thread QueryCache (uses RefCell/Cell, no atomic overhead).
-    // For multi-file projects, use shared L2 cache to avoid redundant computation.
-    let query_cache = if let Some(shared) = shared_query_cache {
-        QueryCache::new_with_shared(&program.type_interner, shared)
-    } else {
-        QueryCache::new(&program.type_interner)
-    };
-
-    // Use the pre-bucketed `resolved_modules_per_file[file_idx]` instead of
-    // re-filtering the program-wide cross-file set per file. The bucketed
-    // version is built once in `collect_diagnostics` and shared via `Arc`.
-    // Per-file `Arc::clone` is a single atomic increment — no deep copy of
-    // the `FxHashSet<String>` contents. Saves ~120K string clones on the
-    // 6086-file large-ts-repo fixture.
-    let resolved_modules: Arc<FxHashSet<String>> = resolved_modules_per_file
-        .get(file_idx)
-        .cloned()
-        .unwrap_or_else(|| Arc::new(FxHashSet::default()));
-
-    // apply_to (below) installs the project-wide shared DefinitionStore and
-    // warms the per-file caches from it. Use the deferred constructor so we
-    // don't build a throwaway per-file store first — that work showed up in
-    // profiles as a non-trivial fraction of total CPU on large projects, all
-    // of it overwritten moments later.
-    let mut checker = CheckerState::with_options_deferred_def_store(
-        &file.arena,
-        &binder,
-        &query_cache,
-        file.file_name.clone(),
-        compiler_options,
-    );
-    checker.ctx.report_unresolved_imports = true;
-    checker.ctx.shared_lib_type_cache = Some(shared_lib_cache);
-
-    // Apply all project-level shared state in one call. This installs the
-    // shared DefinitionStore and runs warm_local_caches_from_shared_store().
-    project_env.apply_to(&mut checker.ctx);
-
-    // Per-file state that varies across files:
-    checker.ctx.set_current_file_idx(file_idx);
-    checker.ctx.file_is_esm = project_env.file_is_esm_map.get(&file.file_name).copied();
-    checker.ctx.resolved_modules = Some(resolved_modules);
-    // TSC suppresses many semantic diagnostics across the whole program when any
-    // file has a real syntax parse error; mirror that behavior using the program-level
-    // flag so that diagnostics like TS1361/TS1362 do not leak from syntax-error files.
-    checker.ctx.has_parse_errors = program_has_real_syntax_errors;
-    // Exclude grammar checks that don't affect AST structure from
-    // has_syntax_parse_errors so we match TSC's hasParseDiagnostics() behavior.
-    //   TS1009 - Trailing comma (checker grammar error in TSC)
-    //   TS1014 - Rest parameter must be last (grammar check, AST is valid)
-    //   TS1185 - Merge conflict marker (not a real parse failure)
-    checker.ctx.has_syntax_parse_errors = file
-        .parse_diagnostics
-        .iter()
-        .any(|d| !is_non_suppressing_parse_error(d.code));
-    checker.ctx.syntax_parse_error_positions = file
-        .parse_diagnostics
-        .iter()
-        .filter(|d| !is_non_suppressing_parse_error(d.code))
-        .map(|d| d.start)
-        .collect();
-    checker.ctx.all_parse_error_positions =
-        file.parse_diagnostics.iter().map(|d| d.start).collect();
-    checker.ctx.nullable_type_parse_error_positions = file
-        .parse_diagnostics
-        .iter()
-        .filter(|d| (d.code == 17019 || d.code == 17020) && d.message.contains("'?'"))
-        .map(|d| d.start)
-        .collect();
-    checker.ctx.has_real_syntax_errors = file
-        .parse_diagnostics
-        .iter()
-        .any(|d| is_real_syntax_error(d.code));
-    checker.ctx.has_structural_parse_errors = file
-        .parse_diagnostics
-        .iter()
-        .any(|d| is_structural_parse_error(d.code));
-    checker.ctx.real_syntax_error_positions = file
-        .parse_diagnostics
-        .iter()
-        .filter(|d| is_real_syntax_error(d.code))
-        .map(|d| d.start)
-        .collect();
+/// Run `check_source_file` on a fully-configured `CheckerState`, then
+/// post-process and shape the resulting `Vec<Diagnostic>`.
+///
+/// Extracted from `check_file_for_parallel` so the T2.1.B sequential
+/// session-reuse path (`PERFORMANCE_PLAN.md` §6) can reuse the same
+/// per-file check pipeline against a `CheckerState` that's been
+/// re-targeted at the next file via `CheckerContext::switch_to_file`,
+/// instead of constructing a fresh checker per file.
+///
+/// **Pure refactor**: the body is byte-for-byte the post-
+/// `configure_checker_per_file` portion of `check_file_for_parallel`.
+/// Default behavior is unchanged because the same function is called
+/// in the same order with the same arguments.
+///
+/// Caller's contract:
+///
+/// - `checker` has been constructed for `file` and configured via
+///   `configure_checker_per_file` (or `switch_to_file` →
+///   `configure_checker_per_file`).
+/// - `program_context.apply_to(&mut checker.ctx)` has been called.
+/// - `checker.ctx.diagnostics` is drained at function entry — anything
+///   left over from a prior file is appended to this file's output.
+///   In practice this means callers reusing a `CheckerState` across
+///   files must have invoked `switch_to_file` (which drains
+///   diagnostics via `reset_for_next_file`) before this function.
+#[allow(clippy::too_many_arguments)]
+fn run_check_on_existing_checker<'a>(
+    checker: &mut CheckerState<'a>,
+    file: &tsz::parallel::BoundFile,
+    compiler_options: &tsz_common::CheckerOptions,
+    program_context: &tsz::checker::context::ProgramContext,
+    no_check: bool,
+    check_js: bool,
+    explicit_check_js_false: bool,
+    program_has_real_syntax_errors: bool,
+    program_has_unsupported_js_root: bool,
+) -> Vec<Diagnostic> {
     let filtered_parse_diagnostics =
         filtered_parse_diagnostics(&file.parse_diagnostics, program_has_real_syntax_errors);
     let is_js = is_js_file(Path::new(&file.file_name));
@@ -2467,7 +2619,7 @@ pub(super) fn check_file_for_parallel<'a>(
             &effective_options,
             program_has_real_syntax_errors,
             program_has_unsupported_js_root,
-            project_env.has_deprecation_diagnostics,
+            program_context.has_deprecation_diagnostics,
         );
 
         if !no_check {
@@ -2491,8 +2643,10 @@ pub(super) fn check_file_for_parallel<'a>(
         file_diagnostics.retain(|d| !is_checker_grammar_code_suppressed_in_js(d.code));
     }
 
-    // Apply @ts-expect-error / @ts-ignore directive suppression.
-    if let Some(source) = file.arena.get_source_file_at(file.source_file) {
+    // Apply @ts-expect-error / @ts-ignore directive suppression only when type
+    // checking ran. Under `--noCheck`, parse and JS grammar diagnostics still
+    // surface in tsc and directives do not hide them.
+    if !no_check && let Some(source) = file.arena.get_source_file_at(file.source_file) {
         apply_ts_directive_suppression(
             &file.file_name,
             source.text.as_ref(),
@@ -2500,6 +2654,102 @@ pub(super) fn check_file_for_parallel<'a>(
             compiler_options.emit_declarations && check_js && is_js,
         );
     }
+
+    file_diagnostics
+}
+
+pub(super) fn check_file_for_parallel<'a>(
+    context: CheckFileForParallelContext<'a>,
+) -> CheckFileResult {
+    let CheckFileForParallelContext {
+        file_idx,
+        binder,
+        program,
+        compiler_options,
+        program_context,
+        resolved_modules_per_file,
+        shared_lib_cache,
+        shared_query_cache,
+        no_check,
+        check_js,
+        explicit_check_js_false,
+        skip_lib_check,
+        program_has_real_syntax_errors,
+        program_has_unsupported_js_root,
+        extract_type_cache,
+    } = context;
+    let file = &program.files[file_idx];
+    // skipLibCheck: skip type checking of declaration files (.d.ts, .d.cts, .d.mts)
+    if skip_lib_check && is_declaration_file(&file.file_name) {
+        return (
+            Vec::new(),
+            None,
+            RequestCacheCounters::default(),
+            tsz_solver::construction::QueryCacheStatistics::default(),
+            tsz_solver::StoreStatistics::default(),
+        );
+    }
+
+    // Create a per-thread QueryCache (uses RefCell/Cell, no atomic overhead).
+    // For multi-file projects, use shared L2 cache to avoid redundant computation.
+    let query_cache = if let Some(shared) = shared_query_cache {
+        QueryCache::new_with_shared(&program.type_interner, shared)
+    } else {
+        QueryCache::new(&program.type_interner)
+    };
+
+    // Use the pre-bucketed `resolved_modules_per_file[file_idx]` instead of
+    // re-filtering the program-wide cross-file set per file. The bucketed
+    // version is built once in `collect_diagnostics` and shared via `Arc`.
+    // Per-file `Arc::clone` is a single atomic increment — no deep copy of
+    // the `FxHashSet<String>` contents. Saves ~120K string clones on the
+    // 6086-file large-ts-repo fixture.
+    let resolved_modules: Arc<FxHashSet<String>> = resolved_modules_per_file
+        .get(file_idx)
+        .cloned()
+        .unwrap_or_else(|| Arc::new(FxHashSet::default()));
+
+    // apply_to (below) installs the project-wide shared DefinitionStore and
+    // warms the per-file caches from it. Use the deferred constructor so we
+    // don't build a throwaway per-file store first — that work showed up in
+    // profiles as a non-trivial fraction of total CPU on large projects, all
+    // of it overwritten moments later.
+    let mut checker = CheckerState::with_options_deferred_def_store(
+        &file.arena,
+        &binder,
+        &query_cache,
+        file.file_name.clone(),
+        compiler_options,
+    );
+    checker.ctx.report_unresolved_imports = true;
+    checker.ctx.shared_lib_type_cache = Some(shared_lib_cache);
+
+    // Apply all project-level shared state in one call. This installs the
+    // shared DefinitionStore and runs warm_local_caches_from_shared_store().
+    program_context.apply_to(&mut checker.ctx);
+
+    // Per-file `CheckerContext` configuration. Extracted into a helper
+    // to seam construction from per-file configuration; T2.1.B's
+    // sequential session-reuse path will reuse this entry point.
+    configure_checker_per_file(
+        &mut checker.ctx,
+        file,
+        file_idx,
+        program_context,
+        resolved_modules,
+        program_has_real_syntax_errors,
+    );
+    let file_diagnostics = run_check_on_existing_checker(
+        &mut checker,
+        file,
+        compiler_options,
+        program_context,
+        no_check,
+        check_js,
+        explicit_check_js_false,
+        program_has_real_syntax_errors,
+        program_has_unsupported_js_root,
+    );
 
     let checker_counters = checker.ctx.request_cache_counters;
     let qc_stats = query_cache.statistics();
@@ -2523,6 +2773,265 @@ pub(super) fn check_file_for_parallel<'a>(
     )
 }
 
+/// Sequential session-reuse path for T2.1.B (`PERFORMANCE_PLAN.md` §6
+/// PR table item T2.1.B: "Add a sequential session-reuse path behind
+/// a flag").
+///
+/// Differences from the default `work_items.iter().map(check_file_for_parallel).collect()`
+/// path:
+///
+/// 1. **One `CheckerState` for the entire loop** (vs. one per file).
+///    Constructed lazily on the first non-skip-lib-check file so an
+///    all-declaration-file `work_items` doesn't pay setup cost.
+/// 2. **One `QueryCache` for the entire loop** (vs. one per file).
+///    The shared L2 path (`shared_query_cache`) already shared a
+///    cache across files when present; this path also reuses the
+///    primary `QueryCache` across files when `shared_query_cache` is
+///    `None`.
+/// 3. **`program_context.apply_to` runs once** (vs. once per file).
+///    The `apply_to` work — Arc-cloning shared program-level state
+///    into `ctx`, warming the local caches from the shared
+///    `DefinitionStore` — is identical across files and only
+///    needs to land once. Subsequent files inherit it through the
+///    same `ctx`.
+/// 4. **Pre-built `Vec<BinderState>`** holds every file's binder for
+///    the duration of the loop, satisfying `CheckerState`'s `&'a
+///    BinderState` lifetime requirement. The fresh-per-file path
+///    drops the binder at each iteration's end; this path holds
+///    them all so the next `switch_to_file` call has a valid
+///    `&BinderState` to swap to.
+///
+/// Per-file work that still happens N times:
+/// - `configure_checker_per_file` (file-local config: `file_idx`,
+///   `resolved_modules`, parse-error positions, etc.)
+/// - `CheckerContext::switch_to_file` (drains file-local caches,
+///   swaps `arena`/`binder`/`file_name`/`file_idx`)
+/// - The actual `check_source_file` work and diagnostic
+///   post-processing (via `run_check_on_existing_checker`)
+///
+/// Caller's contract: OPT-IN for sequential no-emit runs via
+/// `TSZ_FILE_SESSION_REUSE=1` (see `file_session_reuse_requested`
+/// for why this was flipped from default-on in PR #7521).
+/// `TSZ_DISABLE_FILE_SESSION_REUSE=1` continues to force off. The
+/// flag-off path goes through `check_file_for_parallel` per file
+/// unchanged.
+///
+/// **Correctness gate**: this path must produce byte-identical
+/// diagnostics to the flag-off path under any conformance fixture,
+/// or it is wrong (`PERFORMANCE_PLAN.md` §6 T2.1.B `DoD` line). If a
+/// future change introduces a divergence, the responsible change is
+/// the one to fix, not the flag — the flag exists to *measure* the
+/// allocation savings, not to gate behavior changes.
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(clippy::too_many_arguments)]
+fn check_files_sequentially_with_reuse<F>(
+    work_items: &[usize],
+    program: &MergedProgram,
+    compiler_options: &tsz_common::CheckerOptions,
+    program_context: &tsz::checker::context::ProgramContext,
+    resolved_modules_per_file: &Arc<Vec<Arc<rustc_hash::FxHashSet<String>>>>,
+    shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>>,
+    shared_query_cache: Option<&tsz_solver::construction::SharedQueryCache>,
+    no_check: bool,
+    check_js: bool,
+    explicit_check_js_false: bool,
+    skip_lib_check: bool,
+    program_has_real_syntax_errors: bool,
+    program_has_unsupported_js_root: bool,
+    extract_type_cache: bool,
+    build_checker_binder: F,
+) -> Vec<CheckFileResult>
+where
+    F: Fn(usize) -> tsz_binder::BinderState,
+{
+    // Pre-build every binder via the caller-provided closure. Each
+    // file's `CheckerContext::binder` is a `&'a BinderState`, so the
+    // binders must outlive the `CheckerState` we construct below;
+    // collecting into a `Vec` owned by this function satisfies that.
+    // The closure form lets the caller hold the module-resolution
+    // tables (`cached_module_specifiers`, `resolved_module_paths`,
+    // `merged_augmentations`) in its own scope without threading them
+    // through this function's signature.
+    let binders: Vec<tsz_binder::BinderState> = work_items
+        .iter()
+        .map(|&file_idx| build_checker_binder(file_idx))
+        .collect();
+
+    // One `QueryCache` for the whole loop. Mirrors the per-file
+    // construction in `check_file_for_parallel`, but built once.
+    let query_cache = if let Some(shared) = shared_query_cache {
+        QueryCache::new_with_shared(&program.type_interner, shared)
+    } else {
+        QueryCache::new(&program.type_interner)
+    };
+
+    let mut results: Vec<CheckFileResult> = Vec::with_capacity(work_items.len());
+    let mut checker: Option<CheckerState> = None;
+
+    for (loop_idx, &file_idx) in work_items.iter().enumerate() {
+        let file = &program.files[file_idx];
+
+        // skipLibCheck: skip type checking of declaration files. Same
+        // contract as `check_file_for_parallel`'s early-return; we
+        // emit an empty result and do *not* touch the shared
+        // `CheckerState` for this file.
+        if skip_lib_check && is_declaration_file(&file.file_name) {
+            results.push((
+                Vec::new(),
+                None,
+                RequestCacheCounters::default(),
+                tsz_solver::construction::QueryCacheStatistics::default(),
+                tsz_solver::StoreStatistics::default(),
+            ));
+            continue;
+        }
+
+        let resolved_modules: Arc<rustc_hash::FxHashSet<String>> = resolved_modules_per_file
+            .get(file_idx)
+            .cloned()
+            .unwrap_or_else(|| Arc::new(rustc_hash::FxHashSet::default()));
+
+        // Lazy construction on the first non-skipped file. After this,
+        // subsequent iterations use `switch_to_file` to re-target the
+        // same `CheckerState` at the next file.
+        if checker.is_none() {
+            let mut state = CheckerState::with_options_deferred_def_store(
+                &file.arena,
+                &binders[loop_idx],
+                &query_cache,
+                file.file_name.clone(),
+                compiler_options,
+            );
+            state.ctx.report_unresolved_imports = true;
+            state.ctx.shared_lib_type_cache = Some(Arc::clone(&shared_lib_cache));
+            // `apply_to` is the expensive setup we're amortising:
+            // shared `DefinitionStore`, shared global indices,
+            // resolved-module maps, file-is-ESM map, etc. Running it
+            // once vs. N-times is the headline win for this path.
+            program_context.apply_to(&mut state.ctx);
+            if state.ctx.has_lib_loaded() {
+                state.prime_boxed_types();
+            }
+            checker = Some(state);
+        } else if let Some(ref mut state) = checker {
+            state.ctx.switch_to_file(
+                &file.arena,
+                &binders[loop_idx],
+                file.file_name.clone(),
+                file_idx,
+            );
+        }
+
+        let state = checker.as_mut().expect("checker constructed above");
+        configure_checker_per_file(
+            &mut state.ctx,
+            file,
+            file_idx,
+            program_context,
+            resolved_modules,
+            program_has_real_syntax_errors,
+        );
+
+        let file_diagnostics = run_check_on_existing_checker(
+            state,
+            file,
+            compiler_options,
+            program_context,
+            no_check,
+            check_js,
+            explicit_check_js_false,
+            program_has_real_syntax_errors,
+            program_has_unsupported_js_root,
+        );
+
+        let checker_counters = state.ctx.request_cache_counters;
+        // `QueryCache::statistics()` is cumulative over the whole loop
+        // because we reuse the same cache. The aggregator merges per-
+        // file stats; emitting cumulative numbers N times would inflate
+        // them. Emit them once on the last iteration to keep the
+        // aggregator's invariant: sum of per-file QC stats == final
+        // cumulative QC stats.
+        let qc_stats = if loop_idx + 1 == work_items.len() {
+            query_cache.statistics()
+        } else {
+            tsz_solver::construction::QueryCacheStatistics::default()
+        };
+        let ds_stats = tsz_solver::StoreStatistics::default();
+        // The reuse path is gated on `!extract_type_cache` at the
+        // call site; this loop never observes `extract_type_cache=true`,
+        // so we always emit `None` for the per-file `TypeCache` slot.
+        // See the call site in the sequential-branch dispatch for
+        // the rationale.
+        let type_cache = None;
+        let _ = extract_type_cache;
+
+        results.push((
+            file_diagnostics,
+            type_cache,
+            checker_counters,
+            qc_stats,
+            ds_stats,
+        ));
+    }
+
+    results
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(clippy::too_many_arguments)]
+fn check_files_in_parallel_chunks_with_reuse<F>(
+    work_items: &[usize],
+    program: &MergedProgram,
+    compiler_options: &tsz_common::CheckerOptions,
+    program_context: &tsz::checker::context::ProgramContext,
+    resolved_modules_per_file: &Arc<Vec<Arc<rustc_hash::FxHashSet<String>>>>,
+    shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>>,
+    shared_query_cache: Option<&tsz_solver::construction::SharedQueryCache>,
+    no_check: bool,
+    check_js: bool,
+    explicit_check_js_false: bool,
+    skip_lib_check: bool,
+    program_has_real_syntax_errors: bool,
+    program_has_unsupported_js_root: bool,
+    extract_type_cache: bool,
+    chunk_size: usize,
+    build_checker_binder: &F,
+) -> Vec<CheckFileResult>
+where
+    F: Fn(usize) -> tsz_binder::BinderState + Sync,
+{
+    use rayon::iter::ParallelIterator;
+    use rayon::slice::ParallelSlice;
+
+    debug_assert!(!extract_type_cache);
+    let chunk_size = chunk_size.max(1);
+    work_items
+        .par_chunks(chunk_size)
+        .map(|chunk| {
+            check_files_sequentially_with_reuse(
+                chunk,
+                program,
+                compiler_options,
+                program_context,
+                resolved_modules_per_file,
+                Arc::clone(&shared_lib_cache),
+                shared_query_cache,
+                no_check,
+                check_js,
+                explicit_check_js_false,
+                skip_lib_check,
+                program_has_real_syntax_errors,
+                program_has_unsupported_js_root,
+                extract_type_cache,
+                build_checker_binder,
+            )
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
+        .flatten()
+        .collect()
+}
+
 struct CheckerLibFileCheckEnv<'a> {
     program: &'a MergedProgram,
     options: &'a ResolvedCompilerOptions,
@@ -2530,7 +3039,7 @@ struct CheckerLibFileCheckEnv<'a> {
     affected_interfaces: &'a FxHashSet<String>,
     extension_interfaces: &'a FxHashSet<String>,
     merged_augmentations: &'a MergedAugmentations,
-    project_env: &'a tsz::checker::context::ProjectEnv,
+    program_context: &'a tsz::checker::context::ProgramContext,
     program_has_real_syntax_errors: bool,
     program_has_unsupported_js_root: bool,
 }
@@ -2595,7 +3104,7 @@ fn check_checker_lib_file_for_interfaces(
         lib_bound_file.file_name.clone(),
         &options.checker,
     );
-    env.project_env.apply_to(&mut checker.ctx);
+    env.program_context.apply_to(&mut checker.ctx);
     if let Some(shared_lib_cache) = shared_lib_cache {
         checker.ctx.shared_lib_type_cache = Some(shared_lib_cache);
     }
@@ -2649,7 +3158,7 @@ fn check_checker_lib_file_for_interfaces(
 }
 
 fn check_checker_lib_file_baseline(
-    project_env: &tsz::checker::context::ProjectEnv,
+    program_context: &tsz::checker::context::ProgramContext,
     options: &ResolvedCompilerOptions,
     checker_libs: &CheckerLibSet,
     lib_idx: usize,
@@ -2677,7 +3186,7 @@ fn check_checker_lib_file_baseline(
         lib_file.file_name.clone(),
         &options.checker,
     );
-    project_env.apply_to(&mut checker.ctx);
+    program_context.apply_to(&mut checker.ctx);
     let other_lib_contexts: Vec<LibContext> = checker_libs
         .contexts
         .iter()
@@ -3307,11 +3816,13 @@ fn affected_lib_interface_names(
         }
     }
 
-    if relevant.is_empty() {
+    let mut result = if relevant.is_empty() {
         affected
     } else {
         relevant
-    }
+    };
+    result.retain(|name| inheritance_graph.contains_key(name));
+    result
 }
 
 fn affected_lib_extension_interface_names(
@@ -3433,6 +3944,50 @@ fn baseline_lib_datetimeformatpart_spelling_interface_names(
     interfaces
 }
 
+fn should_preserve_datetimeformatpart_spelling_baseline(checker_libs: &CheckerLibSet) -> bool {
+    checker_libs.files.iter().any(|lib| {
+        Path::new(&lib.file_name)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(is_datetimeformatpart_spelling_baseline_trigger_lib)
+    })
+}
+
+fn has_esnext_umbrella_lib(checker_libs: &CheckerLibSet) -> bool {
+    checker_libs.files.iter().any(|lib| {
+        Path::new(&lib.file_name)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| matches!(name, "lib.esnext.d.ts" | "esnext.d.ts"))
+    })
+}
+
+fn has_parallel_order_sensitive_global_lib(checker_libs: &CheckerLibSet) -> bool {
+    checker_libs.files.iter().any(|lib| {
+        Path::new(&lib.file_name)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(is_parallel_order_sensitive_global_lib)
+    })
+}
+
+fn is_parallel_order_sensitive_global_lib(file_name: &str) -> bool {
+    matches!(
+        file_name,
+        "lib.dom.d.ts" | "dom.d.ts" | "lib.webworker.d.ts" | "webworker.d.ts"
+    )
+}
+
+fn is_datetimeformatpart_spelling_baseline_trigger_lib(file_name: &str) -> bool {
+    matches!(
+        file_name,
+        "lib.esnext.date.d.ts"
+            | "esnext.date.d.ts"
+            | "lib.esnext.temporal.d.ts"
+            | "esnext.temporal.d.ts"
+    )
+}
+
 fn is_datetimeformatpart_spelling_baseline_lib(file_name: &str) -> bool {
     matches!(
         file_name,
@@ -3529,14 +4084,14 @@ fn collect_checker_lib_baseline_fingerprints(
     checker_libs: &CheckerLibSet,
     affected_interfaces: &FxHashSet<String>,
     extension_interfaces: &FxHashSet<String>,
-    project_env: &tsz::checker::context::ProjectEnv,
+    program_context: &tsz::checker::context::ProgramContext,
 ) -> FxHashSet<LibDiagnosticFingerprint> {
     let mut fingerprints = FxHashSet::default();
 
     for lib_idx in 0..checker_libs.files.len() {
         let query_cache = QueryCache::new(&program.type_interner);
         let (diagnostics, _, _) = check_checker_lib_file_baseline(
-            project_env,
+            program_context,
             options,
             checker_libs,
             lib_idx,
@@ -3556,7 +4111,7 @@ fn collect_checker_lib_baseline_diagnostics_for_codes(
     checker_libs: &CheckerLibSet,
     affected_interfaces: &FxHashSet<String>,
     extension_interfaces: &FxHashSet<String>,
-    project_env: &tsz::checker::context::ProjectEnv,
+    program_context: &tsz::checker::context::ProgramContext,
     codes: &[u32],
 ) -> Vec<Diagnostic> {
     let code_filter = codes.iter().copied().collect::<FxHashSet<_>>();
@@ -3565,7 +4120,7 @@ fn collect_checker_lib_baseline_diagnostics_for_codes(
     for lib_idx in 0..checker_libs.files.len() {
         let query_cache = QueryCache::new(&program.type_interner);
         let (lib_diagnostics, _, _) = check_checker_lib_file_baseline(
-            project_env,
+            program_context,
             options,
             checker_libs,
             lib_idx,
@@ -3659,6 +4214,156 @@ mod tests {
         .diagnostics
     }
 
+    struct FileSessionReuseOverrideGuard;
+
+    impl Drop for FileSessionReuseOverrideGuard {
+        fn drop(&mut self) {
+            FILE_SESSION_REUSE_TEST_OVERRIDE.with(|override_value| override_value.set(None));
+        }
+    }
+
+    fn collect_test_diagnostics_with_file_session_reuse(
+        files: &[(&str, &str)],
+        enabled: bool,
+    ) -> Vec<Diagnostic> {
+        FILE_SESSION_REUSE_TEST_OVERRIDE.with(|override_value| override_value.set(Some(enabled)));
+        let _guard = FileSessionReuseOverrideGuard;
+        let options = ResolvedCompilerOptions {
+            no_emit: true,
+            ..ResolvedCompilerOptions::default()
+        };
+        collect_test_diagnostics_with_options(files, &options, std::path::Path::new("/"))
+    }
+
+    fn merged_program_from_owned_files(files: Vec<(String, String)>) -> MergedProgram {
+        let bind_results: Vec<_> = files
+            .into_iter()
+            .map(|(file_name, source)| parallel::parse_and_bind_single(file_name, source))
+            .collect();
+        parallel::merge_bind_results(bind_results)
+    }
+
+    /// Asserts the post-PR-#7521 file-session reuse env policy: OFF unless
+    /// the user opts back in via `TSZ_FILE_SESSION_REUSE=1`. Before
+    /// PR #7521 the default was ON (set by PRs #6870 / #6893) which
+    /// regressed wall time 4-14x at 1k+ files; see
+    /// `docs/architecture/LSP_PERF_EXPERIMENTS_2026-05-16.md`.
+    ///
+    /// Failure modes this test catches:
+    ///   * someone accidentally reverts the env default-OFF policy
+    ///     (`file_session_reuse_from_env(false, false)` returns true)
+    ///   * `TSZ_FILE_SESSION_REUSE=1` opt-in stops working
+    ///   * `TSZ_DISABLE_FILE_SESSION_REUSE=1` opt-out stops working
+    ///   * the disable knob stops taking precedence over the enable knob
+    #[test]
+    fn file_session_reuse_env_policy_pr_7521() {
+        // Default (no env vars set): reuse OFF.
+        assert!(
+            !file_session_reuse_from_env(false, false),
+            "PR #7521: default reuse policy must be OFF (no env vars set)"
+        );
+
+        // Explicit opt-in: TSZ_FILE_SESSION_REUSE=1 turns reuse back on.
+        assert!(
+            file_session_reuse_from_env(false, true),
+            "TSZ_FILE_SESSION_REUSE=1 must opt back in"
+        );
+
+        // Explicit opt-out: TSZ_DISABLE_FILE_SESSION_REUSE=1 forces OFF.
+        assert!(
+            !file_session_reuse_from_env(true, false),
+            "TSZ_DISABLE_FILE_SESSION_REUSE=1 must force reuse OFF"
+        );
+
+        // Disable beats enable: both set => OFF.
+        assert!(
+            !file_session_reuse_from_env(true, true),
+            "TSZ_DISABLE_FILE_SESSION_REUSE=1 must take precedence over TSZ_FILE_SESSION_REUSE=1"
+        );
+    }
+
+    #[test]
+    fn file_session_reuse_workload_policy_keeps_reuse_opt_in_for_tiny_batches() {
+        assert!(
+            !file_session_reuse_from_workload(false, false, 10),
+            "tiny no-emit batches must not reuse by default until reuse is byte-identical"
+        );
+        assert!(
+            !file_session_reuse_from_workload(
+                false,
+                false,
+                FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES
+            ),
+            "the documented tiny-project boundary is a reuse implementation limit, not a default-on policy"
+        );
+        assert!(
+            !file_session_reuse_from_workload(
+                false,
+                false,
+                FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES + 1
+            ),
+            "larger batch CLI projects must keep the post-#7521 reuse-off default"
+        );
+        assert!(
+            file_session_reuse_from_workload(
+                false,
+                true,
+                FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES + 1
+            ),
+            "TSZ_FILE_SESSION_REUSE=1 must still opt larger projects into reuse"
+        );
+        assert!(
+            !file_session_reuse_from_workload(true, true, 10),
+            "TSZ_DISABLE_FILE_SESSION_REUSE=1 must override tiny-project auto reuse"
+        );
+    }
+
+    #[test]
+    fn tiny_no_emit_reuse_path_covers_boxed_prime_checker() {
+        assert!(
+            !needs_separate_boxed_prime_checker(true, false, true, 10, true),
+            "tiny no-emit reuse should prime on the reused checker, not a duplicate checker"
+        );
+        assert!(
+            needs_separate_boxed_prime_checker(true, false, false, 10, true),
+            "fresh-checker tiny runs still need the separate prime checker"
+        );
+        assert!(
+            needs_separate_boxed_prime_checker(
+                true,
+                false,
+                true,
+                FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES + 1,
+                true,
+            ),
+            "large projects do not use the tiny reused-checker coverage rule"
+        );
+        assert!(
+            needs_separate_boxed_prime_checker(true, true, true, 10, true),
+            "declaration emit consumes per-file state and cannot use tiny no-emit coverage"
+        );
+        assert!(
+            !needs_separate_boxed_prime_checker(true, false, true, 10, false),
+            "projects without libs have nothing to prime"
+        );
+    }
+
+    #[test]
+    fn detects_large_wildcard_barrel() {
+        let mut files = Vec::new();
+        let mut barrel = String::new();
+        for i in 0..LARGE_WILDCARD_BARREL_EXPORTS {
+            files.push((format!("/p/a{i}.ts"), format!("export type A{i} = {i};")));
+            barrel.push_str(&format!("export * from \"./a{i}\";\n"));
+        }
+        files.push(("/p/index.ts".to_string(), barrel));
+
+        let program = merged_program_from_owned_files(files);
+        let work_items: Vec<usize> = (0..program.files.len()).collect();
+
+        assert!(has_large_wildcard_barrel(&program, &work_items));
+    }
+
     fn checker_lib_set_for_test(libs: &[(&str, &str)]) -> CheckerLibSet {
         let files = libs
             .iter()
@@ -3681,6 +4386,78 @@ mod tests {
             files,
             contexts: std::sync::Arc::new(contexts),
         }
+    }
+
+    #[test]
+    fn user_only_global_interfaces_do_not_trigger_lib_recheck() {
+        let checker_libs = checker_lib_set_for_test(&[(
+            "lib.test.d.ts",
+            r#"
+interface Window {
+    document: object;
+}
+"#,
+        )]);
+
+        let program = merged_program_from_owned_files(vec![(
+            "file.ts".to_string(),
+            r#"
+interface Result<T> {
+    value?: T;
+}
+"#
+            .to_string(),
+        )]);
+
+        let affected = affected_lib_interface_names(&program, &checker_libs);
+        assert!(
+            affected.is_empty(),
+            "user-only global interfaces should not request default-lib recheck, got: {affected:?}"
+        );
+    }
+
+    #[test]
+    fn user_global_interfaces_matching_lib_names_still_trigger_lib_recheck() {
+        let checker_libs = checker_lib_set_for_test(&[(
+            "lib.test.d.ts",
+            r#"
+interface Window {
+    document: object;
+}
+"#,
+        )]);
+
+        let program = merged_program_from_owned_files(vec![(
+            "file.ts".to_string(),
+            r#"
+interface Window {
+    custom: string;
+}
+"#
+            .to_string(),
+        )]);
+
+        let affected = affected_lib_interface_names(&program, &checker_libs);
+        assert!(
+            affected.contains("Window"),
+            "lib-matching global interfaces must still request default-lib recheck, got: {affected:?}"
+        );
+    }
+
+    #[test]
+    fn parallel_order_sensitive_lib_detection_is_scoped_to_dom_like_globals() {
+        let es_libs = checker_lib_set_for_test(&[("lib.es2018.d.ts", "interface Promise<T> {}\n")]);
+        assert!(
+            !has_parallel_order_sensitive_global_lib(&es_libs),
+            "plain ES libs should stay eligible for parallel project checking"
+        );
+
+        let dom_libs =
+            checker_lib_set_for_test(&[("lib.dom.d.ts", "interface Console { log(): void; }\n")]);
+        assert!(
+            has_parallel_order_sensitive_global_lib(&dom_libs),
+            "DOM-style globals should use deterministic project checking"
+        );
     }
 
     fn collect_test_diagnostics_with_checker_libs(
@@ -3710,6 +4487,47 @@ mod tests {
         .diagnostics
     }
 
+    fn collect_test_diagnostics_with_lib_files(
+        files: &[(&str, &str)],
+        lib_files: &[std::sync::Arc<tsz::binder::lib_loader::LibFile>],
+    ) -> Vec<Diagnostic> {
+        collect_test_diagnostics_with_lib_files_and_options(
+            files,
+            lib_files,
+            &ResolvedCompilerOptions::default(),
+        )
+    }
+
+    fn collect_test_diagnostics_with_lib_files_and_options(
+        files: &[(&str, &str)],
+        lib_files: &[std::sync::Arc<tsz::binder::lib_loader::LibFile>],
+        options: &ResolvedCompilerOptions,
+    ) -> Vec<Diagnostic> {
+        let compile_inputs = files
+            .iter()
+            .map(|(file_name, source)| ((*file_name).to_string(), (*source).to_string()))
+            .collect::<Vec<_>>();
+        let program = parallel::merge_bind_results(parallel::parse_and_bind_parallel_with_libs(
+            compile_inputs,
+            lib_files,
+        ));
+        let checker_libs = load_checker_libs(lib_files);
+        let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
+
+        collect_diagnostics(
+            &program,
+            options,
+            std::path::Path::new("/"),
+            None,
+            &checker_libs,
+            (false, false, false),
+            &type_cache_output,
+            false,
+            false,
+        )
+        .diagnostics
+    }
+
     fn default_cli_args_for_test() -> CliArgs {
         clap::Parser::try_parse_from(["tsz"]).expect("default args should parse")
     }
@@ -3728,6 +4546,170 @@ mod tests {
             resolved.checker.module = ModuleKind::ES2015;
         }
         resolved
+    }
+
+    #[test]
+    fn readonly_alias_annotation_survives_consumer_first_program_check() {
+        let lib_files = tsz::checker::test_utils::load_lib_files(&["es5.d.ts"]);
+        assert!(
+            !lib_files.is_empty(),
+            "es5.d.ts must be available for this regression"
+        );
+        let files = [
+            (
+                "/p/b.ts",
+                r#"
+import { Factory } from "./a.js";
+
+Factory.cloneWith("x");
+"#,
+            ),
+            (
+                "/p/a.ts",
+                r#"
+import { freeze } from "./object-utils.js";
+
+type Factory = Readonly<{
+  create(name: string): string;
+  cloneWith(value: string): string;
+}>;
+
+export const Factory: Factory = freeze<Factory>({
+  create(name) {
+    return name;
+  },
+  cloneWith(value) {
+    return value;
+  },
+});
+"#,
+            ),
+            (
+                "/p/object-utils.ts",
+                r#"
+export function freeze<T>(value: T): Readonly<T> {
+  return value;
+}
+"#,
+            ),
+        ];
+
+        let diagnostics = collect_test_diagnostics_with_lib_files(&files, &lib_files);
+        let ts2339 = diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == 2339)
+            .collect::<Vec<_>>();
+
+        assert!(
+            ts2339.is_empty(),
+            "Readonly alias annotations should not collapse to unknown in consumer-first program checks. Got: {ts2339:?}. All: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn large_project_checking_preserves_parallel_dom_globals() {
+        let lib_files = tsz::checker::test_utils::load_lib_files(&["es5.d.ts", "dom.d.ts"]);
+        assert!(
+            lib_files.len() >= 2,
+            "es5.d.ts and dom.d.ts must be available for this regression"
+        );
+
+        let owned_files = (0..40)
+            .map(|idx| {
+                (
+                    format!("pkg{idx}/file{idx}.ts"),
+                    format!("console.log(\"file{idx}\");\nconsole.warn(\"file{idx}\");\n"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let files = owned_files
+            .iter()
+            .map(|(file_name, source)| (file_name.as_str(), source.as_str()))
+            .collect::<Vec<_>>();
+        let options = ResolvedCompilerOptions {
+            no_emit: true,
+            ..ResolvedCompilerOptions::default()
+        };
+
+        let reused_diagnostics = {
+            FILE_SESSION_REUSE_TEST_OVERRIDE.with(|override_value| override_value.set(Some(true)));
+            let _guard = FileSessionReuseOverrideGuard;
+            collect_test_diagnostics_with_lib_files_and_options(&files, &lib_files, &options)
+        };
+        let disabled_diagnostics = {
+            FILE_SESSION_REUSE_TEST_OVERRIDE.with(|override_value| override_value.set(Some(false)));
+            let _guard = FileSessionReuseOverrideGuard;
+            collect_test_diagnostics_with_lib_files_and_options(&files, &lib_files, &options)
+        };
+        let console_member_errors = reused_diagnostics
+            .iter()
+            .chain(disabled_diagnostics.iter())
+            .filter(|diagnostic| diagnostic.code == 2339)
+            .collect::<Vec<_>>();
+
+        assert!(
+            console_member_errors.is_empty(),
+            "large-project DOM globals must not be order-dependent. TS2339: {console_member_errors:?}. Reused: {reused_diagnostics:?}. Disabled: {disabled_diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn file_session_reuse_preserves_multifile_diagnostics() {
+        let files = [
+            (
+                "a.ts",
+                "interface Alpha { kind: \"alpha\"; count: number }\nconst a: Alpha = { kind: \"alpha\", count: \"nope\" };\n",
+            ),
+            (
+                "b.ts",
+                "interface Beta { kind: \"beta\"; count: number }\nconst b: Beta = { kind: \"beta\", count: \"nope\" };\n",
+            ),
+            (
+                "c.ts",
+                "interface Gamma { kind: \"gamma\"; count: number }\nconst c: Gamma = { kind: \"gamma\", count: \"nope\" };\n",
+            ),
+        ];
+
+        let default_diagnostics = collect_test_diagnostics_with_file_session_reuse(&files, false);
+        let reused_diagnostics = collect_test_diagnostics_with_file_session_reuse(&files, true);
+
+        assert_eq!(
+            reused_diagnostics, default_diagnostics,
+            "file-session reuse must preserve byte-identical diagnostics"
+        );
+        assert!(
+            !default_diagnostics.is_empty(),
+            "fixture should exercise real checker diagnostics"
+        );
+    }
+
+    #[test]
+    fn file_session_reuse_preserves_parallel_multifile_diagnostics() {
+        let owned_files = (0..40)
+            .map(|idx| {
+                (
+                    format!("pkg{idx}/file{idx}.ts"),
+                    format!("export {{}};\nconst value{idx}: number = \"nope\";\n"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let files = owned_files
+            .iter()
+            .map(|(file_name, source)| (file_name.as_str(), source.as_str()))
+            .collect::<Vec<_>>();
+
+        let default_diagnostics = collect_test_diagnostics_with_file_session_reuse(&files, false);
+        let reused_diagnostics = collect_test_diagnostics_with_file_session_reuse(&files, true);
+
+        assert_eq!(
+            reused_diagnostics, default_diagnostics,
+            "parallel file-session reuse must preserve byte-identical diagnostics"
+        );
+        assert_eq!(
+            default_diagnostics.len(),
+            owned_files.len(),
+            "fixture should produce one checker diagnostic per file"
+        );
     }
 
     #[test]
@@ -3827,17 +4809,86 @@ mod tests {
     }
 
     #[test]
+    fn skip_lib_check_pure_declaration_no_emit_skips_semantic_diagnostics() {
+        let options = ResolvedCompilerOptions {
+            no_emit: true,
+            skip_lib_check: true,
+            ..ResolvedCompilerOptions::default()
+        };
+
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[(
+                "index.d.ts",
+                r#"
+export type UsesMissing = Missing;
+export interface Broken {
+    value: ;
+}
+"#,
+            )],
+            &options,
+            std::path::Path::new("/"),
+        );
+
+        assert!(
+            diagnostics.iter().any(|diag| diag.code < 2000),
+            "parse diagnostics must still surface under skipLibCheck: {diagnostics:?}"
+        );
+        assert!(
+            !diagnostics.iter().any(|diag| diag.code == 2304),
+            "skipLibCheck must suppress declaration-file semantic diagnostics: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn skip_lib_check_mixed_project_still_checks_source_files() {
+        let options = ResolvedCompilerOptions {
+            no_emit: true,
+            skip_lib_check: true,
+            ..ResolvedCompilerOptions::default()
+        };
+
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[
+                ("types.d.ts", "export type UsesMissing = Missing;\n"),
+                ("main.ts", "const value: string = 1;\n"),
+            ],
+            &options,
+            std::path::Path::new("/"),
+        );
+
+        assert!(
+            diagnostics.iter().any(|diag| diag.code == 2322),
+            "non-declaration source files must still be checked under skipLibCheck: {diagnostics:?}"
+        );
+        assert!(
+            !diagnostics.iter().any(|diag| diag.code == 2304),
+            "declaration-file semantic diagnostics must remain suppressed: {diagnostics:?}"
+        );
+    }
+
+    #[test]
     fn collect_diagnostics_preserves_builtin_lib_ts2552_spelling_baseline() {
-        let checker_libs = checker_lib_set_for_test(&[(
-            "lib.esnext.intl.d.ts",
-            r#"
+        let checker_libs = checker_lib_set_for_test(&[
+            (
+                "lib.esnext.intl.d.ts",
+                r#"
 declare namespace Intl {
     interface DateTimeFormat {
         formatToParts(): DateTimeFormatPart[];
     }
 }
 "#,
-        )]);
+            ),
+            (
+                "lib.esnext.temporal.d.ts",
+                r#"
+declare namespace Temporal {
+    interface Instant {}
+}
+"#,
+            ),
+        ]);
 
         let diagnostics = collect_test_diagnostics_with_checker_libs(
             &[("test.ts", "const value = new Intl.DateTimeFormat();\n")],
@@ -3860,6 +4911,30 @@ declare namespace Intl {
             "expected DateTimeFormatPart spelling suggestion, got: {ts2552:?}"
         );
         assert_eq!(ts2552[0].file, "lib.esnext.intl.d.ts");
+    }
+
+    #[test]
+    fn collect_diagnostics_skips_builtin_lib_ts2552_without_temporal_trigger_lib() {
+        let checker_libs = checker_lib_set_for_test(&[(
+            "lib.esnext.intl.d.ts",
+            r#"
+declare namespace Intl {
+    interface DateTimeFormat {
+        formatToParts(): DateTimeFormatPart[];
+    }
+}
+"#,
+        )]);
+
+        let diagnostics = collect_test_diagnostics_with_checker_libs(
+            &[("test.ts", "const value = new Intl.DateTimeFormat();\n")],
+            &checker_libs,
+        );
+
+        assert!(
+            diagnostics.iter().all(|diag| diag.code != 2552),
+            "expected DateTimeFormatPart baseline to require Temporal/Date libs, got: {diagnostics:?}"
+        );
     }
 
     #[test]
@@ -3888,17 +4963,27 @@ declare namespace Intl {
     }
 
     fn collect_es2015_default_lib_diagnostics(source: &str) -> Vec<Diagnostic> {
+        collect_es2015_default_lib_diagnostics_with_options(source, |_: &mut _| {})
+    }
+
+    fn collect_es2015_default_lib_diagnostics_with_options(
+        source: &str,
+        configure: impl FnOnce(&mut ResolvedCompilerOptions),
+    ) -> Vec<Diagnostic> {
         let dir = tempfile::TempDir::new().expect("temp dir");
         let file_path = dir.path().join("main.ts");
         std::fs::write(&file_path, source).expect("write source");
 
-        let resolved = resolved_options_for_es2015_strict_test();
+        let mut resolved = resolved_options_for_es2015_strict_test();
+        configure(&mut resolved);
         let file_paths = vec![file_path];
         let SourceReadResult {
             sources,
             dependencies: _,
+            module_resolutions: _,
             type_reference_errors,
             resolution_mode_errors,
+            ..
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
             .expect("read source files");
 
@@ -4188,8 +5273,10 @@ const elem = <div className={class1, class2}/>;
         let SourceReadResult {
             sources,
             dependencies: _,
+            module_resolutions: _,
             type_reference_errors,
             resolution_mode_errors,
+            ..
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
             .expect("read source files");
 
@@ -4307,8 +5394,10 @@ const q: PromiseLike<number> = p;
         let SourceReadResult {
             sources,
             dependencies: _,
+            module_resolutions: _,
             type_reference_errors,
             resolution_mode_errors,
+            ..
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
             .expect("read source files");
 
@@ -4387,8 +5476,10 @@ async function f() {
         let SourceReadResult {
             sources,
             dependencies: _,
+            module_resolutions: _,
             type_reference_errors,
             resolution_mode_errors,
+            ..
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
             .expect("read source files");
 
@@ -4470,8 +5561,10 @@ type Recurse2 = {
         let SourceReadResult {
             sources,
             dependencies: _,
+            module_resolutions: _,
             type_reference_errors,
             resolution_mode_errors,
+            ..
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
             .expect("read source files");
 
@@ -4563,8 +5656,10 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
         let SourceReadResult {
             sources,
             dependencies: _,
+            module_resolutions: _,
             type_reference_errors,
             resolution_mode_errors,
+            ..
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
             .expect("read source files");
 
@@ -4623,7 +5718,7 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
         program
             .type_interner
             .set_exact_optional_property_types(resolved.checker.exact_optional_property_types);
-        let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+        let query_cache = tsz_solver::construction::QueryCache::new(&program.type_interner);
         let mut checker = CheckerState::with_options(
             &program.files[0].arena,
             &rebuilt_binder,
@@ -4705,7 +5800,7 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
         let _source_type = checker.get_type_of_node(decl.initializer);
         let target_type = checker.get_type_from_type_node(decl.type_annotation);
         let _read_constraint_type =
-            |object_type| match tsz_solver::QueryDatabase::resolve_property_access(
+            |object_type| match tsz_solver::construction::QueryDatabase::resolve_property_access(
                 &query_cache,
                 object_type,
                 "constraint",
@@ -4716,8 +5811,10 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
                 _ => None,
             };
         let _evaluated_target_type = {
-            let mut evaluator =
-                tsz_solver::TypeEvaluator::with_resolver(&program.type_interner, &checker.ctx);
+            let mut evaluator = tsz_solver::computation::TypeEvaluator::with_resolver(
+                &program.type_interner,
+                &checker.ctx,
+            );
             evaluator.evaluate(target_type)
         };
         let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
@@ -4810,8 +5907,10 @@ export const x = foo();
         let SourceReadResult {
             sources,
             dependencies: _,
+            module_resolutions: _,
             type_reference_errors,
             resolution_mode_errors,
+            ..
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
             .expect("read source files");
 
@@ -4912,8 +6011,10 @@ export type RowToColumns<TColumns> = {
         let SourceReadResult {
             sources,
             dependencies: _,
+            module_resolutions: _,
             type_reference_errors,
             resolution_mode_errors,
+            ..
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
             .expect("read source files");
 
@@ -4974,9 +6075,11 @@ export type RowToColumns<TColumns> = {
         assert!(is_declaration_file("types.d.ts"));
         assert!(is_declaration_file("index.d.mts"));
         assert!(is_declaration_file("index.d.cts"));
+        assert!(is_declaration_file("native.d.node.ts"));
         assert!(is_declaration_file("/path/to/file.d.ts"));
         assert!(is_declaration_file("/path/to/file.d.mts"));
         assert!(is_declaration_file("/path/to/file.d.cts"));
+        assert!(is_declaration_file("/path/to/file.d.node.ts"));
 
         assert!(!is_declaration_file("index.ts"));
         assert!(!is_declaration_file("index.mts"));
@@ -5548,8 +6651,10 @@ let x2: string = f;
         let SourceReadResult {
             sources,
             dependencies: _,
+            module_resolutions: _,
             type_reference_errors,
             resolution_mode_errors,
+            ..
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
             .expect("read source files");
 
@@ -5659,8 +6764,10 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) => typeHandlers[p.t]?.(p
         let SourceReadResult {
             sources,
             dependencies: _,
+            module_resolutions: _,
             type_reference_errors,
             resolution_mode_errors,
+            ..
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
             .expect("read source files");
 
@@ -5757,8 +6864,10 @@ const nestedTuple = type([["ark", "|>", (x) => x.length]])
         let SourceReadResult {
             sources,
             dependencies: _,
+            module_resolutions: _,
             type_reference_errors,
             resolution_mode_errors,
+            ..
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
             .expect("read source files");
 
@@ -5845,8 +6954,10 @@ m(item => item.id < 5);
         let SourceReadResult {
             sources,
             dependencies: _,
+            module_resolutions: _,
             type_reference_errors,
             resolution_mode_errors,
+            ..
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
             .expect("read source files");
 
@@ -5927,8 +7038,10 @@ interface Buzz { id: number; buzz: string }
         let SourceReadResult {
             sources,
             dependencies: _,
+            module_resolutions: _,
             type_reference_errors,
             resolution_mode_errors,
+            ..
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
             .expect("read source files");
 
@@ -5988,7 +7101,6 @@ interface Buzz { id: number; buzz: string }
     }
 
     #[test]
-    #[ignore] // TODO: should report implicit any for primitive union property callback
     fn test_collect_diagnostics_reports_implicit_any_for_primitive_union_property_callback() {
         let dir = tempfile::TempDir::new().expect("temp dir");
         let file_path = dir.path().join("main.ts");
@@ -6017,8 +7129,10 @@ const obj: {field: Rule} = {
         let SourceReadResult {
             sources,
             dependencies: _,
+            module_resolutions: _,
             type_reference_errors,
             resolution_mode_errors,
+            ..
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
             .expect("read source files");
 
@@ -6138,8 +7252,10 @@ function foo() {
         let SourceReadResult {
             sources,
             dependencies: _,
+            module_resolutions: _,
             type_reference_errors,
             resolution_mode_errors,
+            ..
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
             .expect("read source files");
 
@@ -6234,6 +7350,92 @@ interface HTMLElement {
     }
 
     #[test]
+    fn skip_lib_check_skips_default_lib_recheck_after_global_merge() {
+        let diagnostics = collect_es2015_default_lib_diagnostics_with_options(
+            r#"
+const enum SyntaxKind {
+    Modifier,
+    Decorator,
+}
+
+interface Node {
+    kind: SyntaxKind;
+}
+
+interface Modifier extends Node { kind: SyntaxKind.Modifier; }
+interface Decorator extends Node { kind: SyntaxKind.Decorator; }
+
+declare function isModifier(node: Node): node is Modifier;
+declare function isDecorator(node: Node): node is Decorator;
+
+declare function every<T, U extends T>(array: readonly T[], callback: (element: T) => element is U): array is readonly U[];
+
+declare const modifiers: readonly Decorator[] | readonly Modifier[];
+
+function foo() {
+    every(modifiers, isModifier);
+    every(modifiers, isDecorator);
+}
+"#,
+            |resolved| {
+                resolved.skip_lib_check = true;
+            },
+        );
+
+        assert!(
+            !diagnostics.iter().any(|diag| {
+                diag.file.ends_with("lib.dom.d.ts")
+                    && matches!(
+                        diag.code,
+                        diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT
+                            | diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE
+                    )
+            }),
+            "Did not expect lib.dom.d.ts TS2344/TS2430 diagnostics when skipLibCheck is enabled, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn default_lib_validation_keeps_select_option_index_compatible_after_html_element_merge() {
+        let diagnostics = collect_es2015_default_lib_diagnostics(
+            r#"
+declare global {
+    interface ElementTagNameMap {
+        [index: number]: HTMLElement
+    }
+
+    interface HTMLElement {
+        [index: number]: HTMLElement;
+    }
+}
+
+export {};
+"#,
+        );
+
+        let lib_ts2430 = diagnostics
+            .iter()
+            .filter(|diag| {
+                diag.file.ends_with("lib.dom.d.ts")
+                    && diag.code == diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE
+            })
+            .collect::<Vec<_>>();
+
+        assert!(
+            lib_ts2430
+                .iter()
+                .any(|diag| diag.message_text.contains("HTMLFormElement")),
+            "Expected the real HTMLFormElement numeric-index incompatibility, got: {diagnostics:?}"
+        );
+        assert!(
+            !lib_ts2430
+                .iter()
+                .any(|diag| diag.message_text.contains("HTMLSelectElement")),
+            "Did not expect HTMLSelectElement to fail: its option/group index values inherit HTMLElement. Got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
     fn default_lib_validation_normalizes_cross_arena_method_members_after_global_merge() {
         let diagnostics = collect_es2015_default_lib_diagnostics(
             r#"
@@ -6283,8 +7485,10 @@ interface Node {
         let SourceReadResult {
             sources,
             dependencies: _,
+            module_resolutions: _,
             type_reference_errors,
             resolution_mode_errors,
+            ..
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
             .expect("read source files");
 

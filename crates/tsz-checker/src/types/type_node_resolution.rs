@@ -5,6 +5,9 @@
 //! type environment and for resolving `DefIds` from qualified names.
 
 use crate::symbols_domain::name_text::{entity_name_text_in_arena, expression_name_text_in_arena};
+use crate::types_domain::unique_symbol_arena::{
+    has_declared_unique_symbol_owner, is_unique_symbol_type_annotation_unwrapped,
+};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_solver::TypeId;
@@ -13,6 +16,53 @@ use tsz_solver::is_compiler_managed_type;
 use super::type_node::TypeNodeChecker;
 
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
+    pub(super) fn resolve_import_alias_type_target_symbol(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> Option<tsz_binder::SymbolId> {
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS) {
+            return None;
+        }
+        if !symbol.is_type_only {
+            return None;
+        }
+        let module_name = symbol.import_module.as_ref()?;
+        let import_name = symbol.import_name.as_deref()?;
+        if import_name == "*" {
+            return None;
+        }
+
+        let source_file_idx = self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .unwrap_or(self.ctx.current_file_idx);
+        let target_file_idx = self
+            .ctx
+            .resolve_import_target_from_file(source_file_idx, module_name)?;
+        let target_binder = self.ctx.get_binder_for_file(target_file_idx)?;
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let target_file_name = target_arena.source_files.first()?.file_name.as_str();
+
+        let target_sym_id = self
+            .ctx
+            .module_exports_for_module(target_binder, target_file_name)
+            .and_then(|exports| exports.get(import_name))
+            .or_else(|| {
+                self.ctx
+                    .module_exports_for_module(target_binder, module_name)
+                    .and_then(|exports| exports.get(import_name))
+            })
+            .or_else(|| target_binder.file_locals.get(import_name))?;
+        let target_symbol = target_binder.get_symbol(target_sym_id)?;
+        if !target_symbol.has_any_flags(tsz_binder::symbol_flags::TYPE) {
+            return None;
+        }
+        self.ctx
+            .register_symbol_file_target(target_sym_id, target_file_idx);
+        Some(target_sym_id)
+    }
+
     pub(super) fn entity_name_text(&self, idx: NodeIndex) -> Option<String> {
         entity_name_text_in_arena(self.ctx.arena, idx)
     }
@@ -211,6 +261,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             }
             if let Some(symbol_arena) = self.ctx.binder.symbol_arenas.get(&sym_id) {
                 candidate_arenas.push(symbol_arena.as_ref());
+            }
+            for lib_ctx in self.ctx.lib_contexts.iter() {
+                if let Some(arenas) = lib_ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+                    candidate_arenas.extend(arenas.iter().map(std::convert::AsRef::as_ref));
+                }
+                if let Some(symbol_arena) = lib_ctx.binder.symbol_arenas.get(&sym_id) {
+                    candidate_arenas.push(symbol_arena.as_ref());
+                }
             }
             candidate_arenas.push(self.ctx.arena);
 
@@ -440,34 +498,64 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 candidate_arenas.push(self.ctx.arena);
             }
 
-            candidate_arenas
-                .into_iter()
-                .any(|arena| self.declaration_is_unique_symbol_in_arena(arena, decl_idx))
+            candidate_arenas.into_iter().any(|arena| {
+                self.declaration_is_unique_symbol_in_arena(owner_binder, arena, decl_idx)
+            })
         })
     }
 
     fn declaration_is_unique_symbol_in_arena(
         &self,
+        owner_binder: &tsz_binder::BinderState,
         arena: &NodeArena,
-        decl_idx: NodeIndex,
+        mut decl_idx: NodeIndex,
     ) -> bool {
-        let Some(node) = arena.get(decl_idx) else {
+        let Some(mut node) = arena.get(decl_idx) else {
             return false;
         };
-        if node.kind != tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION {
-            return false;
+
+        if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            let Some(parent_idx) = arena.get_extended(decl_idx).map(|ext| ext.parent) else {
+                return false;
+            };
+            let Some(parent_node) = arena.get(parent_idx) else {
+                return false;
+            };
+            if parent_node.kind == tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION
+                || parent_node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_DECLARATION
+            {
+                decl_idx = parent_idx;
+                node = parent_node;
+            }
         }
 
-        let Some(var_decl) = arena.get_variable_declaration(node) else {
-            return false;
-        };
+        if node.kind == tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION {
+            let Some(var_decl) = arena.get_variable_declaration(node) else {
+                return false;
+            };
+            if !arena.is_const_variable_declaration(decl_idx) {
+                return false;
+            }
 
-        (var_decl.type_annotation.is_some()
-            && self.is_unique_symbol_type_annotation_in_resolution_arena(
-                arena,
-                var_decl.type_annotation,
-            ))
-            || self.is_symbol_call_initializer_in_resolution_arena(arena, var_decl.initializer)
+            return (var_decl.type_annotation.is_some()
+                && is_unique_symbol_type_annotation_unwrapped(arena, var_decl.type_annotation))
+                || self.is_global_symbol_factory_call_initializer_in_resolution_arena(
+                    owner_binder,
+                    arena,
+                    var_decl.initializer,
+                );
+        }
+
+        if node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_DECLARATION {
+            let Some(prop) = arena.get_property_decl(node) else {
+                return false;
+            };
+            return prop.type_annotation.is_some()
+                && is_unique_symbol_type_annotation_unwrapped(arena, prop.type_annotation)
+                && has_declared_unique_symbol_owner(arena, prop.type_annotation);
+        }
+
+        false
     }
 
     fn is_unique_symbol_type_annotation_in_resolution_arena(
@@ -514,8 +602,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             .is_some_and(|ident| ident.escaped_text == "symbol")
     }
 
-    fn is_symbol_call_initializer_in_resolution_arena(
+    fn is_global_symbol_factory_call_initializer_in_resolution_arena(
         &self,
+        owner_binder: &tsz_binder::BinderState,
         arena: &NodeArena,
         init_idx: NodeIndex,
     ) -> bool {
@@ -529,13 +618,56 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let Some(call) = arena.get_call_expr(node) else {
             return false;
         };
-        let Some(expr_node) = arena.get(call.expression) else {
+        self.is_global_symbol_factory_callee_in_resolution_arena(
+            owner_binder,
+            arena,
+            call.expression,
+        )
+    }
+
+    fn is_global_symbol_factory_callee_in_resolution_arena(
+        &self,
+        owner_binder: &tsz_binder::BinderState,
+        arena: &NodeArena,
+        callee_idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = arena.get(callee_idx) else {
             return false;
         };
 
+        if let Some(ident) = arena.get_identifier(node) {
+            if ident.escaped_text != "Symbol" {
+                return false;
+            }
+            return owner_binder
+                .resolve_identifier(arena, callee_idx)
+                .or_else(|| owner_binder.file_locals.get("Symbol"))
+                .or_else(|| {
+                    self.ctx
+                        .lib_contexts
+                        .iter()
+                        .find_map(|ctx| ctx.binder.file_locals.get("Symbol"))
+                })
+                .is_some_and(|sym_id| {
+                    self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+                        || self.ctx.symbol_is_from_lib(sym_id)
+                });
+        }
+
+        if node.kind != tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = arena.get_access_expr(node) else {
+            return false;
+        };
         arena
-            .get_identifier(expr_node)
-            .is_some_and(|ident| ident.escaped_text == "Symbol")
+            .get_identifier_text(access.name_or_argument)
+            .is_some_and(|name| name == "for")
+            && self.is_global_symbol_factory_callee_in_resolution_arena(
+                owner_binder,
+                arena,
+                access.expression,
+            )
     }
 
     pub(crate) fn get_symbol_from_any_context(
@@ -685,15 +817,25 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         // creating unbounded stack growth. Cap at 100 levels.
         thread_local! {
             static ALIAS_RESOLVE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+            static ALIAS_RESOLVE_STACK: std::cell::RefCell<Vec<tsz_solver::def::DefId>> =
+                const { std::cell::RefCell::new(Vec::new()) };
         }
         let depth = ALIAS_RESOLVE_DEPTH.get();
         if depth >= 100 {
             return;
         }
+        if ALIAS_RESOLVE_STACK.with(|stack| stack.borrow().contains(&def_id)) {
+            return;
+        }
         // Dynamic stack growth: if remaining stack is low, grow it.
         stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
             ALIAS_RESOLVE_DEPTH.set(depth + 1);
+            ALIAS_RESOLVE_STACK.with(|stack| stack.borrow_mut().push(def_id));
             self.ensure_type_alias_resolved_inner(sym_id, def_id);
+            ALIAS_RESOLVE_STACK.with(|stack| {
+                let popped = stack.borrow_mut().pop();
+                debug_assert_eq!(popped, Some(def_id));
+            });
             ALIAS_RESOLVE_DEPTH.set(depth);
         });
     }
@@ -706,7 +848,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         use tsz_binder::symbol_flags;
 
         if let Ok(env) = self.ctx.type_env.try_borrow()
-            && env.get_def(def_id).is_some()
+            && let Some(existing) = env.get_def(def_id)
+            && existing != TypeId::UNKNOWN
+            && existing != TypeId::ERROR
+            && crate::query_boundaries::common::lazy_def_id(self.ctx.types, existing)
+                != Some(def_id)
         {
             return;
         }
@@ -722,23 +868,33 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 drop(env);
                 // Body not registered for this DefId — register it now
                 if let Some(&type_id) = self.ctx.symbol_types.get(&sym_id) {
-                    let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
-                    if type_params.is_empty() {
-                        self.ctx.register_def_in_envs(def_id, type_id);
+                    if type_id == TypeId::UNKNOWN
+                        || type_id == TypeId::ERROR
+                        || crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)
+                            == Some(def_id)
+                    {
+                        // A placeholder/self-lazy wrapper is not the alias body.
                     } else {
-                        self.ctx
-                            .register_def_with_params_in_envs(def_id, type_id, type_params);
-                    }
-                    // Register symbol mapping in both envs
-                    if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
-                        env.register_def_symbol_mapping(def_id, sym_id);
-                    }
-                    if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
-                        env.register_def_symbol_mapping(def_id, sym_id);
+                        let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
+                        if type_params.is_empty() {
+                            self.ctx.register_def_in_envs(def_id, type_id);
+                        } else {
+                            self.ctx
+                                .register_def_with_params_in_envs(def_id, type_id, type_params);
+                        }
+                        self.ctx.register_def_symbol_mapping_in_envs(def_id, sym_id);
+                        return;
                     }
                 }
             }
-            return;
+            if self.ctx.symbol_types.get(&sym_id).is_some_and(|type_id| {
+                *type_id != TypeId::UNKNOWN
+                    && *type_id != TypeId::ERROR
+                    && crate::query_boundaries::common::lazy_def_id(self.ctx.types, *type_id)
+                        != Some(def_id)
+            }) {
+                return;
+            }
         }
 
         let symbol = self.get_symbol_from_any_context(sym_id);
@@ -891,14 +1047,205 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 type_alias.type_node,
                 &resolve_text_symbol,
             );
-            let computed_name_resolver =
-                |expr_idx: NodeIndex| computed_names.get(&expr_idx).copied();
+            let computed_name_resolver = |expr_idx: NodeIndex| {
+                computed_names.get(&expr_idx).copied().or_else(|| {
+                    let sym_id =
+                        value_resolver(expr_idx)
+                            .map(tsz_binder::SymbolId)
+                            .or_else(|| {
+                                Self::resolve_computed_property_symbol_in_arena(
+                                    decl_arena,
+                                    expr_idx,
+                                    &resolve_text_symbol,
+                                )
+                            })?;
+                    self.symbol_refers_to_unique_symbol_anywhere(sym_id)
+                        .then(|| {
+                            self.ctx
+                                .types
+                                .intern_string(&format!("__unique_{}", sym_id.0))
+                        })
+                })
+            };
+            let computed_symbol_name_resolver = |expr_idx: NodeIndex| {
+                computed_name_resolver(expr_idx).is_some_and(|name| {
+                    let name = self.ctx.types.resolve_atom(name);
+                    name.starts_with("[Symbol.") || name.starts_with("__unique_")
+                })
+            };
 
             // Provide flow-narrowed types for `typeof expr` in the type alias body.
             // These were pre-computed by `precompute_type_query_flow_types` during
             // `check_type_alias_declaration` and stored in `node_types`.
             let type_query_override = |expr_name_idx: NodeIndex| -> Option<TypeId> {
-                self.const_array_to_enum_object_type_query(expr_name_idx)
+                let const_asserted_array_tuple_in_decl_arena = || -> Option<TypeId> {
+                    let expr_node = decl_arena.get(expr_name_idx)?;
+                    let ident = decl_arena.get_identifier(expr_node)?;
+                    let sym_id = resolve_text_symbol(&ident.escaped_text)?;
+                    let symbol = decl_binder.get_symbol(sym_id)?;
+                    if !symbol.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE) {
+                        return None;
+                    }
+
+                    let mut value_decl = if symbol.value_declaration.is_some() {
+                        symbol.value_declaration
+                    } else {
+                        symbol.primary_declaration()?
+                    };
+                    let mut value_node = decl_arena.get(value_decl)?;
+                    if value_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+                        value_decl = decl_arena.get_extended(value_decl)?.parent;
+                        value_node = decl_arena.get(value_decl)?;
+                    }
+                    if value_node.kind != tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION
+                        || !decl_arena.is_const_variable_declaration(value_decl)
+                    {
+                        return None;
+                    }
+
+                    let decl = decl_arena.get_variable_declaration(value_node)?;
+                    let assertion_expr = decl_arena.skip_parenthesized(decl.initializer);
+                    let initializer_is_const_assertion = decl_arena
+                        .get(assertion_expr)
+                        .and_then(|node| decl_arena.get_type_assertion(node))
+                        .and_then(|assertion| decl_arena.get(assertion.type_node))
+                        .is_some_and(|type_node| {
+                            type_node.kind == tsz_scanner::SyntaxKind::ConstKeyword as u16
+                        });
+                    if !initializer_is_const_assertion {
+                        return None;
+                    }
+
+                    let initializer =
+                        decl_arena.skip_parenthesized_and_assertions(decl.initializer);
+                    let init_node = decl_arena.get(initializer)?;
+                    if init_node.kind
+                        != tsz_parser::parser::syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                    {
+                        return None;
+                    }
+
+                    let array = decl_arena.get_literal_expr(init_node)?;
+                    let mut elements = Vec::with_capacity(array.elements.nodes.len());
+                    for &element in &array.elements.nodes {
+                        if element.is_none() {
+                            return None;
+                        }
+                        let element = decl_arena.skip_parenthesized_and_assertions(element);
+                        let element_node = decl_arena.get(element)?;
+                        let element_type = match element_node.kind {
+                            k if k == tsz_scanner::SyntaxKind::StringLiteral as u16
+                                || k == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral
+                                    as u16 =>
+                            {
+                                decl_arena
+                                    .get_literal(element_node)
+                                    .map(|lit| factory.literal_string(&lit.text))?
+                            }
+                            k if k == tsz_scanner::SyntaxKind::NumericLiteral as u16 => {
+                                let value =
+                                    decl_arena.get_literal(element_node).and_then(|lit| {
+                                        lit.value.or_else(|| {
+                                            tsz_common::numeric::parse_numeric_literal_value(
+                                                &lit.text,
+                                            )
+                                        })
+                                    })?;
+                                factory.literal_number(value)
+                            }
+                            k if k == tsz_scanner::SyntaxKind::TrueKeyword as u16 => {
+                                factory.literal_boolean(true)
+                            }
+                            k if k == tsz_scanner::SyntaxKind::FalseKeyword as u16 => {
+                                factory.literal_boolean(false)
+                            }
+                            k if k == tsz_scanner::SyntaxKind::NullKeyword as u16 => TypeId::NULL,
+                            k if k == tsz_scanner::SyntaxKind::UndefinedKeyword as u16 => {
+                                TypeId::UNDEFINED
+                            }
+                            _ => return None,
+                        };
+                        elements.push(tsz_solver::TupleElement {
+                            type_id: element_type,
+                            name: None,
+                            optional: false,
+                            rest: false,
+                        });
+                    }
+
+                    Some(factory.tuple(elements))
+                };
+
+                let const_symbol_type_query_in_decl_arena = || -> Option<TypeId> {
+                    let expr_node = decl_arena.get(expr_name_idx)?;
+                    let ident = decl_arena.get_identifier(expr_node)?;
+                    let sym_id = resolve_text_symbol(&ident.escaped_text)?;
+                    let symbol = decl_binder.get_symbol(sym_id)?;
+                    if !symbol.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE) {
+                        return None;
+                    }
+
+                    let mut value_decl = if symbol.value_declaration.is_some() {
+                        symbol.value_declaration
+                    } else {
+                        symbol.primary_declaration()?
+                    };
+                    let mut value_node = decl_arena.get(value_decl)?;
+                    if value_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+                        value_decl = decl_arena.get_extended(value_decl)?.parent;
+                        value_node = decl_arena.get(value_decl)?;
+                    }
+                    if value_node.kind != tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION
+                        || !decl_arena.is_const_variable_declaration(value_decl)
+                    {
+                        return None;
+                    }
+
+                    let decl = decl_arena.get_variable_declaration(value_node)?;
+                    let initializer = decl_arena.skip_parenthesized(decl.initializer);
+                    let init_node = decl_arena.get(initializer)?;
+                    if init_node.kind != tsz_parser::parser::syntax_kind_ext::CALL_EXPRESSION {
+                        return None;
+                    }
+                    let call = decl_arena.get_call_expr(init_node)?;
+                    let callee_node = decl_arena.get(call.expression)?;
+                    let symbol_callee = if let Some(callee_ident) =
+                        decl_arena.get_identifier(callee_node)
+                    {
+                        callee_ident.escaped_text == "Symbol"
+                            && decl_binder
+                                .resolve_identifier(decl_arena, call.expression)
+                                .and_then(|callee_sym_id| decl_binder.get_symbol(callee_sym_id))
+                                .is_some_and(|callee_symbol| callee_symbol.escaped_name == "Symbol")
+                    } else if callee_node.kind
+                        == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    {
+                        let access = decl_arena.get_access_expr(callee_node)?;
+                        decl_arena
+                            .get_identifier_text(access.expression)
+                            .is_some_and(|name| name == "Symbol")
+                            && decl_arena
+                                .get_identifier_text(access.name_or_argument)
+                                .is_some_and(|name| name == "for")
+                            && decl_binder
+                                .resolve_identifier(decl_arena, access.expression)
+                                .and_then(|callee_sym_id| decl_binder.get_symbol(callee_sym_id))
+                                .is_some_and(|callee_symbol| callee_symbol.escaped_name == "Symbol")
+                    } else {
+                        false
+                    };
+
+                    symbol_callee.then(|| {
+                        self.ctx
+                            .types
+                            .unique_symbol(tsz_solver::SymbolRef(sym_id.0))
+                    })
+                };
+
+                self.const_asserted_array_tuple_type_query(expr_name_idx)
+                    .or_else(const_asserted_array_tuple_in_decl_arena)
+                    .or_else(const_symbol_type_query_in_decl_arena)
+                    .or_else(|| self.const_array_to_enum_object_type_query(expr_name_idx))
                     .or_else(|| self.const_object_member_literal_type_query(expr_name_idx))
                     .or_else(|| {
                         self.ctx
@@ -919,6 +1266,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 )
                 .with_type_param_bindings(bindings)
                 .with_computed_name_resolver(&computed_name_resolver)
+                .with_computed_symbol_name_resolver(&computed_symbol_name_resolver)
                 .with_name_def_id_resolver(&name_resolver)
                 .with_type_query_override(&type_query_override)
             };
@@ -1011,12 +1359,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 self.ctx
                     .register_def_with_params_in_envs(def_id, body, params);
             }
-            if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
-                env.register_def_symbol_mapping(def_id, sym_id);
-            }
-            if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
-                env.register_def_symbol_mapping(def_id, sym_id);
-            }
+            self.ctx.register_def_symbol_mapping_in_envs(def_id, sym_id);
         }
     }
 
@@ -1031,12 +1374,24 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         use tsz_parser::parser::syntax_kind_ext;
 
         if let Some(name) = self.entity_name_text(node_idx)
+            && !name.contains('.')
+            && self.ctx.type_parameter_scope.contains_key(&name)
+        {
+            return None;
+        }
+
+        if let Some(name) = self.entity_name_text(node_idx)
             && let Some(sym_id) = self.resolve_entity_name_text_symbol(&name)
         {
             let expected_name = name.rsplit('.').next().unwrap_or(name.as_str());
-            let def_id = self
-                .ctx
-                .get_or_create_def_id_for_symbol_name(sym_id, expected_name);
+            let def_id = if self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+                || self.ctx.symbol_is_from_lib(sym_id)
+            {
+                self.ctx.get_canonical_lib_def_id(expected_name, sym_id)
+            } else {
+                self.ctx
+                    .get_or_create_def_id_for_symbol_name(sym_id, expected_name)
+            };
             self.ensure_type_alias_resolved(sym_id, def_id);
             return Some(def_id);
         }
@@ -1045,8 +1400,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             let sym_id = tsz_binder::SymbolId(sym_id);
             let def_id = if let Some(name) = self.entity_name_text(node_idx) {
                 let expected_name = name.rsplit('.').next().unwrap_or(name.as_str());
-                self.ctx
-                    .get_or_create_def_id_for_symbol_name(sym_id, expected_name)
+                if self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+                    || self.ctx.symbol_is_from_lib(sym_id)
+                {
+                    self.ctx.get_canonical_lib_def_id(expected_name, sym_id)
+                } else {
+                    self.ctx
+                        .get_or_create_def_id_for_symbol_name(sym_id, expected_name)
+                }
             } else {
                 self.ensure_def_id_with_alias(sym_id)
             };

@@ -3,6 +3,7 @@
 //! This module contains the implementation of TypeScript's structural subtyping rules,
 //! split into focused modules for maintainability:
 //!
+//! - `intrinsic_object`: Unified `Object`/`{}`/`object` trifecta matrix
 //! - `intrinsics`: Primitive/intrinsic type compatibility
 //! - `literals`: Literal types and template literal matching
 //! - `unions`: Union and intersection type logic
@@ -15,6 +16,7 @@
 pub mod conditionals;
 pub mod functions;
 pub mod generics;
+pub mod intrinsic_object;
 pub mod intrinsics;
 pub mod literals;
 pub mod mapped_key_constraints;

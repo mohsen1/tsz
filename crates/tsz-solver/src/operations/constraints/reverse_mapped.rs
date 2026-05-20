@@ -170,7 +170,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         let mut source_has_true = false;
         let mut source_has_false = false;
-        let mut source_values = Vec::new();
+        let mut source_values = Vec::with_capacity(source_union.len());
         for &m in source_union.iter() {
             if let Some((done_true, value_type)) = classify_iterator_result_member(m) {
                 if done_true {
@@ -184,7 +184,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         let mut target_has_true = false;
         let mut target_has_false = false;
-        let mut target_values = Vec::new();
+        let mut target_values = Vec::with_capacity(target_union.len());
         for &m in target_union.iter() {
             if let Some((done_true, value_type)) = classify_iterator_result_member(m) {
                 if done_true {
@@ -299,12 +299,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             "constrain_reverse_mapped_type"
         );
 
-        let mut reverse_properties = Vec::new();
+        let mut reverse_properties = Vec::with_capacity(source_obj.properties.len());
         let mut any_reversed = false;
 
         for prop in &source_obj.properties {
-            // Substitute the iteration parameter K with the property name literal
-            let key_literal = self.interner.literal_string_atom(prop.name);
+            // Substitute the iteration parameter K with the property-key literal.
+            // Bare numeric names (`{ 1: ... }`) substitute as `Number(1)`, not `"1"`.
+            let key_literal = crate::utils::literal_key_for_property_name(
+                self.interner,
+                prop.name,
+                prop.is_string_named,
+            );
             let subst = TypeSubstitution::single(iter_param_name, key_literal);
             let instantiated_template = instantiate_type(self.interner, template, &subst);
 
@@ -953,15 +958,20 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let source_props = source_obj.properties.clone();
                 let source_string_idx = source_obj.string_index;
                 let source_number_idx = source_obj.number_index;
-                let mut reverse_properties = Vec::new();
+                let mut reverse_properties = Vec::with_capacity(source_props.len());
                 let mut any_reversed = false;
 
                 self.reverse_mapped_depth.set(depth + 1);
                 self.reverse_mapped_visited.borrow_mut().insert(pair);
 
                 for prop in &source_props {
-                    // Instantiate the mapped template with the concrete key
-                    let key_literal = self.interner.literal_string_atom(prop.name);
+                    // Instantiate the mapped template with the concrete key.
+                    // Numeric-named properties contribute `Number(n)`, not `"n"`.
+                    let key_literal = crate::utils::literal_key_for_property_name(
+                        self.interner,
+                        prop.name,
+                        prop.is_string_named,
+                    );
                     let subst = TypeSubstitution::single(mapped.type_param.name, key_literal);
                     let instantiated_template =
                         instantiate_type(self.interner, mapped.template, &subst);
@@ -1376,5 +1386,56 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         } else {
             filtered
         }
+    }
+
+    pub(super) fn add_never_candidates_for_excluded_union_placeholders(
+        &self,
+        ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        all_targets: &[TypeId],
+        selected_targets: &[TypeId],
+        priority: crate::types::InferencePriority,
+    ) {
+        if selected_targets.len() >= all_targets.len() {
+            return;
+        }
+
+        let selected_target_set: FxHashSet<TypeId> = selected_targets.iter().copied().collect();
+        let selected_vars = self.placeholder_vars_in_types(var_map, selected_targets);
+        let mut emitted = FxHashSet::default();
+
+        for &target in all_targets {
+            if selected_target_set.contains(&target) {
+                continue;
+            }
+            for var in self.placeholder_vars_in_type(var_map, target) {
+                if !selected_vars.contains(&var) && emitted.insert(var) {
+                    ctx.add_candidate(var, TypeId::NEVER, priority);
+                }
+            }
+        }
+    }
+
+    fn placeholder_vars_in_types(
+        &self,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        types: &[TypeId],
+    ) -> FxHashSet<crate::inference::infer::InferenceVar> {
+        let mut vars = FxHashSet::default();
+        for &ty in types {
+            vars.extend(self.placeholder_vars_in_type(var_map, ty));
+        }
+        vars
+    }
+
+    fn placeholder_vars_in_type(
+        &self,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        ty: TypeId,
+    ) -> FxHashSet<crate::inference::infer::InferenceVar> {
+        crate::visitor::collect_all_types(self.interner.as_type_database(), ty)
+            .into_iter()
+            .filter_map(|nested| var_map.get(&nested).copied())
+            .collect()
     }
 }

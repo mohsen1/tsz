@@ -14,6 +14,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+use tsz_solver::computation::ContextualTypeContext;
 use tsz_solver::{PropertyInfo, TypeId, Visibility};
 
 const SPREAD_DISPLAY_ORDER_OFFSET: u32 = 1_000_000;
@@ -54,48 +55,77 @@ fn remove_synthetic_missing_union_spread_props(member_props: &mut [Vec<PropertyI
     }
 }
 
-/// Whether a contextual type is "literal-permissive" — i.e., does not
-/// constrain literal property types and therefore should not suppress
-/// the object-literal property widening that tsc performs for non-fresh
-/// literal contexts.
-///
-/// `unknown`, `any`, and `never` fall into this bucket: tsc's
-/// `isLiteralOfContextualType` returns `false` for them, so a property
-/// like `a: 1` in `{ a: 1 } satisfies unknown` widens to `number`.
-fn is_literal_permissive_context(ctx: TypeId) -> bool {
-    ctx == TypeId::UNKNOWN || ctx == TypeId::ANY || ctx == TypeId::NEVER
-}
-
-fn is_single_quoted_string_property_name_node(
-    arena: &tsz_parser::parser::node::NodeArena,
-    name_idx: NodeIndex,
-) -> bool {
-    let Some(name_node) = arena.get(name_idx) else {
-        return false;
-    };
-
-    if name_node.kind == SyntaxKind::StringLiteral as u16 {
-        return arena
-            .get_literal(name_node)
-            .and_then(|literal| literal.raw_text.as_deref())
-            .is_some_and(|raw| raw.starts_with('\''));
-    }
-
-    if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
-        && let Some(computed) = arena.get_computed_property(name_node)
-        && let Some(expr_node) = arena.get(computed.expression)
-        && expr_node.kind == SyntaxKind::StringLiteral as u16
-    {
-        return arena
-            .get_literal(expr_node)
-            .and_then(|literal| literal.raw_text.as_deref())
-            .is_some_and(|raw| raw.starts_with('\''));
-    }
-
-    false
-}
-
 impl<'a> CheckerState<'a> {
+    fn object_literal_property_is_typed_variable_initializer(
+        &self,
+        property_elem_idx: NodeIndex,
+    ) -> bool {
+        let Some(object_idx) = self.ctx.arena.parent_of(property_elem_idx) else {
+            return false;
+        };
+        let Some(parent_idx) = self.ctx.arena.parent_of(object_idx) else {
+            return false;
+        };
+        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+            return false;
+        };
+        if parent_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return false;
+        }
+        self.ctx
+            .arena
+            .get_variable_declaration(parent_node)
+            .is_some_and(|var_decl| {
+                var_decl.initializer == object_idx && var_decl.type_annotation.is_some()
+            })
+    }
+
+    /// Decide whether an object-literal property value's literal type should
+    /// be widened to its primitive. Inside a `satisfies T` operand we apply
+    /// tsc's exact `isLiteralOfContextualType` per-property gate (via
+    /// `contextual_type_allows_literal`) and ignore `preserve_literal_types` —
+    /// the user-written `T` is a finer specification than the wrapping
+    /// generic-call's contextual broadening. Outside, the coarser legacy
+    /// policy (preserve whenever the outer object context is non-permissive)
+    /// is kept and the downstream deep-widen compensates.
+    fn should_widen_object_property_literal(
+        &mut self,
+        value_type: TypeId,
+        property_context_type: Option<TypeId>,
+        had_object_context: bool,
+        has_non_widening_source: bool,
+    ) -> bool {
+        if self.ctx.in_const_assertion || has_non_widening_source {
+            return false;
+        }
+        if self.ctx.in_satisfies_operand {
+            // Unconstrained properties (not covered by the satisfies type) preserve their
+            // literal types — tsc's `isLiteralOfContextualType` returns false for absent
+            // properties.
+            let Some(ctx_type) = property_context_type else {
+                return false;
+            };
+            // Skip the recursive `isLiteralOfContextualType` walk for values the widener
+            // cannot transform anyway — functions, plain objects, `any`, etc.
+            let value_is_widenable =
+                crate::query_boundaries::common::is_literal_type(self.ctx.types, value_type)
+                    || crate::query_boundaries::common::is_union_type(self.ctx.types, value_type);
+            if !value_is_widenable {
+                return false;
+            }
+            return !self.contextual_type_allows_literal(ctx_type, value_type);
+        }
+        if self.ctx.preserve_literal_types {
+            return false;
+        }
+        let property_context_preserves_literal = property_context_type.is_some_and(|ct| {
+            !crate::query_boundaries::type_computation::core::is_literal_permissive_object_context(
+                ct,
+            )
+        });
+        !property_context_preserves_literal && !had_object_context
+    }
+
     fn spread_source_is_unannotated_object_literal_binding(&self, expression: NodeIndex) -> bool {
         let expression = self.ctx.arena.skip_parenthesized_and_assertions(expression);
         let Some(node) = self.ctx.arena.get(expression) else {
@@ -165,31 +195,80 @@ impl<'a> CheckerState<'a> {
                 slot.insert(prop.clone());
             }
             Entry::Occupied(mut slot) => {
-                if prop.optional {
-                    let earlier = slot.get().clone();
-                    let merged_type = self.ctx.types.union2(earlier.type_id, prop.type_id);
-                    let merged_write = self.ctx.types.union2(earlier.write_type, prop.write_type);
-                    slot.insert(PropertyInfo {
-                        name: prop.name,
-                        type_id: merged_type,
-                        write_type: merged_write,
-                        // Required wins on optionality.
-                        optional: earlier.optional && prop.optional,
-                        readonly: earlier.readonly && prop.readonly,
-                        is_method: prop.is_method,
-                        is_class_prototype: false,
-                        visibility: prop.visibility,
-                        parent_id: prop.parent_id,
-                        declaration_order: prop.declaration_order,
-                        is_string_named: prop.is_string_named,
-                        is_symbol_named: prop.is_symbol_named,
-                        single_quoted_name: prop.single_quoted_name,
-                    });
-                } else {
-                    slot.insert(prop.clone());
-                }
+                let merged =
+                    crate::query_boundaries::type_computation::core::merge_object_spread_property(
+                        self.ctx.types,
+                        self.ctx.exact_optional_property_types(),
+                        Some(slot.get()),
+                        prop,
+                    );
+                slot.insert(merged);
             }
         }
+    }
+
+    fn variable_declaration_for_symbol_decl(
+        &self,
+        decl_idx: NodeIndex,
+    ) -> Option<&tsz_parser::parser::node::VariableDeclarationData> {
+        let mut current = decl_idx;
+        for _ in 0..4 {
+            let node = self.ctx.arena.get(current)?;
+            if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) {
+                return Some(var_decl);
+            }
+            current = self.ctx.arena.get_extended(current)?.parent;
+        }
+        None
+    }
+
+    fn expression_is_type_assertion(&self, expr_idx: NodeIndex) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized(expr_idx);
+        self.ctx.arena.get(expr_idx).is_some_and(|node| {
+            node.kind == syntax_kind_ext::AS_EXPRESSION
+                || node.kind == syntax_kind_ext::TYPE_ASSERTION
+        })
+    }
+
+    /// Returns `true` when the symbol's value type comes from a non-fresh source:
+    /// either an explicit variable type annotation or a const-asserted initializer.
+    fn sym_has_non_widening_declared_value_type(&self, sym_id: tsz_binder::SymbolId) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        std::iter::once(symbol.value_declaration)
+            .chain(symbol.declarations.iter().copied())
+            .any(|decl_idx| {
+                self.variable_declaration_for_symbol_decl(decl_idx)
+                    .is_some_and(|var_decl| {
+                        self.ctx.arena.get(var_decl.type_annotation).is_some()
+                            || self.expression_is_const_assertion(var_decl.initializer)
+                    })
+            })
+    }
+
+    fn identifier_refers_to_non_widening_declared_value_type(&self, node_idx: NodeIndex) -> bool {
+        self.ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, node_idx)
+            .is_some_and(|sym_id| self.sym_has_non_widening_declared_value_type(sym_id))
+    }
+
+    fn object_literal_property_access_literal_type(
+        &mut self,
+        node_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let node_idx = self.ctx.arena.skip_parenthesized_and_assertions(node_idx);
+        let node = self.ctx.arena.get(node_idx)?;
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        if let Some(literal_type) = self.const_array_to_enum_member_literal_type_query(node_idx) {
+            return Some(literal_type);
+        }
+        let access = self.ctx.arena.get_access_expr(node)?;
+        self.imported_array_to_enum_member_literal_type(access.expression, access.name_or_argument)
     }
 
     fn object_literal_variable_initializer_symbol(
@@ -490,55 +569,9 @@ impl<'a> CheckerState<'a> {
         let mut prop_order: u32 = 1;
         let mut spread_display_order_base = SPREAD_DISPLAY_ORDER_OFFSET;
 
-        // Pre-scan: collect ALL method names from the object literal so that
-        // the synthetic `this` type includes placeholders for all methods,
-        // enabling mutually-recursive methods to resolve `this.otherMethod`.
-        // Maps method name atom → element node index so we can extract annotated
-        // parameter/return types when building placeholders for not-yet-processed methods.
-        // This includes both method declarations (get() {}) and property assignments
-        // with function values (set: function() {}) to ensure complete this-typing.
-        let obj_all_method_names: rustc_hash::FxHashMap<Atom, (NodeIndex, u32)> = obj
-            .elements
-            .nodes
-            .iter()
-            .enumerate()
-            .filter_map(|(pos, &elem_idx)| {
-                let elem_node = self.ctx.arena.get(elem_idx)?;
-
-                // Case 1: Method declaration like `get() {}`
-                if let Some(method) = self.ctx.arena.get_method_decl(elem_node) {
-                    let name = self.get_property_name(method.name)?;
-                    return Some((
-                        self.ctx.types.intern_string(&name),
-                        (elem_idx, (pos + 1) as u32),
-                    ));
-                }
-
-                // Case 2: Property assignment with function value like `set: function() {}`
-                if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
-                    let initializer_is_function_like = self
-                        .ctx
-                        .arena
-                        .get(prop.initializer)
-                        .is_some_and(|init_node| {
-                            matches!(
-                                init_node.kind,
-                                syntax_kind_ext::ARROW_FUNCTION
-                                    | syntax_kind_ext::FUNCTION_EXPRESSION
-                            )
-                        });
-                    if initializer_is_function_like {
-                        let name = self.get_property_name_resolved(prop.name)?;
-                        return Some((
-                            self.ctx.types.intern_string(&name),
-                            (elem_idx, (pos + 1) as u32),
-                        ));
-                    }
-                }
-
-                None
-            })
-            .collect();
+        let obj_all_method_names = self.object_literal_callable_member_names(&obj.elements.nodes);
+        let circular_return_method_sites =
+            self.object_literal_circular_return_method_sites(&obj_all_method_names);
 
         // Pre-scan: collect getter property names so setter TS7006 checks can
         // detect paired getters regardless of declaration order.
@@ -794,8 +827,11 @@ impl<'a> CheckerState<'a> {
                     // false for these types, so property literals widen normally
                     // (e.g., `{ a: 1 } satisfies unknown` produces `{ a: number }`,
                     // not `{ a: 1 }`).
-                    let had_object_context =
-                        contextual_type.is_some_and(|ct| !is_literal_permissive_context(ct));
+                    let had_object_context = contextual_type.is_some_and(|ct| {
+                        !crate::query_boundaries::type_computation::core::is_literal_permissive_object_context(
+                            ct,
+                        )
+                    });
                     // When the outer contextual type is a union with a non-nullish
                     // non-object member (e.g. `string | FullRule`), tsc does not
                     // provide a contextual type for function-like property initializers.
@@ -859,7 +895,7 @@ impl<'a> CheckerState<'a> {
                     // it uses the property NAME node as the fallback initializer for error
                     // recovery (prop.initializer == prop.name). Skip type-checking in that
                     // case to prevent a spurious TS2304 for the property name identifier.
-                    let value_type = if prop.initializer == prop.name {
+                    let mut value_type = if prop.initializer == prop.name {
                         TypeId::ANY
                     } else if self.ctx.in_destructuring_target {
                         self.destructuring_target_type_from_initializer(prop.initializer)
@@ -943,6 +979,27 @@ impl<'a> CheckerState<'a> {
 
                         value_type
                     };
+                    if circular_return_method_sites.contains(&elem_idx)
+                        && initializer_is_function_expression
+                        && jsdoc_declared_type.is_none()
+                        && property_request.contextual_type.is_none()
+                        && self.ctx.no_implicit_any()
+                        && !self.has_syntax_parse_errors()
+                        && !self.is_js_file()
+                    {
+                        use crate::diagnostics::diagnostic_codes;
+                        self.error_at_node_msg(
+                            prop.name,
+                            diagnostic_codes::IMPLICITLY_HAS_RETURN_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_RETURN_TYPE_ANNOTATION,
+                            &[&name],
+                        );
+                        value_type =
+                            crate::query_boundaries::assignability::replace_function_return_type(
+                                self.ctx.types,
+                                value_type,
+                                TypeId::ANY,
+                            );
+                    }
 
                     // TS2779: The left-hand side of an assignment expression may not be
                     // an optional property access. Applies to destructuring targets like
@@ -981,6 +1038,14 @@ impl<'a> CheckerState<'a> {
                         }
                         declared_type
                     } else {
+                        let value_has_non_widening_source = self
+                            .expression_is_type_assertion(prop.initializer)
+                            || self.identifier_refers_to_non_widening_declared_value_type(
+                                prop.initializer,
+                            )
+                            || self
+                                .object_literal_property_access_literal_type(prop.initializer)
+                                .is_some();
                         // Apply bidirectional type inference - use contextual type to narrow
                         // the value type, except for function-like values with explicit
                         // signature annotations. For those, tsc preserves the explicit
@@ -990,12 +1055,23 @@ impl<'a> CheckerState<'a> {
                                 .function_like_has_explicit_signature_annotations(prop.initializer)
                         {
                             value_type
+                        } else if value_has_non_widening_source {
+                            self.literal_type_from_initializer(prop.initializer)
+                                .or_else(|| {
+                                    self.object_literal_property_access_literal_type(
+                                        prop.initializer,
+                                    )
+                                })
+                                .unwrap_or(value_type)
                         } else {
-                            crate::query_boundaries::common::apply_contextual_type(
+                            let applied = crate::query_boundaries::common::apply_contextual_type(
                                 self.ctx.types,
                                 value_type,
                                 property_context_type,
-                            )
+                            );
+                            let applied = self.reduce_literal_index_access_property_types(applied);
+                            self.object_literal_property_access_literal_type(prop.initializer)
+                                .unwrap_or(applied)
                         };
 
                         // Widen literal types for object literal properties.
@@ -1003,36 +1079,66 @@ impl<'a> CheckerState<'a> {
                         // produces `{ x: string }`. Only preserve literals when:
                         // - A const assertion is active (`as const`)
                         // - A contextual type narrows the property to a literal
-                        // - The value has a type assertion (`as T` or `<T>expr`):
-                        //   tsc creates non-widening literal types from type assertions,
-                        //   so `{ value: 0 as 0 }` produces `{ value: 0 }`, not `{ value: number }`.
-                        let value_has_type_assertion =
-                            self.ctx.arena.get(prop.initializer).is_some_and(|n| {
-                                n.kind == syntax_kind_ext::AS_EXPRESSION
-                                    || n.kind == syntax_kind_ext::TYPE_ASSERTION
-                            });
-                        let widening_eligible = !self.ctx.in_const_assertion
-                            && !self.ctx.preserve_literal_types
-                            && property_context_type.is_none()
-                            && !had_object_context
-                            && !value_has_type_assertion;
-                        let final_type = if widening_eligible {
+                        // - The value is a type assertion (`as T` / `<T>expr`) or an identifier
+                        //   whose declaration is non-widening (const-asserted or literal-annotated).
+                        let final_type = if self.should_widen_object_property_literal(
+                            value_type,
+                            property_context_type,
+                            had_object_context,
+                            value_has_non_widening_source,
+                        ) {
                             self.widen_literal_type(value_type)
                         } else {
                             value_type
                         };
 
+                        let recheck_key_remapped_property = if let Some(ctx_type) = contextual_type
+                        {
+                            let mut evaluate = |ty| self.evaluate_contextual_type(ty);
+                            self.object_literal_property_is_typed_variable_initializer(elem_idx)
+                                && crate::query_boundaries::type_origin::originates_from_remapped_mapped_type_with_evaluator(
+                                        self.ctx.types,
+                                        ctx_type,
+                                        &mut evaluate,
+                                    )
+                        } else {
+                            false
+                        };
+                        let recheck_contextual_property = (self
+                            .object_literal_property_has_conditional_mapped_annotation(elem_idx)
+                            || self.object_literal_property_has_conditional_annotation(elem_idx)
+                            || self.object_literal_property_has_mapped_annotation(elem_idx))
+                            && property_context_type.is_some()
+                            && original_contextual_type == contextual_type
+                            && !self.ctx.arena.get(prop.name).is_some_and(|name| {
+                                name.kind
+                                    == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                            });
+
+                        if (recheck_key_remapped_property || recheck_contextual_property)
+                            && let Some(check_target) = property_context_type
+                            && value_type != TypeId::ERROR
+                            && value_type != TypeId::ANY
+                            && check_target != TypeId::ERROR
+                            && check_target != TypeId::ANY
+                            && !self.is_assignable_to(value_type, check_target)
+                        {
+                            let _ = self.check_assignable_or_report_at_exact_anchor(
+                                value_type,
+                                check_target,
+                                prop.initializer,
+                                prop.name,
+                            );
+                        }
+
                         // Freshness model: record the literal property value from
-                        // the AST for display in error messages. Skip the override
-                        // when widening was actually performed: in that case the
-                        // computed property type already matches what tsc would
-                        // display (e.g. `{ a: number }` for `{ a: 1 } satisfies
-                        // unknown`). Storing the literal `1` here would override
-                        // the elaborated `Type 'number' is not assignable to
-                        // 'true'` diagnostic with `Type '1' ...`.
-                        let widened_value = widening_eligible && final_type != value_type;
-                        if !widened_value
-                            && prop.initializer != prop.name
+                        // the AST for display in error messages. The canonical
+                        // property type may widen for checking, but assignment
+                        // diagnostics into literal-sensitive targets still need the
+                        // original object-literal surface (`{ c: true }`, not
+                        // `{ c: boolean }`). Non-literal-sensitive diagnostic paths
+                        // already widen these display properties back to primitives.
+                        if prop.initializer != prop.name
                             && let Some(lit_type) =
                                 self.literal_type_from_initializer(prop.initializer)
                         {
@@ -1135,13 +1241,10 @@ impl<'a> CheckerState<'a> {
                     // Determine if this property was declared with a string key
                     // that looks numeric (e.g. "404" vs 404). This affects DTS
                     // emit quoting: `"404": ...` vs `404: ...`.
+                    let (string_literal_name, single_quoted_name) =
+                        self.ctx.arena.string_property_name_flags(prop.name);
                     let is_string_named =
-                        crate::types_domain::queries::core::is_string_property_name_node(
-                            self.ctx.arena,
-                            prop.name,
-                        ) || self.is_computed_string_property_name(prop.name);
-                    let single_quoted_name =
-                        is_single_quoted_string_property_name_node(self.ctx.arena, prop.name);
+                        string_literal_name || self.is_computed_string_property_name(prop.name);
                     let prop_info = PropertyInfo {
                         name: name_atom,
                         type_id: value_type,
@@ -1354,10 +1457,11 @@ impl<'a> CheckerState<'a> {
                     let jsdoc_declared_type = self.jsdoc_type_annotation_for_node_direct(elem_idx);
 
                     // Set contextual type for shorthand property value.
-                    // See note above on `is_literal_permissive_context` — treat
-                    // `unknown`/`any`/`never` as "no real context" for widening.
-                    let had_object_context =
-                        contextual_type.is_some_and(|ct| !is_literal_permissive_context(ct));
+                    let had_object_context = contextual_type.is_some_and(|ct| {
+                        !crate::query_boundaries::type_computation::core::is_literal_permissive_object_context(
+                            ct,
+                        )
+                    });
                     if let Some(diag_target) = jsdoc_declared_type.or(property_context_type) {
                         self.ctx
                             .object_literal_tracking
@@ -1533,11 +1637,15 @@ impl<'a> CheckerState<'a> {
                             value_type,
                             property_context_type,
                         );
-                        if !self.ctx.in_const_assertion
-                            && !self.ctx.preserve_literal_types
-                            && property_context_type.is_none()
-                            && !had_object_context
-                        {
+                        let shorthand_is_non_widening = shorthand_sym.is_some_and(|sym_id| {
+                            self.sym_has_non_widening_declared_value_type(sym_id)
+                        });
+                        if self.should_widen_object_property_literal(
+                            value_type,
+                            property_context_type,
+                            had_object_context,
+                            shorthand_is_non_widening,
+                        ) {
                             self.widen_literal_type(value_type)
                         } else {
                             value_type
@@ -1635,8 +1743,15 @@ impl<'a> CheckerState<'a> {
                     let method_context_type = contextual_type.and_then(|ctx_type| {
                         self.contextual_method_context_type_for_lookup(ctx_type, &name)
                     });
+                    let method_property_context_type = contextual_type.and_then(|ctx_type| {
+                        self.contextual_object_property_type_for_lookup(ctx_type, &name)
+                    });
                     let method_context_type = self.substitute_contextual_this_type(
                         method_context_type,
+                        contextual_receiver_this_type,
+                    );
+                    let method_property_context_type = self.substitute_contextual_this_type(
+                        method_property_context_type,
                         contextual_receiver_this_type,
                     );
                     let method_request = base_request.contextual_opt(
@@ -1658,12 +1773,11 @@ impl<'a> CheckerState<'a> {
                         // body sees concrete `this` types (fixing TS2783 for spreads of
                         // `this.options.suggestion` where Options = { suggestion: Foo }).
                         let method_ctx_this = method_request.contextual_type.and_then(|ctx_ty| {
-                            let ctx_helper =
-                                tsz_solver::ContextualTypeContext::with_expected_and_options(
-                                    self.ctx.types,
-                                    ctx_ty,
-                                    self.ctx.compiler_options.no_implicit_any,
-                                );
+                            let ctx_helper = ContextualTypeContext::with_expected_and_options(
+                                self.ctx.types,
+                                ctx_ty,
+                                self.ctx.compiler_options.no_implicit_any,
+                            );
                             ctx_helper.get_this_type()
                         });
                         if let Some(mut method_this) = method_ctx_this {
@@ -1701,12 +1815,11 @@ impl<'a> CheckerState<'a> {
 
                     let contextual_method_param_types =
                         method_request.contextual_type.map(|ctx_ty| {
-                            let ctx_helper =
-                                tsz_solver::ContextualTypeContext::with_expected_and_options(
-                                    self.ctx.types,
-                                    ctx_ty,
-                                    self.ctx.compiler_options.no_implicit_any,
-                                );
+                            let ctx_helper = ContextualTypeContext::with_expected_and_options(
+                                self.ctx.types,
+                                ctx_ty,
+                                self.ctx.compiler_options.no_implicit_any,
+                            );
                             let this_atom = self.ctx.types.intern_string("this");
                             let mut contextual_index = 0usize;
                             method
@@ -1796,7 +1909,7 @@ impl<'a> CheckerState<'a> {
                     }
 
                     if method_return_this_circularity {
-                        method_diag_snap.rollback(&mut self.ctx);
+                        method_diag_snap.rollback(&mut self.ctx.diagnostic_state());
                         self.invalidate_expression_for_contextual_retry(elem_idx);
                         let refined_method_type = crate::query_boundaries::assignability::get_function_return_type(
                             self.ctx.types,
@@ -1854,7 +1967,7 @@ impl<'a> CheckerState<'a> {
                                     self.ctx.arena.get(*idx).map(|node| node.pos)
                                 })
                                 .collect();
-                        rerun_snap.rollback_filtered(&mut self.ctx, |diag| {
+                        rerun_snap.rollback_filtered(&mut self.ctx.diagnostic_state(), |diag| {
                             let is_replaced_this_property_error =
                                 diag.code == 2339 && this_property_positions.contains(&diag.start);
                             !is_replaced_this_property_error
@@ -1875,7 +1988,41 @@ impl<'a> CheckerState<'a> {
                         method_type = refined_method_type;
                     }
 
-                    let method_type = jsdoc_declared_type.unwrap_or(method_type);
+                    if circular_return_method_sites.contains(&elem_idx)
+                        && pushed_synthetic_this
+                        && jsdoc_declared_type.is_none()
+                        && method.type_annotation.is_none()
+                        && !has_concrete_method_context
+                        && self.ctx.no_implicit_any()
+                        && !self.has_syntax_parse_errors()
+                        && !self.is_js_file()
+                    {
+                        use crate::diagnostics::diagnostic_codes;
+                        self.error_at_node_msg(
+                            method.name,
+                            diagnostic_codes::IMPLICITLY_HAS_RETURN_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_RETURN_TYPE_ANNOTATION,
+                            &[&name],
+                        );
+                        method_type =
+                            crate::query_boundaries::assignability::replace_function_return_type(
+                                self.ctx.types,
+                                method_type,
+                                TypeId::ANY,
+                            );
+                    }
+
+                    let method_type = jsdoc_declared_type.unwrap_or_else(|| {
+                        if name == "return" || matches!(method_type, TypeId::ANY | TypeId::UNKNOWN)
+                        {
+                            method_property_context_type
+                                .filter(|&context_type| {
+                                    !matches!(context_type, TypeId::ANY | TypeId::UNKNOWN)
+                                })
+                                .unwrap_or(method_type)
+                        } else {
+                            method_type
+                        }
+                    });
 
                     let name_atom = self.ctx.types.intern_string(&name);
 
@@ -2140,11 +2287,25 @@ impl<'a> CheckerState<'a> {
                             let return_context = contextual_type.and_then(|ctx| {
                                 self.contextual_object_property_type_for_lookup(ctx, &name)
                             });
-                            self.infer_return_type_from_body(
+                            // Clear `preserve_literal_types` around the body walk so the
+                            // getter's literal-widening decision is independent of the
+                            // outer `return_expression_type` scope. When the enclosing
+                            // expression is itself a function's return statement
+                            // (`function f() { return { get x() { return 1 } } }`), the
+                            // outer scope sets the flag to preserve the obj literal's
+                            // property literals, but the getter body must make its own
+                            // widening decision — otherwise `readonly x: 1` leaks out
+                            // where tsc emits `readonly x: number`. Mirrors the
+                            // nested-function clearing already in `return_expression_type`.
+                            let prev_preserve_literals = self.ctx.preserve_literal_types;
+                            self.ctx.preserve_literal_types = false;
+                            let result = self.infer_return_type_from_body(
                                 tsz_parser::parser::NodeIndex::NONE,
                                 accessor.body,
                                 return_context,
-                            )
+                            );
+                            self.ctx.preserve_literal_types = prev_preserve_literals;
+                            result
                         } else {
                             self.get_type_from_type_node(accessor.type_annotation)
                         }
@@ -2705,7 +2866,7 @@ impl<'a> CheckerState<'a> {
                                 // First union spread: fork from the main properties
                                 let mut branch = properties.clone();
                                 for prop in member_props {
-                                    branch.insert(prop.name, prop);
+                                    self.merge_spread_property(&mut branch, &prop);
                                 }
                                 new_branches.push(branch);
                             } else {
@@ -2713,7 +2874,7 @@ impl<'a> CheckerState<'a> {
                                 for existing in &union_spread_branches {
                                     let mut branch = existing.clone();
                                     for prop in &member_props {
-                                        branch.insert(prop.name, prop.clone());
+                                        self.merge_spread_property(&mut branch, prop);
                                     }
                                     new_branches.push(branch);
                                 }

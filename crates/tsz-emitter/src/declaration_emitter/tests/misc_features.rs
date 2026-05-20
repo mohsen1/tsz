@@ -1,4 +1,9 @@
 use super::*;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 // =============================================================================
 // 14. Numeric Literal Normalization
@@ -229,6 +234,69 @@ fn test_type_predicate_in_function() {
     assert!(
         output.contains("x is string"),
         "Expected type predicate: {output}"
+    );
+}
+
+#[test]
+fn test_exported_function_returning_declared_conditional_call_preserves_return_type() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export declare function pick<T>(value: T): T extends () => infer R ? R : never;
+export function wrap<T>(value: T) {
+    return pick(value);
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "export declare function wrap<T>(value: T): T extends () => infer R ? R : never;"
+        ),
+        "Expected exported function to reuse declared helper conditional return type: {output}"
+    );
+}
+
+#[test]
+fn test_exported_function_returning_mapped_infer_call_expands_alias_return_type() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export type Boxed<T> = { value: T extends number ? T : string };
+export declare function read<T>(value: T): T extends { [K in keyof Boxed<infer U>]: Boxed<infer U>[K] } ? U : never;
+export function unwrap<T>(value: T) {
+    return read(value);
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "export declare function unwrap<T>(value: T): T extends {\n    value: infer U extends number ? infer U : string;\n} ? U : never;"
+        ),
+        "Expected mapped alias helper return type to expand in declaration scope: {output}"
+    );
+}
+
+#[test]
+fn test_exported_function_returning_shadowed_helper_does_not_borrow_top_level_return_type() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export declare function pick<T>(value: T): T extends () => infer R ? R : never;
+export function wrap<T>(value: T) {
+    function pick(value: T) {
+        return pick(value);
+    }
+    return pick(value);
+}
+"#,
+    );
+
+    let wrap_decl = output
+        .lines()
+        .find(|line| line.starts_with("export declare function wrap"))
+        .unwrap_or_else(|| panic!("Expected exported wrap declaration: {output}"));
+    assert!(
+        !wrap_decl.contains("infer R"),
+        "Expected shadowed local helper call not to reuse top-level pick return type: {output}"
     );
 }
 
@@ -526,6 +594,54 @@ fn test_exported_namespace_import_equals_uses_target_for_outer_inferred_type() {
 }
 
 #[test]
+fn test_exported_namespace_import_equals_annotation_preserves_alias() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+    export namespace m1 {
+        export namespace inner {
+            export class c1 {}
+        }
+        import alias = inner;
+        export declare const value: alias.c1;
+    }
+    "#,
+    );
+
+    assert!(
+        output.contains("import alias = inner;"),
+        "Expected import-equals alias to be emitted: {output}"
+    );
+    assert!(
+        output.contains("const value: alias.c1;"),
+        "Expected exported annotation to preserve the local alias: {output}"
+    );
+}
+
+#[test]
+fn test_duplicate_namespace_import_equals_annotations_preserve_distinct_aliases() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+    namespace N {
+        export class C {}
+    }
+    import A = N;
+    import B = N;
+    export declare const x: A.C;
+    export declare const y: B.C;
+    "#,
+    );
+
+    assert!(
+        output.contains("export declare const x: A.C;"),
+        "Expected x annotation to preserve alias A: {output}"
+    );
+    assert!(
+        output.contains("export declare const y: B.C;"),
+        "Expected y annotation to preserve alias B: {output}"
+    );
+}
+
+#[test]
 fn test_import_type_with_resolution_mode_attributes_is_preserved() {
     let output = emit_dts_with_usage_analysis(
         r#"
@@ -573,8 +689,7 @@ fn test_namespace_import_type_is_preserved_with_usage_analysis() {
     import * as ns from "pkg";
     export const value = ns;
     "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let root_node = parser.arena.get(root).expect("missing root node");
     let source_file = parser
         .arena
@@ -657,12 +772,126 @@ fn test_exported_namespace_import_initializer_preserves_typeof_alias() {
 }
 
 #[test]
+fn test_json_module_imports_infer_declaration_shapes() {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock should be after epoch")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!(
+        "tsz-json-module-import-{}-{unique}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).expect("create temp json fixture dir");
+    std::fs::write(
+        dir.join("package.json"),
+        r#"{
+    "name": "pkg",
+    "version": "0.0.1",
+    "type": "module",
+    "default": "misedirection"
+}"#,
+    )
+    .expect("write json fixture");
+
+    let source = r#"
+import pkg from "./package.json" with { type: "json" };
+export const name = pkg.name;
+import * as ns from "./package.json" with { type: "json" };
+export const thing = ns;
+export const name2 = ns.default.name;
+"#;
+    let index_path = dir.join("index.ts");
+    let mut parser = ParserState::new(
+        index_path.to_string_lossy().into_owned(),
+        source.to_string(),
+    );
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let current_arena = Arc::new(parser.arena.clone());
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.set_current_arena(current_arena, index_path.to_string_lossy().into_owned());
+    let output = emitter.emit(root);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert!(
+        output.contains("export declare const name: string;"),
+        "Expected default JSON import property access to infer the property type: {output}"
+    );
+    assert!(
+        output.contains(
+            "export declare const thing: {\n    default: {\n        name: string;\n        version: string;\n        type: string;\n        default: string;\n    };\n};"
+        ),
+        "Expected namespace JSON import value to inline the JSON module namespace shape: {output}"
+    );
+    assert!(
+        output.contains("export declare const name2: string;"),
+        "Expected namespace JSON default property access to infer the nested property type: {output}"
+    );
+    assert!(
+        !output.contains("import * as ns from \"./package.json\";"),
+        "Expected JSON namespace import to be elided once its type is inlined: {output}"
+    );
+}
+
+#[test]
+fn test_json_module_imports_survive_when_alias_is_public_surface() {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock should be after epoch")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!(
+        "tsz-json-module-public-import-{}-{unique}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).expect("create temp json fixture dir");
+    std::fs::write(dir.join("package.json"), r#"{ "name": "pkg" }"#).expect("write json fixture");
+
+    let source = r#"
+import pkg from "./package.json" with { type: "json" };
+export type Pkg = typeof pkg;
+export { pkg };
+"#;
+    let index_path = dir.join("index.ts");
+    let mut parser = ParserState::new(
+        index_path.to_string_lossy().into_owned(),
+        source.to_string(),
+    );
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let current_arena = Arc::new(parser.arena.clone());
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.set_current_arena(current_arena, index_path.to_string_lossy().into_owned());
+    let output = emitter.emit(root);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert!(
+        output.contains(r#"import pkg from "./package.json";"#),
+        "Expected public JSON import alias to survive declaration emit: {output}"
+    );
+    assert!(
+        output.contains("export type Pkg = typeof pkg;"),
+        "Expected type query to keep referencing the JSON import alias: {output}"
+    );
+    assert!(
+        output.contains("export { pkg };"),
+        "Expected value export specifier to keep referencing the JSON import alias: {output}"
+    );
+}
+
+#[test]
 fn test_call_expression_recovers_return_type_from_callee_type() {
     let source = r#"
     export const a = helper.x();
     "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let root_node = parser.arena.get(root).expect("missing root node");
     let source_file = parser
         .arena
@@ -720,6 +949,169 @@ fn test_call_expression_recovers_return_type_from_callee_type() {
 }
 
 #[test]
+fn test_source_call_uses_cached_generic_return_alias_arguments() {
+    let source = r#"
+    type Boxified<T> = { [P in keyof T]: { value: T[P] } };
+    type A = { a: string };
+    type B = { b: string };
+    function boxify<T>(obj: T) {
+        throw new Error();
+    }
+    function f1(x: A | B | undefined) {
+        return boxify(x);
+    }
+    "#;
+    let (parser, root) = parse_test_source(source);
+
+    let call_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+                return None;
+            }
+            let call = parser.arena.get_call_expr(node)?;
+            (parser.arena.get_identifier_text(call.expression) == Some("boxify"))
+                .then_some(NodeIndex(idx as u32))
+        })
+        .expect("missing boxify call");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let boxified_sym = binder
+        .file_locals
+        .get("Boxified")
+        .expect("missing Boxified symbol");
+    let boxify_sym = binder
+        .file_locals
+        .get("boxify")
+        .expect("missing boxify symbol");
+
+    let interner = TypeInterner::new();
+    let type_param = tsz_solver::types::TypeParamInfo::simple(interner.intern_string("T"));
+    let boxified_def = DefId(7010);
+    let return_type = interner.application(
+        interner.lazy(boxified_def),
+        vec![interner.type_param(type_param)],
+    );
+    let function_type = interner.function(FunctionShape {
+        type_params: vec![type_param],
+        params: Vec::new(),
+        this_type: None,
+        return_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache.def_to_symbol.insert(boxified_def, boxified_sym);
+    type_cache.symbol_types.insert(boxify_sym, function_type);
+
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let type_text = emitter
+        .call_expression_source_return_type_text(call_idx)
+        .expect("expected source call return type");
+
+    assert_eq!(type_text, "Boxified<A | B | undefined>");
+}
+
+#[test]
+fn test_function_returning_generic_mapped_alias_call_preserves_alias_surface() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Box<T> = {};
+type Boxified<T> = {
+    [P in keyof T]: Box<T[P]>;
+};
+type A = { a: string };
+type B = { b: string };
+type C = { c: string };
+declare function boxify<T>(obj: T): Boxified<T>;
+function f1(x: A | B | C | undefined) {
+    return boxify(x);
+}
+
+type Wrapped<Value> = {
+    [Key in keyof Value]: { current: Value[Key] };
+};
+declare function wrap<Value>(value: Value): Wrapped<Value>;
+function f2(item: A | B | undefined) {
+    return wrap(item);
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "declare function f1(x: A | B | C | undefined): Boxified<A | B | C | undefined>;"
+        ),
+        "Expected inferred return to keep the generic mapped alias instantiation: {output}"
+    );
+    assert!(
+        output
+            .contains("declare function f2(item: A | B | undefined): Wrapped<A | B | undefined>;"),
+        "Expected renamed helper type parameters and mapped keys to preserve the alias too: {output}"
+    );
+    assert!(
+        !output.contains("declare function f1(x: A | B | C | undefined): {\n    a: Box<string>;"),
+        "Did not expect the mapped alias return to expand into object-union members: {output}"
+    );
+}
+
+#[test]
+fn test_function_return_prefers_object_literal_over_return_type_wrapper() {
+    let source = r#"
+    function f1(s: string) {
+        return { a: 1, b: s };
+    }
+    "#;
+    let (parser, root) = parse_test_source(source);
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let f1_sym = binder.file_locals.get("f1").expect("missing f1 symbol");
+
+    let interner = TypeInterner::new();
+    let object_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: vec![
+            PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER),
+            PropertyInfo::new(interner.intern_string("b"), TypeId::STRING),
+        ],
+        string_index: None,
+        number_index: None,
+        symbol: None,
+    });
+    let function_arg = interner.function(FunctionShape::new(Vec::new(), object_type));
+    let return_type_def = DefId(7020);
+    let return_type = interner.application(interner.lazy(return_type_def), vec![function_arg]);
+    let function_type = interner.function(FunctionShape::new(Vec::new(), return_type));
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache
+        .def_to_name
+        .insert(return_type_def, "ReturnType".to_string());
+    type_cache.symbol_types.insert(f1_sym, function_type);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare function f1(s: string): {\n    a: number;\n    b: string;\n};"),
+        "Expected object literal return type to be emitted directly: {output}"
+    );
+    assert!(
+        !output.contains("ReturnType<"),
+        "Did not expect ReturnType wrapper in function declaration: {output}"
+    );
+}
+
+#[test]
 fn test_export_type_with_resolution_mode_attributes_is_preserved() {
     let output = emit_dts_with_usage_analysis(
         r#"
@@ -753,8 +1145,7 @@ fn test_export_json_attributes_are_stripped_from_declarations() {
 fn test_inferred_printer_reduces_conditional_alias_applications() {
     use tsz_solver::types::{ConditionalType, TypeParamInfo};
 
-    let mut parser = ParserState::new("test.ts".to_string(), String::new());
-    let _ = parser.parse_source_file();
+    let (parser, _root) = parse_test_source("");
 
     let mut foreign_parser = ParserState::new(
         "lib.d.ts".to_string(),
@@ -1191,8 +1582,7 @@ export default Op;
 #[test]
 fn test_destructuring_variable_declaration_groups_typed_bindings() {
     let source = r#"var [x, y] = [1, "hello"];"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let root_node = parser.arena.get(root).expect("missing root node");
     let stmt_idx = parser
         .arena
@@ -1246,6 +1636,319 @@ fn test_destructuring_variable_declaration_groups_typed_bindings() {
         output.contains("declare var x: number, y: string;"),
         "Expected destructured bindings to emit in one typed declaration: {output}"
     );
+}
+
+#[test]
+fn test_string_literal_tuple_binding_preserves_alias_and_return_union() {
+    let output = emit_dts(
+        r#"
+type RexOrRaptor = "t-rex" | "raptor";
+let [im, a, dinosaur]: ["I'm", "a", RexOrRaptor] = ["I'm", "a", "t-rex"];
+
+function rawr(dino: RexOrRaptor) {
+    if (dino === "t-rex") {
+        return "ROAAAAR!";
+    }
+    if (dino === "raptor") {
+        return "yip yip!";
+    }
+    throw "Unexpected " + dino;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare let im: \"I'm\", a: \"a\", dinosaur: RexOrRaptor;"),
+        "Expected tuple destructuring to preserve the alias from the source tuple annotation: {output}"
+    );
+    assert!(
+        output.contains("declare function rawr(dino: RexOrRaptor): \"ROAAAAR!\" | \"yip yip!\";"),
+        "Expected string literal returns from guarded branches to emit as a union: {output}"
+    );
+}
+
+#[test]
+fn test_mutable_array_literal_binding_widens_homogeneous_literals() {
+    let source = r#"
+let [hello, brave] = ["Hello", "Brave"];
+let [one, two] = [1, 2];
+let [yes, no] = [true, false];
+export let [ma, mb] = ["A", 1];
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let tuple_types = [
+        interner.tuple(vec![
+            TupleElement {
+                type_id: interner.literal_string("Hello"),
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: interner.literal_string("Brave"),
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]),
+        interner.tuple(vec![
+            TupleElement {
+                type_id: interner.literal_number(1.0),
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: interner.literal_number(2.0),
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]),
+        interner.tuple(vec![
+            TupleElement {
+                type_id: interner.literal_boolean(true),
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: interner.literal_boolean(false),
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]),
+        interner.tuple(vec![
+            TupleElement {
+                type_id: interner.literal_string("A"),
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: interner.literal_number(1.0),
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]),
+    ];
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    for (decl_idx, tuple_type) in variable_declarations_from_source(&parser, root)
+        .into_iter()
+        .zip(tuple_types)
+    {
+        let decl = parser
+            .arena
+            .get(decl_idx)
+            .and_then(|node| parser.arena.get_variable_declaration(node))
+            .expect("missing variable declaration");
+        type_cache.node_types.insert(decl.initializer.0, tuple_type);
+    }
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare let hello: string, brave: string;"),
+        "Expected mutable string array binding literals to widen: {output}"
+    );
+    assert!(
+        output.contains("declare let one: number, two: number;"),
+        "Expected mutable number array binding literals to widen: {output}"
+    );
+    assert!(
+        output.contains("declare let yes: boolean, no: boolean;"),
+        "Expected mutable boolean array binding literals to widen: {output}"
+    );
+    assert!(
+        output.contains("export declare let ma: string, mb: number;"),
+        "Expected mutable mixed array binding literals to widen per binding: {output}"
+    );
+}
+
+#[test]
+fn test_short_circuit_const_literal_variables_preserve_literal_union() {
+    let output = emit_dts_with_binding(
+        r#"
+const string: "string" = "string";
+const number: "number" = "number";
+const boolean: "boolean" = "boolean";
+
+const stringOrNumber = string || number;
+const stringOrBoolean = string || boolean;
+const booleanOrNumber = number || boolean;
+const stringOrBooleanOrNumber = stringOrBoolean || number;
+"#,
+    );
+
+    assert!(
+        output.contains("declare const stringOrNumber: \"string\" | \"number\";"),
+        "Expected `||` over literal-typed consts to preserve both arms: {output}"
+    );
+    assert!(
+        output.contains("declare const stringOrBoolean: \"string\" | \"boolean\";"),
+        "Expected `||` to preserve string and boolean literal arms: {output}"
+    );
+    assert!(
+        output.contains("declare const booleanOrNumber: \"number\" | \"boolean\";"),
+        "Expected `||` to preserve source declaration order for operands: {output}"
+    );
+    assert!(
+        output.contains(
+            "declare const stringOrBooleanOrNumber: \"string\" | \"number\" | \"boolean\";"
+        ),
+        "Expected chained `||` to merge prior literal unions in declaration order: {output}"
+    );
+}
+
+#[test]
+fn test_short_circuit_drops_falsy_left_literal_from_dts_union() {
+    let output = emit_dts_with_binding(
+        r#"
+const empty: "" = "";
+const fallback: "fallback" = "fallback";
+const value = empty || fallback;
+"#,
+    );
+
+    assert!(
+        output.contains("declare const value: \"fallback\";"),
+        "Expected `||` declaration inference to exclude a known-falsy left literal: {output}"
+    );
+}
+
+#[test]
+fn test_short_circuit_reference_respects_annotated_widened_surface() {
+    let output = emit_dts_with_binding(
+        r#"
+const a: "a" = "a";
+const b: "b" = "b";
+const c: "c" = "c";
+let ab: string = a || b;
+export const y = ab || c;
+"#,
+    );
+
+    assert!(
+        output.contains("export declare const y: string;"),
+        "Expected referenced annotated short-circuit declarations to expose their declared surface: {output}"
+    );
+    assert!(
+        !output.contains("export declare const y: \"a\" | \"b\" | \"c\";"),
+        "Annotated referenced declarations must not be expanded through their initializer: {output}"
+    );
+}
+
+#[test]
+fn test_nullish_coalescing_drops_nullish_left_from_dts_union() {
+    let output = emit_dts_with_binding(
+        r#"
+const maybe: "value" | undefined = undefined as any;
+const fallback: "fallback" = "fallback";
+const value = maybe ?? fallback;
+"#,
+    );
+
+    assert!(
+        output.contains("declare const value: \"value\" | \"fallback\";"),
+        "Expected `??` declaration inference to remove nullish left arms and keep fallback: {output}"
+    );
+}
+
+#[test]
+fn test_const_asserted_array_literal_binding_preserves_literals() {
+    let source = r#"let [hello, brave] = ["Hello", "Brave"] as const;"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let tuple_type = interner.tuple(vec![
+        TupleElement {
+            type_id: interner.literal_string("Hello"),
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: interner.literal_string("Brave"),
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+    let decl_idx = variable_declarations_from_source(&parser, root)
+        .into_iter()
+        .next()
+        .expect("missing variable declaration");
+    let decl = parser
+        .arena
+        .get(decl_idx)
+        .and_then(|node| parser.arena.get_variable_declaration(node))
+        .expect("missing variable declaration");
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache.node_types.insert(decl.initializer.0, tuple_type);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare let hello: \"Hello\", brave: \"Brave\";"),
+        "Expected const-asserted array binding literals to stay literal: {output}"
+    );
+}
+
+fn variable_declarations_from_source(parser: &ParserState, root: NodeIndex) -> Vec<NodeIndex> {
+    let root_node = parser.arena.get(root).expect("missing root node");
+    let source_file = parser
+        .arena
+        .get_source_file(root_node)
+        .expect("missing source file");
+    let mut declarations = Vec::new();
+    for &stmt_idx in &source_file.statements.nodes {
+        let Some(stmt_node) = parser.arena.get(stmt_idx) else {
+            continue;
+        };
+        let variable_stmt_idx =
+            if stmt_node.kind == tsz_parser::parser::syntax_kind_ext::EXPORT_DECLARATION {
+                parser
+                    .arena
+                    .get_export_decl(stmt_node)
+                    .map(|export| export.export_clause)
+                    .unwrap_or(stmt_idx)
+            } else {
+                stmt_idx
+            };
+        let Some(stmt) = parser
+            .arena
+            .get(variable_stmt_idx)
+            .and_then(|node| parser.arena.get_variable(node))
+        else {
+            continue;
+        };
+        for &decl_list_idx in &stmt.declarations.nodes {
+            let Some(decl_list) = parser
+                .arena
+                .get(decl_list_idx)
+                .and_then(|node| parser.arena.get_variable(node))
+            else {
+                continue;
+            };
+            declarations.extend(decl_list.declarations.nodes.iter().copied());
+        }
+    }
+    declarations
 }
 
 #[test]
@@ -1303,8 +2006,7 @@ fn test_inferred_object_return_preserves_destructured_typeof_alias_member() {
 #[test]
 fn test_destructuring_parameter_properties_emit_individual_class_properties() {
     let source = "class C { constructor(public [x, y]: [string, number]) {} }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let root_node = parser.arena.get(root).expect("missing root node");
     let stmt_idx = parser
         .arena
@@ -1391,6 +2093,52 @@ class Calculator {
     assert!(
         output.contains("add(b: number): number;"),
         "Expected method return type to be inferred as number from this.x + b: {output}"
+    );
+}
+
+#[test]
+fn method_body_return_inference_survives_non_callable_cached_method_type() {
+    let source = r#"
+class Boxed {
+    values() {
+        return new Boxed();
+    }
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let method_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            (node.kind == syntax_kind_ext::METHOD_DECLARATION)
+                .then_some(NodeIndex(idx as u32))
+                .filter(|&method_idx| {
+                    parser
+                        .arena
+                        .get(method_idx)
+                        .and_then(|node| parser.arena.get_method_decl(node))
+                        .and_then(|method| parser.arena.get_identifier_text(method.name))
+                        == Some("values")
+                })
+        })
+        .expect("missing values method");
+
+    let interner = TypeInterner::new();
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache.node_types.insert(method_idx.0, TypeId::UNKNOWN);
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("values(): Boxed;"),
+        "Expected body inference to recover the method return type when cache is non-callable: {output}"
     );
 }
 

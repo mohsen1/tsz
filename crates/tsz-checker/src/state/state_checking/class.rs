@@ -6,12 +6,136 @@ use crate::flow_analysis::PropertyKey;
 use crate::query_boundaries::class_type as class_query;
 use crate::query_boundaries::definite_assignment::check_constructor_property_use_before_assignment;
 use crate::state::CheckerState;
-use rustc_hash::FxHashSet;
-use tsz_parser::parser::NodeIndex;
+use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn class_shape_cache_is_stable(
+        &self,
+        stmt_idx: NodeIndex,
+        class: &tsz_parser::parser::node::ClassData,
+    ) -> bool {
+        if self.is_js_file()
+            || self.ctx.is_declaration_file()
+            || class.name.is_none()
+            || class.type_parameters.is_some()
+            || self.class_has_base(class)
+            || self
+                .first_decorator_in_modifiers(&class.modifiers)
+                .is_some()
+            || !self.class_symbol_has_single_declaration(stmt_idx)
+        {
+            return false;
+        }
+
+        let Some(&instance_type) = self.ctx.class_instance_type_cache.get(&stmt_idx) else {
+            return false;
+        };
+        let Some(&constructor_type) = self.ctx.class_constructor_type_cache.get(&stmt_idx) else {
+            return false;
+        };
+        if matches!(instance_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
+            || matches!(
+                constructor_type,
+                TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR
+            )
+        {
+            return false;
+        }
+
+        class
+            .members
+            .nodes
+            .iter()
+            .copied()
+            .all(|member_idx| self.class_member_shape_cache_is_stable(member_idx))
+    }
+
+    fn class_symbol_has_single_declaration(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(sym_id) = self.ctx.binder.get_node_symbol(stmt_idx) else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        if symbol.value_declaration.is_some() && symbol.value_declaration != stmt_idx {
+            return false;
+        }
+        !symbol.declarations.is_empty()
+            && symbol
+                .declarations
+                .iter()
+                .copied()
+                .all(|decl_idx| decl_idx == stmt_idx)
+    }
+
+    fn class_member_shape_cache_is_stable(&self, member_idx: NodeIndex) -> bool {
+        let Some(member_node) = self.ctx.arena.get(member_idx) else {
+            return false;
+        };
+
+        match member_node.kind {
+            syntax_kind_ext::PROPERTY_DECLARATION => {
+                let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
+                    return false;
+                };
+                prop.type_annotation.is_some()
+                    && !self.class_shape_member_name_is_computed(prop.name)
+                    && !self.has_static_modifier(&prop.modifiers)
+                    && self.first_decorator_in_modifiers(&prop.modifiers).is_none()
+            }
+            syntax_kind_ext::METHOD_DECLARATION => {
+                let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
+                    return false;
+                };
+                method.body.is_some()
+                    && method.type_parameters.is_none()
+                    && method.type_annotation.is_some()
+                    && !self.class_shape_member_name_is_computed(method.name)
+                    && self
+                        .first_decorator_in_modifiers(&method.modifiers)
+                        .is_none()
+                    && self.class_parameters_have_explicit_shape(&method.parameters, false)
+            }
+            syntax_kind_ext::CONSTRUCTOR => {
+                let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
+                    return false;
+                };
+                ctor.type_parameters.is_none()
+                    && self.first_decorator_in_modifiers(&ctor.modifiers).is_none()
+                    && self.class_parameters_have_explicit_shape(&ctor.parameters, true)
+            }
+            _ => false,
+        }
+    }
+
+    fn class_shape_member_name_is_computed(&self, name_idx: NodeIndex) -> bool {
+        self.ctx
+            .arena
+            .get(name_idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+    }
+
+    fn class_parameters_have_explicit_shape(
+        &self,
+        parameters: &NodeList,
+        reject_parameter_properties: bool,
+    ) -> bool {
+        parameters.nodes.iter().copied().all(|param_idx| {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                return false;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                return false;
+            };
+            param.type_annotation.is_some()
+                && (!reject_parameter_properties
+                    || !self.has_parameter_property_modifier(&param.modifiers))
+        })
+    }
+
     /// Check a class declaration.
     pub(crate) fn check_class_declaration(&mut self, stmt_idx: NodeIndex) {
         use crate::class_inheritance::ClassInheritanceChecker;
@@ -170,6 +294,8 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::CLASS_NAME_CANNOT_BE,
             );
         }
+
+        self.check_decorators_on_accessor_pairs(&class.members.nodes);
 
         // TS2725: Class name cannot be 'Object' when targeting ES5 and above with module X
         // Applies to non-ES module kinds (CommonJS, AMD, UMD, System) and non-ambient classes.
@@ -623,6 +749,8 @@ impl<'a> CheckerState<'a> {
             class_type_parameters: _type_params,
         });
 
+        let preserve_stable_class_shape_cache = self.class_shape_cache_is_stable(stmt_idx, class);
+
         // Drop any value-side or instance-side class shape cached during the
         // earlier environment-building pass. Member checking needs a fresh view
         // so `this` inside methods observes the checked class shape rather than
@@ -637,7 +765,9 @@ impl<'a> CheckerState<'a> {
         // returning the instance type as a fallback instead of the correct
         // constructor type. The cache is definitively cleared and refreshed
         // after member checking completes (see below).
-        self.ctx.class_instance_type_cache.remove(&stmt_idx);
+        if !preserve_stable_class_shape_cache {
+            self.ctx.class_instance_type_cache.remove(&stmt_idx);
+        }
         // Clear the constructor type cache for a fresh view. Save the old
         // value so it can be temporarily restored during member checking to
         // prevent cycles. When a generic class has a private static member
@@ -646,7 +776,9 @@ impl<'a> CheckerState<'a> {
         // checking can re-enter get_class_constructor_type and hit cycle
         // detection. Without a valid fallback, the cycle returns the instance
         // type instead of the constructor type, causing false TS2339 errors.
-        self.ctx.class_constructor_type_cache.remove(&stmt_idx);
+        if !preserve_stable_class_shape_cache {
+            self.ctx.class_constructor_type_cache.remove(&stmt_idx);
+        }
         if let Some(sym_id) = self.ctx.binder.get_node_symbol(stmt_idx) {
             self.ctx.symbol_types.remove(&sym_id);
         }
@@ -848,7 +980,9 @@ impl<'a> CheckerState<'a> {
         // build_type_environment before JSDoc/template/member inference stabilizes.
         // Refresh them after the checked pass so following statements observe the
         // finalized constructor signatures and instance return types.
-        self.ctx.class_constructor_type_cache.remove(&stmt_idx);
+        if !preserve_stable_class_shape_cache {
+            self.ctx.class_constructor_type_cache.remove(&stmt_idx);
+        }
         for sym_id in refresh_symbols {
             self.ctx.symbol_types.remove(&sym_id);
             let _ = self.get_type_of_symbol(sym_id);
@@ -941,6 +1075,7 @@ impl<'a> CheckerState<'a> {
             true,
             &class_type_param_names,
         );
+        self.check_decorators_on_accessor_pairs(&class.members.nodes);
 
         // Check heritage clauses for primitive type keywords (TS2863/TS2864).
         // Uses the lightweight check to avoid triggering constructor accessibility (TS2675)
@@ -1142,7 +1277,7 @@ impl<'a> CheckerState<'a> {
 
         // Check if this is a derived class (has base class)
         let summary = self.summarize_class_initialization(class_idx, class);
-        if summary.required_instance_fields.is_empty() {
+        if summary.ts2565_field_keys.is_empty() {
             return;
         }
 
@@ -1174,22 +1309,23 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        // Check for TS2565 (Property used before being assigned in constructor)
         if let Some(body_idx) = summary.constructor_body {
             check_constructor_property_use_before_assignment(
                 self,
                 body_idx,
-                &summary.required_instance_field_keys,
+                &summary.ts2565_field_keys,
                 summary.requires_super,
             );
         }
     }
 
-    pub(crate) fn property_requires_initialization(
+    /// Structural eligibility check shared by TS2564 and TS2565, without the TS2564 decorator
+    /// exemption. ES-decorated fields are **not** excluded; callers that implement the TS2564
+    /// exemption (ES decorators may provide an initial value) layer it on top.
+    pub(crate) fn property_needs_strict_check(
         &mut self,
         member_idx: NodeIndex,
         prop: &tsz_parser::parser::node::PropertyDeclData,
-        _is_derived_class: bool,
     ) -> bool {
         use tsz_scanner::SyntaxKind;
 
@@ -1201,26 +1337,6 @@ impl<'a> CheckerState<'a> {
             || self.has_declare_modifier(&prop.modifiers)
         {
             return false;
-        }
-
-        // Stage 3 (ES) decorated properties don't require initialization — the
-        // decorator can intercept the property definition and provide an initial
-        // value at runtime. TSC suppresses TS2564 for decorated properties when
-        // using ES decorators (experimentalDecorators is NOT enabled).
-        // With legacy experimentalDecorators, decorators are metadata-only and
-        // don't affect initialization, so TS2564 is still required.
-        if !self.ctx.compiler_options.experimental_decorators
-            && let Some(ref modifiers) = prop.modifiers
-        {
-            let has_decorator = modifiers.nodes.iter().any(|&mod_idx| {
-                self.ctx
-                    .arena
-                    .get(mod_idx)
-                    .is_some_and(|n| n.kind == tsz_parser::parser::syntax_kind_ext::DECORATOR)
-            });
-            if has_decorator {
-                return false;
-            }
         }
 
         // Properties with string or numeric literal names are not checked for strict property initialization
@@ -1263,24 +1379,10 @@ impl<'a> CheckerState<'a> {
             TypeId::ANY
         };
 
-        // Property initialization checking:
-        // 1. ANY/UNKNOWN types don't need initialization
-        // 2. Union types with undefined don't need initialization
-        // 3. Optional types don't need initialization
-        // 4. Type parameters (unconstrained or constrained to allow undefined)
-        if prop_type == TypeId::ANY || prop_type == TypeId::UNKNOWN {
+        if prop_type == TypeId::ANY || prop_type == TypeId::UNKNOWN || prop_type == TypeId::ERROR {
             return false;
         }
 
-        // ERROR types also don't need initialization - these indicate parsing/binding errors
-        if prop_type == TypeId::ERROR {
-            return false;
-        }
-
-        // Check if undefined is assignable to the property type.
-        // This handles: union types with undefined, type parameters with
-        // unconstrained or undefined-allowing constraints (mirrors tsc's
-        // `isTypeAssignableTo(undefinedType, type)` check for TS2564).
         !class_query::undefined_is_assignable_to(self.ctx.types, prop_type)
     }
 
@@ -1529,6 +1631,66 @@ impl<'a> CheckerState<'a> {
         self.error_global_type_missing_at_position(type_name, file_name, 0, 0);
     }
 
+    fn check_decorators_on_accessor_pairs(&mut self, members: &[NodeIndex]) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        if !self.ctx.compiler_options.experimental_decorators {
+            return;
+        }
+
+        let mut decorated_accessors: FxHashMap<(bool, String), bool> = FxHashMap::default();
+
+        for &member_idx in members {
+            let Some(node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if node.kind != syntax_kind_ext::GET_ACCESSOR
+                && node.kind != syntax_kind_ext::SET_ACCESSOR
+            {
+                continue;
+            }
+
+            let Some(accessor) = self.ctx.arena.get_accessor(node) else {
+                continue;
+            };
+            let Some(decorator_idx) = self.first_decorator_in_modifiers(&accessor.modifiers) else {
+                continue;
+            };
+            let Some(property_name) = self.get_property_name_resolved(accessor.name) else {
+                continue;
+            };
+
+            let is_static = self
+                .ctx
+                .arena
+                .has_modifier(&accessor.modifiers, tsz_scanner::SyntaxKind::StaticKeyword);
+            let is_get = node.kind == syntax_kind_ext::GET_ACCESSOR;
+            let key = (is_static, property_name);
+            if let Some(seen_is_get) = decorated_accessors.get(&key) {
+                if *seen_is_get != is_get {
+                    self.error_at_node(
+                        decorator_idx,
+                        diagnostic_messages::DECORATORS_CANNOT_BE_APPLIED_TO_MULTIPLE_GET_SET_ACCESSORS_OF_THE_SAME_NAME,
+                        diagnostic_codes::DECORATORS_CANNOT_BE_APPLIED_TO_MULTIPLE_GET_SET_ACCESSORS_OF_THE_SAME_NAME,
+                    );
+                }
+                continue;
+            }
+
+            decorated_accessors.insert(key, is_get);
+        }
+    }
+
+    fn first_decorator_in_modifiers(&self, modifiers: &Option<NodeList>) -> Option<NodeIndex> {
+        let modifiers = modifiers.as_ref()?;
+        modifiers.nodes.iter().copied().find(|&modifier_idx| {
+            self.ctx
+                .arena
+                .get(modifier_idx)
+                .is_some_and(|modifier| modifier.kind == syntax_kind_ext::DECORATOR)
+        })
+    }
+
     /// TS1238: Check that a class decorator expression has a compatible call signature.
     ///
     /// For experimental decorators, the decorator is called as `decoratorExpr(classConstructor)`.
@@ -1541,7 +1703,7 @@ impl<'a> CheckerState<'a> {
         class_idx: NodeIndex,
         class: &tsz_parser::parser::node::ClassData,
     ) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         use crate::query_boundaries::common::call_signatures_for_type;
 
         // Skip validation for error types or any — these won't produce meaningful diagnostics
@@ -1561,6 +1723,14 @@ impl<'a> CheckerState<'a> {
         if resolved == TypeId::ERROR || resolved == TypeId::ANY || resolved == TypeId::UNKNOWN {
             return;
         }
+
+        // Mirror tsc's `isUntypedFunctionCall`: a decorator typed as the
+        // global `Function` interface has no explicit call signatures but is
+        // treated as callable. Without this fallback, a class decorator
+        // factory returning `Function` would produce a spurious TS1238.
+        let Some(resolved) = self.prepare_decorator_callee(resolved) else {
+            return;
+        };
 
         // Check if the decorator type is callable.
         // TypeData::Function has a single call signature (function declarations/expressions).
@@ -1596,14 +1766,36 @@ impl<'a> CheckerState<'a> {
             None,
         );
 
-        if !matches!(
-            result,
-            crate::query_boundaries::common::CallResult::Success(_)
-        ) {
+        let crate::query_boundaries::common::CallResult::Success(return_type) = result else {
             self.error_at_node(
                 decorator_node,
                 diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
                 diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
+            );
+            return;
+        };
+
+        let return_type = self.evaluate_type_for_assignability(return_type);
+        if matches!(return_type, TypeId::ERROR | TypeId::ANY | TypeId::UNKNOWN) {
+            return;
+        }
+
+        let expected_return = self
+            .ctx
+            .types
+            .factory()
+            .union2(TypeId::VOID, class_constructor_type);
+        if !self.is_assignable_to(return_type, expected_return) {
+            let return_str = self.format_type_diagnostic(return_type);
+            let expected_str = self.format_type_diagnostic(expected_return);
+            let message = format_message(
+                diagnostic_messages::DECORATOR_FUNCTION_RETURN_TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[&return_str, &expected_str],
+            );
+            self.error_at_node(
+                decorator_node,
+                &message,
+                diagnostic_codes::DECORATOR_FUNCTION_RETURN_TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             );
         }
     }
@@ -1748,9 +1940,20 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            // Check if the base type is a valid base type
-            if !crate::query_boundaries::class::is_valid_base_type(self.ctx.types, base_type) {
-                let type_name = self.format_type(base_type);
+            // Check if the base type is a valid base type. Mixin intersections
+            // with incompatible private property origins are invalid bases even
+            // when the structural intersection has not been fully reduced to
+            // `never` yet.
+            let private_property_conflict =
+                self.intersection_has_private_property_conflict(base_type);
+            if !crate::query_boundaries::class::is_valid_base_type(self.ctx.types, base_type)
+                || private_property_conflict
+            {
+                let type_name = if private_property_conflict {
+                    self.format_type(TypeId::NEVER)
+                } else {
+                    self.format_type(base_type)
+                };
                 let message = format_message(
                     diagnostic_messages::BASE_CONSTRUCTOR_RETURN_TYPE_IS_NOT_AN_OBJECT_TYPE_OR_INTERSECTION_OF_OBJECT_TYP,
                     &[&type_name],

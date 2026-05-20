@@ -8,9 +8,11 @@
 
 use crate::evaluate_type;
 use crate::intern::TypeInterner;
+use crate::relations::relation_queries::{
+    RelationContext, RelationKind, RelationPolicy, query_relation,
+};
 use crate::relations::subtype::SubtypeChecker;
 use crate::types::{StringIntrinsicKind, TemplateSpan, TypeData, TypeId, TypeParamInfo};
-use crate::{RelationContext, RelationKind, RelationPolicy, query_relation};
 
 // =============================================================================
 // Rule 1: StringIntrinsic(kind, T) <: string

@@ -1,6 +1,8 @@
 use rustc_hash::FxHashSet;
 use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
 
+use crate::declaration_emitter::core::emit_members::ClassMemberKind;
+
 use super::DeclarationEmitter;
 
 impl<'a> DeclarationEmitter<'a> {
@@ -48,10 +50,6 @@ impl<'a> DeclarationEmitter<'a> {
         let mut instance_members = Vec::new();
 
         for &member_idx in &members.nodes {
-            let Some(member_node) = self.arena.get(member_idx) else {
-                continue;
-            };
-
             // For TS classes with computed names, tsc keeps the
             // constructor in its source position among the non-static
             // members (so `[a]: number; constructor();` round-trips).
@@ -59,24 +57,18 @@ impl<'a> DeclarationEmitter<'a> {
             // the JS member shape is synthesised from `this.x = …`
             // assignments and prototype writes whose source positions
             // we can't trust the same way.
+            let Some(member_info) = self.class_member_info(member_idx) else {
+                continue;
+            };
+
             let is_constructor_special =
-                self.source_is_js_file && member_node.kind == syntax_kind_ext::CONSTRUCTOR;
+                self.source_is_js_file && member_info.kind == ClassMemberKind::Constructor;
             if is_constructor_special {
                 constructors.push(member_idx);
                 continue;
             }
 
-            let is_static = if let Some(prop) = self.arena.get_property_decl(member_node) {
-                self.arena.is_static(&prop.modifiers)
-            } else if let Some(method) = self.arena.get_method_decl(member_node) {
-                self.arena.is_static(&method.modifiers)
-            } else if let Some(accessor) = self.arena.get_accessor(member_node) {
-                self.arena.is_static(&accessor.modifiers)
-            } else {
-                false
-            };
-
-            if is_static {
+            if member_info.is_static {
                 static_members.push(member_idx);
             } else {
                 instance_members.push(member_idx);
@@ -193,17 +185,15 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(mn) = self.arena.get(m) else {
                 continue;
             };
-            let is_accessor = mn.kind == syntax_kind_ext::GET_ACCESSOR
-                || mn.kind == syntax_kind_ext::SET_ACCESSOR;
-            let is_method = mn.kind == syntax_kind_ext::METHOD_DECLARATION;
+            let Some(info) = self.class_member_info(m) else {
+                continue;
+            };
+            let is_accessor = info.kind == ClassMemberKind::Accessor;
+            let is_method = info.kind == ClassMemberKind::Method;
             if !is_accessor && !is_method {
                 continue;
             }
-            let name_idx = if is_accessor {
-                self.arena.get_accessor(mn).map(|a| a.name)
-            } else {
-                self.arena.get_method_decl(mn).map(|md| md.name)
-            };
+            let name_idx = info.name;
             let Some(name_idx) = name_idx else {
                 continue;
             };

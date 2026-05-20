@@ -1,14 +1,13 @@
 //! Cross-call `instantiate_type` cache wiring tests.
 //!
-//! PR 3/4 of the `docs/plan/ROADMAP.md` instantiation-cache workstream. These tests
-//! exercise the wiring of `InstantiationCache` into the five `instantiate_type*`
-//! entry points (the `_cached` variants). PR 2 already shipped the storage
-//! and trait methods on `QueryDatabase`; here we verify that:
+//! These tests exercise the wiring of `InstantiationCache` into the
+//! cache-aware instantiation entry points (the `_cached` variants). They verify
+//! that:
 //!
 //! 1. Two back-to-back calls with the same `(type_id, subst, mode_bits, this_type)`
 //!    produce a cache hit (recorded via `instantiation_cache_hits`).
 //! 2. Different `this_type` values for `substitute_this_type_cached` do NOT
-//!    alias even though the substitution is empty (carve-out from design §5).
+//!    alias even though the substitution is empty.
 //! 3. The leaf fast paths (`TypeParameter` direct hit, `IndexAccess`) are NOT
 //!    cached — they remain allocation-free.
 //! 4. The empty / identity short-circuit runs BEFORE cache-key construction,
@@ -194,8 +193,7 @@ fn shallow_this_return_position_caches_with_distinct_mode() {
 #[test]
 fn leaf_fast_path_typeparameter_is_not_cached() {
     // The TypeParameter direct-hit fast path runs BEFORE any cache-key
-    // construction (design §5). After many leaf calls, the cache should
-    // remain empty.
+    // construction. After many leaf calls, the cache should remain empty.
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
 

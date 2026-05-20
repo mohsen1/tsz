@@ -580,6 +580,123 @@ export const thing = {
     );
 }
 
+#[test]
+fn test_ts7023_object_literal_this_method_call_cycles() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        strict: true,
+        target: ScriptTarget::ES2015,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_raw_diagnostics_named(
+        "test.ts",
+        r#"
+const obj = {
+  getValue() {
+    return this.other();
+  },
+  other() {
+    return this.getValue();
+  }
+};
+
+const simple = {
+  recurse() {
+    return this.recurse();
+  }
+};
+
+const withBase = {
+  again(flag: boolean) {
+    if (flag) return this.again(false);
+    return 1;
+  }
+};
+
+export {};
+"#,
+        opts,
+    );
+
+    let ts7023_count = diagnostics.iter().filter(|diag| diag.code == 7023).count();
+    assert_eq!(
+        ts7023_count, 4,
+        "Should emit TS7023 for mutual, direct, and base-case object method `this` call cycles.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts7023_object_literal_function_property_this_call_cycle() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        strict: true,
+        target: ScriptTarget::ES2015,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_raw_diagnostics_named(
+        "test.ts",
+        r#"
+const obj = {
+  first: function() {
+    return this.second();
+  },
+  second: function() {
+    return this.first();
+  }
+};
+
+export {};
+"#,
+        opts,
+    );
+
+    let ts7023_count = diagnostics.iter().filter(|diag| diag.code == 7023).count();
+    assert_eq!(
+        ts7023_count, 2,
+        "Should emit TS7023 for object function-property `this` call cycles.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts7023_object_literal_this_method_call_cycle_suppression_cases() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        strict: true,
+        target: ScriptTarget::ES2015,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_raw_diagnostics_named(
+        "test.ts",
+        r#"
+const nonCycle = {
+  read() {
+    return this.value();
+  },
+  value() {
+    return 1;
+  }
+};
+
+const contextual: { a(): number; b(): number } = {
+  a() {
+    return this.b();
+  },
+  b() {
+    return this.a();
+  }
+};
+
+export {};
+"#,
+        opts,
+    );
+
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 7023),
+        "Should not emit TS7023 for acyclic `this` calls or contextual method return types.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
 // TS2487: The left-hand side of a 'for...of' statement must be a variable or a property access.
 // From: for-of3.ts
 

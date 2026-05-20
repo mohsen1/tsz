@@ -97,6 +97,12 @@ impl<'a> Printer<'a> {
         if appears_in_value_haystack {
             return true;
         }
+        if names
+            .iter()
+            .any(|name| self.is_classic_jsx_factory_root(name))
+        {
+            return true;
+        }
         // Under `--emitDecoratorMetadata`, type annotations on decorated
         // class members become *value* references at runtime via
         // `__metadata("design:type", X)`. The standard type-only strip would
@@ -141,6 +147,40 @@ impl<'a> Printer<'a> {
             .options
             .type_only_export_equals_modules
             .contains(lit.text.as_str())
+    }
+
+    pub(in crate::emitter) fn import_decl_should_schedule_wrapped_dependency(
+        &self,
+        node: &Node,
+        import_decl: &tsz_parser::parser::node::ImportDeclData,
+    ) -> bool {
+        if !self.import_decl_has_runtime_value(import_decl) {
+            return false;
+        }
+
+        let Some(clause_node) = self.arena.get(import_decl.import_clause) else {
+            return true;
+        };
+
+        if clause_node.kind != syntax_kind_ext::IMPORT_CLAUSE {
+            if self.ctx.options.verbatim_module_syntax || self.source_is_js_file {
+                return true;
+            }
+            return self.import_equals_has_value_usage_after_node(node, import_decl);
+        }
+
+        let Some(clause) = self.arena.get_import_clause(clause_node) else {
+            return true;
+        };
+        if clause.is_type_only {
+            return false;
+        }
+
+        if self.ctx.options.verbatim_module_syntax || self.source_is_js_file {
+            return true;
+        }
+
+        self.import_has_value_usage_after_node(node, clause)
     }
 
     fn async_return_type_uses_imported_promise_constructor_after_node(
@@ -200,50 +240,84 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// Returns true when the given import clause's default or namespace
-    /// binding matches the configured JSX factory root name (e.g. `React`).
-    /// Such imports must be exempt from text-based value-usage elision since
-    /// JSX elements reference the factory implicitly. Mirrors the logic at
+    /// Returns true when the given import clause has a binding matching an
+    /// implicit classic JSX factory root (e.g. `React`, `h`, or a per-file
+    /// `@jsx dom` pragma). Such imports must be exempt from text-based
+    /// value-usage elision since JSX elements reference the factory implicitly.
+    ///
+    /// This includes named import specifiers because `@jsx dom` plus
+    /// `import { dom } from "./renderer"` is a real runtime dependency even
+    /// though the source has no textual `dom(...)` call before JSX transform.
+    /// Mirrors the logic at
     /// `crates/tsz-emitter/src/emitter/module_wrapper/wrapper_entry.rs`
     /// around the AMD/UMD dependency collection (`is_jsx_factory_import`).
     pub(in crate::emitter) fn is_jsx_factory_import_clause(
         &self,
         clause: &tsz_parser::parser::node::ImportClauseData,
     ) -> bool {
-        if !matches!(
-            self.ctx.options.jsx,
-            JsxEmit::Preserve | JsxEmit::React | JsxEmit::ReactNative
-        ) {
+        let roots = self.classic_jsx_factory_roots();
+        if roots.is_empty() {
             return false;
         }
-        let factory_root = self
-            .ctx
-            .options
-            .jsx_factory
-            .as_deref()
-            .and_then(|f| f.split('.').next())
-            .unwrap_or("React");
 
         if clause.name.is_some() {
             let name = self.get_identifier_text_idx(clause.name);
-            if name == factory_root {
+            if roots.iter().any(|root| root == &name) {
                 return true;
             }
         }
 
-        if clause.named_bindings.is_some()
-            && let Some(bindings_node) = self.arena.get(clause.named_bindings)
-            && let Some(named_imports) = self.arena.get_named_imports(bindings_node)
-            && named_imports.name.is_some()
-            && named_imports.elements.nodes.is_empty()
-        {
+        let Some(bindings_node) = self.arena.get(clause.named_bindings) else {
+            return false;
+        };
+        let Some(named_imports) = self.arena.get_named_imports(bindings_node) else {
+            return false;
+        };
+
+        if named_imports.name.is_some() && named_imports.elements.nodes.is_empty() {
             let ns_name = self.get_identifier_text_idx(named_imports.name);
-            if ns_name == factory_root {
+            if roots.iter().any(|root| root == &ns_name) {
                 return true;
             }
         }
 
-        false
+        named_imports.elements.nodes.iter().any(|&spec_idx| {
+            self.arena
+                .get(spec_idx)
+                .and_then(|spec_node| self.arena.get_specifier(spec_node))
+                .is_some_and(|spec| {
+                    if spec.is_type_only {
+                        return false;
+                    }
+                    let local_name = self.get_identifier_text_idx(spec.name);
+                    roots.iter().any(|root| root == &local_name)
+                })
+        })
+    }
+
+    fn classic_jsx_factory_roots(&self) -> Vec<String> {
+        let uses_classic_factory = match self.jsx_pragmas.runtime {
+            Some(crate::jsx_pragmas::JsxRuntimePragma::Classic) => true,
+            Some(crate::jsx_pragmas::JsxRuntimePragma::Automatic) => false,
+            _ => matches!(
+                self.ctx.options.jsx,
+                JsxEmit::Preserve | JsxEmit::React | JsxEmit::ReactNative
+            ),
+        };
+        if !uses_classic_factory {
+            return Vec::new();
+        }
+
+        self.jsx_pragmas.classic_factory_roots(
+            self.ctx.options.jsx_factory.as_deref(),
+            self.ctx.options.jsx_fragment_factory.as_deref(),
+        )
+    }
+
+    pub(in crate::emitter) fn is_classic_jsx_factory_root(&self, name: &str) -> bool {
+        self.classic_jsx_factory_roots()
+            .iter()
+            .any(|root| root == name)
     }
 
     /// Whether the default binding of an import clause is referenced as a
@@ -307,6 +381,7 @@ impl<'a> Printer<'a> {
             &value_haystack,
             &self.ctx.options.external_const_enum_bindings,
         );
+        let jsx_factory_roots = self.classic_jsx_factory_roots();
 
         specs
             .iter()
@@ -320,6 +395,9 @@ impl<'a> Printer<'a> {
                 };
                 let local_name = self.get_identifier_text_idx(spec.name);
                 if local_name.is_empty() {
+                    return true;
+                }
+                if jsx_factory_roots.iter().any(|root| root == &local_name) {
                     return true;
                 }
                 if crate::import_usage::contains_identifier_occurrence(&value_haystack, &local_name)
@@ -1194,6 +1272,8 @@ impl<'a> Printer<'a> {
         };
         let is_external = module_node.is_string_literal()
             || module_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE;
+        let is_node_esm_external =
+            is_external && self.ctx.options.resolved_node_module_to_esm && !self.in_namespace_iife;
 
         if self.recovered_module_syntax_block_depth > 0 && is_external && !is_exported_var {
             self.write("import ");
@@ -1221,10 +1301,13 @@ impl<'a> Printer<'a> {
         let target_is_interface_or_type_alias = is_simple_identifier_target
             && self.identifier_target_is_interface_or_type_alias(import.module_specifier);
         let script_mode_preserves_alias = is_script_mode && target_is_interface_or_type_alias;
+        let recovered_missing_trailing_entity_identifier = !import.is_type_only
+            && self.is_import_equals_reference_missing_trailing_identifier(import.module_specifier);
         let is_namespace_alias =
             module_node.is_identifier() || module_node.kind == syntax_kind_ext::QUALIFIED_NAME;
         if !(has_runtime_value
             || script_mode_preserves_alias
+            || recovered_missing_trailing_entity_identifier
             || is_exported_var && module_node.kind != SyntaxKind::Identifier as u16)
         {
             return;
@@ -1276,9 +1359,18 @@ impl<'a> Printer<'a> {
 
         // Parser recovery can produce missing/invalid module references for
         // malformed `import x = ...;` declarations. TSC skips JS alias emission
-        // in that case and preserves only trailing recovered expressions.
+        // for most invalid references and preserves only trailing recovered
+        // expressions, but a dotted entity name with a missing final identifier
+        // still emits the alias assignment (`var x = N.;`).
         if !self.is_valid_import_equals_reference(import.module_specifier) {
-            if self.is_recovered_import_equals_expression(module_node) {
+            if recovered_missing_trailing_entity_identifier {
+                self.emit_import_equals_assignment_prefix(
+                    import.import_clause,
+                    is_external,
+                    is_exported_var,
+                );
+                self.emit_entity_name(import.module_specifier);
+            } else if self.is_recovered_import_equals_expression(module_node) {
                 self.emit_module_specifier(import.module_specifier);
             } else if self
                 .recovered_import_equals_rhs_text(node)
@@ -1310,34 +1402,164 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        if is_exported_var {
-            // Emit directly as `exports.b = ...;` — the identifier substitution
-            // in emit() will produce `exports.b`.
-            self.emit(import.import_clause);
-            self.write(" = ");
-        } else if is_external {
-            // `import X = require("module")` uses const/var based on target.
+        if is_node_esm_external && is_exported_var {
             self.write_var_or_const();
             self.emit_decl_name(import.import_clause);
             self.write(" = ");
-        } else {
-            // `import X = Y` (entity name) always uses `var` per TSC behavior.
-            self.write("var ");
+            self.emit_node_esm_import_equals_require(module_node);
+            self.write_semicolon();
+            self.write_line();
+            self.write("export { ");
             self.emit_decl_name(import.import_clause);
-            self.write(" = ");
+            self.write(" }");
+            return;
         }
 
+        self.emit_import_equals_assignment_prefix(
+            import.import_clause,
+            is_external,
+            is_exported_var,
+        );
+
         if module_node.is_string_literal() {
-            if let Some(lit) = self.arena.get_literal(module_node) {
-                let spec = self.rewrite_module_spec(&lit.text);
-                self.write("require(\"");
-                self.write(&spec);
-                self.write("\")");
-            }
+            self.emit_import_equals_require_call(module_node, is_node_esm_external);
             return;
         }
 
         self.emit_entity_name(import.module_specifier);
+    }
+
+    fn emit_import_equals_assignment_prefix(
+        &mut self,
+        import_clause: NodeIndex,
+        is_external: bool,
+        is_exported_var: bool,
+    ) {
+        let is_es_module_output = matches!(
+            self.ctx.options.module,
+            ModuleKind::ES2015 | ModuleKind::ES2020 | ModuleKind::ES2022 | ModuleKind::ESNext
+        );
+
+        if is_exported_var && !is_external && is_es_module_output {
+            self.write("export var ");
+            self.emit_decl_name(import_clause);
+            self.write(" = ");
+        } else if is_exported_var {
+            // Emit directly as `exports.b = ...;` — the identifier substitution
+            // in emit() will produce `exports.b`.
+            self.emit(import_clause);
+            self.write(" = ");
+        } else if is_external {
+            // `import X = require("module")` uses const/var based on target.
+            self.write_var_or_const();
+            self.emit_decl_name(import_clause);
+            self.write(" = ");
+        } else {
+            // `import X = Y` (entity name) always uses `var` per TSC behavior.
+            self.write("var ");
+            self.emit_decl_name(import_clause);
+            self.write(" = ");
+        }
+    }
+
+    fn emit_node_esm_import_equals_require(&mut self, module_node: &Node) {
+        self.emit_import_equals_require_call(module_node, true);
+    }
+
+    fn emit_import_equals_require_call(&mut self, module_node: &Node, use_node_esm_require: bool) {
+        if let Some(lit) = self.arena.get_literal(module_node) {
+            let spec = self.rewrite_module_spec(&lit.text);
+            let require_name = if use_node_esm_require {
+                self.node_esm_require_name()
+            } else {
+                "require".to_string()
+            };
+            self.write(&require_name);
+            self.write("(\"");
+            self.write(&spec);
+            self.write("\")");
+        }
+    }
+
+    pub(in crate::emitter) fn source_needs_node_esm_create_require(
+        &self,
+        statements: &tsz_parser::parser::NodeList,
+    ) -> bool {
+        self.ctx.options.resolved_node_module_to_esm
+            && statements.nodes.iter().any(|&stmt_idx| {
+                self.arena.get(stmt_idx).is_some_and(|stmt| {
+                    if stmt.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                        return self.import_equals_declaration_is_external(stmt);
+                    }
+                    if let Some(export) = self.arena.get_export_decl(stmt)
+                        && let Some(clause_node) = self.arena.get(export.export_clause)
+                        && clause_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                    {
+                        return self.import_equals_declaration_is_external(clause_node);
+                    }
+                    false
+                })
+            })
+    }
+
+    pub(in crate::emitter) fn import_equals_declaration_is_external(&self, node: &Node) -> bool {
+        self.arena.get_import_decl(node).is_some_and(|import| {
+            !import.is_type_only
+                && self
+                    .arena
+                    .get(import.module_specifier)
+                    .is_some_and(|module_node| {
+                        module_node.is_string_literal()
+                            || module_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE
+                    })
+        })
+    }
+
+    pub(in crate::emitter) fn emit_node_esm_create_require_preamble(&mut self) {
+        let (create_require_name, require_name) = self.node_esm_create_require_names();
+        self.write("import { createRequire as ");
+        self.write(&create_require_name);
+        self.write(" } from \"module\";");
+        self.write_line();
+        self.write_var_or_const();
+        self.write(&require_name);
+        self.write(" = ");
+        self.write(&create_require_name);
+        self.write("(import.meta.url);");
+        self.write_line();
+    }
+
+    fn node_esm_require_name(&mut self) -> String {
+        self.node_esm_create_require_names().1
+    }
+
+    fn node_esm_create_require_names(&mut self) -> (String, String) {
+        if let Some(names) = &self.node_esm_create_require_names {
+            return names.clone();
+        }
+        let create_require_name = self.make_unique_exact_or_numbered_name("_createRequire");
+        let require_name = self.make_unique_exact_or_numbered_name("__require");
+        let names = (create_require_name, require_name);
+        self.node_esm_create_require_names = Some(names.clone());
+        names
+    }
+
+    fn make_unique_exact_or_numbered_name(&mut self, base: &str) -> String {
+        if !self.file_identifiers.contains(base) && !self.generated_temp_names.contains(base) {
+            let name = base.to_string();
+            self.generated_temp_names.insert(name.clone());
+            return name;
+        }
+        for suffix in 1..=1000 {
+            let candidate = format!("{base}_{suffix}");
+            if !self.file_identifiers.contains(&candidate)
+                && !self.generated_temp_names.contains(&candidate)
+            {
+                self.generated_temp_names.insert(candidate.clone());
+                return candidate;
+            }
+        }
+        self.make_unique_name_fresh()
     }
 
     fn namespace_has_prior_import_equals_alias(&self, node: &Node, alias_name: &str) -> bool {
@@ -1389,6 +1611,27 @@ impl<'a> Printer<'a> {
             }
             _ => false,
         }
+    }
+
+    fn is_import_equals_reference_missing_trailing_identifier(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::QUALIFIED_NAME {
+            return false;
+        }
+        let Some(name) = self.arena.get_qualified_name(node) else {
+            return false;
+        };
+        let left_is_valid = self.is_valid_import_equals_reference(name.left);
+        if !left_is_valid {
+            return false;
+        }
+        self.arena
+            .get(name.right)
+            .filter(|right| right.kind == SyntaxKind::Identifier as u16)
+            .and_then(|right| self.arena.get_identifier(right))
+            .is_some_and(|ident| ident.escaped_text.is_empty())
     }
 
     const fn is_recovered_import_equals_expression(&self, node: &Node) -> bool {

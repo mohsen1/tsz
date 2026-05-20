@@ -128,6 +128,26 @@ var result: number = b.getX();
     );
 }
 
+#[test]
+fn test_generic_class_this_indexed_array_element_return() {
+    let source = r#"
+class Container<T> {
+    items: T[] = [];
+
+    getFirst(): this["items"][number] | undefined {
+        return this.items[0];
+    }
+}
+
+export {};
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "this[\"items\"][number] should resolve to the class array element type. Got: {diagnostics:?}"
+    );
+}
+
 /// Regression guard: accessing a property that truly doesn't exist should
 /// still produce TS2339, even with the polymorphic this type fix.
 #[test]
@@ -174,6 +194,69 @@ class C1 {
     assert!(
         !has_error(&diagnostics, 2322),
         "Generic this-index assignment should not emit TS2322: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_direct_this_access_finds_declared_abstract_method_in_generic_class() {
+    let source = r#"
+abstract class Box<Output, Def extends {} = {}, Input = Output> {
+    readonly _output!: Output;
+    abstract _parse(value: Input): Output;
+    parse(value: Input): Output {
+        return this._parse(value);
+    }
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2339_errors = errors_with_code(&diagnostics, 2339);
+    assert!(
+        ts2339_errors.is_empty(),
+        "Direct this access should find declared abstract methods: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_direct_this_access_finds_later_declared_method_in_generic_class() {
+    let source = r#"
+abstract class Box<T> {
+    parse(value: T): T {
+        return this.safeParse(value);
+    }
+    safeParse(value: T): T {
+        return value;
+    }
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2339_errors = errors_with_code(&diagnostics, 2339);
+    assert!(
+        ts2339_errors.is_empty(),
+        "Direct this access should find later declared instance methods: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_direct_this_access_does_not_expose_static_method() {
+    let source = r#"
+class C {
+    static s(): number {
+        return 1;
+    }
+    m() {
+        return this.s();
+    }
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| { *code == 2576 && message.contains("static member 'C.s'") }),
+        "Static methods should not be exposed through instance this: {diagnostics:?}"
     );
 }
 
@@ -400,5 +483,186 @@ const a: A = c.clone();
     assert!(
         !has_error(&diagnostics, 2322),
         "Multi-level polymorphic-this subtype assignment must not emit TS2322: {diagnostics:?}"
+    );
+}
+
+/// Single-signature callable interface whose call signature returns `this`.
+/// Calling a value of that interface type must return the interface type, not the
+/// unresolved polymorphic `this`.
+#[test]
+fn test_callable_interface_this_return_single_sig() {
+    let source = r#"
+interface Builder {
+    (): this;
+    name: string;
+}
+declare const b: Builder;
+const result = b();
+const _: string = result.name;
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Calling callable interface with `this` return should resolve `.name` without TS2339: {diagnostics:?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Assigning result.name to string must not emit TS2322: {diagnostics:?}"
+    );
+}
+
+/// Callable type alias (not an interface) with a `this` return signature.
+/// Ensures the fix covers type aliases, not only declared interfaces.
+#[test]
+fn test_callable_type_alias_this_return() {
+    let source = r#"
+type Factory = {
+    (): this;
+    tag: number;
+};
+declare const f: Factory;
+const r = f();
+const _: number = r.tag;
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Callable type alias with `this` return must resolve `.tag` after call: {diagnostics:?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Assigning r.tag to number must not emit TS2322: {diagnostics:?}"
+    );
+}
+
+/// Multi-signature callable interface where the first overload returns `this`
+/// and the second returns a concrete type.  Only the `this`-returning overload
+/// is called here; the result must have the callee type.
+#[test]
+fn test_callable_interface_this_return_multi_sig() {
+    let source = r#"
+interface MultiBuilder {
+    (x: number): this;
+    (x: string): string;
+    prop: boolean;
+}
+declare const mb: MultiBuilder;
+// Call the number overload → returns this (= MultiBuilder).
+const r = mb(42);
+const _: boolean = r.prop;
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Multi-sig callable: `this`-returning overload result must expose `.prop`: {diagnostics:?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Multi-sig callable: r.prop assigned to boolean must not emit TS2322: {diagnostics:?}"
+    );
+}
+
+/// Regression guard: a callable interface whose call signature returns a
+/// concrete type (not `this`) must not be affected by the substitution.
+#[test]
+fn test_callable_interface_concrete_return_unaffected() {
+    let source = r#"
+interface Maker {
+    (): string;
+    tag: number;
+}
+declare const m: Maker;
+const r = m();
+const _s: string = r;
+const _t: number = m.tag;
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Concrete-return callable must not be affected by this-substitution: {diagnostics:?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Concrete-return callable: `.tag` property must still be accessible on callee: {diagnostics:?}"
+    );
+}
+
+/// Regression guard: method calls on classes already work via property-access
+/// substitution. They must not be broken by the new call-result substitution.
+#[test]
+fn test_class_method_this_return_still_works_after_fix() {
+    let source = r#"
+class Node {
+    value: number = 0;
+    setVal(v: number): this {
+        this.value = v;
+        return this;
+    }
+}
+class SpecialNode extends Node {
+    extra: string = "";
+}
+declare const sn: SpecialNode;
+const r = sn.setVal(1);
+const _: string = r.extra;
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Class method returning `this` must still expose subclass properties: {diagnostics:?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "r.extra assigned to string must not emit TS2322: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn function_call_apply_bind_use_declared_this_parameter_not_host_object() {
+    let source = r#"
+function greet(this: { name: string }, greeting: string): string {
+    return greeting + this.name;
+}
+const obj = { name: "Alice", greet };
+const called: string = obj.greet.call({ name: "Bob" }, "Hello");
+const applied: string = obj.greet.apply({ name: "Bob" }, ["Hello"]);
+const bound: (greeting: string) => string = obj.greet.bind({ name: "Bob" });
+const boundResult: string = bound("Hello");
+export {};
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Function call/apply/bind should accept the function's declared this parameter, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn this_array_push_accepts_this_element_with_lib_array_signature() {
+    let source = r#"
+class State {
+  history: this[] = [];
+
+  save(): void {
+    this.history.push(this);
+  }
+}
+
+const s = new State();
+s.save();
+"#;
+    let libs = tsz_checker::test_utils::load_compiled_lib_files(&["lib.es5.d.ts"]);
+    let diagnostics = tsz_checker::test_utils::check_source_with_libs(
+        source,
+        "test.ts",
+        CheckerOptions::default(),
+        &libs,
+    )
+    .into_iter()
+    .map(|d| (d.code, d.message_text))
+    .collect::<Vec<_>>();
+    assert!(
+        diagnostics.is_empty(),
+        "pushing this into this[] should not produce diagnostics, got: {diagnostics:?}"
     );
 }

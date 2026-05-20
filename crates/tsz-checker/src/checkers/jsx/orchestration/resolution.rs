@@ -1,55 +1,15 @@
-//! JSX namespace/symbol resolution, element type lookups, intrinsic elements,
-//! closing element checks, children contextual type, and attribute name extraction.
+//! JSX namespace resolution, intrinsic elements, closing checks, and attributes.
 
 use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use crate::symbols_domain::name_text::entity_name_text_in_arena;
 use tsz_binder::{SymbolId, symbol_flags};
+use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    fn validate_jsx_intrinsic_type_arguments(&mut self, type_args: &NodeList) {
-        if type_args.has_trailing_comma
-            && let Some(comma_pos) = self.jsx_type_argument_trailing_comma_pos(type_args)
-        {
-            self.error_at_position(
-                comma_pos,
-                1,
-                crate::diagnostics::diagnostic_messages::TRAILING_COMMA_NOT_ALLOWED,
-                crate::diagnostics::diagnostic_codes::TRAILING_COMMA_NOT_ALLOWED,
-            );
-        }
-
-        for &arg_idx in &type_args.nodes {
-            self.check_type_node(arg_idx);
-            self.get_type_from_type_node(arg_idx);
-        }
-
-        let Some(&first_arg_idx) = type_args.nodes.first() else {
-            return;
-        };
-        let got = type_args.nodes.len();
-        self.error_at_node_msg(
-            first_arg_idx,
-            crate::diagnostics::diagnostic_codes::EXPECTED_TYPE_ARGUMENTS_BUT_GOT,
-            &["0", &got.to_string()],
-        );
-    }
-
-    fn jsx_type_argument_trailing_comma_pos(&self, type_args: &NodeList) -> Option<u32> {
-        let last_arg = self.ctx.arena.get(*type_args.nodes.last()?)?;
-        let source = self.current_jsx_source_text()?;
-        let start = last_arg.end as usize;
-        let tail = source.get(start..source.len().min(start + 32))?;
-        let before_close = tail.split('>').next().unwrap_or(tail);
-        before_close
-            .find(',')
-            .map(|offset| last_arg.end + offset as u32)
-    }
-
     pub(in crate::checkers_domain::jsx) fn file_has_jsx_unicode_escape_parse_error(&self) -> bool {
         let Some(source) = self.current_jsx_source_text() else {
             return false;
@@ -776,31 +736,23 @@ impl<'a> CheckerState<'a> {
             });
             let has_multi_call = overloaded_sfc_component_type.is_some();
             let uses_jsx_overload_resolution = has_multi_construct || has_multi_call;
+            // Skip TS2786 for React component aliases and unions thereof: their
+            // recursive return types cause cycle-detection false positives.
+            let skip_jsx_return_check = self
+                .is_react_jsx_component_alias_application(component_type)
+                || self.is_react_jsx_component_alias_union(component_type);
 
             if let Some((props_type, raw_has_type_params)) = recovered_props {
                 if has_multi_construct {
-                    // Class component with overloaded constructors: use overload
-                    // resolution to match tsc's TS2769 behavior.
+                    // Overload resolution is the sole check — a separate generic-spread
+                    // assignability pass would produce spurious TS2322 for valid JSX whose
+                    // props type contains complex mapped/conditional generics.
                     self.check_jsx_overloaded_sfc(
                         resolved_component_type,
                         jsx_opening.attributes,
                         jsx_opening.tag_name,
                         children_ctx,
-                    );
-                    let props_type = self
-                        .narrow_jsx_props_union_from_attributes(jsx_opening.attributes, props_type);
-                    let preferred_props_display =
-                        self.get_jsx_component_props_display_text(tag_name_idx);
-                    let display_target = self.build_jsx_display_target_with_preferred_props(
-                        props_type,
-                        Some(resolved_component_type),
-                        preferred_props_display.as_deref(),
-                    );
-                    self.check_jsx_generic_spread_attrs_assignability(
-                        jsx_opening.attributes,
-                        props_type,
-                        &display_target,
-                        jsx_opening.tag_name,
+                        skip_jsx_return_check,
                     );
                 } else if let Some(overload_component_type) = overloaded_sfc_component_type {
                     // Function components with multiple call signatures must use
@@ -813,21 +765,37 @@ impl<'a> CheckerState<'a> {
                         jsx_opening.attributes,
                         jsx_opening.tag_name,
                         children_ctx,
+                        skip_jsx_return_check,
                     );
                 } else {
                     // TS2786: component return type must be valid JSX element
                     let class_props_from_construct =
                         self.get_class_component_props_from_construct_return(component_type);
-                    let skip_react_class_return_check = class_props_from_construct
-                        .as_ref()
-                        .is_some_and(|props| self.format_type(*props).contains("Readonly<"));
-                    let component_type_is_union = crate::query_boundaries::common::union_members(
-                        self.ctx.types,
-                        resolved_component_type,
-                    )
-                    .is_some();
-                    if !skip_react_class_return_check && !component_type_is_union {
+                    let has_readonly_construct_props = self
+                        .jsx_component_type_has_readonly_construct_props(resolved_component_type);
+                    // Also skip for React class components whose constructor return exposes
+                    // `Readonly<Props>` — a structural pattern not covered by alias detection.
+                    let skip_react_class_return_check = skip_jsx_return_check
+                        || has_readonly_construct_props
+                        || class_props_from_construct
+                            .as_ref()
+                            .is_some_and(|props| {
+                                crate::query_boundaries::checkers::jsx::contains_mapped_type_with_readonly_modifier(
+                                    self.ctx.types,
+                                    *props,
+                                )
+                            });
+                    if !skip_react_class_return_check {
                         self.check_jsx_component_return_type(resolved_component_type, tag_name_idx);
+                    }
+                    // Keep `<this/>` strict even when props recovery succeeds,
+                    // but run after return validation so TS2604 is not added
+                    // when TS2786 already explains the same tag.
+                    if self.get_jsx_tag_name_text(tag_name_idx) == "this" {
+                        self.check_jsx_element_has_signatures(
+                            resolved_component_type,
+                            tag_name_idx,
+                        );
                     }
                     let props_type = self
                         .narrow_jsx_props_union_from_attributes(jsx_opening.attributes, props_type);
@@ -892,10 +860,16 @@ impl<'a> CheckerState<'a> {
                     jsx_opening.attributes,
                     jsx_opening.tag_name,
                     children_ctx,
+                    skip_jsx_return_check,
                 );
             } else {
-                // TS2786: component return type must be valid JSX element
-                self.check_jsx_component_return_type(resolved_component_type, tag_name_idx);
+                // TS2786: component return type must be valid JSX element.
+                if !skip_jsx_return_check
+                    && !self
+                        .jsx_component_type_has_readonly_construct_props(resolved_component_type)
+                {
+                    self.check_jsx_component_return_type(resolved_component_type, tag_name_idx);
+                }
 
                 // Grammar check: TS17000 for empty expressions in JSX attributes.
                 self.check_grammar_jsx_element(jsx_opening.attributes);
@@ -1911,8 +1885,6 @@ impl<'a> CheckerState<'a> {
                 self.jsx_children_contextual_type_for_body_shape(children_type, child_count)
             })
     }
-    // JSX Attribute Name Extraction
-
     /// Extract the attribute name from a JSX attribute name node.
     ///
     /// Handles both simple identifiers (`name`) and namespaced names (`ns:name`).

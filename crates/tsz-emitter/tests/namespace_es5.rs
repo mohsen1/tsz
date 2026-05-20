@@ -1,9 +1,12 @@
 use super::*;
-use tsz_parser::parser::ParserState;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 fn emit_namespace(source: &str) -> String {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     // Find the namespace declaration
     if let Some(root_node) = parser.arena.get(root)
@@ -78,6 +81,21 @@ fn test_namespace_with_function() {
     assert!(output.contains("M.foo = foo;"), "Should export foo");
 }
 
+#[test]
+fn test_namespace_recovers_malformed_function_arrow_body_expression() {
+    let output = emit_namespace(
+        "// @target: es2015\r\nnamespace M {\r\n    export namespace N {\r\n\texport function f(x:number)=>2*x;\r\n    }\r\n}\r\n",
+    );
+    assert!(
+        output.contains("2 * x;"),
+        "Malformed function arrow body should be emitted as a recovered statement. Got:\n{output}"
+    );
+    assert!(
+        !output.contains("function f"),
+        "Declaration-only malformed function should not emit a function declaration. Got:\n{output}"
+    );
+}
+
 // Note: test_declare_namespace_skipped is skipped because the parser
 // currently doesn't attach the `declare` modifier to namespace nodes.
 // This is a known parser limitation that should be fixed separately.
@@ -106,8 +124,7 @@ fn test_cjs_exported_namespace_iife_tail_folding() {
     // When a namespace is exported in CJS, exports.Name should be folded
     // into the IIFE tail: (N || (exports.N = N = {}))
     let source = "export namespace Models { export function test(): void {} }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
@@ -137,6 +154,53 @@ fn test_cjs_exported_namespace_iife_tail_folding() {
 }
 
 #[test]
+fn test_system_exported_namespace_iife_tail_folding() {
+    let source = "namespace Models { export function test(): void {} }";
+    let (parser, root) = parse_test_source(source);
+
+    if let Some(root_node) = parser.arena.get(root)
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+        && let Some(&ns_idx) = source_file.statements.nodes.first()
+    {
+        let mut emitter = NamespaceES5Emitter::new(&parser.arena);
+        emitter.set_source_text(source);
+        emitter.set_should_declare_var(false);
+        emitter.set_system_export_fold("Models");
+        let output = emitter.emit_namespace(ns_idx);
+        assert!(
+            !output.contains("var Models;"),
+            "Merged System namespace output should omit the already-hoisted var declaration. Got:\n{output}"
+        );
+        assert!(
+            output.contains(r#"(Models || (exports_1("Models", Models = {})))"#),
+            "System namespace export should fold exports_1 into the IIFE tail. Got:\n{output}"
+        );
+    }
+}
+
+#[test]
+fn test_system_exported_namespace_iife_tail_folds_aliases() {
+    let source = "namespace Models { export function test(): void {} }";
+    let (parser, root) = parse_test_source(source);
+
+    if let Some(root_node) = parser.arena.get(root)
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+        && let Some(&ns_idx) = source_file.statements.nodes.first()
+    {
+        let mut emitter = NamespaceES5Emitter::new(&parser.arena);
+        emitter.set_source_text(source);
+        emitter.set_should_declare_var(false);
+        emitter.set_system_export_folds(["Models", "Alias"]);
+        let output = emitter.emit_namespace(ns_idx);
+        assert!(
+            output
+                .contains(r#"(Models || (exports_1("Alias", exports_1("Models", Models = {}))))"#),
+            "System namespace export should retain every alias in the IIFE tail. Got:\n{output}"
+        );
+    }
+}
+
+#[test]
 fn test_cjs_exported_namespace_uninitialized_var_qualifies_references() {
     let source = r#"export namespace m1 {
     /** b's comment*/
@@ -152,8 +216,7 @@ fn test_cjs_exported_namespace_uninitialized_var_qualifies_references() {
         export var i = new c();
     }
 }"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
@@ -195,8 +258,7 @@ fn test_cjs_exported_namespace_uninitialized_var_qualifies_references() {
 fn test_nested_namespace_uses_var_at_es5_target() {
     // At ES5 target, nested namespaces inside IIFEs must use `var`, not `let`
     let source = "namespace m { namespace m2 { export class c { } } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
@@ -221,8 +283,7 @@ fn test_nested_namespace_uses_var_at_es5_target() {
 fn test_nested_namespace_uses_let_at_es2015_target() {
     // At ES2015+ target, nested namespaces inside IIFEs should use `let`
     let source = "namespace m { namespace m2 { export class c { } } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)

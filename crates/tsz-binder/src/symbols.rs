@@ -603,7 +603,10 @@ impl SymbolArena {
     pub fn alloc(&mut self, flags: u32, name: String) -> SymbolId {
         let id = SymbolId(
             self.base_offset
-                + u32::try_from(self.symbols.len()).expect("symbol arena length exceeds u32"),
+                .checked_add(
+                    u32::try_from(self.symbols.len()).expect("symbol arena length exceeds u32"),
+                )
+                .expect("symbol arena allocation overflows u32"),
         );
         if !name.is_empty() {
             Arc::make_mut(&mut self.name_index)
@@ -625,7 +628,10 @@ impl SymbolArena {
     pub fn alloc_from(&mut self, source: &Symbol) -> SymbolId {
         let id = SymbolId(
             self.base_offset
-                + u32::try_from(self.symbols.len()).expect("symbol arena length exceeds u32"),
+                .checked_add(
+                    u32::try_from(self.symbols.len()).expect("symbol arena length exceeds u32"),
+                )
+                .expect("symbol arena allocation overflows u32"),
         );
         if !source.escaped_name.is_empty() {
             Arc::make_mut(&mut self.name_index)
@@ -761,15 +767,19 @@ impl SymbolArena {
     /// # Panics
     ///
     /// Panics if any index in `current_len..count` cannot be converted into a
-    /// `u32`.
+    /// `u32`, or if `base_offset + index` would overflow `u32`.
     pub fn reserve_symbol_ids(&mut self, count: usize) {
         let current_len = self.symbols.len();
         if count > current_len {
             let symbols = Arc::make_mut(&mut self.symbols);
             symbols.reserve(count);
             for id in current_len..count {
+                let raw_id = self
+                    .base_offset
+                    .checked_add(u32::try_from(id).expect("symbol ID exceeds u32"))
+                    .expect("symbol ID overflows u32 with base_offset");
                 symbols.push(Symbol::new(
-                    SymbolId(u32::try_from(id).expect("symbol ID exceeds u32")),
+                    SymbolId(raw_id),
                     0,
                     String::new(), // Empty placeholder
                 ));

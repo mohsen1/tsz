@@ -144,11 +144,40 @@ pub(crate) struct ReturnTypeSnapshot {
     pub cache: CacheSnapshot,
 }
 
+impl ReturnTypeSnapshot {
+    /// The diagnostic checkpoint embedded in this return-type snapshot.
+    pub(crate) const fn diagnostic_snapshot(&self) -> &DiagnosticSnapshot {
+        &self.full.diag
+    }
+
+    /// Roll back return-type inference state through the speculation boundary.
+    pub(crate) fn rollback(&self, speculation: &mut SpeculationState<'_, '_>) {
+        speculation.ctx.rollback_return_type(self);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // CheckerContext snapshot methods
 // ---------------------------------------------------------------------------
 
-impl CheckerContext<'_> {
+impl<'a> CheckerContext<'a> {
+    /// Borrow the speculation-scoped state capability.
+    ///
+    /// This exposes rollback-sensitive checker state without handing callers
+    /// the full `CheckerContext` surface.
+    pub(crate) const fn speculation_state(&mut self) -> SpeculationState<'_, 'a> {
+        SpeculationState { ctx: self }
+    }
+
+    /// Borrow the diagnostics-only speculation capability.
+    ///
+    /// This gives snapshot holders a narrow state handle instead of the full
+    /// checker context. The underlying methods still live here during the
+    /// first split so existing direct snapshot users keep their behavior.
+    pub(crate) const fn diagnostic_state(&mut self) -> DiagnosticState<'_, 'a> {
+        DiagnosticState { ctx: self }
+    }
+
     /// Lightweight diagnostic-only snapshot.
     ///
     /// Captures `diagnostics.len()` and clones `emitted_diagnostics`. Suitable
@@ -269,7 +298,7 @@ impl CheckerContext<'_> {
 
     /// Roll back to a return-type snapshot, discarding speculative diagnostics,
     /// dedup state, and cache entries added during speculation.
-    pub(crate) fn rollback_return_type(&mut self, snap: &ReturnTypeSnapshot) {
+    fn rollback_return_type(&mut self, snap: &ReturnTypeSnapshot) {
         self.rollback_full(&snap.full);
         self.node_types.clone_from(&snap.cache.node_types);
         self.request_node_types
@@ -425,10 +454,74 @@ impl CheckerContext<'_> {
     pub(crate) fn restore_ts2454_state(&mut self, snap: &FxHashSet<(u32, SymbolId)>) {
         self.emitted_ts2454_errors.clone_from(snap);
     }
+}
 
-    /// Restore implicit-any-checked closures state from a snapshot.
-    pub(crate) fn restore_implicit_any_closures(&mut self, snap: &FxHashSet<NodeIndex>) {
-        self.implicit_any_checked_closures.clone_from(snap);
+/// Snapshot of speculation-scoped implicit-any closure state.
+pub(crate) struct ImplicitAnyClosureSnapshot {
+    checked_closures: FxHashSet<NodeIndex>,
+}
+
+impl ImplicitAnyClosureSnapshot {
+    pub(crate) fn new(ctx: &CheckerContext) -> Self {
+        Self {
+            checked_closures: ctx.implicit_any_checked_closures.clone(),
+        }
+    }
+
+    pub(crate) fn restore_preserving_contextual(self, speculation: &mut SpeculationState<'_, '_>) {
+        let contextual_closures: Vec<_> = speculation
+            .ctx
+            .implicit_any_contextual_closures
+            .iter()
+            .copied()
+            .collect();
+        speculation
+            .ctx
+            .implicit_any_checked_closures
+            .clone_from(&self.checked_closures);
+        speculation
+            .ctx
+            .implicit_any_checked_closures
+            .extend(contextual_closures);
+    }
+}
+
+/// Narrow capability for speculation-scoped state.
+pub(crate) struct SpeculationState<'ctx, 'a> {
+    ctx: &'ctx mut CheckerContext<'a>,
+}
+
+/// Narrow capability for diagnostics-only speculation operations.
+///
+/// This is the first explicit capability split for `CheckerContext`: call
+/// sites that own a diagnostic speculation holder only need the ability to
+/// commit or roll back diagnostic state, not access to every checker cache and
+/// semantic helper on the full context.
+pub(crate) struct DiagnosticState<'ctx, 'a> {
+    ctx: &'ctx mut CheckerContext<'a>,
+}
+
+impl DiagnosticState<'_, '_> {
+    fn commit_diagnostics(&mut self, snap: &DiagnosticSnapshot) {
+        self.ctx.commit_diagnostics(snap);
+    }
+
+    fn rollback_diagnostics(&mut self, snap: &DiagnosticSnapshot) {
+        self.ctx.rollback_diagnostics(snap);
+    }
+
+    fn rollback_diagnostics_filtered(
+        &mut self,
+        snap: &DiagnosticSnapshot,
+        keep: impl FnMut(&Diagnostic) -> bool,
+    ) {
+        self.ctx.rollback_diagnostics_filtered(snap, keep);
+    }
+}
+
+impl SpeculationState<'_, '_> {
+    fn rollback_full(&mut self, snap: &FullSnapshot) {
+        self.ctx.rollback_full(snap);
     }
 }
 
@@ -480,27 +573,37 @@ impl DiagnosticSpeculationSnapshot {
 
     /// Commit speculative diagnostics: they survive the snapshot's drop.
     /// Equivalent to dropping the snapshot without calling `rollback`.
-    pub(crate) fn commit(mut self, ctx: &mut CheckerContext) {
-        ctx.commit_diagnostics(&self.snapshot);
+    pub(crate) fn commit(mut self, diagnostics: &mut DiagnosticState<'_, '_>) {
+        diagnostics.commit_diagnostics(&self.snapshot);
         self.committed = true;
     }
 
     /// Roll back to the snapshot — discards every diagnostic produced after
     /// the snapshot was taken. Since `Drop` cannot access `CheckerContext`,
     /// this is the only way to discard speculative diagnostics.
-    pub(crate) fn rollback(mut self, ctx: &mut CheckerContext) {
-        ctx.rollback_diagnostics(&self.snapshot);
+    pub(crate) fn rollback(mut self, diagnostics: &mut DiagnosticState<'_, '_>) {
+        diagnostics.rollback_diagnostics(&self.snapshot);
         self.committed = true; // prevent any future misuse; Drop is a no-op anyway
     }
 
     /// Rollback and apply a filter to keep some speculative diagnostics.
     pub(crate) fn rollback_filtered(
         mut self,
-        ctx: &mut CheckerContext,
+        diagnostics: &mut DiagnosticState<'_, '_>,
         keep: impl FnMut(&Diagnostic) -> bool,
     ) {
-        ctx.rollback_diagnostics_filtered(&self.snapshot, keep);
+        diagnostics.rollback_diagnostics_filtered(&self.snapshot, keep);
         self.committed = true;
+    }
+
+    /// Rollback and apply a filter while retaining this checkpoint for another
+    /// explicit rollback from the same speculative boundary.
+    pub(crate) fn rollback_filtered_reusable(
+        &self,
+        diagnostics: &mut DiagnosticState<'_, '_>,
+        keep: impl FnMut(&Diagnostic) -> bool,
+    ) {
+        diagnostics.rollback_diagnostics_filtered(&self.snapshot, keep);
     }
 
     /// Access the underlying snapshot for manual operations.
@@ -528,6 +631,32 @@ impl DiagnosticSpeculationSnapshot {
 // `.snapshot()` for manual operations) and intentionally drop it to commit
 // the speculative diagnostics. A debug_assert in Drop would break these
 // legitimate patterns.
+
+/// Full checker-state snapshot holder for speculative checking.
+///
+/// Like `DiagnosticSpeculationSnapshot`, dropping is an implicit commit.
+/// Call `rollback()` explicitly when discarding diagnostics, implicit-any
+/// bookkeeping, and request cache state produced during a speculative probe.
+#[allow(dead_code)]
+pub(crate) struct FullSpeculationSnapshot {
+    snapshot: FullSnapshot,
+    committed: bool,
+}
+
+#[allow(dead_code)]
+impl FullSpeculationSnapshot {
+    pub(crate) fn new(ctx: &CheckerContext) -> Self {
+        Self {
+            snapshot: ctx.snapshot_full(),
+            committed: false,
+        }
+    }
+
+    pub(crate) fn rollback(mut self, speculation: &mut SpeculationState<'_, '_>) {
+        speculation.rollback_full(&self.snapshot);
+        self.committed = true;
+    }
+}
 
 // Unit tests for speculation API are in tests/speculation_rollback_tests.rs
 // (integration tests that use the full parse→bind→check pipeline).

@@ -4,6 +4,29 @@ use tsz::config::{CompilerOptions, resolve_compiler_options};
 use tsz::emitter::ModuleKind;
 
 #[test]
+fn test_module_resolution_file_exists_cache_is_per_cache() {
+    use std::fs;
+
+    let dir = tempfile::TempDir::new().expect("temp dir creation should succeed in test");
+    let candidate = dir.path().join("late.ts");
+
+    let mut cache = ModuleResolutionCache::default();
+    assert!(!cache.file_exists(&candidate));
+
+    fs::write(&candidate, "export {};").unwrap();
+    assert!(
+        !cache.file_exists(&candidate),
+        "file-existence misses are a per-resolution-run snapshot"
+    );
+
+    let mut fresh_cache = ModuleResolutionCache::default();
+    assert!(
+        fresh_cache.file_exists(&candidate),
+        "file-existence misses must not leak across resolution caches"
+    );
+}
+
+#[test]
 fn test_preserve_symlinks_keeps_symlink_path_identity() {
     use std::fs;
     use std::os::unix::fs::symlink;
@@ -915,6 +938,265 @@ fn test_collect_module_requests_from_text_carries_type_json_attribute() {
         *has_type_json_attribute,
         "Expected source-discovery module requests to retain type=json import attributes"
     );
+}
+
+#[test]
+fn test_collect_module_requests_from_text_skips_non_relative_ambient_declaration_names() {
+    let path = Path::new("types.d.ts");
+    let requests = collect_module_requests_from_text(
+        path,
+        r#"
+declare module "*.css" {}
+declare module "virtual:asset" {}
+declare module "./augment" {}
+declare module "pkg" {
+  export { T } from "dep";
+}
+"#,
+    );
+    let specifiers: Vec<_> = requests
+        .iter()
+        .map(|(specifier, _, _, _)| specifier.as_str())
+        .collect();
+
+    assert!(
+        !specifiers.contains(&"*.css"),
+        "ambient wildcard declarations are not source dependencies: {specifiers:?}"
+    );
+    assert!(
+        !specifiers.contains(&"virtual:asset"),
+        "bare ambient declarations are not source dependencies: {specifiers:?}"
+    );
+    assert!(
+        !specifiers.contains(&"pkg"),
+        "ambient declaration names are not source dependencies: {specifiers:?}"
+    );
+    assert!(
+        specifiers.contains(&"./augment"),
+        "relative module augmentation names can target concrete files: {specifiers:?}"
+    );
+    assert!(
+        specifiers.contains(&"dep"),
+        "real re-exports inside ambient module bodies remain dependencies: {specifiers:?}"
+    );
+}
+
+#[test]
+fn test_collect_module_specifiers_for_check_skips_declaration_file_ambient_names() {
+    let text = r#"
+declare module "*.css" {}
+declare module "virtual:asset" {}
+declare module "./augment" {}
+declare module "pkg" {
+  export { T } from "dep";
+}
+"#;
+    let mut parser = tsz::parser::ParserState::new("types.d.ts".to_string(), text.to_string());
+    let source_file = parser.parse_source_file();
+    let (arena, _diagnostics) = parser.into_parts();
+
+    let specifiers: Vec<_> = collect_module_specifiers_for_check(&arena, source_file, true)
+        .into_iter()
+        .map(|(specifier, _, _, _)| specifier)
+        .collect();
+
+    assert!(
+        !specifiers.iter().any(|specifier| specifier == "*.css"),
+        "ambient wildcard declarations are not driver lookups: {specifiers:?}"
+    );
+    assert!(
+        !specifiers
+            .iter()
+            .any(|specifier| specifier == "virtual:asset"),
+        "ambient bare declarations are not driver lookups: {specifiers:?}"
+    );
+    assert!(
+        !specifiers.iter().any(|specifier| specifier == "pkg"),
+        "ambient declaration names are not driver lookups in declaration files: {specifiers:?}"
+    );
+    assert!(
+        specifiers.iter().any(|specifier| specifier == "./augment"),
+        "relative augmentation names still need source-file-specific lookup: {specifiers:?}"
+    );
+    assert!(
+        specifiers.iter().any(|specifier| specifier == "dep"),
+        "real re-exports inside ambient module bodies remain dependencies: {specifiers:?}"
+    );
+}
+
+#[test]
+fn test_collect_module_specifiers_for_check_keeps_bare_source_augmentation_targets() {
+    let text = r#"
+export {};
+declare module "pkg" {
+  export const value: number;
+}
+"#;
+    let mut parser = tsz::parser::ParserState::new("source.ts".to_string(), text.to_string());
+    let source_file = parser.parse_source_file();
+    let (arena, _diagnostics) = parser.into_parts();
+
+    let external_specifiers: Vec<_> =
+        collect_module_specifiers_for_check(&arena, source_file, true)
+            .into_iter()
+            .map(|(specifier, _, _, _)| specifier)
+            .collect();
+    assert!(
+        external_specifiers
+            .iter()
+            .any(|specifier| specifier == "pkg"),
+        "external source augmentations need lookup for TS2664: {external_specifiers:?}"
+    );
+
+    let script_specifiers: Vec<_> = collect_module_specifiers_for_check(&arena, source_file, false)
+        .into_iter()
+        .map(|(specifier, _, _, _)| specifier)
+        .collect();
+    assert!(
+        !script_specifiers.iter().any(|specifier| specifier == "pkg"),
+        "script ambient declarations should not become driver lookups: {script_specifiers:?}"
+    );
+}
+
+#[test]
+fn simple_module_request_scanner_collects_static_imports_and_reexports() {
+    let requests = collect_simple_module_requests_from_text(
+        r#"
+import "./setup";
+import type { Widget } from "./types";
+import view from "./view";
+export { Widget } from "./types";
+export * from "./shared";
+export interface LocalOnly {}
+"#,
+    )
+    .expect("simple static module syntax should not need the source-discovery parser");
+
+    let actual: Vec<_> = requests
+        .iter()
+        .map(|(specifier, kind, _, has_type_json)| (specifier.as_str(), *kind, *has_type_json))
+        .collect();
+    assert_eq!(
+        actual,
+        vec![
+            (
+                "./setup",
+                tsz::module_resolver::ImportKind::EsmImport,
+                false
+            ),
+            (
+                "./types",
+                tsz::module_resolver::ImportKind::EsmImport,
+                false
+            ),
+            ("./view", tsz::module_resolver::ImportKind::EsmImport, false),
+            (
+                "./types",
+                tsz::module_resolver::ImportKind::EsmReExport,
+                false
+            ),
+            (
+                "./shared",
+                tsz::module_resolver::ImportKind::EsmReExport,
+                false
+            ),
+        ]
+    );
+}
+
+#[test]
+fn simple_module_request_scanner_preserves_opposite_quote_specifier_values() {
+    let requests = collect_simple_module_requests_from_text(
+        r#"
+import quotedSingle from "'pkg'";
+export { quotedDouble } from '"pkg"';
+"#,
+    )
+    .expect("opposite quote characters are literal specifier contents");
+
+    let actual: Vec<_> = requests
+        .iter()
+        .map(|(specifier, kind, _, has_type_json)| (specifier.as_str(), *kind, *has_type_json))
+        .collect();
+    assert_eq!(
+        actual,
+        vec![
+            ("'pkg'", tsz::module_resolver::ImportKind::EsmImport, false),
+            (
+                r#""pkg""#,
+                tsz::module_resolver::ImportKind::EsmReExport,
+                false,
+            ),
+        ]
+    );
+}
+
+#[test]
+fn simple_module_request_scanner_falls_back_for_escaped_static_specifiers() {
+    let text = r#"
+import "./d\u0065p";
+export { value } from "./r\u0065exp";
+"#;
+    assert!(
+        collect_simple_module_requests_from_text(text).is_none(),
+        "escaped module specifiers must fall back so the parser can decode them"
+    );
+
+    let requests = collect_module_requests_from_text(std::path::Path::new("index.ts"), text);
+    let actual: Vec<_> = requests
+        .iter()
+        .map(|(specifier, kind, _, _)| (specifier.as_str(), *kind))
+        .collect();
+    assert_eq!(
+        actual,
+        vec![
+            ("./dep", tsz::module_resolver::ImportKind::EsmImport),
+            ("./reexp", tsz::module_resolver::ImportKind::EsmReExport),
+        ]
+    );
+}
+
+#[test]
+fn simple_module_request_scanner_handles_ambient_modules_conservatively() {
+    let simple = collect_simple_module_requests_from_text(
+        r#"
+declare module "*.css" {}
+declare module "virtual:asset" {}
+declare module "./augment" {}
+"#,
+    )
+    .expect("ambient declarations without body imports can stay on the scanner path");
+    let specifiers: Vec<_> = simple
+        .iter()
+        .map(|(specifier, _, _, _)| specifier.as_str())
+        .collect();
+    assert_eq!(specifiers, vec!["./augment"]);
+
+    assert!(
+        collect_simple_module_requests_from_text(
+            r#"
+declare module "pkg" {
+  export { T } from "dep";
+}
+"#
+        )
+        .is_none(),
+        "real dependencies inside ambient module bodies fall back to the parser path"
+    );
+}
+
+#[test]
+fn simple_module_request_scanner_falls_back_for_mode_sensitive_forms() {
+    assert!(
+        collect_simple_module_requests_from_text(
+            r#"import data from "./data.json" with { type: "json" };"#
+        )
+        .is_none()
+    );
+    assert!(
+        collect_simple_module_requests_from_text(r#"const loader = import("./lazy");"#).is_none()
+    );
+    assert!(collect_simple_module_requests_from_text(r#"require("./cjs");"#).is_none());
 }
 
 #[test]

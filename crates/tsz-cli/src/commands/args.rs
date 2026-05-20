@@ -428,12 +428,21 @@ pub struct CliArgs {
     )]
     pub no_fallthrough_cases_in_switch: bool,
 
-    /// Enable Sound Mode for stricter type checking beyond TypeScript's defaults.
-    /// Catches common unsoundness like mutable array covariance, method bivariance,
-    /// `any` escapes, and excess properties via sticky freshness.
-    /// Uses `TS9xxx` diagnostic codes (TS9001-TS9008).
+    /// Enable experimental Sound Mode for stricter checking beyond TypeScript's defaults.
+    ///
+    /// This hidden flag currently tightens relation policy and sticky freshness
+    /// behavior. It still emits ordinary TypeScript diagnostics; dedicated TSZ
+    /// sound diagnostics, and config support are planned work.
     #[arg(long, hide = true)]
     pub sound: bool,
+
+    /// Enable Sound Mode and report diagnostics without failing the build.
+    ///
+    /// Implies `--sound`. All diagnostics (including sound violations) are printed,
+    /// but the process always exits 0. Use this to audit sound violations without
+    /// blocking CI during a migration to stricter checking.
+    #[arg(long = "soundReportOnly", alias = "sound-report-only", hide = true)]
+    pub sound_report_only: bool,
 
     /// Add 'undefined' to a type when accessed using an index.
     #[arg(
@@ -512,6 +521,23 @@ pub struct CliArgs {
     /// Output more detailed compiler performance information after building.
     #[arg(long = "extendedDiagnostics", alias = "extended-diagnostics")]
     pub extended_diagnostics: bool,
+
+    /// Perf-tools-only: write a schema-versioned diagnostics JSON report to
+    /// the given path after compilation. Used by the bench harness for
+    /// machine-readable phase timings (`PERFORMANCE_PLAN.md` §4.T0.2). The
+    /// flag is compiled out of default release builds.
+    #[cfg(feature = "perf-tools")]
+    #[arg(long = "diagnostics-json", value_name = "PATH", hide = true)]
+    pub diagnostics_json: Option<PathBuf>,
+
+    /// Perf-tools-only: write a schema-versioned perf-counter JSON snapshot
+    /// to the given path after compilation. Intended for the bench harness
+    /// (`PERFORMANCE_PLAN.md` §4.T0.3); enabled when the counters are on
+    /// (`TSZ_PERF_COUNTERS=1`). The flag is compiled out of default release
+    /// builds.
+    #[cfg(feature = "perf-tools")]
+    #[arg(long = "perf-counters-json", value_name = "PATH", hide = true)]
+    pub perf_counters_json: Option<PathBuf>,
 
     /// Print files read during the compilation including why it was included.
     #[arg(long = "explainFiles", alias = "explain-files")]

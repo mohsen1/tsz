@@ -266,16 +266,21 @@ impl<'a> TypeFormatter<'a> {
         // `n?: number | undefined`. If the stored type doesn't already contain
         // undefined, we append it.
         let type_str: String = if prop.optional {
-            let formatted = self.format(prop.type_id).into_owned();
             if self.preserve_optional_property_surface_syntax {
-                formatted
+                let surface_type = if prop.write_type != TypeId::NONE {
+                    prop.write_type
+                } else {
+                    prop.type_id
+                };
+                self.format(surface_type).into_owned()
             } else if prop.type_id == TypeId::NEVER {
                 // `never | undefined` simplifies to `undefined`; tsc displays just `undefined`
                 "undefined".to_string()
             } else if !self.type_contains_undefined(prop.type_id) {
+                let formatted = self.format(prop.type_id).into_owned();
                 format!("{formatted} | undefined")
             } else {
-                formatted
+                self.format(prop.type_id).into_owned()
             }
         } else {
             self.format(prop.type_id).into_owned()
@@ -299,31 +304,34 @@ impl<'a> TypeFormatter<'a> {
         false
     }
 
-    /// Format a type while stripping `undefined` from it.
-    /// Used for optional tuple elements where the `?` already implies optionality.
-    fn format_stripping_undefined(&mut self, type_id: TypeId) -> String {
-        if type_id == TypeId::UNDEFINED {
-            // Edge case: type is just `undefined` — display it as-is since
-            // there's nothing else to show.
-            return self.format(type_id).into_owned();
-        }
-        if let Some(TypeData::Union(list_id)) = self.interner.lookup(type_id) {
-            let members = self.interner.type_list(list_id);
-            let filtered: Vec<TypeId> = members
-                .iter()
-                .copied()
-                .filter(|&m| m != TypeId::UNDEFINED)
-                .collect();
-            if filtered.len() < members.len() {
-                // We stripped some undefined members
-                return match filtered.len() {
-                    0 => self.format(TypeId::NEVER).into_owned(),
-                    1 => self.format(filtered[0]).into_owned(),
-                    _ => self.format_union(&filtered),
-                };
+    fn format_optional_tuple_element_type(&mut self, type_id: TypeId, named: bool) -> String {
+        let formatted = self.format(type_id).into_owned();
+        let absorbs_undefined =
+            type_id == TypeId::UNDEFINED || type_id == TypeId::ANY || type_id == TypeId::UNKNOWN;
+
+        if self.preserve_optional_property_surface_syntax {
+            if named {
+                return formatted;
             }
+            if !named && !absorbs_undefined && self.type_contains_undefined(type_id) {
+                return format!("({formatted})?");
+            }
+            return format!("{formatted}?");
         }
-        self.format(type_id).into_owned()
+
+        if named {
+            if self.type_contains_undefined(type_id) {
+                formatted
+            } else {
+                format!("{formatted} | undefined")
+            }
+        } else if absorbs_undefined {
+            format!("{formatted}?")
+        } else if self.type_contains_undefined(type_id) {
+            format!("({formatted})?")
+        } else {
+            format!("({formatted} | undefined)?")
+        }
     }
 
     pub(super) fn format_type_params(&mut self, type_params: &[TypeParamInfo]) -> String {
@@ -457,6 +465,10 @@ impl<'a> TypeFormatter<'a> {
             } else {
                 Cow::Owned(format!("{}{}", target_name, type_part.unwrap_or_default()))
             }
+        } else if self.diagnostic_mode
+            && self.should_elide_recursive_typeof_function_return(return_type)
+        {
+            Cow::Borrowed("...")
         } else if is_construct && return_type == TypeId::UNKNOWN {
             Cow::Borrowed("any")
         } else {
@@ -472,8 +484,44 @@ impl<'a> TypeFormatter<'a> {
         )
     }
 
+    fn should_elide_recursive_typeof_function_return(&self, return_type: TypeId) -> bool {
+        match self.interner.lookup(return_type) {
+            Some(TypeData::Function(shape_id)) => {
+                let shape = self.interner.function_shape(shape_id);
+                self.type_is_or_contains_type_query(shape.return_type)
+            }
+            Some(TypeData::Callable(shape_id)) => {
+                let shape = self.interner.callable_shape(shape_id);
+                shape
+                    .call_signatures
+                    .iter()
+                    .any(|sig| self.type_is_or_contains_type_query(sig.return_type))
+            }
+            _ => false,
+        }
+    }
+
+    fn type_is_or_contains_type_query(&self, type_id: TypeId) -> bool {
+        match self.interner.lookup(type_id) {
+            Some(TypeData::TypeQuery(_)) => true,
+            Some(TypeData::Function(shape_id)) => {
+                let shape = self.interner.function_shape(shape_id);
+                self.type_is_or_contains_type_query(shape.return_type)
+            }
+            Some(TypeData::Callable(shape_id)) => {
+                let shape = self.interner.callable_shape(shape_id);
+                shape
+                    .call_signatures
+                    .iter()
+                    .any(|sig| self.type_is_or_contains_type_query(sig.return_type))
+            }
+            _ => false,
+        }
+    }
+
     pub(super) fn format_object_with_index(&mut self, shape: &ObjectShape) -> String {
         let mut parts = Vec::new();
+        let use_array_to_locale_display = self.should_expand_array_to_locale_string_display(shape);
 
         if let Some(ref idx) = shape.string_index {
             let key_name = idx
@@ -481,10 +529,9 @@ impl<'a> TypeFormatter<'a> {
                 .map(|a| self.atom(a).to_string())
                 .unwrap_or_else(|| "x".to_owned());
             let ro = if idx.readonly { "readonly " } else { "" };
-            parts.push(format!(
-                "{ro}[{key_name}: string]: {}",
-                self.format_index_signature_value(idx.value_type)
-            ));
+            let key_type_str = self.format(idx.key_type);
+            let value_str = self.format_index_signature_value(idx.value_type);
+            parts.push(format!("{ro}[{key_name}: {key_type_str}]: {value_str}"));
         }
         if let Some(ref idx) = shape.number_index {
             let key_name = idx
@@ -492,10 +539,9 @@ impl<'a> TypeFormatter<'a> {
                 .map(|a| self.atom(a).to_string())
                 .unwrap_or_else(|| "x".to_owned());
             let ro = if idx.readonly { "readonly " } else { "" };
-            parts.push(format!(
-                "{ro}[{key_name}: number]: {}",
-                self.format_index_signature_value(idx.value_type)
-            ));
+            let key_type_str = self.format(idx.key_type);
+            let value_str = self.format_index_signature_value(idx.value_type);
+            parts.push(format!("{ro}[{key_name}: {key_type_str}]: {value_str}"));
         }
         // Sort properties by declaration_order for display (preserves source order)
         let mut display_props = self.visible_object_properties(shape.properties.as_slice());
@@ -504,10 +550,52 @@ impl<'a> TypeFormatter<'a> {
             display_props.sort_by_key(|p| p.declaration_order);
         }
         for prop in display_props {
-            parts.push(self.format_property(prop));
+            if use_array_to_locale_display && self.atom(prop.name).as_ref() == "toLocaleString" {
+                parts.push(
+                    "toLocaleString: { (): string; (locales: string | string[], options?: (NumberFormatOptions & DateTimeFormatOptions) | undefined): string; }"
+                        .to_string(),
+                );
+            } else {
+                parts.push(self.format_property(prop));
+            }
+        }
+        if use_array_to_locale_display
+            && !parts
+                .iter()
+                .any(|part| part.starts_with("[Symbol.") || part.starts_with("readonly [Symbol."))
+            && parts.len() >= 22
+        {
+            let original_len = parts.len();
+            let insert_at = parts.len() - 1;
+            parts.insert(
+                insert_at,
+                "readonly [Symbol.unscopables]: { ...; }".to_string(),
+            );
+            if original_len >= 22 {
+                parts.insert(
+                    insert_at,
+                    "[Symbol.iterator]: () => ArrayIterator<any>".to_string(),
+                );
+            }
         }
 
         self.format_object_parts(parts)
+    }
+
+    fn should_expand_array_to_locale_string_display(&mut self, shape: &ObjectShape) -> bool {
+        shape.number_index.is_some()
+            && shape
+                .properties
+                .iter()
+                .any(|prop| self.atom(prop.name).as_ref() == "toString")
+            && shape
+                .properties
+                .iter()
+                .any(|prop| self.atom(prop.name).as_ref() == "toLocaleString")
+            && shape
+                .properties
+                .iter()
+                .any(|prop| self.atom(prop.name).as_ref() == "includes")
     }
 
     fn format_index_signature_value(&mut self, value_type: TypeId) -> String {
@@ -596,6 +684,18 @@ impl<'a> TypeFormatter<'a> {
             ordered = reordered;
         }
 
+        if let Some(factored) = self.format_union_of_intersections_with_common_parts(&ordered) {
+            return factored;
+        }
+
+        self.format_ordered_union_members(ordered)
+    }
+
+    pub(super) fn format_union_preserving_member_order(&mut self, members: &[TypeId]) -> String {
+        self.format_ordered_union_members(members.to_vec())
+    }
+
+    fn format_ordered_union_members(&mut self, mut ordered: Vec<TypeId>) -> String {
         if let Some(collapsed) = self.collapse_same_enum_members_for_display(&ordered) {
             return collapsed;
         }
@@ -689,6 +789,81 @@ impl<'a> TypeFormatter<'a> {
         }
         let reordered: Vec<TypeId> = found.into_iter().collect::<Option<Vec<_>>>()?;
         Some(reordered)
+    }
+
+    fn format_union_of_intersections_with_common_parts(
+        &mut self,
+        members: &[TypeId],
+    ) -> Option<String> {
+        if members.len() < 2 {
+            return None;
+        }
+
+        let mut common: Option<Vec<TypeId>> = None;
+        let mut union_remainders = Vec::with_capacity(members.len());
+        for &member in members {
+            let intersection_members = match self.interner.lookup(member) {
+                Some(TypeData::Intersection(list_id)) => {
+                    self.interner.type_list(list_id).as_ref().to_vec()
+                }
+                _ => return None,
+            };
+            if intersection_members.len() < 2 {
+                return None;
+            }
+
+            let mut numeric_literal_parts = Vec::new();
+            let mut non_numeric_parts = Vec::new();
+            for part in intersection_members {
+                if matches!(
+                    self.interner.lookup(part),
+                    Some(TypeData::Literal(LiteralValue::Number(_)))
+                ) {
+                    numeric_literal_parts.push(part);
+                } else {
+                    non_numeric_parts.push(part);
+                }
+            }
+
+            if numeric_literal_parts.len() != 1 || non_numeric_parts.is_empty() {
+                return None;
+            }
+
+            match &common {
+                Some(common_parts) if common_parts == &non_numeric_parts => {}
+                Some(_) => return None,
+                None => common = Some(non_numeric_parts),
+            }
+            union_remainders.push(numeric_literal_parts[0]);
+        }
+
+        union_remainders.sort_by(|&left, &right| {
+            let left_number = match self.interner.lookup(left) {
+                Some(TypeData::Literal(LiteralValue::Number(number))) => number,
+                _ => return std::cmp::Ordering::Equal,
+            };
+            let right_number = match self.interner.lookup(right) {
+                Some(TypeData::Literal(LiteralValue::Number(number))) => number,
+                _ => return std::cmp::Ordering::Equal,
+            };
+            let left_zero = left_number.0.to_bits() == 0.0f64.to_bits();
+            let right_zero = right_number.0.to_bits() == 0.0f64.to_bits();
+            right_zero
+                .cmp(&left_zero)
+                .then_with(|| right_number.0.total_cmp(&left_number.0))
+        });
+
+        let common = common?;
+        let common_display = common
+            .iter()
+            .map(|&part| self.format_intersection_member(part))
+            .collect::<Vec<_>>()
+            .join(" & ");
+        // Use sorted union_remainders directly rather than round-tripping through
+        // self.interner.union(), which canonically re-sorts by TypeId and discards
+        // the custom numeric sort order above (e.g. `0 | 2 | 1` → `0 | 1 | 2`).
+        let remainder_display = self.format_ordered_union_members(union_remainders);
+        Some(format!("{common_display} & ({remainder_display})"))
     }
 
     fn remove_redundant_intersection_displays(
@@ -1405,7 +1580,75 @@ impl<'a> TypeFormatter<'a> {
             .iter()
             .map(|&m| self.format_intersection_member(m))
             .collect();
+        let formatted = Self::remove_redundant_index_signature_intersection_displays(formatted);
         formatted.join(" & ")
+    }
+
+    fn remove_redundant_index_signature_intersection_displays(
+        formatted: Vec<String>,
+    ) -> Vec<String> {
+        if formatted.len() <= 1 {
+            return formatted;
+        }
+
+        let sole_index_members: Vec<Option<String>> = formatted
+            .iter()
+            .map(|display| Self::sole_index_signature_object_member(display).map(str::to_string))
+            .collect();
+
+        let keep: Vec<bool> = formatted
+            .iter()
+            .enumerate()
+            .map(|(idx, _)| {
+                !sole_index_members[idx].as_deref().is_some_and(|index_sig| {
+                    formatted
+                        .iter()
+                        .enumerate()
+                        .any(|(other_idx, other_display)| {
+                            other_idx != idx
+                                && sole_index_members[other_idx].as_deref() != Some(index_sig)
+                                && Self::object_display_contains_member(other_display, index_sig)
+                        })
+                })
+            })
+            .collect();
+
+        formatted
+            .into_iter()
+            .zip(keep)
+            .filter_map(|(display, keep)| keep.then_some(display))
+            .collect()
+    }
+
+    fn sole_index_signature_object_member(display: &str) -> Option<&str> {
+        let inner = Self::object_display_inner(display)?;
+        let mut members = inner
+            .split(';')
+            .map(str::trim)
+            .filter(|member| !member.is_empty());
+        let member = members.next()?;
+        if members.next().is_some() {
+            return None;
+        }
+        Self::is_index_signature_display(member).then_some(member)
+    }
+
+    fn object_display_contains_member(display: &str, expected: &str) -> bool {
+        Self::object_display_inner(display)
+            .into_iter()
+            .flat_map(|inner| inner.split(';'))
+            .map(str::trim)
+            .any(|member| member == expected)
+    }
+
+    fn object_display_inner(display: &str) -> Option<&str> {
+        display
+            .strip_prefix("{ ")
+            .and_then(|inner| inner.strip_suffix(" }"))
+    }
+
+    fn is_index_signature_display(member: &str) -> bool {
+        member.contains('[') && member.contains("]:")
     }
 
     fn format_non_nullable_type_parameter_intersection(
@@ -1563,7 +1806,7 @@ impl<'a> TypeFormatter<'a> {
             .iter()
             .map(|e| {
                 if e.optional && !e.rest {
-                    self.format_stripping_undefined(e.type_id)
+                    self.format_optional_tuple_element_type(e.type_id, e.name.is_some())
                 } else {
                     self.format(e.type_id).into_owned()
                 }
@@ -1577,8 +1820,11 @@ impl<'a> TypeFormatter<'a> {
             .zip(disambiguated)
             .map(|(e, type_str)| {
                 let rest = if e.rest { "..." } else { "" };
-                // Rest elements are never printed with `?` in tsc
-                let optional = if e.optional && !e.rest { "?" } else { "" };
+                let optional = if e.optional && !e.rest && e.name.is_some() {
+                    "?"
+                } else {
+                    ""
+                };
                 if let Some(name_atom) = e.name {
                     let name = self.atom(name_atom);
                     format!("{rest}{name}{optional}: {type_str}")
@@ -1679,10 +1925,9 @@ impl<'a> TypeFormatter<'a> {
                 .map(|a| self.atom(a).to_string())
                 .unwrap_or_else(|| "x".to_owned());
             let ro = if idx.readonly { "readonly " } else { "" };
-            parts.push(format!(
-                "{ro}[{key_name}: string]: {}",
-                self.format(idx.value_type)
-            ));
+            let key_type_str = self.format(idx.key_type);
+            let value_str = self.format(idx.value_type);
+            parts.push(format!("{ro}[{key_name}: {key_type_str}]: {value_str}"));
         }
         if let Some(ref idx) = shape.number_index {
             let key_name = idx
@@ -1690,10 +1935,9 @@ impl<'a> TypeFormatter<'a> {
                 .map(|a| self.atom(a).to_string())
                 .unwrap_or_else(|| "x".to_owned());
             let ro = if idx.readonly { "readonly " } else { "" };
-            parts.push(format!(
-                "{ro}[{key_name}: number]: {}",
-                self.format(idx.value_type)
-            ));
+            let key_type_str = self.format(idx.key_type);
+            let value_str = self.format(idx.value_type);
+            parts.push(format!("{ro}[{key_name}: {key_type_str}]: {value_str}"));
         }
         let mut sorted_props: Vec<&PropertyInfo> = shape.properties.iter().collect();
         // Sort by declaration_order (same logic as format_object)

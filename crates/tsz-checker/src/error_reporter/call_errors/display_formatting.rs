@@ -1150,11 +1150,11 @@ impl<'a> CheckerState<'a> {
         &mut self,
         expr_idx: NodeIndex,
     ) -> TypeId {
-        let snap = self.ctx.snapshot_diagnostics();
+        let snap = crate::context::speculation::DiagnosticSpeculationSnapshot::new(&self.ctx);
 
         let ty = self.compute_type_of_node_with_request(expr_idx, &TypingRequest::NONE);
 
-        self.ctx.rollback_diagnostics(&snap);
+        snap.rollback(&mut self.ctx.diagnostic_state());
         ty
     }
 
@@ -1163,6 +1163,20 @@ impl<'a> CheckerState<'a> {
         target_type: TypeId,
         prop_name: &str,
     ) -> Option<TypeId> {
+        if let Some(members) = query_common::union_members(self.ctx.types, target_type) {
+            let property_types: Vec<TypeId> = members
+                .iter()
+                .copied()
+                .filter(|&member| member != TypeId::NULL && member != TypeId::UNDEFINED)
+                .filter_map(|member| self.finite_mapped_target_property_type(member, prop_name))
+                .collect();
+            return match property_types.as_slice() {
+                [] => None,
+                [single] => Some(*single),
+                _ => Some(self.ctx.types.factory().union(property_types)),
+            };
+        }
+
         if let Some(mapped_id) = query_common::mapped_type_id(self.ctx.types, target_type) {
             return crate::query_boundaries::state::checking::get_finite_mapped_property_type(
                 self.ctx.types,
@@ -1193,6 +1207,22 @@ impl<'a> CheckerState<'a> {
         target_type: TypeId,
         prop_name: &str,
     ) -> Option<TypeId> {
+        if let Some(members) = query_common::union_members(self.ctx.types, target_type) {
+            let property_types: Vec<TypeId> = members
+                .iter()
+                .copied()
+                .filter(|&member| member != TypeId::NULL && member != TypeId::UNDEFINED)
+                .filter_map(|member| {
+                    self.finite_mapped_target_property_display_type(member, prop_name)
+                })
+                .collect();
+            return match property_types.as_slice() {
+                [] => None,
+                [single] => Some(*single),
+                _ => Some(self.ctx.types.factory().union(property_types)),
+            };
+        }
+
         if let Some(mapped_id) = query_common::mapped_type_id(self.ctx.types, target_type) {
             return crate::query_boundaries::state::checking::get_finite_mapped_property_display_type(
                 self.ctx.types,
@@ -1973,7 +2003,10 @@ impl<'a> CheckerState<'a> {
             || Self::union_has_primitive_members_only(self.ctx.types, evaluated)
     }
 
-    fn union_has_primitive_members_only(types: &dyn tsz_solver::TypeDatabase, ty: TypeId) -> bool {
+    fn union_has_primitive_members_only(
+        types: &dyn tsz_solver::construction::TypeDatabase,
+        ty: TypeId,
+    ) -> bool {
         let Some(members) = query_common::union_members(types, ty) else {
             return false;
         };
@@ -2304,6 +2337,10 @@ impl<'a> CheckerState<'a> {
     ) -> String {
         let direct_param_display = self.format_type_diagnostic(param_type);
 
+        if let Some(display) = self.overloaded_recursive_typeof_parameter_display(param_type) {
+            return display;
+        }
+
         if let Some(display) =
             self.constrained_variadic_tuple_parameter_display(param_type, arg_type)
         {
@@ -2474,6 +2511,34 @@ impl<'a> CheckerState<'a> {
         } else {
             fallback
         }
+    }
+
+    fn overloaded_recursive_typeof_parameter_display(
+        &mut self,
+        param_type: TypeId,
+    ) -> Option<String> {
+        if !query_common::is_type_query_type(self.ctx.types, param_type) {
+            return None;
+        }
+        let evaluated = self.evaluate_type_with_env(param_type);
+        if evaluated == param_type || evaluated == TypeId::ERROR {
+            return None;
+        }
+        let shape = query_common::callable_shape_for_type(self.ctx.types, evaluated)?;
+        if shape.call_signatures.len() <= 1
+            || !query_common::function_signature_has_typeof(self.ctx.types, evaluated)
+        {
+            return None;
+        }
+        let mut formatter =
+            tsz_solver::TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols)
+                .with_diagnostic_mode()
+                .with_preserve_optional_parameter_surface_syntax(true)
+                .with_strict_null_checks(self.ctx.compiler_options.strict_null_checks)
+                .with_exact_optional_property_types(
+                    self.ctx.compiler_options.exact_optional_property_types,
+                );
+        Some(formatter.format(evaluated).into_owned())
     }
 
     fn materialize_finite_mapped_call_parameter_display_type(
@@ -2979,6 +3044,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn types_overlap_for_diagnostic_display(&mut self, left: TypeId, right: TypeId) -> bool {
-        self.is_assignable_to(left, right) || self.is_assignable_to(right, left)
+        self.diagnostic_relation_boolean_guard(left, right)
+            || self.diagnostic_relation_boolean_guard(right, left)
     }
 }

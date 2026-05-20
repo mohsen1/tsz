@@ -1,7 +1,164 @@
-use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::{Node, NodeArena};
+use tsz_parser::parser::node::{Node, NodeAccess, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, node_flags};
 use tsz_scanner::SyntaxKind;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ForOfUsingInfo {
+    pub binding_name: String,
+    pub using_async: bool,
+    pub recovered_missing_binding: bool,
+}
+
+/// Returns true when a function/method header contains the async-generator
+/// asterisk, without treating `*` in parameter defaults or computed names as a
+/// generator marker.
+pub(crate) fn source_header_has_async_generator_asterisk(
+    source_text: Option<&str>,
+    start: u32,
+    end: u32,
+) -> bool {
+    let Some(text) = source_text else {
+        return false;
+    };
+    let start = (start as usize).min(text.len());
+    let end = (end as usize).min(text.len());
+    if start >= end {
+        return false;
+    }
+
+    let bytes = &text.as_bytes()[start..end];
+    let search_end = find_header_parameter_start(bytes).unwrap_or(bytes.len());
+    let header = &bytes[..search_end];
+
+    let mut pos = 0;
+    while let Some(async_pos) = find_identifier_token(header, b"async", pos) {
+        let next = skip_js_trivia(header, async_pos + b"async".len());
+        if next < header.len() && header[next] == b'*' {
+            return true;
+        }
+        pos = async_pos + b"async".len();
+    }
+
+    let mut pos = 0;
+    while let Some(function_pos) = find_identifier_token(header, b"function", pos) {
+        let next = skip_js_trivia(header, function_pos + b"function".len());
+        if next < header.len() && header[next] == b'*' {
+            return true;
+        }
+        pos = function_pos + b"function".len();
+    }
+
+    false
+}
+
+fn find_header_parameter_start(bytes: &[u8]) -> Option<usize> {
+    let mut pos = 0;
+    let mut square_depth = 0u32;
+    while pos < bytes.len() {
+        if let Some(next) = skip_comment_or_string(bytes, pos) {
+            pos = next;
+            continue;
+        }
+        match bytes[pos] {
+            b'[' => {
+                square_depth = square_depth.saturating_add(1);
+                pos += 1;
+            }
+            b']' => {
+                square_depth = square_depth.saturating_sub(1);
+                pos += 1;
+            }
+            b'(' if square_depth == 0 => return Some(pos),
+            _ => pos += 1,
+        }
+    }
+    None
+}
+
+fn find_identifier_token(haystack: &[u8], needle: &[u8], from: usize) -> Option<usize> {
+    if needle.is_empty() || from >= haystack.len() {
+        return None;
+    }
+    let mut pos = from;
+    while pos + needle.len() <= haystack.len() {
+        let is_match = &haystack[pos..pos + needle.len()] == needle;
+        if is_match {
+            let before = pos
+                .checked_sub(1)
+                .and_then(|idx| haystack.get(idx).copied());
+            let after = haystack.get(pos + needle.len()).copied();
+            if !before.is_some_and(is_identifier_part) && !after.is_some_and(is_identifier_part) {
+                return Some(pos);
+            }
+        }
+        pos += 1;
+    }
+    None
+}
+
+fn skip_js_trivia(bytes: &[u8], mut pos: usize) -> usize {
+    loop {
+        while pos < bytes.len() && bytes[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        if pos + 1 >= bytes.len() || bytes[pos] != b'/' {
+            return pos;
+        }
+        match bytes[pos + 1] {
+            b'/' | b'*' => pos = skip_js_comment(bytes, pos),
+            _ => return pos,
+        }
+    }
+}
+
+fn skip_comment_or_string(bytes: &[u8], pos: usize) -> Option<usize> {
+    if pos + 1 < bytes.len() && bytes[pos] == b'/' && matches!(bytes[pos + 1], b'/' | b'*') {
+        return Some(skip_js_comment(bytes, pos));
+    }
+    if matches!(bytes[pos], b'\'' | b'"' | b'`') {
+        return Some(skip_js_string(bytes, pos));
+    }
+    None
+}
+
+fn skip_js_comment(bytes: &[u8], mut pos: usize) -> usize {
+    if pos + 1 >= bytes.len() || bytes[pos] != b'/' {
+        return pos;
+    }
+    match bytes[pos + 1] {
+        b'/' => {
+            pos += 2;
+            while pos < bytes.len() && !matches!(bytes[pos], b'\n' | b'\r') {
+                pos += 1;
+            }
+            pos
+        }
+        b'*' => {
+            pos += 2;
+            while pos + 1 < bytes.len() && !(bytes[pos] == b'*' && bytes[pos + 1] == b'/') {
+                pos += 1;
+            }
+            (pos + 2).min(bytes.len())
+        }
+        _ => pos,
+    }
+}
+
+fn skip_js_string(bytes: &[u8], mut pos: usize) -> usize {
+    let quote = bytes[pos];
+    pos += 1;
+    while pos < bytes.len() {
+        if bytes[pos] == b'\\' {
+            pos = (pos + 2).min(bytes.len());
+        } else if bytes[pos] == quote {
+            return pos + 1;
+        } else {
+            pos += 1;
+        }
+    }
+    pos
+}
 
 /// Get identifier text from a node index, returning `None` if the node is not an identifier.
 pub(crate) fn identifier_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
@@ -11,6 +168,250 @@ pub(crate) fn identifier_text(arena: &NodeArena, idx: NodeIndex) -> Option<Strin
 /// Get identifier text from a node index, returning an empty string on failure.
 pub(crate) fn identifier_text_or_empty(arena: &NodeArena, idx: NodeIndex) -> String {
     identifier_text(arena, idx).unwrap_or_default()
+}
+
+/// Returns true when an expression evaluated from a function parameter can
+/// allocate a downlevel optional-chain/nullish temp in the function body.
+pub(crate) fn parameter_expression_generates_downlevel_temp(
+    arena: &NodeArena,
+    needs_es2020_lowering: bool,
+    idx: NodeIndex,
+) -> bool {
+    needs_es2020_lowering && expression_generates_downlevel_temp_inner(arena, idx)
+}
+
+fn expression_generates_downlevel_temp_inner(arena: &NodeArena, idx: NodeIndex) -> bool {
+    let Some(node) = arena.get(idx) else {
+        return false;
+    };
+
+    if let Some(computed) = arena.get_computed_property(node) {
+        return expression_generates_downlevel_temp_inner(arena, computed.expression);
+    }
+
+    if let Some(paren) = arena.get_parenthesized(node) {
+        return expression_generates_downlevel_temp_inner(arena, paren.expression);
+    }
+
+    if let Some(assertion) = arena.get_type_assertion(node) {
+        return expression_generates_downlevel_temp_inner(arena, assertion.expression);
+    }
+
+    if let Some(binary) = arena.get_binary_expr(node) {
+        if binary.operator_token == SyntaxKind::QuestionQuestionToken as u16
+            && !is_simple_copiable_expression(arena, binary.left)
+        {
+            return true;
+        }
+        return expression_generates_downlevel_temp_inner(arena, binary.left)
+            || expression_generates_downlevel_temp_inner(arena, binary.right);
+    }
+
+    if let Some(access) = arena.get_access_expr(node) {
+        if access.question_dot_token && !is_simple_copiable_expression(arena, access.expression) {
+            return true;
+        }
+        return expression_generates_downlevel_temp_inner(arena, access.expression)
+            || expression_generates_downlevel_temp_inner(arena, access.name_or_argument);
+    }
+
+    if let Some(call) = arena.get_call_expr(node) {
+        if node.is_optional_chain()
+            && !optional_chain_call_uses_simple_receiver(arena, call.expression)
+            && !is_simple_copiable_expression(arena, call.expression)
+        {
+            return true;
+        }
+        if expression_generates_downlevel_temp_inner(arena, call.expression) {
+            return true;
+        }
+        return call.arguments.as_ref().is_some_and(|args| {
+            args.nodes
+                .iter()
+                .copied()
+                .any(|arg| expression_generates_downlevel_temp_inner(arena, arg))
+        });
+    }
+
+    if let Some(cond) = arena.get_conditional_expr(node) {
+        return expression_generates_downlevel_temp_inner(arena, cond.condition)
+            || expression_generates_downlevel_temp_inner(arena, cond.when_true)
+            || expression_generates_downlevel_temp_inner(arena, cond.when_false);
+    }
+
+    if let Some(unary) = arena.get_unary_expr(node) {
+        return expression_generates_downlevel_temp_inner(arena, unary.operand);
+    }
+
+    if let Some(unary) = arena.get_unary_expr_ex(node) {
+        return expression_generates_downlevel_temp_inner(arena, unary.expression);
+    }
+
+    if let Some(literal) = arena.get_literal_expr(node) {
+        return literal
+            .elements
+            .nodes
+            .iter()
+            .copied()
+            .any(|element| expression_generates_downlevel_temp_inner(arena, element));
+    }
+
+    if let Some(prop) = arena.get_property_assignment(node) {
+        return expression_generates_downlevel_temp_inner(arena, prop.name)
+            || expression_generates_downlevel_temp_inner(arena, prop.initializer);
+    }
+
+    if let Some(shorthand) = arena.get_shorthand_property(node) {
+        return expression_generates_downlevel_temp_inner(arena, shorthand.name)
+            || expression_generates_downlevel_temp_inner(
+                arena,
+                shorthand.object_assignment_initializer,
+            );
+    }
+
+    if let Some(spread) = arena.get_spread(node) {
+        return expression_generates_downlevel_temp_inner(arena, spread.expression);
+    }
+
+    false
+}
+
+/// Match tsc's `isSimpleCopiableExpression`: an expression whose evaluation
+/// has no observable side effects and which is therefore safe to reference
+/// more than once in a lowered form (e.g. the `a` in
+/// `a !== null && a !== void 0 ? a : b`). Identifiers, keywords (including
+/// `this`, `super`, the boolean literals, `null`), numeric and string
+/// literals, and template literals without substitutions all qualify.
+pub(crate) fn is_simple_copiable_expression(arena: &NodeArena, idx: NodeIndex) -> bool {
+    let Some(node) = arena.get(idx) else {
+        return false;
+    };
+
+    node.is_identifier()
+        || (node.kind >= SyntaxKind::BreakKeyword as u16
+            && node.kind <= SyntaxKind::DeferKeyword as u16)
+        || node.is_numeric_literal()
+        || node.is_string_literal()
+        || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+}
+
+fn optional_chain_call_uses_simple_receiver(arena: &NodeArena, callee: NodeIndex) -> bool {
+    let Some(callee_node) = arena.get(callee) else {
+        return false;
+    };
+    let Some(access) = arena.get_access_expr(callee_node) else {
+        return false;
+    };
+
+    access.question_dot_token && is_simple_copiable_expression(arena, access.expression)
+}
+
+/// Returns true when a namespace/module block contains declarations that
+/// produce runtime output.
+pub(crate) fn module_body_has_runtime_value_declarations(
+    arena: &NodeArena,
+    body_idx: NodeIndex,
+) -> bool {
+    let Some(body_node) = arena.get(body_idx) else {
+        return false;
+    };
+    let Some(block_data) = arena.get_module_block(body_node) else {
+        return false;
+    };
+    let Some(stmts) = block_data.statements.as_ref() else {
+        return false;
+    };
+
+    stmts.nodes.iter().any(|&stmt_idx| {
+        let Some(stmt_node) = arena.get(stmt_idx) else {
+            return false;
+        };
+
+        match stmt_node.kind {
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT
+                || k == syntax_kind_ext::FUNCTION_DECLARATION
+                || k == syntax_kind_ext::CLASS_DECLARATION
+                || k == syntax_kind_ext::ENUM_DECLARATION =>
+            {
+                true
+            }
+            k if k == syntax_kind_ext::MODULE_DECLARATION => arena
+                .get_module(stmt_node)
+                .is_some_and(|ns| module_body_has_runtime_value_declarations(arena, ns.body)),
+            k if k == syntax_kind_ext::EXPORT_DECLARATION => arena
+                .get_export_decl(stmt_node)
+                .and_then(|export| arena.get(export.export_clause))
+                .is_some_and(|inner| match inner.kind {
+                    k if k == syntax_kind_ext::VARIABLE_STATEMENT
+                        || k == syntax_kind_ext::FUNCTION_DECLARATION
+                        || k == syntax_kind_ext::CLASS_DECLARATION
+                        || k == syntax_kind_ext::ENUM_DECLARATION =>
+                    {
+                        true
+                    }
+                    k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                        arena.get_module(inner).is_some_and(|ns| {
+                            module_body_has_runtime_value_declarations(arena, ns.body)
+                        })
+                    }
+                    _ => false,
+                }),
+            _ => false,
+        }
+    })
+}
+
+pub(crate) fn for_of_using_info(
+    arena: &NodeArena,
+    initializer: NodeIndex,
+) -> Option<ForOfUsingInfo> {
+    if let Some(info) = for_of_using_declaration_info(arena, initializer) {
+        return Some(info);
+    }
+
+    let init_node = arena.get(initializer)?;
+    if init_node.kind == syntax_kind_ext::AWAIT_EXPRESSION
+        && let Some(unary) = arena.get_unary_expr_ex(init_node)
+        && identifier_text_or_empty(arena, unary.expression) == "using"
+    {
+        return Some(ForOfUsingInfo {
+            binding_name: "_a".to_string(),
+            using_async: true,
+            recovered_missing_binding: true,
+        });
+    }
+
+    None
+}
+
+pub(crate) fn for_of_using_declaration_info(
+    arena: &NodeArena,
+    initializer: NodeIndex,
+) -> Option<ForOfUsingInfo> {
+    let init_node = arena.get(initializer)?;
+    if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+        let flags = init_node.flags as u32;
+        if (flags & node_flags::USING) == 0 {
+            return None;
+        }
+        let decl_list = arena.get_variable(init_node)?;
+        if decl_list.declarations.nodes.len() != 1 {
+            return None;
+        }
+        let decl_idx = decl_list.declarations.nodes[0];
+        let decl_node = arena.get(decl_idx)?;
+        let decl = arena.get_variable_declaration(decl_node)?;
+        let binding_name = identifier_text_or_empty(arena, decl.name);
+        if binding_name.is_empty() {
+            return None;
+        }
+        return Some(ForOfUsingInfo {
+            binding_name,
+            using_async: node_flags::is_await_using(flags),
+            recovered_missing_binding: false,
+        });
+    }
+    None
 }
 
 /// Get the emit text for an identifier, preserving unicode escape sequences.
@@ -790,30 +1191,78 @@ pub(crate) fn hygienic_temp_name(base: &str, source_text: &str) -> String {
     base.to_string()
 }
 
-/// Walk a function body and collect the property names accessed off `super`
-/// via `super.<identifier>` (issue #3759). Used by the async-method downlevel
-/// transform to build the `_super = Object.create(null, { ... })` capture
-/// block before entering the generator.
-///
-/// Stops recursion at function-like boundaries that re-bind `super` (function
-/// expressions / declarations and class members). Arrow functions inherit
-/// `super` from the enclosing method, so they ARE traversed.
-pub(crate) fn collect_async_method_super_property_names(
-    arena: &NodeArena,
-    body: NodeIndex,
-) -> Vec<String> {
-    let mut names: Vec<String> = Vec::new();
-    let mut visited: rustc_hash::FxHashSet<NodeIndex> = rustc_hash::FxHashSet::default();
-    collect_super_property_names_rec(arena, body, &mut names, &mut visited);
-    names.sort();
-    names.dedup();
-    names
+#[derive(Clone, Debug, Default)]
+pub(crate) struct AsyncMethodSuperCapture {
+    pub property_names: Vec<String>,
+    pub writable_property_names: rustc_hash::FxHashSet<String>,
+    pub needs_element_index: bool,
+    pub needs_writable_element_index: bool,
 }
 
-fn collect_super_property_names_rec(
+pub(crate) fn collect_async_method_super_capture(
+    arena: &NodeArena,
+    body: NodeIndex,
+) -> AsyncMethodSuperCapture {
+    let mut capture = AsyncMethodSuperCapture::default();
+    let mut visited: rustc_hash::FxHashSet<NodeIndex> = rustc_hash::FxHashSet::default();
+    collect_super_capture_rec(arena, body, false, &mut capture, &mut visited);
+    capture.property_names.sort();
+    capture.property_names.dedup();
+    capture
+}
+
+pub(crate) fn collect_lowered_async_arrow_super_capture(
+    arena: &NodeArena,
+    body: NodeIndex,
+) -> AsyncMethodSuperCapture {
+    let mut capture = AsyncMethodSuperCapture::default();
+    let mut visited: rustc_hash::FxHashSet<NodeIndex> = rustc_hash::FxHashSet::default();
+    collect_lowered_async_arrow_super_capture_rec(arena, body, &mut capture, &mut visited);
+    capture.property_names.sort();
+    capture.property_names.dedup();
+    capture
+}
+
+fn collect_lowered_async_arrow_super_capture_rec(
     arena: &NodeArena,
     idx: NodeIndex,
-    out: &mut Vec<String>,
+    out: &mut AsyncMethodSuperCapture,
+    visited: &mut rustc_hash::FxHashSet<NodeIndex>,
+) {
+    if idx.is_none() || !visited.insert(idx) {
+        return;
+    }
+    let Some(node) = arena.get(idx) else { return };
+
+    if node.kind == syntax_kind_ext::ARROW_FUNCTION {
+        if arena.get_function(node).is_some_and(|func| func.is_async) {
+            let mut arrow_visited: rustc_hash::FxHashSet<NodeIndex> =
+                rustc_hash::FxHashSet::default();
+            collect_super_capture_rec(arena, idx, false, out, &mut arrow_visited);
+            return;
+        }
+    } else if node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+        || node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+        || node.kind == syntax_kind_ext::METHOD_DECLARATION
+        || node.kind == syntax_kind_ext::CONSTRUCTOR
+        || node.kind == syntax_kind_ext::GET_ACCESSOR
+        || node.kind == syntax_kind_ext::SET_ACCESSOR
+        || node.kind == syntax_kind_ext::CLASS_DECLARATION
+        || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+    {
+        return;
+    }
+
+    for child in arena.get_children(idx) {
+        collect_lowered_async_arrow_super_capture_rec(arena, child, out, visited);
+    }
+}
+
+fn collect_super_capture_rec(
+    arena: &NodeArena,
+    idx: NodeIndex,
+    write_context: bool,
+    out: &mut AsyncMethodSuperCapture,
     visited: &mut rustc_hash::FxHashSet<NodeIndex>,
 ) {
     use tsz_parser::parser::node::NodeAccess;
@@ -838,6 +1287,15 @@ fn collect_super_property_names_rec(
         return;
     }
 
+    if kind == syntax_kind_ext::BINARY_EXPRESSION
+        && let Some(binary) = arena.get_binary_expr(node)
+        && is_assignment_operator(binary.operator_token)
+    {
+        collect_super_capture_rec(arena, binary.left, true, out, visited);
+        collect_super_capture_rec(arena, binary.right, false, out, visited);
+        return;
+    }
+
     if kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
         && let Some(access) = arena.get_access_expr(node)
         && let Some(base) = arena.get(access.expression)
@@ -847,16 +1305,50 @@ fn collect_super_property_names_rec(
             && name_node.kind == SyntaxKind::Identifier as u16
             && let Some(name) = identifier_text(arena, access.name_or_argument)
         {
-            out.push(name);
+            if write_context {
+                out.writable_property_names.insert(name.clone());
+            }
+            out.property_names.push(name);
         }
-        // Walk arguments only — the `super` expression itself has no further
-        // descendants worth visiting.
+        return;
+    }
+
+    if kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        && let Some(access) = arena.get_access_expr(node)
+        && let Some(base) = arena.get(access.expression)
+        && base.kind == SyntaxKind::SuperKeyword as u16
+    {
+        out.needs_element_index = true;
+        out.needs_writable_element_index |= write_context;
+        collect_super_capture_rec(arena, access.name_or_argument, false, out, visited);
         return;
     }
 
     for child in arena.get_children(idx) {
-        collect_super_property_names_rec(arena, child, out, visited);
+        collect_super_capture_rec(arena, child, write_context, out, visited);
     }
+}
+
+const fn is_assignment_operator(token: u16) -> bool {
+    matches!(
+        token,
+        t if t == SyntaxKind::EqualsToken as u16
+            || t == SyntaxKind::PlusEqualsToken as u16
+            || t == SyntaxKind::MinusEqualsToken as u16
+            || t == SyntaxKind::AsteriskEqualsToken as u16
+            || t == SyntaxKind::SlashEqualsToken as u16
+            || t == SyntaxKind::PercentEqualsToken as u16
+            || t == SyntaxKind::AsteriskAsteriskEqualsToken as u16
+            || t == SyntaxKind::LessThanLessThanEqualsToken as u16
+            || t == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
+            || t == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
+            || t == SyntaxKind::AmpersandEqualsToken as u16
+            || t == SyntaxKind::CaretEqualsToken as u16
+            || t == SyntaxKind::BarEqualsToken as u16
+            || t == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+            || t == SyntaxKind::BarBarEqualsToken as u16
+            || t == SyntaxKind::QuestionQuestionEqualsToken as u16
+    )
 }
 
 #[cfg(test)]

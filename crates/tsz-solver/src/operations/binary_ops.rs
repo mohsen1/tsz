@@ -14,10 +14,13 @@
 //! All functions take `TypeId` as input and return structured results,
 //! making them pure logic that can be unit tested independently.
 
+use crate::construction::{QueryDatabase, TypeDatabase};
 use crate::narrowing::NullishFilter;
 use crate::types::TypeListId;
 use crate::visitor::TypeVisitor;
-use crate::{IntrinsicKind, LiteralValue, QueryDatabase, TypeData, TypeDatabase, TypeId};
+use crate::{IntrinsicKind, LiteralValue, TypeData, TypeId};
+use rustc_hash::FxHashSet;
+use smallvec::SmallVec;
 
 /// Result of a binary operation.
 #[derive(Clone, Debug, PartialEq)]
@@ -417,16 +420,75 @@ impl<'a> BinaryOpEvaluator<'a> {
         Self { interner }
     }
 
+    /// Apply the `D & {}` `NonNullable` approximation for unconstrained type parameters.
+    ///
+    /// When a type parameter `D` appears as the non-nullish component of a `??` or
+    /// `||` expression (`(D | undefined) ?? X` → `(D & {}) | X`), tsc uses this
+    /// intersection to represent the fact that `D` is non-nullable. Callers outside
+    /// this module (e.g., the checker's inline `??` result path) can use this to
+    /// replicate the same treatment without duplicating the logic.
+    ///
+    /// `original` is the full left-hand type (e.g. `D | undefined`); `narrowed` is
+    /// the non-nullish portion (e.g. `D`). Returns `narrowed & {}` when `narrowed`
+    /// is an unconstrained type parameter, otherwise returns `narrowed` unchanged.
+    pub fn apply_non_nullable_approximation(&self, original: TypeId, narrowed: TypeId) -> TypeId {
+        self.non_nullable_type_parameter_result(original, narrowed)
+    }
+
     fn non_nullable_type_parameter_result(&self, original: TypeId, narrowed: TypeId) -> TypeId {
+        // Apply the D & {} non-nullable intersection only for unconstrained type
+        // parameters. This matches tsc's NonNullable<T> approximation for the
+        // truthy side of `(T | undefined) || X`: tsc produces `(T & {}) | X`,
+        // which for X = {} reduces to {} (since T & {} <: {}).
+        //
+        // Constrained type parameters (e.g., D extends string) must NOT receive
+        // the & {} treatment: their constraint already determines assignability,
+        // and adding & {} to a primitive-constrained param would incorrectly let
+        // the intersection pass the `object` keyword check via the `any`-member
+        // intersection rule.
+        if self.is_unconstrained_type_parameter(narrowed) {
+            return self
+                .interner
+                .intersection2(narrowed, self.interner.object(vec![]));
+        }
+
+        // Distribute over union members: NonNullable<D | E> = (D & {}) | (E & {})
+        // where each unconstrained type param gets the & {} treatment.
+        if let Some(TypeData::Union(list_id)) = self.interner.lookup(narrowed) {
+            let members = self.interner.type_list(list_id);
+            let has_unconstrained = members
+                .iter()
+                .any(|&m| self.is_unconstrained_type_parameter(m));
+            if has_unconstrained {
+                let empty_obj = self.interner.object(vec![]);
+                let transformed: SmallVec<[TypeId; 4]> = members
+                    .iter()
+                    .map(|&m| {
+                        if self.is_unconstrained_type_parameter(m) {
+                            self.interner.intersection2(m, empty_obj)
+                        } else {
+                            m
+                        }
+                    })
+                    .collect();
+                return self.interner.union(transformed.into_vec());
+            }
+        }
+
         if narrowed != original {
             return narrowed;
         }
-        if self.is_type_parameter_like(original) {
-            return self
-                .interner
-                .intersection2(original, self.interner.object(vec![]));
-        }
         narrowed
+    }
+
+    /// Return `true` if `type_id` is a type parameter or infer type with **no** constraint.
+    fn is_unconstrained_type_parameter(&self, type_id: TypeId) -> bool {
+        match self.interner.lookup(type_id) {
+            Some(TypeData::TypeParameter(info)) | Some(TypeData::Infer(info)) => {
+                info.constraint.is_none()
+            }
+            _ => false,
+        }
     }
 
     fn is_type_parameter_like(&self, type_id: TypeId) -> bool {
@@ -884,8 +946,13 @@ impl<'a> BinaryOpEvaluator<'a> {
                 right
             } else {
                 let result = self.union2_subtype_reduce(truthy_left, right);
+                // tsc displays the truthy-narrowed left first, then the right
+                // operand: `(options || {}).a` produces
+                //   `{ a: string; b: number; } | {}`
+                // (not the reverse). Record that order as the union origin so
+                // diagnostic display follows source order.
                 self.interner
-                    .replace_union_origin_for_display(result, vec![right, truthy_left]);
+                    .replace_union_origin_for_display(result, vec![truthy_left, right]);
                 result
             }
         } else {
@@ -899,7 +966,12 @@ impl<'a> BinaryOpEvaluator<'a> {
             } else if non_nullish_left == TypeId::NEVER {
                 right
             } else {
-                self.union2_subtype_reduce(non_nullish_left, right)
+                // Apply the same non-nullable type-parameter treatment as `||`:
+                // `(D | undefined) ?? X` → `(D & {}) | X`, matching tsc's
+                // NonNullable<D> approximation for unconstrained generics.
+                let non_nullish_left_final =
+                    self.non_nullable_type_parameter_result(left, non_nullish_left);
+                self.union2_subtype_reduce(non_nullish_left_final, right)
             }
         };
 
@@ -1067,7 +1139,8 @@ impl<'a> BinaryOpEvaluator<'a> {
     /// template literals, unique symbols). For unions, ALL members must be valid.
     /// This check is independent of strictNullChecks.
     pub fn is_valid_computed_property_name_type(&self, type_id: TypeId) -> bool {
-        self.is_valid_key_type_impl(type_id, false)
+        let mut seen = FxHashSet::default();
+        self.is_valid_key_type_impl(type_id, false, &mut seen)
     }
 
     /// Check if a type is a valid mapped type constraint key type (TS2322).
@@ -1076,21 +1149,31 @@ impl<'a> BinaryOpEvaluator<'a> {
     /// as valid, since they cannot be fully resolved in generic context and will
     /// be checked at instantiation time.
     pub fn is_valid_mapped_type_key_type(&self, type_id: TypeId) -> bool {
-        self.is_valid_key_type_impl(type_id, true)
+        let mut seen = FxHashSet::default();
+        self.is_valid_key_type_impl(type_id, true, &mut seen)
     }
 
-    fn is_valid_key_type_impl(&self, type_id: TypeId, defer_unresolved: bool) -> bool {
+    fn is_valid_key_type_impl(
+        &self,
+        type_id: TypeId,
+        defer_unresolved: bool,
+        seen: &mut FxHashSet<TypeId>,
+    ) -> bool {
         if type_id == TypeId::ANY || type_id == TypeId::NEVER || type_id == TypeId::ERROR {
             return true;
         }
-        match self.interner.lookup(type_id) {
+        if !seen.insert(type_id) {
+            return defer_unresolved;
+        }
+
+        let result = match self.interner.lookup(type_id) {
             // For union types, each member must individually be valid
             Some(TypeData::Union(list_id)) => {
                 let members = self.interner.type_list(list_id);
                 !members.is_empty()
                     && members
                         .iter()
-                        .all(|&m| self.is_valid_key_type_impl(m, defer_unresolved))
+                        .all(|&m| self.is_valid_key_type_impl(m, defer_unresolved, seen))
             }
             // For type parameters, check the constraint (e.g., K extends keyof T).
             // tsc uses getBaseConstraintOfType(type) for this check.
@@ -1099,7 +1182,7 @@ impl<'a> BinaryOpEvaluator<'a> {
             // defer the check to instantiation time to avoid false TS2464.
             Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info
                 .constraint
-                .is_some_and(|c| self.is_valid_key_type_impl(c, true)),
+                .is_some_and(|c| self.is_valid_key_type_impl(c, true, seen)),
             // keyof always produces string | number | symbol, which are all valid.
             Some(TypeData::KeyOf(_)) => true,
             // For intersection types, valid if any member is a valid key type.
@@ -1107,7 +1190,7 @@ impl<'a> BinaryOpEvaluator<'a> {
                 let members = self.interner.type_list(list_id);
                 members
                     .iter()
-                    .any(|&m| self.is_valid_key_type_impl(m, defer_unresolved))
+                    .any(|&m| self.is_valid_key_type_impl(m, defer_unresolved, seen))
             }
             // TypeQuery (typeof expr), deferred types (generic applications, lazy refs,
             // conditionals) — try to evaluate to the underlying type. If they resolve
@@ -1123,7 +1206,7 @@ impl<'a> BinaryOpEvaluator<'a> {
             ) => {
                 let evaluated = self.interner.evaluate_type(type_id);
                 if evaluated != type_id {
-                    self.is_valid_key_type_impl(evaluated, defer_unresolved)
+                    self.is_valid_key_type_impl(evaluated, defer_unresolved, seen)
                 } else if defer_unresolved {
                     // Unresolvable in generic context — conservatively accept
                     true
@@ -1147,14 +1230,13 @@ impl<'a> BinaryOpEvaluator<'a> {
                             self.interner.lookup(index_type)
                         && let Some(constraint) = info.constraint
                     {
-                        return self
-                            .interner
-                            .is_assignable_to(constraint, self.interner.keyof(object_type));
+                        self.interner
+                            .is_assignable_to(constraint, self.interner.keyof(object_type))
+                    } else {
+                        true
                     }
-
-                    true
                 } else {
-                    self.is_valid_key_type_impl(evaluated, defer_unresolved)
+                    self.is_valid_key_type_impl(evaluated, defer_unresolved, seen)
                 }
             }
             _ => {
@@ -1162,7 +1244,10 @@ impl<'a> BinaryOpEvaluator<'a> {
                     || self.is_number_like(type_id)
                     || self.is_symbol_like(type_id)
             }
-        }
+        };
+
+        seen.remove(&type_id);
+        result
     }
 
     /// Check if a type is boolean-like (boolean or boolean literal).

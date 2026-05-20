@@ -276,6 +276,106 @@ fn source_map_duplicate_name() {
 }
 
 #[test]
+fn add_source_assigns_sequential_zero_based_indices() {
+    let mut smg = SourceMapGenerator::new("out.js".to_string());
+    assert_eq!(smg.add_source("a.ts".to_string()), 0);
+    assert_eq!(smg.add_source("b.ts".to_string()), 1);
+    assert_eq!(
+        smg.add_source_with_content("c.ts".to_string(), "/* c */".to_string()),
+        2
+    );
+    assert_eq!(smg.add_source("d.ts".to_string()), 3);
+}
+
+#[test]
+fn add_name_assigns_sequential_indices_and_dedupes_existing() {
+    let mut smg = SourceMapGenerator::new("out.js".to_string());
+    assert_eq!(smg.add_name("alpha".to_string()), 0);
+    assert_eq!(smg.add_name("beta".to_string()), 1);
+    assert_eq!(smg.add_name("gamma".to_string()), 2);
+    // Dedupe must return the original index, not the next slot.
+    assert_eq!(smg.add_name("beta".to_string()), 1);
+    // Adding a fresh name continues from the real length, not from the deduped slot.
+    assert_eq!(smg.add_name("delta".to_string()), 3);
+}
+
+// =============================================================================
+// VLQ encoding overflow (issue #4780)
+// =============================================================================
+//
+// Source Map v3 segments encode each mapping field as a 32-bit signed VLQ
+// delta. Mapping fields are stored as u32 in `Mapping`, but values greater
+// than i32::MAX cannot be represented faithfully and previously fell back to
+// i32::MAX silently — emitting a syntactically valid but wrong mapping. The
+// generator now panics on that overflow so corruption is loud rather than
+// silent.
+
+#[test]
+#[should_panic(expected = "source map generated_column overflowed i32")]
+fn source_map_panics_on_generated_column_overflow() {
+    let mut smg = SourceMapGenerator::new("out.js".to_string());
+    let _ = smg.add_source("in.ts".to_string());
+
+    #[allow(clippy::cast_sign_loss)]
+    let too_large = (i32::MAX as u32) + 1;
+    smg.add_simple_mapping(0, too_large, 0, 0, 0);
+
+    let _ = smg.generate();
+}
+
+#[test]
+#[should_panic(expected = "source map source_index overflowed i32")]
+fn source_map_panics_on_source_index_overflow() {
+    let mut smg = SourceMapGenerator::new("out.js".to_string());
+    let _ = smg.add_source("in.ts".to_string());
+
+    #[allow(clippy::cast_sign_loss)]
+    let too_large = (i32::MAX as u32) + 1;
+    smg.add_simple_mapping(0, 0, too_large, 0, 0);
+
+    let _ = smg.generate();
+}
+
+#[test]
+#[should_panic(expected = "source map original_line overflowed i32")]
+fn source_map_panics_on_original_line_overflow() {
+    let mut smg = SourceMapGenerator::new("out.js".to_string());
+    let _ = smg.add_source("in.ts".to_string());
+
+    #[allow(clippy::cast_sign_loss)]
+    let too_large = (i32::MAX as u32) + 1;
+    smg.add_simple_mapping(0, 0, 0, too_large, 0);
+
+    let _ = smg.generate();
+}
+
+#[test]
+#[should_panic(expected = "source map original_column overflowed i32")]
+fn source_map_panics_on_original_column_overflow() {
+    let mut smg = SourceMapGenerator::new("out.js".to_string());
+    let _ = smg.add_source("in.ts".to_string());
+
+    #[allow(clippy::cast_sign_loss)]
+    let too_large = (i32::MAX as u32) + 1;
+    smg.add_simple_mapping(0, 0, 0, 0, too_large);
+
+    let _ = smg.generate();
+}
+
+#[test]
+#[should_panic(expected = "source map name_index overflowed i32")]
+fn source_map_panics_on_name_index_overflow() {
+    let mut smg = SourceMapGenerator::new("out.js".to_string());
+    let _ = smg.add_source("in.ts".to_string());
+
+    #[allow(clippy::cast_sign_loss)]
+    let too_large = (i32::MAX as u32) + 1;
+    smg.add_mapping(0, 0, 0, 0, 0, Some(too_large));
+
+    let _ = smg.generate();
+}
+
+#[test]
 fn source_map_shift_generated_lines() {
     let mut smg = SourceMapGenerator::new("out.js".to_string());
     let _ = smg.add_source("in.ts".to_string());

@@ -6,10 +6,125 @@
 use super::content_predicates::{
     get_array_element_type, get_intersection_members, get_tuple_elements, get_union_members,
 };
-use crate::TypeDatabase;
-use crate::types::{LiteralValue, PropertyInfo, TypeData, TypeId, Visibility};
+use crate::construction::TypeDatabase;
+use crate::def::{DefKind, DefinitionStore};
+use crate::types::{
+    LiteralValue, ObjectShape, PropertyInfo, TupleElement, TypeData, TypeId, Visibility,
+};
 use rustc_hash::FxHashSet;
+use std::sync::Arc;
 use tsz_common::Atom;
+
+pub enum AssignmentNumericDisplayChildren {
+    Application { base: TypeId, args: Vec<TypeId> },
+    Members(Vec<TypeId>),
+    Array(TypeId),
+    Tuple(Vec<TupleElement>),
+    Object(Arc<ObjectShape>),
+    None,
+}
+
+pub fn assignment_numeric_display_children(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> AssignmentNumericDisplayChildren {
+    if type_id.is_intrinsic() {
+        return AssignmentNumericDisplayChildren::None;
+    }
+
+    match db.lookup(type_id) {
+        Some(TypeData::Application(app_id)) => {
+            let app = db.type_application(app_id);
+            AssignmentNumericDisplayChildren::Application {
+                base: app.base,
+                args: app.args.clone(),
+            }
+        }
+        Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
+            AssignmentNumericDisplayChildren::Members(db.type_list(list_id).to_vec())
+        }
+        Some(TypeData::Array(element)) => AssignmentNumericDisplayChildren::Array(element),
+        Some(TypeData::Tuple(elements)) => {
+            AssignmentNumericDisplayChildren::Tuple(db.tuple_list(elements).to_vec())
+        }
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+            AssignmentNumericDisplayChildren::Object(db.object_shape(shape_id))
+        }
+        _ => AssignmentNumericDisplayChildren::None,
+    }
+}
+
+pub fn object_shape_for_assignment_numeric_display(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<Arc<ObjectShape>> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
+
+    match db.lookup(type_id) {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+            Some(db.object_shape(shape_id))
+        }
+        _ => None,
+    }
+}
+
+pub fn number_literal_bits(db: &dyn TypeDatabase, type_id: TypeId) -> Option<u64> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
+
+    match db.lookup(type_id) {
+        Some(TypeData::Literal(LiteralValue::Number(value))) => Some(value.0.to_bits()),
+        _ => None,
+    }
+}
+
+pub fn is_number_literal_union(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    match assignment_numeric_display_children(db, type_id) {
+        AssignmentNumericDisplayChildren::Members(members) => {
+            members.len() > 1
+                && members
+                    .iter()
+                    .all(|&member| number_literal_bits(db, member).is_some())
+        }
+        _ => false,
+    }
+}
+
+pub fn numeric_literal_union_origin_preserves_alias(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+) -> bool {
+    let Some(origin) = db.get_union_origin(type_id) else {
+        return false;
+    };
+    origin
+        .iter()
+        .copied()
+        .any(|member| display_origin_member_is_type_alias(db, def_store, member))
+}
+
+fn display_origin_member_is_type_alias(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+) -> bool {
+    match db.lookup(type_id) {
+        Some(TypeData::Lazy(def_id)) => def_store
+            .get(def_id)
+            .is_some_and(|def| def.kind == DefKind::TypeAlias),
+        Some(TypeData::Application(app_id)) => {
+            let app = db.type_application(app_id);
+            display_origin_member_is_type_alias(db, def_store, app.base)
+        }
+        _ => db
+            .get_display_alias(type_id)
+            .is_some_and(|alias| display_origin_member_is_type_alias(db, def_store, alias)),
+    }
+}
 
 /// Collect `TypeIds` of callable properties from an object type.
 ///
@@ -496,7 +611,13 @@ pub fn keyof_object_properties(db: &dyn TypeDatabase, type_id: TypeId) -> Option
             has_symbol_key = true;
             continue;
         }
-        key_types.push(db.literal_string_atom(p.name));
+        // `keyof { 1: ... }` yields the numeric literal `1`, not `"1"` —
+        // see crate::utils::literal_key_for_property_name for the rule.
+        key_types.push(crate::utils::literal_key_for_property_name(
+            db,
+            p.name,
+            p.is_string_named,
+        ));
     }
     // Include `symbol` in keyof when the object has computed symbol properties.
     if has_symbol_key {
@@ -565,6 +686,29 @@ pub fn receiver_property_visibility(
     }
 }
 
+fn union_member_has_branch_only_keys(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    let Some(union_members) = get_union_members(db, type_id) else {
+        return false;
+    };
+    if union_members.len() < 2 {
+        return false;
+    }
+
+    let mut first_keys: Option<FxHashSet<_>> = None;
+    for branch in &union_members {
+        let Some(shape) = get_object_shape(db, *branch) else {
+            return false;
+        };
+        let keys = shape.properties.iter().map(|prop| prop.name).collect();
+        match &first_keys {
+            Some(first) if first != &keys => return true,
+            None => first_keys = Some(keys),
+            _ => {}
+        }
+    }
+    false
+}
+
 /// Detect intersections that should preserve a discriminated object-union shape
 /// instead of being eagerly collapsed by downstream evaluators.
 ///
@@ -592,10 +736,13 @@ pub fn is_discriminated_object_intersection(db: &dyn TypeDatabase, type_id: Type
     }
 
     if candidate_names.is_empty() {
-        return false;
+        return members
+            .iter()
+            .copied()
+            .any(|member| union_member_has_branch_only_keys(db, member));
     }
 
-    members.iter().copied().any(|member| {
+    let has_discriminated_union_member = members.iter().copied().any(|member| {
         let Some(union_members) = get_union_members(db, member) else {
             return false;
         };
@@ -619,7 +766,20 @@ pub fn is_discriminated_object_intersection(db: &dyn TypeDatabase, type_id: Type
             }
             seen.len() > 1
         })
-    })
+    });
+    if has_discriminated_union_member {
+        return true;
+    }
+
+    // Also preserve object intersections where a union member has branch-only
+    // properties but no shared discriminant with the other intersection members,
+    // e.g. `(A | B) & { path?: ... }`. Eagerly merging this form to a single
+    // object keeps only common union properties and makes branch-specific keys
+    // appear excess during fresh object literal checks.
+    members
+        .iter()
+        .copied()
+        .any(|member| union_member_has_branch_only_keys(db, member))
 }
 
 /// Get the applicable contextual type for an array literal from a (possibly union) type.

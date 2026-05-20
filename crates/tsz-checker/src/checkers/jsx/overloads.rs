@@ -4,7 +4,7 @@
 //! tries each overload against the provided JSX attributes. If no overload
 //! matches, emits TS2769 ("No overload matches this call.").
 
-use crate::context::speculation::DiagnosticSpeculationSnapshot;
+use crate::context::speculation::FullSpeculationSnapshot;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -44,12 +44,15 @@ impl<'a> CheckerState<'a> {
     /// Generic overloads are instantiated with constraint/default substitutions
     /// before checking, matching tsc's behavior of attempting inference for each
     /// candidate signature.
+    /// When `skip_return_check` is true, the TS2786 return-type check is skipped
+    /// to avoid cycle-detection false positives from recursive React alias return types.
     pub(crate) fn check_jsx_overloaded_sfc(
         &mut self,
         component_type: TypeId,
         attributes_idx: NodeIndex,
         tag_name_idx: NodeIndex,
         children_ctx: Option<crate::checkers_domain::JsxChildrenContext>,
+        skip_return_check: bool,
     ) {
         // Try call signatures first (SFC overloads), then construct signatures
         // (class component overloads like React.Component with 2 constructors).
@@ -72,12 +75,11 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        // Speculative attribute collection: save diagnostic checkpoint so side-effect
-        // diagnostics (e.g. TS7006 from callback params without contextual typing) are
-        // rolled back. Only the final TS2769 (if no overload matches) is kept.
-        // (TS2698 spread validity is emitted earlier by the JSX orchestration entry,
-        // so it survives this rollback even when no overload matches.)
-        let snap = DiagnosticSpeculationSnapshot::new(&self.ctx);
+        // Full-state snapshot: deferred implicit-any state (pending_implicit_any_vars,
+        // implicit_any_checked_closures) must be rolled back with each failed probe —
+        // a diagnostic-only snapshot leaks TS7006 from attr type computation even when
+        // an overload matches. TS2698 is emitted before this point, so it survives.
+        let snap = FullSpeculationSnapshot::new(&self.ctx);
 
         // Collect JSX attributes: explicit + spread-merged, with override tracking
         let mut attrs_info = self.collect_jsx_provided_attrs(attributes_idx);
@@ -111,7 +113,7 @@ impl<'a> CheckerState<'a> {
         if attrs_info.has_any_spread {
             let has_non_zero_param = sigs.iter().any(|s| !s.params.is_empty());
             if has_non_zero_param {
-                snap.rollback(&mut self.ctx);
+                snap.rollback(&mut self.ctx.speculation_state());
                 return;
             }
         }
@@ -128,7 +130,7 @@ impl<'a> CheckerState<'a> {
             // overloads fail on arg count when any attributes exist.
             if sig.params.is_empty() {
                 if !has_any_attrs {
-                    snap.rollback(&mut self.ctx);
+                    snap.rollback(&mut self.ctx.speculation_state());
                     self.check_jsx_sfc_return_type(instantiated_return, tag_name_idx);
                     return;
                 }
@@ -175,7 +177,7 @@ impl<'a> CheckerState<'a> {
             ) {
                 // Found a matching overload — done.
                 // Roll back speculative diagnostics from attribute collection.
-                snap.rollback(&mut self.ctx);
+                snap.rollback(&mut self.ctx.speculation_state());
                 self.check_jsx_sfc_return_type(instantiated_return, tag_name_idx);
                 return;
             }
@@ -199,7 +201,7 @@ impl<'a> CheckerState<'a> {
         // No overload matched — roll back speculative diagnostics and emit TS2769.
         // tsc often anchors at the tag name, but when every non-0-param overload
         // fails on the same explicit attribute, anchor that attribute instead.
-        snap.rollback(&mut self.ctx);
+        snap.rollback(&mut self.ctx.speculation_state());
         let anchor_idx =
             if considered_overload_failures > 0 && all_overload_failures_share_explicit_anchor {
                 shared_explicit_anchor_name
@@ -220,10 +222,10 @@ impl<'a> CheckerState<'a> {
                 tag_name_idx
             };
 
-        // TS2786: When no overload matches, also check if the component's return
-        // type is compatible with JSX.Element. tsc emits TS2786 alongside TS2769
-        // when none of the overloads return a valid JSX element type.
-        self.check_jsx_component_return_type(component_type, tag_name_idx);
+        // TS2786: skipped for React aliases (cycle-detection false positives).
+        if !skip_return_check {
+            self.check_jsx_component_return_type(component_type, tag_name_idx);
+        }
 
         use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
         self.error_at_node(
@@ -469,20 +471,30 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check 3: Type compatibility for all provided attributes
+        let mut saw_type_mismatch = false;
         for attr in &info.attrs {
             if attr.type_id == TypeId::ANY || attr.type_id == TypeId::ERROR {
                 continue;
             }
-            use crate::query_boundaries::common::PropertyAccessResult;
-            if let PropertyAccessResult::Success { type_id, .. } =
-                self.resolve_property_access_with_env(props_type, &attr.name)
+            if let Some(expected) = self.jsx_expected_attribute_write_type_from_shape(
+                props_type,
+                Some(shape.as_ref()),
+                &attr.name,
+            ) && !self.jsx_attr_assignable_to_expected(attr.type_id, expected)
             {
-                let expected =
-                    crate::query_boundaries::common::remove_undefined(self.ctx.types, type_id);
-                if !self.is_assignable_to(attr.type_id, expected) {
-                    return false;
-                }
+                saw_type_mismatch = true;
+                break;
             }
+        }
+
+        if saw_type_mismatch {
+            // The fast pointwise check above can be too strict for generic
+            // conditional/indexed-access props because it loses relationships
+            // that the full object relation still preserves. After required
+            // and explicit-excess checks have already passed, defer to the
+            // canonical assignability gate before rejecting the overload.
+            let attrs_type = self.build_attrs_object_type_from_info(&info.attrs);
+            return self.is_assignable_to(attrs_type, props_type);
         }
 
         true
@@ -542,16 +554,15 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            use crate::query_boundaries::common::PropertyAccessResult;
-            if let PropertyAccessResult::Success { type_id, .. } =
-                self.resolve_property_access_with_env(props_type, &attr.name)
-            {
+            if let Some(expected) = self.jsx_expected_attribute_write_type_from_shape(
+                props_type,
+                Some(shape.as_ref()),
+                &attr.name,
+            ) {
                 if attr.type_id == TypeId::ANY || attr.type_id == TypeId::ERROR {
                     continue;
                 }
-                let expected =
-                    crate::query_boundaries::common::remove_undefined(self.ctx.types, type_id);
-                if !self.is_assignable_to(attr.type_id, expected) {
+                if !self.jsx_attr_assignable_to_expected(attr.type_id, expected) {
                     return Some(attr.name.clone());
                 }
                 continue;
@@ -563,6 +574,67 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    /// Check JSX attribute assignability, including source-constraint fallback
+    /// for unresolved generic conditional results.
+    ///
+    /// A JSX attribute can be an alias application such as
+    /// `ExtractValue<T>` where `T` has a useful declared constraint. Direct
+    /// pointwise assignability may not evaluate that conditional result, while
+    /// tsc still uses `T`'s constraint to prove applicability. Rechecking after
+    /// replacing referenced type parameters with their declared constraints
+    /// keeps overload matching aligned with the canonical generic-constraint
+    /// path without naming any particular helper alias.
+    fn jsx_attr_assignable_to_expected(&mut self, attr_type: TypeId, expected: TypeId) -> bool {
+        self.is_assignable_to(attr_type, expected)
+            || self.jsx_attr_assignable_after_referenced_constraints(attr_type, expected)
+    }
+
+    fn jsx_attr_assignable_after_referenced_constraints(
+        &mut self,
+        attr_type: TypeId,
+        expected: TypeId,
+    ) -> bool {
+        let db = self.ctx.types.as_type_database();
+        let mut substitution = crate::query_boundaries::common::TypeSubstitution::new();
+        let mut referenced =
+            crate::query_boundaries::common::collect_referenced_types(db, attr_type);
+        referenced.insert(attr_type);
+        for ty in referenced {
+            if crate::query_boundaries::checkers::generic::is_infer_type(db, ty) {
+                continue;
+            }
+            let Some(name) =
+                crate::query_boundaries::checkers::generic::type_parameter_name(db, ty)
+            else {
+                continue;
+            };
+            let constraint =
+                crate::query_boundaries::checkers::generic::get_type_parameter_constraint(db, ty)
+                    .unwrap_or_else(|| {
+                        crate::query_boundaries::checkers::generic::base_constraint_of_type(db, ty)
+                    });
+            if constraint != TypeId::UNKNOWN && constraint != TypeId::ANY && constraint != ty {
+                substitution.insert(name, constraint);
+            }
+        }
+        if substitution.is_empty() {
+            return false;
+        }
+
+        let restricted = crate::query_boundaries::common::instantiate_type(
+            self.ctx.types,
+            attr_type,
+            &substitution,
+        );
+        if restricted == attr_type {
+            return false;
+        }
+        let restricted = self.resolve_lazy_type(restricted);
+        let restricted_evaluated = self.evaluate_type_for_assignability(restricted);
+        self.is_assignable_to(restricted_evaluated, expected)
+            || self.is_assignable_to(restricted, expected)
     }
 
     /// Build an object type from collected JSX attribute info.

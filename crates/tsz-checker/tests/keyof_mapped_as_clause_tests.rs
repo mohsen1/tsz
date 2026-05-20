@@ -8,7 +8,9 @@
 //! full evaluation pipeline rather than treating every string literal as
 //! not-in-keys.
 
-use crate::test_utils::check_source_codes as check_and_get_codes;
+use tsz_checker::test_utils::{
+    check_source_codes as check_and_get_codes, check_source_diagnostics, diagnostic_count,
+};
 
 #[test]
 fn keyof_mapped_type_with_as_clause_no_false_ts2322() {
@@ -71,6 +73,79 @@ const x: K = "c";
         ts2322_count, 1,
         "Expected TS2322 for 'c' not in keyof simple object, got codes: {codes:?}"
     );
+}
+
+#[test]
+fn key_remapped_object_literal_reports_all_property_mismatches() {
+    let source = r#"
+type ObjectFromEntries<T extends readonly [string, any][]> = {
+  [K in T[number] as K[0]]: K[1]
+};
+
+type Entries = [
+  ["name", string],
+  ["age", number],
+  ["active", boolean]
+];
+
+type Obj = ObjectFromEntries<Entries>;
+const wrongObj: Obj = { name: 123, age: "wrong", active: "yes" };
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+    let ts2322_count = diagnostic_count(&diagnostics, 2322);
+    assert_eq!(
+        ts2322_count, 3,
+        "Expected one TS2322 per mismatching key-remapped property, got: {diagnostics:#?}"
+    );
+
+    for expected in [
+        "Type 'number' is not assignable to type 'string'.",
+        "Type 'string' is not assignable to type 'number'.",
+        "Type 'string' is not assignable to type 'boolean'.",
+    ] {
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diag| diag.code == 2322 && diag.message_text.contains(expected)),
+            "Expected diagnostic containing {expected:?}, got: {diagnostics:#?}"
+        );
+    }
+}
+
+#[test]
+fn conditional_mapped_object_literal_reports_all_property_mismatches() {
+    let source = r#"
+type IsArray<T> = T extends any[] ? true : false;
+type ArrayFlags<T> = { [K in keyof T]: IsArray<T[K]> };
+
+interface Foo {
+  arr: number[];
+  str: string;
+}
+
+type FooFlags = ArrayFlags<Foo>;
+const bad: FooFlags = { arr: false, str: true };
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+    let ts2322_count = diagnostic_count(&diagnostics, 2322);
+    assert_eq!(
+        ts2322_count, 2,
+        "Expected one TS2322 per mismatching conditional mapped property, got: {diagnostics:#?}"
+    );
+
+    for expected in [
+        "Type 'false' is not assignable to type 'true'.",
+        "Type 'true' is not assignable to type 'false'.",
+    ] {
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diag| diag.code == 2322 && diag.message_text.contains(expected)),
+            "Missing expected diagnostic `{expected}` in {diagnostics:#?}"
+        );
+    }
 }
 
 #[test]
@@ -172,5 +247,320 @@ const x: OnlyA = { a: { name: "a" } };
     assert!(
         !codes.contains(&2322),
         "Expected no TS2322 for filtered mapped type with as-clause, got: {codes:?}"
+    );
+}
+
+// =============================================================================
+// `keyof T` over a source with both literal properties AND an index signature
+// (issue #6814). `interner.union` collapses `"foo" | string | number` into
+// `string | number` for subtype reasons, but mapped iteration must enumerate
+// each named property and each index signature separately so per-key
+// as-clause filters drop the index step without dropping named properties.
+// =============================================================================
+
+#[test]
+fn remove_index_signature_preserves_named_property() {
+    // Canonical RemoveIndexSignature pattern: filter out `string`/`number`
+    // index keys via `string extends K ? never`. The named property `foo`
+    // must survive because `string extends "foo"` is `false`.
+    let code = r#"
+type RemoveIndexSignature<T> = {
+  [K in keyof T as string extends K
+    ? never
+    : number extends K
+      ? never
+      : K]: T[K]
+};
+interface Foo {
+  [key: string]: any;
+  foo(): void;
+}
+type Cleaned = RemoveIndexSignature<Foo>;
+declare const cleaned: Cleaned;
+cleaned.foo();
+    "#;
+    let codes = check_and_get_codes(code);
+    assert!(
+        !codes.contains(&2339),
+        "Expected named property `foo` to survive index-signature filter, got: {codes:?}"
+    );
+}
+
+#[test]
+fn remove_index_signature_different_type_param_names() {
+    // Renaming the iteration variable (`P` instead of `K`) and the source
+    // type parameter (`X` instead of `T`) must not change the result.
+    // Proves the fix is structural, not name-dependent.
+    let code = r#"
+type Strip<X> = {
+  [P in keyof X as string extends P ? never : P]: X[P]
+};
+interface Bar {
+  [k: string]: unknown;
+  bar(): number;
+  baz: string;
+}
+declare const stripped: Strip<Bar>;
+stripped.bar();
+const s: string = stripped.baz;
+    "#;
+    let codes = check_and_get_codes(code);
+    assert!(
+        !codes.contains(&2339),
+        "Expected named props bar/baz to survive (different type-param names), got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2322),
+        "Expected baz to keep its `string` type, got: {codes:?}"
+    );
+}
+
+#[test]
+fn strip_number_index_signature_preserves_named() {
+    // Same pattern with the numeric index signature instead of string.
+    let code = r#"
+type StripNum<T> = {
+  [K in keyof T as number extends K ? never : K]: T[K]
+};
+interface Baz {
+  [n: number]: any;
+  named: string;
+}
+declare const sb: StripNum<Baz>;
+const v: string = sb.named;
+    "#;
+    let codes = check_and_get_codes(code);
+    assert!(
+        !codes.contains(&2339),
+        "Expected named property to survive number-index filter, got: {codes:?}"
+    );
+}
+
+#[test]
+fn key_remap_with_template_literal_keeps_named_keys() {
+    // Renaming via template literal (`as `${P}_${K & string}``) requires the
+    // literal key `alpha` to be visible to the substitution; if the literal is
+    // collapsed into `string`, the resulting prefixed key would be `${P}_string`
+    // (deferred) instead of the concrete `x_alpha`.
+    let code = r#"
+type Prefix<T, P extends string> = {
+  [K in keyof T as string extends K ? never : `${P}_${K & string}`]: T[K]
+};
+interface Q {
+  [k: string]: any;
+  alpha: number;
+  beta: boolean;
+}
+declare const px: Prefix<Q, "x">;
+const a: number = px.x_alpha;
+const b: boolean = px.x_beta;
+    "#;
+    let codes = check_and_get_codes(code);
+    assert!(
+        !codes.contains(&2339),
+        "Expected x_alpha / x_beta to be present after prefix-rename, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2322),
+        "Expected x_alpha / x_beta value types to match, got: {codes:?}"
+    );
+}
+
+#[test]
+fn key_remap_with_required_modifier_over_indexed_source() {
+    // Combine the as-clause filter with the `-?` (required) modifier. The
+    // named property must be present and required.
+    let code = r#"
+interface Src {
+  [k: string]: unknown;
+  named?: string;
+}
+type ReqStrip<T> = {
+  [K in keyof T as string extends K ? never : K]-?: T[K]
+};
+declare const rs: ReqStrip<Src>;
+const v: unknown = rs.named;
+    "#;
+    let codes = check_and_get_codes(code);
+    assert!(
+        !codes.contains(&2339),
+        "Expected `named` to survive strip + required, got: {codes:?}"
+    );
+}
+
+#[test]
+fn pure_literal_source_unchanged_no_regression() {
+    // Source has NO index signature: existing path must remain untouched.
+    // The fix is gated on `literal keys + index signature` so this should
+    // exercise the unchanged behavior.
+    let code = r#"
+type Strip<T> = {
+  [K in keyof T as string extends K ? never : K]: T[K]
+};
+interface NoIdx { foo: number; bar: string; }
+declare const s: Strip<NoIdx>;
+const f: number = s.foo;
+const b: string = s.bar;
+    "#;
+    let codes = check_and_get_codes(code);
+    assert!(
+        !codes.contains(&2339),
+        "Expected pure-literal source to keep its props, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2322),
+        "Expected pure-literal source to keep its types, got: {codes:?}"
+    );
+}
+
+#[test]
+fn pure_index_source_collapses_to_empty() {
+    // Source has only an index signature, no named keys. After filtering the
+    // index out, the resulting type has no properties — accessing one is an
+    // error. Verifies the negative case.
+    let code = r#"
+type Strip<T> = {
+  [K in keyof T as string extends K ? never : K]: T[K]
+};
+interface OnlyIdx { [k: string]: any; }
+declare const oi: Strip<OnlyIdx>;
+const v = oi.anything;
+    "#;
+    let codes = check_and_get_codes(code);
+    assert!(
+        codes.contains(&2339),
+        "Expected TS2339 when accessing a property on a stripped index-only object, got: {codes:?}"
+    );
+}
+
+#[test]
+fn identity_mapped_over_indexed_source_keeps_named_and_index() {
+    // No `as` clause: both the named property AND arbitrary index access
+    // must work (identity mapped should round-trip the source shape).
+    let code = r#"
+type Id<T> = { [K in keyof T]: T[K] };
+interface IxSrc {
+  [k: string]: any;
+  named: string;
+}
+declare const ix: Id<IxSrc>;
+const n: string = ix.named;
+const a: any = ix["arbitrary"];
+    "#;
+    let codes = check_and_get_codes(code);
+    assert!(
+        !codes.contains(&2339),
+        "Expected identity mapped to preserve named + index, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2322),
+        "Expected identity mapped to keep value types, got: {codes:?}"
+    );
+}
+
+/// Regression test for issue #7650: when a typed variable initializer is an
+/// object literal whose contextual type is a remapped mapped type (key
+/// remapping via `as` clause) and properties have type mismatches *and*
+/// required properties are missing from the source, tsc emits only the inner
+/// per-property TS2322 diagnostic(s) and suppresses the outer "missing
+/// property" (TS2741) diagnostic. The inner per-property recheck during
+/// object-literal type computation effectively elaborates the assignment;
+/// the outer relation check must not double-report.
+///
+/// Structural rule: for a typed variable initializer with an object literal
+/// source whose contextual remapped-mapped target has missing required
+/// properties **and** the source literal already has property-level
+/// diagnostics emitted within its property spans, the outer relation
+/// elaboration treats the assignment as already elaborated and skips the
+/// duplicate whole-object diagnostic.
+#[test]
+fn remapped_mapped_var_init_missing_and_mismatched_suppresses_outer() {
+    // Direct repro from `genericMappedTypeAsClause.ts`.
+    let code = r#"
+type Model = { a: string; b: number };
+type MappedModel<Suffix extends string> = {
+    [K in keyof Model as `${K}${Suffix}`]: Model[K];
+};
+const foo2: MappedModel<'Foo'> = { bFoo: 'bar' };
+"#;
+    let diagnostics = check_source_diagnostics(code);
+    let ts2322_count = diagnostic_count(&diagnostics, 2322);
+    let ts2741_count = diagnostic_count(&diagnostics, 2741);
+    assert_eq!(
+        ts2322_count, 1,
+        "Expected exactly one TS2322 for the inner `bFoo: 'bar'` mismatch, got: {diagnostics:#?}"
+    );
+    assert_eq!(
+        ts2741_count, 0,
+        "Expected no outer TS2741 (the inner TS2322 should suppress it), got: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2322
+            && d.message_text
+                .contains("Type 'string' is not assignable to type 'number'")),
+        "Expected the inner property mismatch text, got: {diagnostics:#?}"
+    );
+}
+
+/// Variation: renamed iteration variable and type parameter must not change
+/// the behavior. The fix must apply structurally, independent of the bound
+/// variable names chosen by the user.
+#[test]
+fn remapped_mapped_var_init_missing_and_mismatched_suppresses_outer_renamed_binders() {
+    let code = r#"
+type Model = { a: string; b: number };
+type Mapped<P extends string> = {
+    [Key in keyof Model as `${Key}${P}`]: Model[Key];
+};
+const v: Mapped<'X'> = { bX: 'wrong' };
+"#;
+    let diagnostics = check_source_diagnostics(code);
+    let ts2322_count = diagnostic_count(&diagnostics, 2322);
+    let ts2741_count = diagnostic_count(&diagnostics, 2741);
+    assert_eq!(
+        ts2322_count, 1,
+        "Expected exactly one TS2322 for the inner mismatch (renamed binders), got: {diagnostics:#?}"
+    );
+    assert_eq!(
+        ts2741_count, 0,
+        "Expected no outer TS2741 (renamed binders), got: {diagnostics:#?}"
+    );
+}
+
+/// When the object literal is entirely empty against a remapped-mapped target,
+/// no inner property diagnostics exist, so the outer whole-object error
+/// (TS2739/TS2741) must still fire to inform the user. The fix must NOT
+/// over-suppress this case.
+#[test]
+fn remapped_mapped_var_init_empty_literal_still_reports_missing() {
+    let code = r#"
+type Model = { a: string; b: number };
+type MappedModel<S extends string> = {
+    [K in keyof Model as `${K}${S}`]: Model[K];
+};
+const empty: MappedModel<'X'> = {};
+"#;
+    let diagnostics = check_source_diagnostics(code);
+    let has_missing_diag = diagnostics.iter().any(|d| d.code == 2739 || d.code == 2741);
+    assert!(
+        has_missing_diag,
+        "Expected an outer missing-property diagnostic for `{{}}` against a non-empty target, got: {diagnostics:#?}"
+    );
+}
+
+/// When the contextual target is a normal (non-mapped) object type, no inner
+/// recheck fires, so the var-init elaboration path is unchanged. The outer
+/// TS2741 should still be reported.
+#[test]
+fn normal_object_target_var_init_unchanged_by_fix() {
+    let code = r#"
+type T = { a: string; b: number };
+const x: T = { b: 5 };
+"#;
+    let diagnostics = check_source_diagnostics(code);
+    let ts2741_count = diagnostic_count(&diagnostics, 2741);
+    assert_eq!(
+        ts2741_count, 1,
+        "Expected TS2741 for missing 'a' against a normal object target, got: {diagnostics:#?}"
     );
 }

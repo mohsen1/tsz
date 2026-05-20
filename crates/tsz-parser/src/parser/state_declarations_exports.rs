@@ -344,7 +344,7 @@ impl ParserState {
         }
         self.parse_semicolon();
 
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         self.arena.add_export_assignment(
             syntax_kind_ext::EXPORT_ASSIGNMENT,
@@ -368,7 +368,7 @@ impl ParserState {
         let name = self.parse_identifier();
         self.parse_semicolon();
 
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
         self.arena.add_export_decl(
             syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION,
             start_pos,
@@ -516,7 +516,7 @@ impl ParserState {
 
         self.parse_semicolon();
 
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
         self.arena.add_export_decl(
             syntax_kind_ext::EXPORT_DECLARATION,
             start_pos,
@@ -551,7 +551,7 @@ impl ParserState {
         };
 
         self.parse_semicolon();
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         self.arena.add_export_decl(
             syntax_kind_ext::EXPORT_DECLARATION,
@@ -576,6 +576,7 @@ impl ParserState {
 
         let mut elements = Vec::new();
         let mut emitted_comma_error = false;
+        let mut leave_closing_brace_for_statement_recovery = false;
         while !self.is_token(SyntaxKind::CloseBraceToken)
             && !self.is_token(SyntaxKind::EndOfFileToken)
         {
@@ -589,6 +590,8 @@ impl ParserState {
 
             let spec = self.parse_export_specifier();
             elements.push(spec);
+            let spec_recovered_braced_unicode_escape_debris =
+                self.current_specifier_recovered_braced_unicode_escape_debris;
 
             if !self.parse_optional(SyntaxKind::CommaToken) {
                 // tsc uses parseDelimitedList which emits `',' expected.` when
@@ -603,6 +606,23 @@ impl ParserState {
                         diagnostic_codes::EXPECTED,
                     );
                     emitted_comma_error = true;
+                    if spec_recovered_braced_unicode_escape_debris
+                        && self.is_token(SyntaxKind::OpenBraceToken)
+                    {
+                        self.next_token(); // consume the `{` from `\u{...}` debris
+                        while !matches!(
+                            self.token(),
+                            SyntaxKind::CloseBraceToken | SyntaxKind::EndOfFileToken
+                        ) {
+                            self.next_token();
+                        }
+                        if self.is_token(SyntaxKind::CloseBraceToken) {
+                            self.next_token(); // consume the `}` from the braced escape
+                        }
+                        if self.is_token(SyntaxKind::CloseBraceToken) {
+                            leave_closing_brace_for_statement_recovery = true;
+                        }
+                    }
                 }
                 break;
             }
@@ -610,7 +630,7 @@ impl ParserState {
 
         // Skip '}' expected if we already emitted ',' expected at the same position.
         // tsc's parseDelimitedList emits only the comma error, not a closing brace error.
-        if !emitted_comma_error {
+        if !emitted_comma_error && !leave_closing_brace_for_statement_recovery {
             self.parse_expected(SyntaxKind::CloseBraceToken);
         }
         let end_pos = self.token_end();
@@ -1164,7 +1184,10 @@ impl ParserState {
         self.parse_expected(SyntaxKind::IfKeyword);
         self.parse_expected(SyntaxKind::OpenParenToken);
 
+        let saved_context_flags = self.context_flags;
+        self.context_flags |= crate::parser::state::CONTEXT_FLAG_IN_PARENTHESIZED_EXPRESSION;
         let expression = self.parse_expression();
+        self.context_flags = saved_context_flags;
 
         // Check for missing condition expression: if () { }
         if expression == NodeIndex::NONE {
@@ -1172,9 +1195,6 @@ impl ParserState {
         }
 
         self.parse_expected(SyntaxKind::CloseParenToken);
-        if self.look_ahead_is_leftover_type_predicate_tail_before_close_paren() {
-            self.next_token();
-        }
 
         let then_statement = if self.is_token(SyntaxKind::Unknown) {
             // Emit TS1127 for any unexpected characters before this malformed body,
@@ -1256,26 +1276,6 @@ impl ParserState {
         )
     }
 
-    fn look_ahead_is_leftover_type_predicate_tail_before_close_paren(&mut self) -> bool {
-        if !self.is_token(SyntaxKind::IsKeyword) || self.scanner.has_preceding_line_break() {
-            return false;
-        }
-
-        let snapshot = self.scanner.save_state();
-        let current = self.current_token;
-
-        self.next_token();
-        let is_tail = self.can_token_start_type();
-        if is_tail {
-            let _ = self.parse_type();
-        }
-        let result = is_tail && self.is_token(SyntaxKind::CloseParenToken);
-
-        self.scanner.restore_state(snapshot);
-        self.current_token = current;
-        result
-    }
-
     // Parse return statement
     pub(crate) fn parse_return_statement(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
@@ -1290,7 +1290,7 @@ impl ParserState {
         };
 
         self.parse_semicolon();
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         self.arena.add_return(
             syntax_kind_ext::RETURN_STATEMENT,
@@ -1304,7 +1304,9 @@ impl ParserState {
     pub(crate) fn parse_while_statement(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::WhileKeyword);
-        self.parse_expected(SyntaxKind::OpenParenToken);
+        let has_open_paren = self.parse_expected(SyntaxKind::OpenParenToken);
+        let missing_open_paren_before_colon =
+            !has_open_paren && self.parse_optional(SyntaxKind::ColonToken);
 
         let condition = self.parse_expression();
 
@@ -1313,12 +1315,43 @@ impl ParserState {
             self.error_expression_expected();
         }
 
-        // Error recovery: if condition parsing failed badly, resync to close paren
-        if condition.is_none() && !self.is_token(SyntaxKind::CloseParenToken) {
-            self.resync_after_error();
-        }
+        if missing_open_paren_before_colon {
+            if self.is_token(SyntaxKind::DotDotDotToken) {
+                self.error_expression_expected();
+                self.next_token();
+                let _ = self.parse_expression();
+            }
+            if self.is_token(SyntaxKind::ColonToken) {
+                self.next_token();
+                let _ = self.parse_expression();
+            }
+            while !matches!(
+                self.token(),
+                SyntaxKind::CloseParenToken
+                    | SyntaxKind::OpenBraceToken
+                    | SyntaxKind::CloseBraceToken
+                    | SyntaxKind::EndOfFileToken
+            ) {
+                if self.is_token(SyntaxKind::CloseBracketToken) {
+                    self.parse_error_at_current_token(
+                        tsz_common::diagnostics::diagnostic_messages::AN_ELEMENT_ACCESS_EXPRESSION_SHOULD_TAKE_AN_ARGUMENT,
+                        diagnostic_codes::AN_ELEMENT_ACCESS_EXPRESSION_SHOULD_TAKE_AN_ARGUMENT,
+                    );
+                }
+                self.next_token();
+            }
+            if self.is_token(SyntaxKind::CloseParenToken) {
+                self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+                self.next_token();
+            }
+        } else {
+            // Error recovery: if condition parsing failed badly, resync to close paren
+            if condition.is_none() && !self.is_token(SyntaxKind::CloseParenToken) {
+                self.resync_after_error();
+            }
 
-        self.parse_expected(SyntaxKind::CloseParenToken);
+            self.parse_expected(SyntaxKind::CloseParenToken);
+        }
 
         let statement = self.parse_statement();
         self.check_using_outside_block(statement);
@@ -1979,7 +2012,10 @@ impl ParserState {
         // Optional label — matching tsc's isIdentifier() which returns false for
         // `await` in await/static-block context and `yield` in generator context.
         // When the label would be a contextually reserved word (e.g., `break await;` in a
-        // static block), tsc's parseIdentifier emits TS1003 "Identifier expected".
+        // static block), tsc's parseIdentifier emits TS1003 "Identifier expected" and
+        // leaves the token unconsumed. The outer statement loop then re-parses the
+        // reserved word as an expression statement (e.g. `await` as an await expression
+        // with a missing operand), which is where TS1109 originates.
         let label = if !self.can_parse_semicolon_for_restricted_production()
             && self.is_identifier_or_keyword()
         {
@@ -1995,7 +2031,7 @@ impl ParserState {
         };
 
         self.parse_semicolon();
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         self.arena.add_jump(
             syntax_kind_ext::BREAK_STATEMENT,
@@ -2011,9 +2047,10 @@ impl ParserState {
         self.parse_expected(SyntaxKind::ContinueKeyword);
 
         // For restricted productions (continue), ASI applies immediately after line break
-        // Use can_parse_semicolon_for_restricted_production() instead of can_parse_semicolon()
-        // Optional label — matching tsc's isIdentifier() which returns false for
-        // `await` in await/static-block context and `yield` in generator context.
+        // Use can_parse_semicolon_for_restricted_production() instead of can_parse_semicolon().
+        // For contextually reserved-word labels (e.g. `continue await` in a static block),
+        // see `parse_break_statement` above for the full rationale: emit TS1003 and leave
+        // the token unconsumed so the outer loop can re-parse it as an expression.
         let label = if !self.can_parse_semicolon_for_restricted_production()
             && self.is_identifier_or_keyword()
         {
@@ -2028,7 +2065,7 @@ impl ParserState {
         };
 
         self.parse_semicolon();
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         self.arena.add_jump(
             syntax_kind_ext::CONTINUE_STATEMENT,
@@ -2082,7 +2119,7 @@ impl ParserState {
         };
 
         self.parse_semicolon();
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         // Use return statement node type for throw (same structure)
         self.arena.add_return(
@@ -2436,7 +2473,7 @@ impl ParserState {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::DebuggerKeyword);
         self.parse_semicolon();
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         self.arena
             .add_token(syntax_kind_ext::DEBUGGER_STATEMENT, start_pos, end_pos)
@@ -2448,18 +2485,34 @@ impl ParserState {
         self.pending_jsx_missing_close_brace_in_expression_statement = 0;
         self.jsx_missing_brace_semicolon_window_start = Some(start_pos);
 
-        // Early rejection: If the current token cannot start an expression, fail immediately
-        // This prevents TS1109 from being emitted for tokens that are obviously not expressions
-        // (e.g., }, ], ), etc.) when we fall through to parse_expression_statement() from
-        // parse_statement()'s wildcard match.
-        if !self.is_expression_start() {
-            // Don't emit error here - let the statement-level error handling deal with it
-            // Just return NONE to indicate failure
-            self.jsx_missing_brace_semicolon_window_start = None;
-            return NodeIndex::NONE;
-        }
+        let started_with_binary_operator = !self.is_expression_start() && self.is_binary_operator();
+        let expression = if started_with_binary_operator {
+            self.error_expression_expected();
+            self.next_token();
+            let right = if self.is_expression_start() {
+                self.parse_binary_expression(2)
+            } else {
+                NodeIndex::NONE
+            };
+            if right.is_none() {
+                self.create_missing_expression()
+            } else {
+                right
+            }
+        } else {
+            // Early rejection: If the current token cannot start an expression, fail immediately
+            // This prevents TS1109 from being emitted for tokens that are obviously not expressions
+            // (e.g., }, ], ), etc.) when we fall through to parse_expression_statement() from
+            // parse_statement()'s wildcard match.
+            if !self.is_expression_start() {
+                // Don't emit error here - let the statement-level error handling deal with it
+                // Just return NONE to indicate failure
+                self.jsx_missing_brace_semicolon_window_start = None;
+                return NodeIndex::NONE;
+            }
 
-        let expression = self.parse_expression();
+            self.parse_expression()
+        };
 
         // If expression parsing failed completely, resync to recover
         if expression.is_none() {
@@ -2650,10 +2703,18 @@ impl ParserState {
             let has_numeric_follow_error = self.current_token_has_numeric_literal_follow_error();
             if jsx_head_needs_semicolon && has_numeric_follow_error {
                 self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+            } else if started_with_binary_operator {
+                self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+                if self.is_assignment_operator(self.token()) {
+                    self.next_token();
+                }
             } else if self.suppress_next_jsx_head_missing_semicolon {
                 self.suppress_next_jsx_head_missing_semicolon = false;
             } else if !has_numeric_follow_error && !arrow_or_func_block_followed_by_equals {
                 self.parse_error_for_missing_semicolon_after(expression);
+                if self.expression_statement_block_function_recovers_conditional_tail(expression) {
+                    self.recover_invalid_conditional_tail_after_expression_statement();
+                }
             }
             // For malformed JSX heads like `<X -attr={...} />`, tsc reports `';' expected`
             // at `=` and then continues from the `{...}` tail, which can surface
@@ -2669,7 +2730,8 @@ impl ParserState {
                 self.next_token();
             }
         }
-        let end_pos = self.token_end();
+        // token_full_start() (not token_end()) matches tsc's finishNode/getTokenFullStart() for ASI.
+        let end_pos = self.token_full_start();
         self.pending_jsx_missing_close_brace_in_expression_statement = 0;
         self.jsx_missing_brace_semicolon_window_start = None;
         self.suppress_next_jsx_missing_brace_at_semicolon = false;
@@ -2683,5 +2745,57 @@ impl ParserState {
             end_pos,
             ExprStatementData { expression },
         )
+    }
+
+    fn expression_statement_block_function_recovers_conditional_tail(
+        &self,
+        expression: NodeIndex,
+    ) -> bool {
+        if !self.is_token(SyntaxKind::QuestionToken) {
+            return false;
+        }
+        let Some(node) = self.arena.get(expression) else {
+            return false;
+        };
+        if !node.is_function_expression_or_arrow() {
+            return false;
+        }
+        let Some(function) = self.arena.get_function(node) else {
+            return false;
+        };
+        self.arena
+            .get(function.body)
+            .is_some_and(|body| body.kind == syntax_kind_ext::BLOCK)
+    }
+
+    fn recover_invalid_conditional_tail_after_expression_statement(&mut self) {
+        if !self.is_token(SyntaxKind::QuestionToken) {
+            return;
+        }
+
+        self.next_token(); // consume the stray `?`
+        self.parse_recovered_invalid_conditional_branch_expression_statement();
+        if self.is_token(SyntaxKind::ColonToken) {
+            self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+            self.next_token(); // consume the stray `:`
+        }
+        self.parse_recovered_invalid_conditional_branch_expression_statement();
+    }
+
+    fn parse_recovered_invalid_conditional_branch_expression_statement(&mut self) {
+        if !self.is_expression_start() {
+            return;
+        }
+
+        let pending_start = self.pending_recovered_expression_statements.len();
+        let stmt = self.parse_expression_statement();
+        let nested_recovered = self
+            .pending_recovered_expression_statements
+            .split_off(pending_start);
+        if stmt.is_some() {
+            self.pending_recovered_expression_statements.push(stmt);
+        }
+        self.pending_recovered_expression_statements
+            .extend(nested_recovered);
     }
 }

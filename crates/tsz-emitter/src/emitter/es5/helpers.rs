@@ -192,10 +192,45 @@ impl<'a> Printer<'a> {
     }
 
     pub(in crate::emitter) fn emit_spread_expression(&mut self, node: &Node) {
-        // Get the expression inside the spread element
         if let Some(spread) = self.arena.get_spread(node) {
             self.emit(spread.expression);
         }
+    }
+
+    fn emit_spread_expr_from_idx(&mut self, spread_idx: NodeIndex) {
+        if let Some(spread_node) = self.arena.get(spread_idx) {
+            self.emit_spread_expression(spread_node);
+        }
+    }
+
+    /// Returns true when the spread element at `spread_idx` wraps a simple object literal.
+    ///
+    /// tsc uses the object literal directly as the `__assign` target (instead of
+    /// allocating a fresh `{}`) when the spread expression is an inline object
+    /// literal without nested spreads. If the inner literal has spreads, it
+    /// lowers to its own `__assign` chain and the outer spread must copy it
+    /// through `{}` instead of mutating that intermediate result.
+    fn spread_idx_is_simple_object_literal(&self, spread_idx: NodeIndex) -> bool {
+        let Some(spread_node) = self.arena.get(spread_idx) else {
+            return false;
+        };
+        let Some(spread) = self.arena.get_spread(spread_node) else {
+            return false;
+        };
+        let Some(expr_node) = self.arena.get(spread.expression) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+        let Some(literal) = self.arena.get_literal_expr(expr_node) else {
+            return false;
+        };
+        !literal.elements.nodes.iter().any(|&idx| {
+            self.arena
+                .get(idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT)
+        })
     }
 
     pub(in crate::emitter) fn emit_spread_expression_with_read(
@@ -470,7 +505,7 @@ impl<'a> Printer<'a> {
                 if let Some(method) = self.arena.get_method_decl(node) {
                     self.emit(method.name);
                     self.write(": ");
-                    self.emit_object_literal_method_value_es5(method);
+                    self.emit_object_literal_method_value_es5(node, method);
                 }
             }
             _ => self.emit(prop_idx),
@@ -499,6 +534,7 @@ impl<'a> Printer<'a> {
 
     pub(in crate::emitter) fn emit_object_literal_method_value_es5(
         &mut self,
+        node: &Node,
         method: &MethodDeclData,
     ) {
         if method.body.is_none() {
@@ -510,6 +546,27 @@ impl<'a> Printer<'a> {
             .arena
             .has_modifier(&method.modifiers, SyntaxKind::AsyncKeyword);
         if is_async {
+            if method.asterisk_token
+                || crate::transforms::emit_utils::source_header_has_async_generator_asterisk(
+                    self.source_text,
+                    node.pos,
+                    self.arena
+                        .get(method.body)
+                        .map_or(node.end, |body| body.pos),
+                )
+            {
+                let property_name = crate::transforms::emit_utils::identifier_text_or_empty(
+                    self.arena,
+                    method.name,
+                );
+                self.emit_async_generator_es5_object_method_value(
+                    &property_name,
+                    &method.parameters.nodes,
+                    method.body,
+                );
+                return;
+            }
+
             self.emit_async_function_es5_body(
                 "",
                 &method.parameters.nodes,
@@ -529,6 +586,7 @@ impl<'a> Printer<'a> {
         self.write(") ");
         let prev_emitting_function_body_block = self.emitting_function_body_block;
         self.emitting_function_body_block = true;
+        self.prepare_logical_assignment_value_temps(method.body);
         if param_transforms.has_transforms() {
             self.emit_block_with_param_prologue(method.body, &param_transforms);
         } else {
@@ -541,10 +599,12 @@ impl<'a> Printer<'a> {
     /// Emit ES5-compatible object literal with computed properties and spread
     /// Uses TypeScript's __assign helper for exact tsc matching.
     ///
-    /// Spread patterns:
-    /// - { ...a } → __assign({}, a)
+    /// Spread patterns (variable spread `v`, object-literal spread `{x}`):
+    /// - { ...v }       → __assign({}, v)       (fresh target, variable spread)
+    /// - { ...{x} }     → __assign({x})          (literal spread: use it as target directly)
     /// - { a: 1, ...b } → __assign({ a: 1 }, b)
-    /// - { ...a, b: 1 } → __assign(__assign({}, a), { b: 1 })
+    /// - { ...a, b: 1 } → __assign(__assign({}, a), { b: 1 })   (variable spread first)
+    /// - { ...{x}, b: 1 } → __assign({x}, { b: 1 })             (literal spread first)
     /// - { a: 1, ...b, c: 2 } → __assign(__assign({ a: 1 }, b), { c: 2 })
     ///
     /// Computed properties (without spread):
@@ -586,6 +646,113 @@ impl<'a> Printer<'a> {
         source_range: Option<(u32, u32)>,
         has_trailing_comma: bool,
     ) {
+        self.emit_object_literal_without_spread_es5_with_layout(
+            elements,
+            source_range,
+            has_trailing_comma,
+            true,
+            true,
+        );
+    }
+
+    pub(in crate::emitter) fn try_emit_object_literal_es5_return_expression(
+        &mut self,
+        expression: NodeIndex,
+    ) -> bool {
+        if !self.ctx.target_es5 {
+            return false;
+        }
+
+        let Some(node) = self.arena.get(expression) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+
+        let Some(literal) = self.arena.get_literal_expr(node) else {
+            return false;
+        };
+        if literal
+            .elements
+            .nodes
+            .iter()
+            .any(|&idx| emit_utils::is_spread_element(self.arena, idx))
+        {
+            return false;
+        }
+        if !literal
+            .elements
+            .nodes
+            .iter()
+            .any(|&idx| emit_utils::is_computed_property_member(self.arena, idx))
+        {
+            return false;
+        }
+
+        self.emit_object_literal_without_spread_es5_with_layout(
+            &literal.elements.nodes,
+            Some((node.pos, node.end)),
+            self.has_trailing_comma_in_source(node, &literal.elements.nodes),
+            false,
+            false,
+        );
+        true
+    }
+
+    pub(in crate::emitter) fn try_emit_object_literal_es5_inline_computed_expression(
+        &mut self,
+        expression: NodeIndex,
+    ) -> bool {
+        if !self.ctx.target_es5 {
+            return false;
+        }
+
+        let Some(node) = self.arena.get(expression) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+
+        let Some(literal) = self.arena.get_literal_expr(node) else {
+            return false;
+        };
+        if literal
+            .elements
+            .nodes
+            .iter()
+            .any(|&idx| emit_utils::is_spread_element(self.arena, idx))
+        {
+            return false;
+        }
+        if !literal
+            .elements
+            .nodes
+            .iter()
+            .any(|&idx| emit_utils::is_computed_property_member(self.arena, idx))
+        {
+            return false;
+        }
+
+        self.emit_object_literal_without_spread_es5_with_layout(
+            &literal.elements.nodes,
+            Some((node.pos, node.end)),
+            self.has_trailing_comma_in_source(node, &literal.elements.nodes),
+            true,
+            false,
+        );
+        true
+    }
+
+    fn emit_object_literal_without_spread_es5_with_layout(
+        &mut self,
+        elements: &[NodeIndex],
+        source_range: Option<(u32, u32)>,
+        has_trailing_comma: bool,
+        wrap_in_parens: bool,
+        use_multiline: bool,
+    ) {
         let first_computed_idx = elements
             .iter()
             .position(|&idx| emit_utils::is_computed_property_member(self.arena, idx))
@@ -604,12 +771,14 @@ impl<'a> Printer<'a> {
         // Get hoisted temp variable name
         let temp_var = self.make_unique_name_hoisted();
 
-        // tsc formats the lowered computed-property comma expression as multi-line
-        // regardless of whether the original object literal was single-line.
+        // Assignment-like expression contexts use the parenthesized multi-line
+        // lowering. A return statement can own the comma expression directly,
+        // and `tsc` keeps that form on one line.
         let _ = source_range;
-        let use_multiline = true;
 
-        self.write("(");
+        if wrap_in_parens {
+            self.write("(");
+        }
         if use_multiline {
             self.increase_indent();
         }
@@ -645,7 +814,9 @@ impl<'a> Printer<'a> {
         if use_multiline {
             self.decrease_indent();
         }
-        self.write(")");
+        if wrap_in_parens {
+            self.write(")");
+        }
     }
 
     /// Emit object literal with spread using __assign pattern
@@ -694,11 +865,15 @@ impl<'a> Printer<'a> {
                 }
             }
             [ObjectSegment::Spread(spread_idx)] => {
-                // Only a spread element: { ...a } → __assign({}, a)
+                // { ...a } → __assign({}, a)  (variable: fresh empty target)
+                // { ...{x} } → __assign({x})  (object literal: use it as target directly)
                 self.write_helper("__assign");
-                self.write("({}, ");
-                if let Some(spread_node) = self.arena.get(*spread_idx) {
-                    self.emit_spread_expression(spread_node);
+                self.write("(");
+                if self.spread_idx_is_simple_object_literal(*spread_idx) {
+                    self.emit_spread_expr_from_idx(*spread_idx);
+                } else {
+                    self.write("{}, ");
+                    self.emit_spread_expr_from_idx(*spread_idx);
                 }
                 self.write(")");
             }
@@ -724,27 +899,29 @@ impl<'a> Printer<'a> {
                     self.emit_object_literal_entries_es5(elems);
                 }
                 self.write(", ");
-                if let Some(spread_node) = self.arena.get(*spread_idx) {
-                    self.emit_spread_expression(spread_node);
-                }
+                self.emit_spread_expr_from_idx(*spread_idx);
                 self.write(")");
             }
             [
                 ObjectSegment::Spread(spread_idx),
                 ObjectSegment::Elements(elems),
             ] => {
-                // Spread then elements: { ...a, b: 1 } → __assign(__assign({}, a), { b: 1 })
+                // { ...a, b: 1 }    → __assign(__assign({}, a), { b: 1 })  (variable)
+                // { ...{x}, b: 1 }  → __assign({x}, { b: 1 })              (object literal)
                 let has_computed = elems
                     .iter()
                     .any(|&idx| emit_utils::is_computed_property_member(self.arena, idx));
                 self.write_helper("__assign");
                 self.write("(");
-                self.write_helper("__assign");
-                self.write("({}, ");
-                if let Some(spread_node) = self.arena.get(*spread_idx) {
-                    self.emit_spread_expression(spread_node);
+                if self.spread_idx_is_simple_object_literal(*spread_idx) {
+                    self.emit_spread_expr_from_idx(*spread_idx);
+                } else {
+                    self.write_helper("__assign");
+                    self.write("({}, ");
+                    self.emit_spread_expr_from_idx(*spread_idx);
+                    self.write(")");
                 }
-                self.write("), ");
+                self.write(", ");
                 if has_computed {
                     let temp_var = self.make_unique_name_hoisted();
                     self.write("(");
@@ -775,16 +952,24 @@ impl<'a> Printer<'a> {
                 // Complex pattern: use Prefix-Wrap strategy for proper nested __assign
                 // Example: { a: 1, ...b, c: 2, ...d }
                 // Result: __assign(__assign(__assign({ a: 1 }, b), { c: 2 }), d)
+                //
+                // When the first segment is a spread of an object literal, use it
+                // directly as the innermost target (no extra `{}` wrapper):
+                // { ...{a:1}, b:2, ...c } → __assign(__assign({a:1}, {b:2}), c)
 
                 let total_segments = 1 + rest.len();
-                let first_is_spread = matches!(first, ObjectSegment::Spread(_));
+                let first_spread_is_obj_lit = match first {
+                    ObjectSegment::Spread(idx) => self.spread_idx_is_simple_object_literal(*idx),
+                    _ => false,
+                };
 
                 // 1. Emit the necessary number of __assign( calls
-                let num_assigns = if first_is_spread {
-                    total_segments
-                } else {
-                    total_segments - 1
-                };
+                let num_assigns =
+                    if matches!(first, ObjectSegment::Spread(_)) && !first_spread_is_obj_lit {
+                        total_segments
+                    } else {
+                        total_segments - 1
+                    };
 
                 for _ in 0..num_assigns {
                     self.write_helper("__assign");
@@ -830,11 +1015,13 @@ impl<'a> Printer<'a> {
                         }
                     }
                     ObjectSegment::Spread(spread_idx) => {
-                        self.write("{}, ");
-                        if let Some(spread_node) = self.arena.get(*spread_idx) {
-                            self.emit_spread_expression(spread_node);
+                        if first_spread_is_obj_lit {
+                            self.emit_spread_expr_from_idx(*spread_idx);
+                        } else {
+                            self.write("{}, ");
+                            self.emit_spread_expr_from_idx(*spread_idx);
+                            self.write(")");
                         }
-                        self.write(")");
                     }
                 }
 
@@ -878,9 +1065,7 @@ impl<'a> Printer<'a> {
                             }
                         }
                         ObjectSegment::Spread(spread_idx) => {
-                            if let Some(spread_node) = self.arena.get(*spread_idx) {
-                                self.emit_spread_expression(spread_node);
-                            }
+                            self.emit_spread_expr_from_idx(*spread_idx);
                         }
                     }
                     self.write(")");
@@ -920,7 +1105,7 @@ impl<'a> Printer<'a> {
                 if let Some(method) = self.arena.get_method_decl(node) {
                     self.emit_assignment_target_es5(method.name, temp_var);
                     self.write(" = ");
-                    self.emit_object_literal_method_value_es5(method);
+                    self.emit_object_literal_method_value_es5(node, method);
                 }
             }
             k if k == syntax_kind_ext::GET_ACCESSOR => {
@@ -1187,12 +1372,13 @@ impl<'a> Printer<'a> {
         // marks `this` references with SubstituteThis to emit `_this` instead.
 
         if func.is_async {
-            // Arrow functions don't have their own `this`. In ES5 lowering:
-            // - If body uses `this`: capture with `_this` and pass to __awaiter
-            // - If body doesn't use `this`: pass `void 0` to __awaiter
+            // Arrow functions don't have their own `this`. In ES5 lowering,
+            // the lowering directive asks for `_this` both when the body
+            // spells `this` and when an async arrow needs a lexical thisArg
+            // passed into `__awaiter`.
             let this_expr = if _captures_this { "_this" } else { "void 0" };
             // TSC wraps async arrow→function conversions inline:
-            // function () { return __awaiter(void 0, ..., function () { ... }); };
+            // function () { return __awaiter(<lexical-this>, ..., function () { ... }); };
             self.emit_async_arrow_es5_inline(func, this_expr);
         } else {
             // Emit any leading comments before the arrow function's `(`.
@@ -1222,6 +1408,9 @@ impl<'a> Printer<'a> {
             let body_node = self.arena.get(func.body);
             let is_block = body_node.is_some_and(|n| n.kind == syntax_kind_ext::BLOCK);
             let needs_param_prologue = param_transforms.has_transforms();
+            let prev_emitting_function_body_block = self.emitting_function_body_block;
+            self.emitting_function_body_block = true;
+            self.prepare_logical_assignment_value_temps(func.body);
 
             if is_block {
                 // Check if it's a simple single-return block
@@ -1237,12 +1426,15 @@ impl<'a> Printer<'a> {
                                 self.write_line();
                                 self.write("}");
                             }
+                            self.emitting_function_body_block = prev_emitting_function_body_block;
                             self.pop_temp_scope();
                             return;
                         }
                         if !needs_param_prologue
+                            && !self.has_pending_new_target_capture()
                             && block.statements.nodes.len() == 1
                             && self.is_simple_return_statement(block.statements.nodes[0])
+                            && self.is_single_line(block_node)
                         {
                             self.emit_single_line_block(func.body);
                         } else if needs_param_prologue {
@@ -1266,15 +1458,9 @@ impl<'a> Printer<'a> {
                 self.write_line();
                 self.increase_indent();
                 self.emit_param_prologue(&param_transforms);
-                if needs_parens {
-                    self.write("return (");
-                    self.emit(func.body);
-                    self.write(");");
-                } else {
-                    self.write("return ");
-                    self.emit(func.body);
-                    self.write(";");
-                }
+                let comments_before_return =
+                    self.es5_arrow_concise_body_needs_multiline_return(func.body);
+                self.emit_es5_arrow_concise_return(func.body, needs_parens, comments_before_return);
                 self.write_line();
                 self.decrease_indent();
                 self.write("}");
@@ -1283,17 +1469,53 @@ impl<'a> Printer<'a> {
                 // If the body is (or resolves to) an object literal, wrap in parens
                 // to disambiguate from a block: () => ({})  →  function () { return ({}); }
                 let needs_parens = self.concise_body_needs_parens(func.body);
-                if needs_parens {
-                    self.write("{ return (");
-                    self.emit(func.body);
-                    self.write("); }");
+                if self.es5_arrow_concise_body_needs_multiline_return(func.body) {
+                    self.write("{");
+                    self.write_line();
+                    self.increase_indent();
+                    self.emit_es5_arrow_concise_return(func.body, needs_parens, true);
+                    self.write_line();
+                    self.decrease_indent();
+                    self.write("}");
                 } else {
-                    self.write("{ return ");
-                    self.emit(func.body);
-                    self.write("; }");
+                    self.write("{ ");
+                    self.emit_es5_arrow_concise_return(func.body, needs_parens, false);
+                    self.write(" }");
                 }
             }
+            self.emitting_function_body_block = prev_emitting_function_body_block;
             self.pop_temp_scope();
+        }
+    }
+
+    fn es5_arrow_concise_body_needs_multiline_return(&self, body: NodeIndex) -> bool {
+        self.arena.get(body).is_some_and(|body_node| {
+            self.pending_comment_before_pos_starts_after_newline(body_node.pos)
+        })
+    }
+
+    fn emit_es5_arrow_concise_return(
+        &mut self,
+        body: NodeIndex,
+        needs_parens: bool,
+        comments_before_return: bool,
+    ) {
+        if comments_before_return && let Some(body_node) = self.arena.get(body) {
+            self.emit_comments_before_pos(body_node.pos);
+        }
+        if needs_parens {
+            self.write("return (");
+        } else {
+            self.write("return ");
+        }
+        if !comments_before_return && let Some(body_node) = self.arena.get(body) {
+            self.emit_comments_before_pos(body_node.pos);
+        }
+        self.emit(body);
+        if needs_parens {
+            self.write(");");
+        } else {
+            self.write(";");
         }
     }
 
@@ -1309,13 +1531,22 @@ impl<'a> Printer<'a> {
             match node.kind {
                 k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => return true,
                 k if k == syntax_kind_ext::TYPE_ASSERTION
-                    || k == syntax_kind_ext::AS_EXPRESSION =>
+                    || k == syntax_kind_ext::AS_EXPRESSION
+                    || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
                 {
                     if let Some(ta) = self.arena.get_type_assertion(node) {
                         idx = ta.expression;
                     } else {
                         return false;
                     }
+                }
+                k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+                {
+                    return self.erased_object_literal_access_chain_needs_parens(idx);
+                }
+                k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                    return self.erased_object_literal_access_chain_needs_parens(idx);
                 }
                 // Already parenthesized — the emitter will preserve the parens
                 k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => return false,
@@ -1324,7 +1555,43 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(in crate::emitter) fn emit_function_expression_es5_params(&mut self, node: &Node) {
+    fn erased_object_literal_access_chain_needs_parens(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        match node.kind {
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+            {
+                self.arena.get_access_expr(node).is_some_and(|access| {
+                    self.erased_object_literal_access_chain_needs_parens(access.expression)
+                })
+            }
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                self.arena.get_call_expr(node).is_some_and(|call| {
+                    self.erased_object_literal_access_chain_needs_parens(call.expression)
+                })
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                self.arena.get_parenthesized(node).is_some_and(|paren| {
+                    self.erased_object_literal_access_chain_needs_parens(paren.expression)
+                })
+            }
+            k if k == syntax_kind_ext::TYPE_ASSERTION
+                || k == syntax_kind_ext::AS_EXPRESSION
+                || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+            {
+                self.type_assertion_wraps_object_literal(idx)
+            }
+            _ => false,
+        }
+    }
+
+    pub(in crate::emitter) fn emit_function_expression_es5_params(
+        &mut self,
+        node: &Node,
+        idx: NodeIndex,
+    ) {
         let Some(func) = self.arena.get_function(node) else {
             return;
         };
@@ -1342,10 +1609,14 @@ impl<'a> Printer<'a> {
             self.write("*");
         }
 
+        let needs_new_target_capture = self.function_body_contains_new_target(func);
+        let function_name =
+            self.function_expression_emit_name(idx, func.name, needs_new_target_capture);
+
         // Name (if any)
-        if func.name.is_some() {
+        if let Some(name) = function_name.as_deref() {
             self.write_space();
-            self.emit(func.name);
+            self.write(name);
         } else {
             // Space before ( only for anonymous functions: function (x) vs function name(x)
             self.write(" ");
@@ -1370,13 +1641,25 @@ impl<'a> Printer<'a> {
             false
         };
 
+        let prev_emitting_function_body_block = self.emitting_function_body_block;
+        self.emitting_function_body_block = true;
+        self.prepare_logical_assignment_value_temps(func.body);
+        let previous_new_target_capture = needs_new_target_capture.then(|| {
+            self.push_new_target_capture_for_initializer(
+                self.ordinary_function_new_target_initializer(function_name.as_deref()),
+            )
+        });
         if param_transforms.has_transforms() {
             self.emit_block_with_param_prologue(func.body, &param_transforms);
-        } else if is_simple_body {
+        } else if is_simple_body && !needs_new_target_capture {
             self.emit_single_line_block(func.body);
         } else {
             self.emit(func.body);
         }
+        if let Some(previous) = previous_new_target_capture {
+            self.restore_new_target_capture(previous);
+        }
+        self.emitting_function_body_block = prev_emitting_function_body_block;
         self.pop_temp_scope();
         if self_paren {
             self.write(")");
@@ -1398,6 +1681,13 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        let needs_new_target_capture = self.function_body_contains_new_target(func);
+        let function_name = if func.name.is_some() {
+            Some(self.get_identifier_text_idx(func.name))
+        } else {
+            needs_new_target_capture.then_some("_a".to_string())
+        };
+
         self.write("function");
 
         if func.asterisk_token {
@@ -1405,9 +1695,9 @@ impl<'a> Printer<'a> {
         }
 
         // Name
-        if func.name.is_some() {
+        if let Some(name) = function_name.as_deref() {
             self.write_space();
-            self.emit(func.name);
+            self.write(name);
         }
 
         // Parameters - only emit names, not types for JavaScript
@@ -1418,11 +1708,23 @@ impl<'a> Printer<'a> {
         // No return type for JavaScript
 
         self.write_space();
+        let prev_emitting_function_body_block = self.emitting_function_body_block;
+        self.emitting_function_body_block = true;
+        self.prepare_logical_assignment_value_temps(func.body);
+        let previous_new_target_capture = needs_new_target_capture.then(|| {
+            self.push_new_target_capture_for_initializer(
+                self.ordinary_function_new_target_initializer(function_name.as_deref()),
+            )
+        });
         if param_transforms.has_transforms() {
             self.emit_block_with_param_prologue(func.body, &param_transforms);
         } else {
             self.emit(func.body);
         }
+        if let Some(previous) = previous_new_target_capture {
+            self.restore_new_target_capture(previous);
+        }
+        self.emitting_function_body_block = prev_emitting_function_body_block;
         self.pop_temp_scope();
     }
 
@@ -1490,6 +1792,7 @@ impl<'a> Printer<'a> {
 
         // Build the __generator body
         let mut async_emitter = crate::transforms::async_es5::AsyncES5Emitter::new(self.arena);
+        async_emitter.set_system_import_meta(self.in_system_execute_body);
         async_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
         // The generator body is nested inside `function () { ... }` in the __awaiter
         // callback, so render it at one extra indent level (matching tsc multi-line format).
@@ -1502,6 +1805,9 @@ impl<'a> Printer<'a> {
             async_emitter.set_tslib_prefix(true);
             async_emitter.set_tslib_import_binding(self.commonjs_tslib_import_binding.clone());
         }
+        let blocked_disposable_names = self.blocked_disposable_names_for_transform();
+        async_emitter
+            .set_disposable_env_context(self.next_disposable_env_id, blocked_disposable_names);
 
         let body_has_await = async_emitter.body_contains_await(func.body);
         let body_is_single_line = self
@@ -1509,14 +1815,22 @@ impl<'a> Printer<'a> {
             .get(func.body)
             .is_some_and(|n| self.is_single_line(n));
         let promise_ctor = self.extract_awaiter_promise_constructor(func.type_annotation);
-        let (generator_body, hoisted_vars) = if body_has_await {
-            let (generator_body, hoisted_vars, _) =
-                async_emitter.emit_generator_body_with_await_and_hoisted_vars(func.body);
-            (generator_body, hoisted_vars)
+        let (generator_body, hoisted_var_groups, needs_lexical_this_capture) = if body_has_await {
+            let (generator_body, hoisted_var_groups, _, needs_lexical_this_capture) =
+                async_emitter.emit_generator_body_with_await_and_hoisted_var_groups(func.body);
+            (
+                generator_body,
+                hoisted_var_groups,
+                needs_lexical_this_capture,
+            )
         } else {
-            async_emitter.emit_simple_generator_body_with_hoisted_vars(func.body)
+            async_emitter.emit_simple_generator_body_with_hoisted_var_groups(func.body)
         };
         self.ctx.destructuring_state.temp_var_counter = async_emitter.temp_var_counter();
+        self.next_disposable_env_id = async_emitter.disposable_env_counter();
+        for generated_name in async_emitter.take_generated_disposable_env_names() {
+            self.generated_temp_names.insert(generated_name);
+        }
         let generator_mappings = async_emitter.take_mappings();
 
         if has_param_transforms {
@@ -1529,7 +1843,10 @@ impl<'a> Printer<'a> {
             self.write(", function () {");
             self.write_line();
             self.increase_indent();
-            self.emit_async_arrow_hoisted_vars(&hoisted_vars, &generator_body, this_expr);
+            self.emit_async_arrow_hoisted_var_groups(
+                &hoisted_var_groups,
+                needs_lexical_this_capture,
+            );
             self.emit_param_binding_prologue(&param_transforms);
             self.write(&generator_body);
             self.decrease_indent();
@@ -1559,7 +1876,10 @@ impl<'a> Printer<'a> {
             self.write(", function () {");
             self.write_line();
             self.increase_indent();
-            self.emit_async_arrow_hoisted_vars(&hoisted_vars, &generator_body, this_expr);
+            self.emit_async_arrow_hoisted_var_groups(
+                &hoisted_var_groups,
+                needs_lexical_this_capture,
+            );
             if !generator_mappings.is_empty() && self.writer.has_source_map() {
                 self.writer.write("");
                 let base_line = self.writer.current_line();
@@ -1584,11 +1904,11 @@ impl<'a> Printer<'a> {
             self.write_helper("__awaiter");
             self.write("(");
             self.write(this_expr);
-            if hoisted_vars.is_empty() {
+            if hoisted_var_groups.is_empty() {
                 let can_inline_wrapper = func.equals_greater_than_token
                     && body_is_single_line
                     && !body_has_await
-                    && !(this_expr != "this" && generator_body.contains("return _this"))
+                    && !needs_lexical_this_capture
                     && generator_mappings.is_empty();
                 if can_inline_wrapper {
                     self.write(", void 0, ");
@@ -1608,7 +1928,10 @@ impl<'a> Printer<'a> {
                 self.write(", function () {");
                 self.write_line();
                 self.increase_indent();
-                self.emit_async_arrow_hoisted_vars(&hoisted_vars, &generator_body, this_expr);
+                self.emit_async_arrow_hoisted_var_groups(
+                    &hoisted_var_groups,
+                    needs_lexical_this_capture,
+                );
                 if !generator_mappings.is_empty() && self.writer.has_source_map() {
                     self.writer.write("");
                     let base_line = self.writer.current_line();
@@ -1629,7 +1952,10 @@ impl<'a> Printer<'a> {
                 self.write(", function () {");
                 self.write_line();
                 self.increase_indent();
-                self.emit_async_arrow_hoisted_vars(&hoisted_vars, &generator_body, this_expr);
+                self.emit_async_arrow_hoisted_var_groups(
+                    &hoisted_var_groups,
+                    needs_lexical_this_capture,
+                );
                 if !generator_mappings.is_empty() && self.writer.has_source_map() {
                     self.writer.write("");
                     let base_line = self.writer.current_line();
@@ -1666,22 +1992,27 @@ impl<'a> Printer<'a> {
         output
     }
 
-    fn emit_async_arrow_hoisted_vars(
+    fn emit_async_arrow_hoisted_var_groups(
         &mut self,
-        hoisted_vars: &[String],
-        generator_body: &str,
-        this_expr: &str,
+        hoisted_var_groups: &[Vec<String>],
+        needs_lexical_this_capture: bool,
     ) {
-        if !hoisted_vars.is_empty() {
-            for var_name in hoisted_vars {
-                self.write("var ");
-                self.write(var_name);
-                self.write(";");
-                self.write_line();
+        for group in hoisted_var_groups {
+            if group.is_empty() {
+                continue;
             }
+            self.write("var ");
+            for (i, var_name) in group.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                self.write(var_name);
+            }
+            self.write(";");
+            self.write_line();
         }
 
-        if this_expr != "this" && generator_body.contains("return _this") {
+        if needs_lexical_this_capture {
             self.write("var _this = this;");
             self.write_line();
         }

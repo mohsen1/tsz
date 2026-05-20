@@ -860,6 +860,27 @@ impl<'a> DeclarationEmitter<'a> {
             })
     }
 
+    fn type_argument_tuple_should_preserve_multiline(&self, type_idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(type_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::TUPLE_TYPE {
+            return false;
+        }
+        let Some(text) = self.source_file_text.as_deref() else {
+            return false;
+        };
+        let start = node.pos as usize;
+        let end = node.end as usize;
+        if start >= end || end > text.len() {
+            return false;
+        }
+
+        let raw = &text[start..end];
+        let tuple_text = raw.find('[').map_or(raw, |index| &raw[index..]);
+        tuple_text.contains('\n')
+    }
+
     fn emit_tuple_type_multiline(&mut self, tuple_idx: NodeIndex) {
         let Some(tuple_node) = self.arena.get(tuple_idx) else {
             self.emit_type(tuple_idx);
@@ -917,6 +938,10 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(")");
                 continue;
             }
+            if self.type_argument_tuple_should_preserve_multiline(arg_idx) {
+                self.emit_tuple_type_multiline(arg_idx);
+                continue;
+            }
             self.emit_type(arg_idx);
         }
         self.write(">");
@@ -930,7 +955,14 @@ impl<'a> DeclarationEmitter<'a> {
         match node.kind {
             k if k == SyntaxKind::Identifier as u16 => {
                 if let Some(ident) = self.arena.get_identifier(node) {
-                    self.write(&ident.escaped_text);
+                    if let Some(canonical_name) =
+                        self.canonical_named_import_name_for_alias(node_idx)
+                    {
+                        let canonical_name = canonical_name.to_owned();
+                        self.write(&canonical_name);
+                    } else {
+                        self.write(&ident.escaped_text);
+                    }
                 }
             }
             k if k == SyntaxKind::ThisKeyword as u16 => self.write("this"),

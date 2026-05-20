@@ -10,6 +10,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeArena, NodeIndex};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+use tsz_solver::computation::TypeResolver;
 use tsz_solver::is_compiler_managed_type;
 
 pub(crate) use super::lib_decls::{
@@ -17,6 +18,9 @@ pub(crate) use super::lib_decls::{
     resolve_lib_context_fallback_arena, resolve_lib_fallback_arena,
 };
 use super::lib_name_text::{entity_name_text_from_decl_arenas, entity_name_text_in_arena};
+use super::lib_resolution_selected::{
+    canonical_interface_symbol_id, register_selected_lib_def_resolved, selected_lib_symbol_for_name,
+};
 use super::lib_scoped_heritage::LibHeritageBase;
 
 /// Index from identifier text to `(file_idx, SymbolId)` entries in `file_locals`.
@@ -79,8 +83,28 @@ pub(crate) fn lib_def_id_from_node(
     decl_arenas: &[(NodeIndex, &NodeArena)],
     fallback_arena: &NodeArena,
 ) -> Option<tsz_solver::DefId> {
-    resolve_lib_node_in_arenas(binder, node_idx, decl_arenas, fallback_arena)
-        .map(|sym_id| ctx.get_lib_def_id(sym_id))
+    let sym_id = resolve_lib_node_in_arenas(binder, node_idx, decl_arenas, fallback_arena)?;
+    if binder
+        .get_symbol_with_libs(sym_id, &[])
+        .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_PARAMETER))
+    {
+        return Some(ctx.get_lib_def_id(sym_id));
+    }
+
+    if let Some(name) = entity_name_text_from_decl_arenas(node_idx, decl_arenas, fallback_arena) {
+        let expected_name = name
+            .strip_prefix("globalThis.")
+            .unwrap_or(&name)
+            .rsplit('.')
+            .next()
+            .unwrap_or(&name);
+        if let Some(def_id) = ctx.actual_lib_def_id_for_bare_name(expected_name) {
+            return Some(def_id);
+        }
+        return Some(ctx.get_canonical_lib_def_id(expected_name, sym_id));
+    }
+
+    Some(ctx.get_lib_def_id(sym_id))
 }
 
 /// Resolve a `NodeIndex` directly to a `DefId` via lib-context binders.
@@ -97,6 +121,14 @@ pub(crate) fn lib_def_id_from_node_in_lib_contexts(
 ) -> Option<tsz_solver::DefId> {
     let sym_id =
         resolve_lib_node_in_lib_contexts(node_idx, decl_arenas, fallback_arena, lib_contexts)?;
+    if lib_contexts.iter().any(|ctx| {
+        ctx.binder
+            .get_symbol_with_libs(sym_id, &[])
+            .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_PARAMETER))
+    }) {
+        return Some(ctx.get_lib_def_id(sym_id));
+    }
+
     let name = entity_name_text_from_decl_arenas(node_idx, decl_arenas, fallback_arena)?;
     let expected_name = name
         .strip_prefix("globalThis.")
@@ -104,6 +136,9 @@ pub(crate) fn lib_def_id_from_node_in_lib_contexts(
         .rsplit('.')
         .next()
         .unwrap_or(&name);
+    if let Some(def_id) = ctx.actual_lib_def_id_for_bare_name(expected_name) {
+        return Some(def_id);
+    }
     Some(ctx.get_canonical_lib_def_id(expected_name, sym_id))
 }
 
@@ -363,7 +398,7 @@ impl<'a> CheckerState<'a> {
     // Section 45: Symbol Resolution Utilities
     // ----------------------------------------
 
-    pub(super) fn resolve_lib_symbol_by_name(&self, name: &str) -> Option<tsz_binder::SymbolId> {
+    pub(crate) fn resolve_lib_symbol_by_name(&self, name: &str) -> Option<tsz_binder::SymbolId> {
         let lib_binders = self.get_lib_binders();
         self.ctx.binder.file_locals.get(name).or_else(|| {
             self.ctx
@@ -458,7 +493,13 @@ impl<'a> CheckerState<'a> {
         let lib_contexts = self.ctx.lib_contexts.clone();
 
         // Look up the symbol and its declarations
-        let Some(sym_id) = self.resolve_lib_symbol_by_entity_name(name) else {
+        let sym_id = name
+            .split_once('.')
+            .and_then(|(namespace, export_name)| {
+                self.resolve_lib_namespace_export_symbol(namespace, export_name)
+            })
+            .or_else(|| self.resolve_lib_symbol_by_entity_name(name));
+        let Some(sym_id) = sym_id else {
             self.ctx.lib_heritage_in_progress.remove(name);
             self.ctx.leave_recursion();
             return derived_type;
@@ -574,15 +615,31 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        let heritage_namespace = name.split_once('.').map(|(namespace, _)| namespace);
+
         // Now resolve each base type and merge, applying type argument substitution
         for base in &bases {
-            if let Some(mut base_type) = self
-                .resolve_scoped_lib_typeof_class_heritage(base, &lib_contexts)
-                .or_else(|| self.resolve_lib_type_by_entity_name(&base.name))
+            let namespace_base_sym = heritage_namespace
+                .filter(|_| !base.name.contains('.'))
+                .and_then(|namespace| {
+                    self.resolve_lib_namespace_export_symbol(namespace, &base.name)
+                });
+            let mut base_type = self.resolve_scoped_lib_typeof_class_heritage(base, &lib_contexts);
+            if base_type.is_none()
+                && let (Some(namespace), Some(sym_id)) = (heritage_namespace, namespace_base_sym)
             {
+                let cache_name = format!("{namespace}.{}", base.name);
+                base_type = self.resolve_lib_interface_type_by_symbol(&cache_name, sym_id);
+            }
+            if base_type.is_none() {
+                base_type = self.resolve_lib_type_by_entity_name(&base.name);
+            }
+
+            if let Some(mut base_type) = base_type {
                 // If there are type arguments, resolve them and substitute
                 if !base.type_arg_indices.is_empty() {
-                    let base_sym = self.resolve_lib_symbol_by_entity_name(&base.name);
+                    let base_sym = namespace_base_sym
+                        .or_else(|| self.resolve_lib_symbol_by_entity_name(&base.name));
                     if let Some(base_sym_id) = base_sym {
                         let base_params = self.get_type_params_for_symbol(base_sym_id);
                         if !base_params.is_empty() {
@@ -721,7 +778,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .types
                 .get_array_display_base_type()
-                .or_else(|| tsz_solver::TypeResolver::get_array_base_type(&self.ctx.types))
+                .or_else(|| TypeResolver::get_array_base_type(&self.ctx.types))
         {
             self.ctx
                 .lib_type_resolution_cache
@@ -766,12 +823,6 @@ impl<'a> CheckerState<'a> {
         // The main file's binder already has merged declarations from all lib files.
         let mut lib_types: Vec<TypeId> = Vec::new();
 
-        // CRITICAL: Look up the symbol in the MAIN file's binder (self.ctx.binder),
-        // not in lib_ctx.binder. The main file's binder has lib symbols merged with
-        // unique SymbolIds via merge_lib_contexts_into_binder during binding.
-        // lib_ctx.binder is a SEPARATE merged binder with DIFFERENT SymbolIds.
-        // Using lib_ctx.binder's SymbolIds with self.ctx.get_or_create_def_id causes
-        // SymbolId collisions and wrong type resolution.
         let lib_binders = self.get_lib_binders();
         let sym_id = if self.ctx.file_local_type_shadow_for_lib_name(name) {
             None
@@ -782,21 +833,37 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .binder
                 .get_global_type_with_libs(name, &lib_binders)
+        })
+        .or_else(|| {
+            resolve_name_to_lib_symbol(
+                name,
+                self.ctx.binder,
+                self.ctx.global_file_locals_index.as_deref(),
+                self.ctx
+                    .all_binders
+                    .as_ref()
+                    .map(|binders| binders.as_ref().as_slice()),
+                &self.ctx.lib_contexts,
+            )
         });
 
-        if let Some(sym_id) = sym_id {
+        let selected_symbol = selected_lib_symbol_for_name(&self.ctx, name, sym_id, &lib_binders);
+
+        if let Some((sym_id, selected_binder_arc)) = selected_symbol {
+            let selected_from_lib_context = selected_binder_arc.is_some();
+            let selected_binder = selected_binder_arc.as_deref().unwrap_or(self.ctx.binder);
             // Get the symbol's declaration(s) from the main file's binder
-            if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
+            if let Some(symbol) = selected_binder.get_symbol_with_libs(sym_id, &lib_binders) {
                 symbol_has_interface = symbol.has_any_flags(tsz_binder::symbol_flags::INTERFACE);
                 let fallback_arena = resolve_lib_fallback_arena(
-                    self.ctx.binder,
+                    selected_binder,
                     sym_id,
                     &lib_contexts,
                     self.ctx.arena,
                 );
 
                 let decls_with_arenas = collect_lib_decls_with_arenas_in_contexts(
-                    self.ctx.binder,
+                    selected_binder,
                     sym_id,
                     &symbol.declarations,
                     fallback_arena,
@@ -819,7 +886,7 @@ impl<'a> CheckerState<'a> {
                                 .is_some_and(|args| !args.nodes.is_empty());
                             if has_type_args
                                 && let Some(ref_sym_id) = resolve_lib_node_in_arenas(
-                                    self.ctx.binder,
+                                    selected_binder,
                                     type_ref.type_name,
                                     &decls_with_arenas,
                                     fallback_arena,
@@ -830,6 +897,10 @@ impl<'a> CheckerState<'a> {
                                     .ctx
                                     .binder
                                     .get_symbol_with_libs(ref_sym_id, &lib_binders)
+                                    .or_else(|| {
+                                        selected_binder
+                                            .get_symbol_with_libs(ref_sym_id, &lib_binders)
+                                    })
                                     .map(|symbol| symbol.escaped_name.clone());
                                 if let Some(ref_name) = ref_name {
                                     let _ = self.resolve_lib_type_by_name(&ref_name);
@@ -843,7 +914,7 @@ impl<'a> CheckerState<'a> {
                             {
                                 self.prime_lib_type_params(name);
                                 if let Some(ref_sym_id) = self.ctx.binder.file_locals.get(name) {
-                                    let def_id = self.ctx.get_or_create_def_id(ref_sym_id);
+                                    let def_id = self.ctx.get_lib_def_id(ref_sym_id);
                                     if let Some(params) = self.ctx.get_def_type_params(def_id)
                                         && !params.is_empty()
                                     {
@@ -856,11 +927,7 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                // Resolver triplet: delegates to stable helpers instead of
-                // maintaining per-call caches. The `resolver` closure extracts
-                // the raw `u32` at the TypeLowering boundary; all internal
-                // resolution uses type-safe `SymbolId`.
-                let binder = &self.ctx.binder;
+                let binder = selected_binder;
                 let resolver = |node_idx: NodeIndex| -> Option<u32> {
                     resolve_lib_node_in_arenas(binder, node_idx, &decls_with_arenas, fallback_arena)
                         .map(|sym_id| sym_id.0)
@@ -875,7 +942,8 @@ impl<'a> CheckerState<'a> {
                     )
                 };
                 let name_resolver = |type_name: &str| -> Option<tsz_solver::DefId> {
-                    self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+                    self.resolve_actual_lib_name_to_def_id_for_lowering(type_name)
+                        .or_else(|| self.resolve_entity_name_text_to_def_id_for_lowering(type_name))
                 };
 
                 let lazy_type_params_resolver = |def_id: tsz_solver::def::DefId| {
@@ -893,6 +961,7 @@ impl<'a> CheckerState<'a> {
                     &def_id_resolver,
                     &resolver,
                 )
+                .with_builtin_iterator_return_type(self.builtin_iterator_return_intrinsic_type())
                 .with_lazy_type_params_resolver(&lazy_type_params_resolver)
                 .with_name_def_id_resolver(&name_resolver);
                 let lowering = if self.ctx.all_binders.is_some()
@@ -913,6 +982,12 @@ impl<'a> CheckerState<'a> {
 
                     if !is_type_alias {
                         let deduped = dedup_decl_arenas(&decls_with_arenas);
+                        let interface_sym_id = canonical_interface_symbol_id(
+                            &self.ctx,
+                            name,
+                            sym_id,
+                            selected_from_lib_context,
+                        );
 
                         // Use lower_merged_interface_declarations for proper multi-arena support.
                         // Pass sym_id so the resulting Object type gets stamped with the
@@ -921,13 +996,20 @@ impl<'a> CheckerState<'a> {
                         let (ty, params) = lowering
                             .lower_merged_interface_declarations_with_symbol(
                                 &deduped,
-                                Some(sym_id),
+                                Some(interface_sym_id),
                             );
 
                         // If lowering succeeded (not ERROR), use the result
                         if ty != TypeId::ERROR {
                             // Register DefId, type params, and body in one step.
-                            self.ctx.register_lib_def_resolved(sym_id, ty, params);
+                            register_selected_lib_def_resolved(
+                                &self.ctx,
+                                name,
+                                sym_id,
+                                selected_from_lib_context,
+                                ty,
+                                params,
+                            );
 
                             lib_types.push(ty);
                         }
@@ -946,8 +1028,14 @@ impl<'a> CheckerState<'a> {
                                     alias_lowering.lower_type_alias_declaration(alias);
                                 if ty != TypeId::ERROR {
                                     // Register DefId, type params, and body in one step.
-                                    let def_id =
-                                        self.ctx.register_lib_def_resolved(sym_id, ty, params);
+                                    let def_id = register_selected_lib_def_resolved(
+                                        &self.ctx,
+                                        name,
+                                        sym_id,
+                                        selected_from_lib_context,
+                                        ty,
+                                        params,
+                                    );
 
                                     // CRITICAL: Return Lazy(DefId) instead of the structural body.
                                     // Application types only expand when the base is Lazy, not when
@@ -1153,38 +1241,11 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Re-register type_to_def AND TypeEnvironment after augmentation heritage merge.
-        // merge_interface_types / merge_lib_interface_heritage may have created a new
-        // TypeId, so the initial registration (pre-merge) points to a stale TypeId.
-        // Without updating type_to_def, the formatter expands "Date" into its full
-        // member list.  Without updating the TypeEnvironment, Lazy(DefId) evaluates to
-        // the pre-heritage body, causing false TS2322/TS2719 when the literal path
-        // (e.g., regex literals resolving via resolve_lib_type_by_name) returns the
-        // post-merge TypeId directly.
+        // Finalize after heritage merge — `merge_lib_interface_heritage`
+        // above may have produced a new TypeId; helper rewires type→def
+        // and the DefId body so literal and annotation paths agree.
         if let Some(ty) = lib_type_id {
-            let name_atom = self.ctx.types.intern_string(name);
-            if let Some(defs) = self.ctx.definition_store.find_defs_by_name(name_atom)
-                && let Some(&def_id) = defs.first()
-            {
-                self.ctx.definition_store.register_type_to_def(ty, def_id);
-                // Update the TypeEnvironment so that Lazy(DefId) resolves to the
-                // fully-merged type (post-heritage, post-augmentation).  The initial
-                // register_lib_def_resolved call registered the pre-merge body;
-                // this overwrites it with the final merged result.
-                //
-                // Do not overwrite a generic alias body with `Lazy(def_id)` itself.
-                // For alias paths, `lib_type_id` can be the public lazy wrapper
-                // (`Lazy(def_id)`) while the real structural body was already
-                // registered by `register_lib_def_resolved`. Re-registering with the
-                // wrapper creates a self-lazy cycle (`DefId -> Lazy(DefId)`), which
-                // blocks application instantiation (e.g. `FlatArray<T, D>`).
-                if crate::query_boundaries::common::lazy_def_id(self.ctx.types, ty) != Some(def_id)
-                {
-                    let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
-                    self.ctx
-                        .register_def_auto_params_in_envs(def_id, ty, type_params);
-                }
-            }
+            self.register_finalized_lib_body(name, ty);
             // Update the symbol_types cache for the INTERFACE type position.
             // compute_type_of_symbol may have cached a DIFFERENT TypeId
             // when has_local_interface_decl was a false positive (NodeIndex
@@ -1227,7 +1288,8 @@ mod tests {
     use crate::query_boundaries::type_construction::TypeInterner;
     use crate::state::CheckerState;
     use tsz_binder::BinderState;
-    use tsz_solver::{QueryDatabase, TypeParamInfo};
+    use tsz_solver::TypeParamInfo;
+    use tsz_solver::construction::QueryDatabase;
 
     #[test]
     fn keyword_syntax_maps_string() {
@@ -1509,13 +1571,9 @@ mod tests {
 mod integration_tests {
     use crate::test_utils::check_source_codes;
 
-    // ---- Promise / lib ref lowering ----
-
     #[test]
     fn promise_type_annotation_no_error() {
-        // Without lib contexts, Promise is unknown. We just verify no crash.
         let codes = check_source_codes("let p: Promise<number>;");
-        // TS2304 (Cannot find name) or TS2583 (needs lib change) expected without libs
         assert!(
             codes.contains(&2304) || codes.contains(&2583) || codes.is_empty(),
             "Promise without libs should produce TS2304/TS2583 or pass: {codes:?}"
@@ -1524,21 +1582,16 @@ mod integration_tests {
 
     #[test]
     fn async_function_returns_promise_no_crash() {
-        // Async functions implicitly return Promise — verify no panic during lowering
         let _codes = check_source_codes("async function f(): Promise<string> { return ''; }");
     }
 
     #[test]
     fn generic_lib_ref_annotation_no_crash() {
-        // Generic lib-like types referenced without lib contexts should not crash
         let _codes = check_source_codes("let a: Array<number> = [];");
     }
 
-    // ---- import type lowering ----
-
     #[test]
     fn import_type_basic_no_crash() {
-        // import() type expressions should not crash the lowering pipeline
         let _codes = check_source_codes("type T = import('./other').Foo;");
     }
 
@@ -1547,14 +1600,11 @@ mod integration_tests {
         let _codes = check_source_codes("type T = import('./other').Bar<number>;");
     }
 
-    // ---- lib keyword type refs ----
-
     #[test]
     fn keyword_type_refs_no_error() {
         let codes = check_source_codes(
             "let s: string; let n: number; let b: boolean; let v: void; let u: undefined;",
         );
-        // Keyword types always resolve (no lib needed)
         assert!(
             codes.is_empty(),
             "Keyword type annotations should produce no errors: {codes:?}"
@@ -1574,7 +1624,6 @@ mod integration_tests {
     #[test]
     fn null_and_never_types_no_error() {
         let codes = check_source_codes("let n: null = null; let x: never = undefined as never;");
-        // 'never' assignment may error, but should not crash
         let _ = codes;
     }
 
@@ -1587,11 +1636,8 @@ mod integration_tests {
         );
     }
 
-    // ---- Promise lowering edge cases ----
-
     #[test]
     fn promise_nested_generic_no_crash() {
-        // Nested Promise generics should not crash during lib lowering
         let _codes = check_source_codes("let p: Promise<Promise<number>>;");
     }
 
@@ -1617,8 +1663,6 @@ mod integration_tests {
         // PromiseLike is a separate lib interface
         let _codes = check_source_codes("let p: PromiseLike<string>;");
     }
-
-    // ---- lib ref lowering: generic types ----
 
     #[test]
     fn map_type_no_crash() {

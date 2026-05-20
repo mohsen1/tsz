@@ -4,12 +4,12 @@
 //! assignments are recognized as class instance property declarations,
 //! preventing false TS2339 errors.
 
-use std::path::Path;
 use std::sync::Arc;
 
 use tsz_binder::lib_loader::LibFile;
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::context::LibContext;
+use tsz_checker::test_utils::load_compiled_lib_files;
 
 fn check_js(source: &str) -> Vec<(u32, String)> {
     let options = CheckerOptions {
@@ -25,7 +25,7 @@ fn check_js(source: &str) -> Vec<(u32, String)> {
     let mut binder = tsz_binder::BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let mut checker = tsz_checker::state::CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -53,7 +53,7 @@ fn check_js_with_options(source: &str, options: CheckerOptions) -> Vec<(u32, Str
     let mut binder = tsz_binder::BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let mut checker = tsz_checker::state::CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -83,7 +83,7 @@ fn check_ts(source: &str) -> Vec<(u32, String)> {
     let mut binder = tsz_binder::BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let mut checker = tsz_checker::state::CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -108,49 +108,11 @@ fn count_code(diags: &[(u32, String)], code: u32) -> usize {
 }
 
 fn load_es5_lib_for_test() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_roots = [
-        manifest_dir.join("../../crates/tsz-core/src/lib-assets"),
-        manifest_dir.join("../../crates/tsz-core/src/lib-assets-stripped"),
-        manifest_dir.join("../../TypeScript/src/lib"),
-    ];
-
-    for root in &lib_roots {
-        let lib_path = root.join("es5.d.ts");
-        if lib_path.exists()
-            && let Ok(content) = std::fs::read_to_string(&lib_path)
-        {
-            return vec![Arc::new(LibFile::from_source(
-                "es5.d.ts".to_string(),
-                content,
-            ))];
-        }
-    }
-
-    Vec::new()
+    load_compiled_lib_files(&["lib.es5.d.ts"])
 }
 
 fn load_es5_and_dom_lib_for_test() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_paths = [
-        manifest_dir.join("../../TypeScript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../TypeScript/lib/lib.dom.d.ts"),
-    ];
-
-    let mut lib_files = Vec::new();
-    for lib_path in lib_paths {
-        if lib_path.exists()
-            && let Ok(content) = std::fs::read_to_string(&lib_path)
-            && let Some(file_name) = lib_path.file_name()
-        {
-            lib_files.push(Arc::new(LibFile::from_source(
-                file_name.to_string_lossy().to_string(),
-                content,
-            )));
-        }
-    }
-
-    lib_files
+    load_compiled_lib_files(&["lib.es5.d.ts", "lib.dom.d.ts"])
 }
 
 fn check_js_with_es5_lib(source: &str, options: CheckerOptions) -> Vec<(u32, String)> {
@@ -158,7 +120,13 @@ fn check_js_with_es5_lib(source: &str, options: CheckerOptions) -> Vec<(u32, Str
 }
 
 fn check_js_with_es5_and_dom_lib(source: &str, options: CheckerOptions) -> Vec<(u32, String)> {
-    check_js_with_lib_files(source, options, load_es5_and_dom_lib_for_test())
+    let lib_files = load_es5_and_dom_lib_for_test();
+    assert_eq!(
+        lib_files.len(),
+        2,
+        "expected ES5 + DOM libs for JS constructor property tests; checked stripped assets, full assets, and TypeScript/lib"
+    );
+    check_js_with_lib_files(source, options, lib_files)
 }
 
 fn check_js_with_lib_files(
@@ -177,7 +145,7 @@ fn check_js_with_lib_files(
         binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
     }
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let mut checker = tsz_checker::state::CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -1992,8 +1960,8 @@ function A() {
     assert!(
         ts7008_messages
             .iter()
-            .all(|msg| !msg.contains("Member 'unknown' implicitly has an 'any' type.")),
-        "Did not expect TS7008 for JS null-initialized constructor property, got: {diagnostics:?}"
+            .any(|msg| msg.contains("Member 'unknown' implicitly has an 'any' type.")),
+        "Expected TS7008 for JS null-initialized constructor property, got: {diagnostics:?}"
     );
     assert!(
         ts7008_messages

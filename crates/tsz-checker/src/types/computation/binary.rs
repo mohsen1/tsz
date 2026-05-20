@@ -3,6 +3,9 @@
 //! arithmetic, comparison, logical, assignment, nullish coalescing, and comma.
 
 use crate::context::TypingRequest;
+use crate::query_boundaries::type_computation::core::{
+    WriteTargetLogicalOperator, WriteTargetLogicalResult,
+};
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
@@ -25,7 +28,61 @@ enum SyntacticNullishness {
 }
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn resolve_literal_index_access_property_type(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<TypeId> {
+        let (object_type, index_type) =
+            crate::query_boundaries::common::index_access_parts(self.ctx.types, type_id)?;
+        let atom = crate::query_boundaries::type_computation::access::literal_property_name(
+            self.ctx.types,
+            index_type,
+        )?;
+        let property_name = self.ctx.types.resolve_atom(atom);
+
+        self.contextual_object_literal_property_type(object_type, property_name.as_ref())
+            .or_else(|| {
+                self.ctx
+                    .types
+                    .contextual_property_type(object_type, property_name.as_ref())
+            })
+    }
+
+    pub(crate) fn reduce_literal_index_access_property_types(&mut self, type_id: TypeId) -> TypeId {
+        if let Some(resolved) = self.resolve_literal_index_access_property_type(type_id) {
+            return resolved;
+        }
+
+        let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, type_id)
+        else {
+            return type_id;
+        };
+
+        let mut changed = false;
+        let reduced = members
+            .into_iter()
+            .map(|member| {
+                if let Some(resolved) = self.resolve_literal_index_access_property_type(member) {
+                    changed = true;
+                    resolved
+                } else {
+                    member
+                }
+            })
+            .collect::<Vec<_>>();
+
+        if changed {
+            self.ctx.types.factory().union_preserve_members(reduced)
+        } else {
+            type_id
+        }
+    }
+
     fn global_function_interface_type_for_instanceof(&mut self) -> Option<TypeId> {
+        if !self.ctx.compiler_options.no_lib {
+            return Some(TypeId::FUNCTION);
+        }
+
         let function_sym_id = self.ctx.binder.lib_symbol_ids.iter().find_map(|&sym_id| {
             self.ctx.binder.get_symbol(sym_id).and_then(|symbol| {
                 (symbol.escaped_name == "Function" && symbol.has_any_flags(symbol_flags::INTERFACE))
@@ -35,6 +92,10 @@ impl<'a> CheckerState<'a> {
 
         function_sym_id
             .map(|sym_id| self.get_type_of_symbol(sym_id))
+            .or_else(|| {
+                self.resolve_actual_lib_name_to_def_id_for_lowering("Function")
+                    .map(|def_id| self.ctx.types.lazy(def_id))
+            })
             .or_else(|| self.resolve_lib_type_by_name("Function"))
     }
 
@@ -128,38 +189,25 @@ impl<'a> CheckerState<'a> {
         {
             let left_type = self.get_type_of_node_with_request(binary.left, &TypingRequest::NONE);
             let right_type = self.get_type_of_node_with_request(binary.right, &TypingRequest::NONE);
-            let ctx = tsz_solver::NarrowingContext::new(self.ctx.types);
-            let members = if binary.operator_token == SyntaxKind::BarBarToken as u16 {
-                let truthy_left = ctx.narrow_by_truthiness(left_type);
-                let falsy_left = ctx.narrow_to_falsy(left_type);
-                if truthy_left == TypeId::NEVER || falsy_left == TypeId::NEVER {
-                    return self.get_type_of_node_with_request(
-                        logical_idx,
-                        &TypingRequest::for_write_context(),
-                    );
-                }
-                vec![truthy_left, right_type]
+            let operator = if binary.operator_token == SyntaxKind::BarBarToken as u16 {
+                WriteTargetLogicalOperator::LogicalOr
             } else {
-                let non_nullish_left =
-                    ctx.narrow_by_nullishness(left_type, tsz_solver::NullishFilter::ExcludeNullish);
-                let nullish_left =
-                    ctx.narrow_by_nullishness(left_type, tsz_solver::NullishFilter::KeepNullish);
-                if non_nullish_left == TypeId::NEVER || nullish_left == TypeId::NEVER {
+                WriteTargetLogicalOperator::NullishCoalescing
+            };
+            match crate::query_boundaries::type_computation::core::write_target_logical_result_type(
+                self.ctx.types,
+                operator,
+                left_type,
+                right_type,
+            ) {
+                Some(WriteTargetLogicalResult::Type(result)) => return result,
+                Some(WriteTargetLogicalResult::FallbackToLogicalExpression) => {
                     return self.get_type_of_node_with_request(
                         logical_idx,
                         &TypingRequest::for_write_context(),
                     );
                 }
-                vec![non_nullish_left, right_type]
-            };
-
-            if let Some(normalized) =
-                crate::query_boundaries::common::normalize_object_union_members_for_write_target(
-                    self.ctx.types,
-                    &members,
-                )
-            {
-                return tsz_solver::utils::union_or_single(self.ctx.types, normalized);
+                None => {}
             }
         }
 
@@ -455,8 +503,8 @@ impl<'a> CheckerState<'a> {
     ///
     /// tsc routes these to the assignability gateway:
     /// - bare type parameters (`T`)
-    /// - unions whose every member is a type parameter or a primitive
-    ///   (`T | U`, `string | number | T`)
+    /// - unions that contain a type parameter/primitive assignability member
+    ///   (`T | U`, `string | number | T`, `T | { a: string }`)
     /// - intersections whose every member is a type parameter or
     ///   primitive constraint (`T & U`, `T & (0 | 1 | 2)`)
     ///
@@ -473,9 +521,13 @@ impl<'a> CheckerState<'a> {
             return true;
         }
         if let Some(members) = common::union_members(self.ctx.types, ty) {
+            // A union containing a bare generic or primitive constituent is
+            // reported through assignability to `object`, even when other
+            // constituents are object-like. This is the shape produced by a
+            // false branch of `("a" in x && "b" in x)`: `T | (T & Record<...>)`.
             return members
                 .iter()
-                .all(|&m| self.in_rhs_is_type_parameter_assignability_shape(m));
+                .any(|&m| self.in_rhs_is_type_parameter_assignability_shape(m));
         }
         if let Some(members) = common::intersection_members(self.ctx.types, ty) {
             // Intersections with an empty-object-constraint member
@@ -1410,6 +1462,8 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
+                let left_type = self.reduce_literal_index_access_property_types(left_type);
+                let right_type = self.reduce_literal_index_access_property_types(right_type);
                 let result = match evaluator.evaluate(left_type, right_type, "||") {
                     BinaryOpResult::Success(ty) => ty,
                     BinaryOpResult::TypeError { .. } => TypeId::UNKNOWN,
@@ -1430,6 +1484,8 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
+                let left_type = self.reduce_literal_index_access_property_types(left_type);
+                let right_type = self.reduce_literal_index_access_property_types(right_type);
                 // Evaluate the left type to resolve type aliases (Applications)
                 // before splitting nullish parts. For example, `Maybe<T> = null | undefined | T`
                 // stored as an Application needs to be expanded so that the nullish split
@@ -1440,6 +1496,7 @@ impl<'a> CheckerState<'a> {
                     evaluated_left == TypeId::UNKNOWN || evaluated_left == TypeId::ANY;
                 let left_is_nullish_chain_or_literal =
                     Self::is_nullish_coalescing_or_literal(self.ctx.arena, left_idx);
+                let left_is_nullish_literal = self.is_literal_null_or_undefined_node(left_idx);
                 if cause.is_none() && !left_is_top_type && left_is_nullish_chain_or_literal {
                     use crate::diagnostics::diagnostic_codes;
                     // tsc points the error at the left operand (the never-nullish expression),
@@ -1452,6 +1509,32 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::RIGHT_OPERAND_OF_IS_UNREACHABLE_BECAUSE_THE_LEFT_OPERAND_IS_NEVER_NULLISH,
                     );
                     type_stack.push(left_type);
+                } else if non_nullish.is_none()
+                    && cause.is_some()
+                    && !left_is_top_type
+                    && (left_is_nullish_chain_or_literal || left_is_nullish_literal)
+                {
+                    // TS2871: complementary to TS2869. When the left operand of
+                    // `??` is syntactically a nullish-coalescing chain or a
+                    // bare nullish literal and its evaluated type contains
+                    // only nullish constituents (split yields no non-nullish
+                    // part), tsc emits TS2871 — the left expression is
+                    // *always* nullish, so the `??` itself is redundant.
+                    //
+                    // Same anchor strategy as TS2869: point at the left
+                    // operand, skipping through parentheses.
+                    use crate::diagnostics::diagnostic_codes;
+                    let diag_idx = self.ctx.arena.skip_parenthesized(left_idx);
+                    self.error_at_node(
+                        diag_idx,
+                        "This expression is always nullish.",
+                        diagnostic_codes::THIS_EXPRESSION_IS_ALWAYS_NULLISH,
+                    );
+                    // Result type is the right operand's type — the `??`
+                    // result equals `right_type` whenever the left is always
+                    // nullish, matching the `non_nullish.is_none()` branch in
+                    // the else arm below.
+                    type_stack.push(right_type);
                 } else {
                     // tsc uses UnionReduction.Subtype for ?? result types,
                     // which removes structural subtypes (e.g., never[] from
@@ -1460,6 +1543,12 @@ impl<'a> CheckerState<'a> {
                     let result = match non_nullish {
                         None => right_type,
                         Some(non_nullish) => {
+                            // Apply tsc's NonNullable<D> approximation: when D is an
+                            // unconstrained type parameter, `(D | undefined) ?? X`
+                            // yields `(D & {}) | X` rather than `D | X`.  This matches
+                            // what the solver does for `??` in BinaryOpEvaluator.
+                            let non_nullish = evaluator
+                                .apply_non_nullable_approximation(evaluated_left, non_nullish);
                             if non_nullish == right_type
                                 || self.is_subtype_of(right_type, non_nullish)
                             {
@@ -2245,8 +2334,7 @@ impl<'a> CheckerState<'a> {
                         // Number op enum => number
                         TypeId::NUMBER
                     } else if is_arithmetic_op
-                        && self
-                            .resolve_indexed_access_binary_op(eval_left, eval_right, op, &evaluator)
+                        && self.resolve_indexed_access_binary_op(eval_left, eval_right, op)
                     {
                         // IndexAccess types (T[K]) resolved through assignability
                         // e.g., T[K] where T extends Record<K, number> is number-like
@@ -2881,13 +2969,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check a binary operation with `IndexAccess` operands is valid through assignability.
-    fn resolve_indexed_access_binary_op(
-        &mut self,
-        left: TypeId,
-        right: TypeId,
-        op: &str,
-        evaluator: &tsz_solver::BinaryOpEvaluator,
-    ) -> bool {
+    fn resolve_indexed_access_binary_op(&mut self, left: TypeId, right: TypeId, op: &str) -> bool {
         let left_is_index_access =
             crate::query_boundaries::common::is_index_access_type(self.ctx.types, left);
         let right_is_index_access =
@@ -2899,10 +2981,16 @@ impl<'a> CheckerState<'a> {
 
         match op {
             "+" | "-" | "*" | "/" | "%" | "**" => {
-                let left_ok = evaluator.is_arithmetic_operand(left)
+                let left_ok = crate::query_boundaries::type_computation::core::is_arithmetic_operand(
+                    self.ctx.types,
+                    left,
+                )
                     || left_is_index_access && self.is_assignable_to(left, TypeId::NUMBER);
-                let right_ok = evaluator.is_arithmetic_operand(right)
-                    || right_is_index_access && self.is_assignable_to(right, TypeId::NUMBER);
+                let right_ok =
+                    crate::query_boundaries::type_computation::core::is_arithmetic_operand(
+                        self.ctx.types,
+                        right,
+                    ) || right_is_index_access && self.is_assignable_to(right, TypeId::NUMBER);
                 left_ok && right_ok
             }
             _ => false,

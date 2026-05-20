@@ -1394,14 +1394,8 @@ pub(super) fn collect_no_check_parse_diagnostics_for_file(
         file_diagnostics.retain(|d| !is_checker_grammar_code_suppressed_in_js(d.code));
     }
 
-    if let Some(source) = arena.get_source_file_at(source_file) {
-        apply_ts_directive_suppression(
-            file_name,
-            source.text.as_ref(),
-            &mut file_diagnostics,
-            options.checker.emit_declarations && options.check_js && is_js,
-        );
-    }
+    // `@ts-expect-error` suppression applies only to semantic diagnostics; all
+    // diagnostics here are syntactic, so directive suppression must not run.
 
     file_diagnostics
 }
@@ -1866,7 +1860,7 @@ pub(super) fn create_binder_from_bound_file_with_augmentations(
             declaration_arenas,
             sym_to_decl_indices,
             // Per-binder cross_file_node_symbols left empty intentionally.
-            // The program-wide outer map is stored once on ProjectEnv and
+            // The program-wide outer map is stored once on ProgramContext and
             // read via `ctx.cross_file_node_symbols_for_arena`. Cloning
             // it into every per-file binder scales outer-map allocation
             // with N² — several hundred MB on large-ts-repo.
@@ -1891,7 +1885,7 @@ pub(super) fn create_binder_from_bound_file_with_augmentations(
             // Per-binder alias_partners left empty: every checker consumer
             // routes through `ctx.alias_partner_for` /
             // `alias_partners_contains`, which prefers the project-wide
-            // `program_alias_partners` Arc installed by ProjectEnv::apply_to.
+            // `program_alias_partners` Arc installed by ProgramContext::apply_to.
             alias_partners: Default::default(),
         },
     );
@@ -1906,7 +1900,7 @@ pub(super) fn create_binder_from_bound_file_with_augmentations(
     binder.lib_symbol_reverse_remap = file.lib_symbol_reverse_remap.clone();
     // Only the file-local semantic_defs are stored on the reconstructed
     // binder. The cross-file / program-wide entries live in the shared
-    // `DefinitionStore` installed by `ProjectEnv::apply_to`, which gates
+    // `DefinitionStore` installed by `ProgramContext::apply_to`, which gates
     // every consumer of `binder.semantic_defs` (`pre_populate_def_ids_*`,
     // `resolve_cross_batch_heritage`) behind
     // `!ctx.definition_store.is_fully_populated()`. In the parallel CLI
@@ -1932,6 +1926,7 @@ pub(super) fn create_binder_from_bound_file_with_augmentations(
     binder.lib_binders = program.lib_binders.clone();
     // Track lib-originating symbols so unused checking can skip them
     binder.lib_symbol_ids = program.lib_symbol_ids.clone();
+    binder.lib_type_namespace = Arc::new(program.build_lib_type_namespace(file_idx));
 
     binder
 }
@@ -1979,7 +1974,7 @@ pub(super) fn create_cross_file_lookup_binder_with_augmentations(
             augmentation_target_modules: augmentations.augmentation_target_modules.clone(),
             // Per-binder `module_exports` is left empty intentionally.
             // The program-wide merged `module_exports` lives once on
-            // `ProjectEnv` as `program_module_exports` and is read via
+            // `ProgramContext` as `program_module_exports` and is read via
             // `ctx.module_exports_for_module`. Cross-file lookup binders
             // used to deep-clone the entire merged map (thousands of
             // entries on large repos) into every one of N per-file
@@ -1988,7 +1983,7 @@ pub(super) fn create_cross_file_lookup_binder_with_augmentations(
             module_declaration_exports_publicly: file.module_declaration_exports_publicly.clone(),
             // Per-binder re-export maps left empty intentionally. The
             // program-wide merged re-export maps are stored once on
-            // `ProjectEnv` and read via `ctx.reexports_for_file` /
+            // `ProgramContext` and read via `ctx.reexports_for_file` /
             // `wildcard_reexports_for_file`. Cloning them into every one
             // of N cross-file lookup binders scales the per-file setup
             // cost with total re-exports across the whole project —
@@ -2003,7 +1998,7 @@ pub(super) fn create_cross_file_lookup_binder_with_augmentations(
             declaration_arenas: Default::default(),
             sym_to_decl_indices: Default::default(),
             // See `create_binder_from_bound_file_with_augmentations` for
-            // the rationale: the program-wide map lives on ProjectEnv.
+            // the rationale: the program-wide map lives on ProgramContext.
             cross_file_node_symbols: Default::default(),
             shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
             // Per-binder `flow_nodes` is an Arc clone; see
@@ -2047,6 +2042,7 @@ pub(super) fn create_cross_file_lookup_binder_with_augmentations(
     binder.set_lib_symbols_merged(true);
     binder.lib_binders = program.lib_binders.clone();
     binder.lib_symbol_ids = program.lib_symbol_ids.clone();
+    binder.lib_type_namespace = Arc::new(program.build_lib_type_namespace(file_idx));
 
     binder
 }
@@ -2122,7 +2118,9 @@ const fn is_directive_leading_trivia_byte(b: u8) -> bool {
 }
 
 /// Check if a comment text contains `@ts-expect-error` or `@ts-ignore`.
-fn find_directive_in_text(comment: &str) -> Option<(DirectiveKind, usize)> {
+/// Returns the directive kind and the byte offset of the directive marker
+/// within the comment text.
+fn find_directive_in_text(comment: &str) -> Option<(DirectiveKind, u32)> {
     let bytes = comment.as_bytes();
     let mut pos = if comment.starts_with("//") || comment.starts_with("/*") {
         2
@@ -2143,7 +2141,7 @@ fn find_directive_in_text(comment: &str) -> Option<(DirectiveKind, usize)> {
         }
         let after = pos + text.len();
         if after >= comment.len() || is_directive_separator(comment.as_bytes()[after]) {
-            return Some((kind, pos));
+            return Some((kind, pos as u32));
         }
     }
     None
@@ -2155,12 +2153,10 @@ struct TsDirective {
     is_expect_error: bool,
     /// The 0-based line number that this directive suppresses (the line after the comment).
     suppressed_line: u32,
-    /// Byte offset of the start of the comment containing the directive.
-    comment_start: u32,
-    /// Byte length of the comment containing the directive.
-    comment_length: u32,
-    /// Byte offset of the `@ts-expect-error` text within the comment.
-    directive_text_start: u32,
+    /// Byte offset where an unused `@ts-expect-error` diagnostic should start.
+    unused_diagnostic_start: u32,
+    /// Byte length for an unused `@ts-expect-error` diagnostic.
+    unused_diagnostic_length: u32,
 }
 
 /// Scan source text for `@ts-expect-error` and `@ts-ignore` directives in comments.
@@ -2170,7 +2166,7 @@ fn find_ts_directives(text: &str) -> Vec<TsDirective> {
 
     for comment in tsz_common::comments::get_comment_ranges(text) {
         let comment_text = comment.get_text(text);
-        let Some((kind, rel_offset)) = find_directive_in_text(comment_text) else {
+        let Some((kind, directive_offset)) = find_directive_in_text(comment_text) else {
             continue;
         };
 
@@ -2181,13 +2177,24 @@ fn find_ts_directives(text: &str) -> Vec<TsDirective> {
             let comment_line = line_of_offset(&line_starts, comment.pos);
             comment_line + 1
         };
+        let directive_start = comment.pos.saturating_add(directive_offset);
+        let directive_line = line_of_offset(&line_starts, directive_start) as usize;
+        let directive_line_start = line_starts
+            .get(directive_line)
+            .copied()
+            .unwrap_or(comment.pos);
+        let unused_diagnostic_start = if comment.is_multi_line && directive_line_start > comment.pos
+        {
+            directive_line_start
+        } else {
+            comment.pos
+        };
 
         directives.push(TsDirective {
             is_expect_error: kind == DirectiveKind::ExpectError,
             suppressed_line,
-            comment_start: comment.pos,
-            comment_length: comment.end.saturating_sub(comment.pos),
-            directive_text_start: comment.pos + rel_offset as u32,
+            unused_diagnostic_start,
+            unused_diagnostic_length: comment.end.saturating_sub(unused_diagnostic_start),
         });
     }
 
@@ -2229,35 +2236,43 @@ pub(super) fn apply_ts_directive_suppression(
     // here; callers still pass it so the public signature stays stable while
     // any deeper revisit of declaration-emit fingerprints lands.
     let _ = preserve_declaration_jsdoc_name_diagnostics;
+    // tsc's `getSyntacticDiagnostics` path bypasses directive suppression, but
+    // syntactic diagnostics on the target line still make `@ts-expect-error`
+    // used. Keep those diagnostics while recording the directive hit.
     diagnostics.retain(|diag| {
         let diag_line = line_of_offset(&line_starts, diag.start);
         for (idx, directive) in directives.iter().enumerate() {
             if diag_line == directive.suppressed_line {
                 directive_used[idx] = true;
-                return false;
+                return is_ts_directive_unsuppressible_syntactic(diag.code);
             }
         }
         true
     });
 
-    // Emit TS2578 for unused @ts-expect-error directives
+    // Emit TS2578 for unused @ts-expect-error directives.
+    //
+    // tsc anchors this diagnostic at the directive comment text, not at the
+    // enclosing line start. Same-line directives start at the `//` or `/*`
+    // opener, while directives inside multiline block comments start at the
+    // line containing the directive text.
     if !has_ts_nocheck {
         for (idx, directive) in directives.iter().enumerate() {
             if directive.is_expect_error && !directive_used[idx] {
-                let directive_line = line_of_offset(&line_starts, directive.directive_text_start);
-                let line_start_offset = line_starts[directive_line as usize];
-                let comment_end = directive.comment_start + directive.comment_length;
-                let length = comment_end.saturating_sub(line_start_offset);
                 diagnostics.push(Diagnostic::error(
                     file_name.to_string(),
-                    line_start_offset,
-                    length,
+                    directive.unused_diagnostic_start,
+                    directive.unused_diagnostic_length,
                     "Unused '@ts-expect-error' directive.".to_string(),
                     2578,
                 ));
             }
         }
     }
+}
+
+const fn is_ts_directive_unsuppressible_syntactic(code: u32) -> bool {
+    is_real_syntax_error(code) || is_js_only_syntactic_diagnostic(code)
 }
 
 /// Classify a parse diagnostic code as a "real" syntax error (actual parse failure)
@@ -2335,6 +2350,7 @@ pub(super) const fn is_real_syntax_error(code: u32) -> bool {
         | 1378 // Top-level 'for await' loops are only allowed...
         | 1432 // 'await' expressions are only allowed within async functions
         | 1434 // Top-level 'await' expressions are only allowed...
+        | 1389 // '{0}' is not allowed as a variable declaration name
         | 1382 // Unexpected token. Did you mean `{'>'}` or `&gt;`? (JSX)
         | 1438 // Interface must be given a name (recovery creates invalid expression statements)
         | 1442 // Identifier or expression expected (TS-only construct in JS)
@@ -2525,7 +2541,7 @@ mod tests {
             module: ModuleKind::CommonJS,
             ..Default::default()
         };
-        let interner = tsz_solver::TypeInterner::new();
+        let interner = tsz_solver::construction::TypeInterner::new();
         let mut checker = CheckerState::new(
             all_arenas[entry_idx].as_ref(),
             all_binders[entry_idx].as_ref(),
@@ -2805,6 +2821,65 @@ const value = 1;
         );
     }
 
+    /// Anchor regression for TS2578.
+    ///
+    /// tsc 6.0.3 emits TS2578 at the comment range — the `/` of the `//`
+    /// or `/*` opener — not at the enclosing line start. For an indented
+    /// `  // @ts-expect-error` that means the diagnostic span starts at
+    /// the comment's first character (here byte 2, column 3), not at
+    /// column 1.
+    ///
+    /// Source: type-challenges 00004-easy-pick (issue #4902).
+    #[test]
+    fn unused_expect_error_anchors_at_indented_comment_start() {
+        let source = "const a = 1;\n  // @ts-expect-error\nconst x = 1;\n";
+        let mut diagnostics = Vec::new();
+        apply_ts_directive_suppression("anchor.ts", source, &mut diagnostics, false);
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, 2578);
+        // The `//` of the indented comment starts at byte offset
+        // `"const a = 1;\n  ".len() == 15`. tsc anchors at this position
+        // (column 3 on the comment line), not at the line start (column 1).
+        assert_eq!(diagnostics[0].start, 15);
+        // Span covers the entire comment, including the `//` opener.
+        assert_eq!(diagnostics[0].length, "// @ts-expect-error".len() as u32);
+    }
+
+    /// Same rule for block comments: anchor at `/*`, span the whole comment.
+    /// Anti-hardcoding cover: a different comment opener and a different
+    /// indent — the fix must key on the structural comment range, not on
+    /// `//` specifically or on a fixed offset.
+    #[test]
+    fn unused_expect_error_anchors_at_indented_block_comment_start() {
+        let source = "    /* @ts-expect-error */\nconst y = 1;\n";
+        let mut diagnostics = Vec::new();
+        apply_ts_directive_suppression("anchor-block.ts", source, &mut diagnostics, false);
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, 2578);
+        // 4 spaces of indent, then `/*` starts at byte 4 (column 5).
+        assert_eq!(diagnostics[0].start, 4);
+        assert_eq!(diagnostics[0].length, "/* @ts-expect-error */".len() as u32);
+    }
+
+    #[test]
+    fn unused_expect_error_in_multiline_block_anchors_at_directive_line_start() {
+        let source = "    /*\n   @ts-expect-error */\nconst y = 1;\n";
+        let mut diagnostics = Vec::new();
+        apply_ts_directive_suppression(
+            "anchor-multiline-block.ts",
+            source,
+            &mut diagnostics,
+            false,
+        );
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, 2578);
+        assert_eq!(diagnostics[0].start, "    /*\n".len() as u32);
+        assert_eq!(diagnostics[0].length, "   @ts-expect-error */".len() as u32);
+    }
+
     #[test]
     fn raw_ts_nocheck_text_does_not_suppress_unused_expect_error() {
         let source = r#"const marker = "@ts-nocheck";
@@ -2896,7 +2971,10 @@ unchecked;
         assert!(!directives[0].is_expect_error);
         assert_eq!(directives[0].suppressed_line, 1);
         // Comment span must stop at the CR, not run to end-of-file.
-        assert_eq!(directives[0].comment_length, "// @ts-ignore".len() as u32);
+        assert_eq!(
+            directives[0].unused_diagnostic_length,
+            "// @ts-ignore".len() as u32
+        );
     }
 
     #[test]
@@ -2908,7 +2986,7 @@ unchecked;
         // The CR must be excluded from the comment span (matches the
         // existing behaviour of the LF-only path).
         assert_eq!(
-            directives[0].comment_length,
+            directives[0].unused_diagnostic_length,
             "// @ts-expect-error".len() as u32
         );
     }
@@ -3709,5 +3787,163 @@ export declare function __classPrivateFieldSet<T extends object, V>(receiver: T,
             !diagnostics.iter().any(|d| d.code == 8010),
             "TS8010 must not fire on TypeScript files, got: {diagnostics:#?}"
         );
+    }
+
+    #[test]
+    fn no_check_ts_expect_error_does_not_suppress_parse_error() {
+        // Under `--noCheck`, `@ts-expect-error` must not suppress parse errors
+        // (TS1109 "Expression expected"). tsc reports parse diagnostics from
+        // `getSyntacticDiagnostics` which bypasses directive suppression.
+        let source = "// @ts-expect-error\nconst broken = ;\n";
+        let diagnostics = collect_no_check_diags("a.ts", source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == 1109),
+            "TS1109 must not be suppressed by @ts-expect-error in --noCheck, got: {diagnostics:#?}"
+        );
+        assert!(
+            !diagnostics.iter().any(|d| d.code == 2578),
+            "TS2578 must not be emitted under --noCheck, got: {diagnostics:#?}"
+        );
+    }
+
+    #[test]
+    fn no_check_ts_ignore_does_not_suppress_parse_error() {
+        // `@ts-ignore` must also not suppress parse errors under `--noCheck`.
+        let source = "// @ts-ignore\nconst broken = ;\n";
+        let diagnostics = collect_no_check_diags("a.ts", source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == 1109),
+            "TS1109 must survive @ts-ignore in --noCheck, got: {diagnostics:#?}"
+        );
+    }
+
+    #[test]
+    fn no_check_ts_expect_error_does_not_suppress_js_grammar_error() {
+        // Under `--noCheck`, `@ts-expect-error` must not suppress JS grammar
+        // errors (TS8010 "Type annotations can only be used in TypeScript files").
+        let source = "// @ts-expect-error\nlet x: number;\n";
+        let diagnostics = collect_no_check_diags("a.js", source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == 8010),
+            "TS8010 must not be suppressed by @ts-expect-error in --noCheck JS, got: {diagnostics:#?}"
+        );
+        assert!(
+            !diagnostics.iter().any(|d| d.code == 2578),
+            "TS2578 must not be emitted under --noCheck, got: {diagnostics:#?}"
+        );
+    }
+
+    #[test]
+    fn no_check_ts_expect_error_on_clean_line_does_not_emit_ts2578() {
+        // Under `--noCheck`, an @ts-expect-error directive above a line with
+        // no diagnostics must not produce TS2578 ("Unused '@ts-expect-error'").
+        // tsc does not run type-checking in --noCheck mode so every directive
+        // is effectively unreachable; none should be penalized.
+        let source = "// @ts-expect-error\nconst x = 5;\n";
+        let diagnostics = collect_no_check_diags("a.ts", source);
+        assert!(
+            !diagnostics.iter().any(|d| d.code == 2578),
+            "TS2578 must not be emitted under --noCheck for unused directive, got: {diagnostics:#?}"
+        );
+    }
+
+    #[test]
+    fn no_check_multiple_expect_error_directives_do_not_emit_ts2578() {
+        // Multiple @ts-expect-error directives under --noCheck must all be
+        // silently ignored rather than producing a wave of TS2578 reports.
+        let source = concat!(
+            "// @ts-expect-error\nconst a = 1;\n",
+            "// @ts-expect-error\nconst b = 2;\n",
+        );
+        let diagnostics = collect_no_check_diags("a.ts", source);
+        assert!(
+            !diagnostics.iter().any(|d| d.code == 2578),
+            "TS2578 must not fire for multiple unused directives under --noCheck, got: {diagnostics:#?}"
+        );
+    }
+
+    fn check_directive_suppression(source: &str, codes_in: &[u32]) -> Vec<Diagnostic> {
+        let line_starts = build_line_starts(source);
+        let line1_start = line_starts.get(1).copied().unwrap_or(0);
+        let mut diagnostics: Vec<Diagnostic> = codes_in
+            .iter()
+            .map(|&code| {
+                Diagnostic::error(
+                    "test.ts".to_string(),
+                    line1_start,
+                    1,
+                    format!("diag {code}"),
+                    code,
+                )
+            })
+            .collect();
+        apply_ts_directive_suppression("test.ts", source, &mut diagnostics, false);
+        diagnostics
+    }
+
+    #[test]
+    fn apply_suppression_never_suppresses_real_syntax_errors() {
+        // TS1109 (Expression expected) is a real syntax error and must survive
+        // directive suppression even in the full-check path. It still marks
+        // @ts-expect-error as used, matching tsc's TS2578 behavior.
+        let source = "// @ts-expect-error\nconst broken = ;\n";
+        let remaining = check_directive_suppression(source, &[1109]);
+        assert!(
+            remaining.iter().any(|d| d.code == 1109),
+            "TS1109 must not be suppressed, got: {remaining:#?}"
+        );
+        assert!(
+            !remaining.iter().any(|d| d.code == 2578),
+            "TS2578 must not be emitted when directive targets a parse error, got: {remaining:#?}"
+        );
+    }
+
+    #[test]
+    fn apply_suppression_never_suppresses_js_only_syntactic_errors() {
+        let source = "// @ts-expect-error\nlet x: number;\n";
+        let remaining = check_directive_suppression(source, &[8010]);
+        assert!(
+            remaining.iter().any(|d| d.code == 8010),
+            "TS8010 must not be suppressed, got: {remaining:#?}"
+        );
+        assert!(
+            !remaining.iter().any(|d| d.code == 2578),
+            "TS2578 must not be emitted when directive targets a JS syntactic diagnostic, got: {remaining:#?}"
+        );
+    }
+
+    #[test]
+    fn apply_suppression_suppresses_semantic_error_but_not_parse_error_on_same_line() {
+        // When a parse error (TS1109) and a semantic error (TS2322) both exist
+        // on the target line, the semantic error is suppressed and the parse
+        // error survives. The directive is marked as used, so no TS2578.
+        let source = "// @ts-expect-error\nconst x: string = ;\n";
+        let remaining = check_directive_suppression(source, &[1109, 2322]);
+        assert!(
+            remaining.iter().any(|d| d.code == 1109),
+            "TS1109 must survive directive suppression, got: {remaining:#?}"
+        );
+        assert!(
+            !remaining.iter().any(|d| d.code == 2322),
+            "TS2322 must be suppressed by @ts-expect-error, got: {remaining:#?}"
+        );
+        assert!(
+            !remaining.iter().any(|d| d.code == 2578),
+            "TS2578 must not fire when directive suppressed a semantic error, got: {remaining:#?}"
+        );
+    }
+
+    #[test]
+    fn apply_suppression_real_syntax_error_codes_are_never_suppressed() {
+        // Verify several codes from is_real_syntax_error are all immune.
+        let real_syntax_codes: &[u32] = &[1002, 1003, 1005, 1006, 1007, 1109, 1110, 1126, 1127];
+        let source = "// @ts-expect-error\ncode_on_line_2;\n";
+        for &code in real_syntax_codes {
+            let remaining = check_directive_suppression(source, &[code]);
+            assert!(
+                remaining.iter().any(|d| d.code == code),
+                "TS{code} must not be suppressed by @ts-expect-error, got: {remaining:#?}"
+            );
+        }
     }
 }

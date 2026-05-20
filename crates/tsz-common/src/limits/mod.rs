@@ -29,7 +29,7 @@
 /// the compiler emits **TS2589**:
 /// *"Type instantiation is excessively deep and possibly infinite."*
 ///
-/// Used by `tsz-checker` (`function_type.rs`, `type_environment/mod.rs`)
+/// Used by `tsz-checker` (`function_type.rs`, `state/type_environment/core.rs`)
 /// and `tsz-solver` (instantiate.rs).
 ///
 /// # TypeScript example
@@ -211,6 +211,13 @@ pub const MAX_PARSER_RECURSION_DEPTH: u32 = 1_000;
 pub const MAX_TYPE_RESOLUTION_OPS: u32 = 20_000;
 #[cfg(not(target_arch = "wasm32"))]
 pub const MAX_TYPE_RESOLUTION_OPS: u32 = 100_000;
+
+/// Maximum number of elements in a synthesized tuple type.
+///
+/// When a tuple-spread synthesis exceeds this limit the solver sets a flag and the
+/// checker emits TS2799 ("Type produces a tuple type that is too large to represent").
+/// Mirrors tsc's `checkTupleType` cardinality guard.
+pub const MAX_REPRESENTABLE_TUPLE_LENGTH: usize = 10_000;
 
 // =============================================================================
 // Thread / Runtime Limits

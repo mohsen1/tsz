@@ -1575,6 +1575,212 @@ export const viaInlineArrow = (<T>(value: T) => value)("ok" as const);
 }
 
 #[test]
+fn fix_generic_call_infers_literal_from_option_property() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Kind = "one" | "two" | "three";
+declare function getInterfaceFromString<T extends Kind>(options?: { type?: T } & { type?: Kind }): T;
+
+const result = getInterfaceFromString({ type: "two" });
+"#,
+    );
+
+    assert!(
+        output.contains("declare const result: \"two\";"),
+        "expected generic call result to preserve inferred option literal: {output}"
+    );
+}
+
+#[test]
+fn fix_generic_call_option_literal_does_not_ignore_other_inference_sites() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Kind = "one" | "two" | "three";
+declare function getInterfaceFromString<T extends Kind>(options: { type?: T }, fallback: T): T;
+
+const result = getInterfaceFromString({ type: "two" }, "three");
+"#,
+    );
+
+    assert!(
+        output.contains("declare const result: string;"),
+        "expected generic call result to fall back instead of narrowing from one argument: {output}"
+    );
+    assert!(
+        !output.contains(r#"declare const result: "two";"#),
+        "generic call result must not ignore the fallback argument inference site: {output}"
+    );
+}
+
+#[test]
+fn fix_generic_call_identity_callback_uses_type_parameter_constraint() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+function foo<T extends "foo">(f: (x: T) => T) {
+    return f;
+}
+
+function bar<T extends "foo" | "bar">(f: (x: T) => T) {
+    return f;
+}
+
+let f = foo(x => x);
+let fResult = f("foo");
+
+let g = foo((x => x));
+let gResult = g("foo");
+
+let h = bar(x => x);
+let hResult = h("foo");
+hResult = h("bar");
+"#,
+    );
+
+    for expected in [
+        r#"declare let f: (x: "foo") => "foo";"#,
+        r#"declare let fResult: "foo";"#,
+        r#"declare let g: (x: "foo") => "foo";"#,
+        r#"declare let gResult: "foo";"#,
+        r#"declare let h: (x: "foo" | "bar") => "foo" | "bar";"#,
+        r#"declare let hResult: "foo" | "bar";"#,
+    ] {
+        assert!(
+            output.contains(expected),
+            "expected constrained identity callback inference to emit `{expected}`: {output}"
+        );
+    }
+}
+
+#[test]
+fn fix_generic_call_identity_callback_skips_explicit_recursive_type_arguments() {
+    let output = emit_dts(
+        r#"
+export type Key<U> = keyof U;
+export type Value<K extends Key<U>, U> = U[K];
+export const updateIfChanged = <T>(t: T) => {
+    const reduce = <U>(u: U, update: (u: U) => T) => {
+        const set = (newU: U) => Object.is(u, newU) ? t : update(newU);
+        return Object.assign(
+            <K extends Key<U>>(key: K) =>
+                reduce<Value<K, U>>(u[key as keyof U] as Value<K, U>, (v: Value<K, U>) => {
+                    return update(Object.assign(Array.isArray(u) ? [] : {}, u, { [key]: v }));
+                }),
+            { map: (updater: (u: U) => U) => set(updater(u)), set });
+    };
+    return reduce<T>(t, (t: T) => t);
+};
+"#,
+    );
+
+    assert!(
+        output.contains("export declare const updateIfChanged"),
+        "recursive explicit generic calls should not crash declaration emit: {output}"
+    );
+}
+
+#[test]
+fn fix_local_overloaded_call_uses_matching_literal_signature_return() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+interface Base {
+    x: string;
+    y: number;
+}
+interface HelloOrWorld extends Base {
+    p1: boolean;
+}
+interface JustHello extends Base {
+    p2: boolean;
+}
+interface JustWorld extends Base {
+    p3: boolean;
+}
+
+let hello: "hello";
+let world: "world";
+let helloOrWorld: "hello" | "world";
+
+function f(p: "hello"): JustHello;
+function f(p: "hello" | "world"): HelloOrWorld;
+function f(p: "world"): JustWorld;
+function f(p: string): Base;
+function f(...args: any[]): any {
+    return undefined;
+}
+
+let fResult1 = f(hello);
+let fResult2 = f(world);
+let fResult3 = f(helloOrWorld);
+
+function g(p: string): Base;
+function g(p: "hello"): JustHello;
+function g(p: "hello" | "world"): HelloOrWorld;
+function g(p: "world"): JustWorld;
+function g(...args: any[]): any {
+    return undefined;
+}
+
+let gResult1 = g(hello);
+let gResult2 = g(world);
+let gResult3 = g(helloOrWorld);
+"#,
+    );
+
+    for expected in [
+        "declare let fResult1: JustHello;",
+        "declare let fResult2: JustWorld;",
+        "declare let fResult3: HelloOrWorld;",
+        "declare let gResult1: JustHello;",
+        "declare let gResult2: JustWorld;",
+        "declare let gResult3: Base;",
+    ] {
+        assert!(
+            output.contains(expected),
+            "expected overload call return `{expected}`: {output}"
+        );
+    }
+}
+
+#[test]
+fn fix_short_circuit_string_literal_overload_operands_match_tsc_dts_widening() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+const explicitString: "string" = "string";
+const explicitNumber: "number" = "number";
+const explicitBoolean: "boolean" = "boolean";
+const explicitStringOrNumber = explicitString || explicitNumber;
+const explicitStringOrBoolean = explicitString || explicitBoolean;
+const explicitBooleanOrNumber = explicitNumber || explicitBoolean;
+const explicitStringOrBooleanOrNumber = explicitStringOrBoolean || explicitNumber;
+
+const inferredString = "string";
+const inferredNumber = "number";
+const inferredBoolean = "boolean";
+const inferredStringOrNumber = inferredString || inferredNumber;
+const inferredStringOrBoolean = inferredString || inferredBoolean;
+const inferredBooleanOrNumber = inferredNumber || inferredBoolean;
+const inferredStringOrBooleanOrNumber = inferredStringOrBoolean || inferredNumber;
+"#,
+    );
+
+    for expected in [
+        r#"declare const explicitStringOrNumber: "string" | "number";"#,
+        r#"declare const explicitStringOrBoolean: "string" | "boolean";"#,
+        r#"declare const explicitBooleanOrNumber: "number" | "boolean";"#,
+        r#"declare const explicitStringOrBooleanOrNumber: "string" | "number" | "boolean";"#,
+        "declare const inferredStringOrNumber: string;",
+        "declare const inferredStringOrBoolean: string;",
+        "declare const inferredBooleanOrNumber: string;",
+        "declare const inferredStringOrBooleanOrNumber: string;",
+    ] {
+        assert!(
+            output.contains(expected),
+            "expected short-circuit operand type `{expected}`: {output}"
+        );
+    }
+}
+
+#[test]
 fn fix_generic_call_constructor_return_object_formats_multiline() {
     let output = emit_dts(
         r#"
@@ -1750,5 +1956,147 @@ export class Enhancement {
     assert!(
         !output.contains("static getType(): this;"),
         "Static methods must not use instance this return syntax: {output}"
+    );
+}
+
+// === Tests for symbol_types fallback (issue #8744) ===
+
+#[test]
+fn fix_symbol_types_fallback_used_when_node_types_is_any() {
+    // When node_types holds ANY (context-contaminated by contextual re-evaluation),
+    // the emitter must fall back to symbol_types to recover the arrow function return type.
+    use crate::type_cache_view::TypeCacheView;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::NodeIndex;
+    use tsz_parser::parser::syntax_kind_ext;
+    use tsz_solver::construction::TypeInterner;
+    use tsz_solver::{FunctionShape, ParamInfo, TypeId};
+
+    let source = "export const isNonNull = (x: number | null) => x !== null;";
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    // Find the arrow function node.
+    let arrow_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(i, n)| {
+            (n.kind == syntax_kind_ext::ARROW_FUNCTION).then_some(NodeIndex(i as u32))
+        })
+        .expect("ARROW_FUNCTION node");
+
+    // Get the symbol bound to "isNonNull".
+    let sym_id = binder
+        .file_locals
+        .get("isNonNull")
+        .expect("isNonNull symbol");
+
+    // Build a concrete function type: (x: number | null) => boolean
+    let interner = TypeInterner::new();
+    let x_atom = interner.intern_string("x");
+    let param_type = interner.union(vec![TypeId::NUMBER, TypeId::NULL]);
+    let func_type = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(x_atom),
+            type_id: param_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::BOOLEAN,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Simulate contamination: node_types = ANY, symbol_types = real function type.
+    let mut type_cache = TypeCacheView::default();
+    type_cache.node_types.insert(arrow_idx.0, TypeId::ANY);
+    type_cache.symbol_types.insert(sym_id, func_type);
+
+    let mut emitter = crate::declaration_emitter::DeclarationEmitter::with_type_info(
+        &parser.arena,
+        type_cache,
+        &interner,
+        &binder,
+    );
+    let output = emitter.emit(root);
+
+    assert!(
+        !output.contains(": any"),
+        "should not emit `any` when symbol_types holds a concrete type: {output}"
+    );
+    assert!(
+        output.contains("boolean"),
+        "should recover boolean return type from symbol_types: {output}"
+    );
+}
+
+#[test]
+fn fix_predicate_pattern2_does_not_rewrite_unrelated_union_shapes() {
+    // (T & undefined) | string must NOT be rewritten as T & ({} | undefined).
+    // Only (T & undefined) | (T & {}) qualifies — both arms must be verified.
+    use crate::type_cache_view::TypeCacheView;
+    use tsz_solver::construction::TypeInterner;
+    use tsz_solver::{
+        FunctionShape, ParamInfo, TypeId,
+        types::{TypeParamInfo, TypePredicate, TypePredicateTarget},
+    };
+
+    let interner = TypeInterner::new();
+
+    // Build type param T.
+    let t_atom = interner.intern_string("T");
+    let t_param = interner.type_param(TypeParamInfo::simple(t_atom));
+
+    // Build (T & undefined) | string — the second arm is NOT T & {}.
+    let t_and_undef = interner.intersection(vec![t_param, TypeId::UNDEFINED]);
+    let bad_union = interner.union(vec![t_and_undef, TypeId::STRING]);
+
+    // Build a function type with predicate `x is (T & undefined) | string`.
+    let x_atom = interner.intern_string("x");
+    let func_type = interner.function(FunctionShape {
+        type_params: vec![TypeParamInfo::simple(t_atom)],
+        params: vec![ParamInfo {
+            name: Some(x_atom),
+            type_id: TypeId::UNKNOWN,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::BOOLEAN,
+        type_predicate: Some(TypePredicate {
+            asserts: false,
+            target: TypePredicateTarget::Identifier(x_atom),
+            type_id: Some(bad_union),
+            parameter_index: None,
+        }),
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let parser = tsz_parser::ParserState::new("test.ts".to_string(), String::new());
+    let binder = tsz_binder::BinderState::new();
+    let type_cache = TypeCacheView::default();
+    let emitter = crate::declaration_emitter::DeclarationEmitter::with_type_info(
+        &parser.arena,
+        type_cache,
+        &interner,
+        &binder,
+    );
+
+    // The predicate type should fall through to the normal printer, not rewrite.
+    let text = emitter
+        .function_type_predicate_text(func_type, None)
+        .unwrap_or_default();
+
+    assert!(
+        !text.contains("& ({} | undefined)"),
+        "should not rewrite (T & undefined) | string as T & ({{}} | undefined): {text}"
     );
 }

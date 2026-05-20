@@ -142,6 +142,17 @@ impl<'db> TypeFactory<'db> {
         self.db.object_with_index(shape)
     }
 
+    /// Create an object whose declaration order should be preserved for
+    /// stable spread display.
+    #[inline]
+    pub fn object_preserve_declaration_order(&self, properties: Vec<PropertyInfo>) -> TypeId {
+        self.db.object_with_flags_and_symbol(
+            properties,
+            ObjectFlags::PRESERVE_DECLARATION_ORDER,
+            None,
+        )
+    }
+
     #[inline]
     pub fn object_with_flags_and_symbol(
         &self,
@@ -165,6 +176,23 @@ impl<'db> TypeFactory<'db> {
     ) -> TypeId {
         self.db
             .object_with_flags_and_symbol(properties, ObjectFlags::empty(), symbol)
+    }
+
+    /// Create a non-fresh object type with late-bound computed members.
+    ///
+    /// Use this instead of importing `ObjectFlags::HAS_LATE_BOUND_MEMBERS`
+    /// outside the solver.
+    #[inline]
+    pub fn object_with_late_bound_members(
+        &self,
+        properties: Vec<PropertyInfo>,
+        symbol: Option<SymbolId>,
+    ) -> TypeId {
+        self.db.object_with_flags_and_symbol(
+            properties,
+            ObjectFlags::HAS_LATE_BOUND_MEMBERS,
+            symbol,
+        )
     }
 
     #[inline]

@@ -5,8 +5,8 @@ use crate::class_inheritance::ClassInheritanceChecker;
 use crate::query_boundaries::common::{
     self as common, ContextualLiteralAllowKind, TypeTraversalKind, are_same_base_literal_kind,
     classify_for_contextual_literal, classify_for_traversal, contains_type_parameters,
-    index_access_types, intersection_members, is_conditional_type, is_index_access_type,
-    is_keyof_type, is_this_type, keyof_inner_type, lazy_def_id, mapped_type_info,
+    index_access_types, intersection_members, is_conditional_type, is_evaluable_meta_type,
+    is_index_access_type, is_this_type, keyof_inner_type, lazy_def_id, mapped_type_info,
     number_literal_value, object_shape_for_type, string_literal_value, type_application,
     type_parameter_constraint, union_members,
 };
@@ -18,10 +18,11 @@ use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+use tsz_solver::computation::ContextualTypeContext;
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn raw_contextual_signature_available(&self, type_id: TypeId) -> bool {
-        let helper = tsz_solver::ContextualTypeContext::with_expected_and_options(
+        let helper = ContextualTypeContext::with_expected_and_options(
             self.ctx.types,
             type_id,
             self.ctx.compiler_options.no_implicit_any,
@@ -310,10 +311,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Evaluate KeyOf/IndexAccess to concrete form before classification.
-        if is_keyof_type(self.ctx.types, ctx_type)
-            || is_index_access_type(self.ctx.types, ctx_type)
-            || is_conditional_type(self.ctx.types, ctx_type)
-        {
+        if is_evaluable_meta_type(self.ctx.types, ctx_type) {
             let evaluated = self.evaluate_type_with_env(ctx_type);
             if evaluated != ctx_type && evaluated != TypeId::ERROR {
                 return self.contextual_type_allows_literal_inner(evaluated, literal_type, visited);
@@ -479,9 +477,24 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|s| s.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0);
 
             if is_in_resolution_chain && is_type_alias {
+                if target_sym_id == sym_id
+                    && self.type_node_contains_value_type_query_for_alias(type_node, sym_id)
+                {
+                    return false;
+                }
                 let is_direct = if in_union_or_intersection {
                     if target_sym_id == sym_id {
-                        true
+                        !self
+                            .ctx
+                            .symbol_resolution_stack
+                            .iter()
+                            .skip_while(|&&stack_sym| stack_sym != target_sym_id)
+                            .skip(1)
+                            .any(|&stack_sym| {
+                                self.ctx.binder.get_symbol(stack_sym).is_some_and(|symbol| {
+                                    symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0
+                                }) && self.alias_ast_is_deferred(stack_sym)
+                            })
                     } else {
                         let body = self
                             .ctx
@@ -878,6 +891,52 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    fn type_node_contains_value_type_query_for_alias(
+        &self,
+        type_node: NodeIndex,
+        alias_sym_id: SymbolId,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(type_node) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::TYPE_QUERY
+            && let Some(type_query) = self.ctx.arena.get_type_query(node)
+            && let Some(raw_query_sym) =
+                self.resolve_value_symbol_for_lowering(type_query.expr_name)
+        {
+            let query_sym_id = SymbolId(raw_query_sym);
+            if self.value_symbol_matches_alias_name(query_sym_id, alias_sym_id) {
+                return true;
+            }
+        }
+
+        self.ctx
+            .arena
+            .get_children(type_node)
+            .into_iter()
+            .any(|child| self.type_node_contains_value_type_query_for_alias(child, alias_sym_id))
+    }
+
+    fn value_symbol_matches_alias_name(
+        &self,
+        query_sym_id: SymbolId,
+        alias_sym_id: SymbolId,
+    ) -> bool {
+        let Some(alias_symbol) = self.ctx.binder.get_symbol(alias_sym_id) else {
+            return false;
+        };
+        if alias_symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS == 0 {
+            return false;
+        }
+        let Some(query_symbol) = self.ctx.binder.get_symbol(query_sym_id) else {
+            return false;
+        };
+        let query_has_value = query_symbol.value_declaration.is_some()
+            || query_symbol.flags & tsz_binder::symbol_flags::VALUE != 0;
+        query_has_value && query_symbol.escaped_name == alias_symbol.escaped_name
+    }
+
     /// True when the `typeof X` target's variable annotation references any type
     /// alias in the current resolution chain. Marks the chain as circular when
     /// found. AST-only — never resolves x's type, to avoid re-entering alias
@@ -1168,27 +1227,136 @@ impl<'a> CheckerState<'a> {
                 let children = self.ctx.arena.get_children(ta.type_node);
                 if !children.is_empty()
                     && children.iter().all(|&c| {
-                        self.ctx.arena.get(c).is_some_and(|cn| {
-                            let ck = cn.kind;
-                            ck == syntax_kind_ext::ARRAY_TYPE
-                                || ck == syntax_kind_ext::TUPLE_TYPE
-                                || ck == syntax_kind_ext::TYPE_LITERAL
-                                || ck == syntax_kind_ext::MAPPED_TYPE
-                                || ck == syntax_kind_ext::FUNCTION_TYPE
-                                || ck == syntax_kind_ext::CONSTRUCTOR_TYPE
-                                || ck == syntax_kind_ext::TYPE_OPERATOR
-                                || (ck == syntax_kind_ext::TYPE_REFERENCE
-                                    && self
-                                        .ctx
-                                        .arena
-                                        .get_type_ref(cn)
-                                        .and_then(|tr| tr.type_arguments.as_ref())
-                                        .is_some())
-                        })
+                        self.union_alias_child_is_deferred_or_non_recursive(
+                            c,
+                            sym_id,
+                            &mut FxHashSet::default(),
+                        )
                     })
                 {
                     return true;
                 }
+            }
+        }
+        false
+    }
+
+    fn union_alias_child_is_deferred_or_non_recursive(
+        &self,
+        node_idx: NodeIndex,
+        target_sym: SymbolId,
+        visited_aliases: &mut FxHashSet<SymbolId>,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return true;
+        };
+        let k = node.kind;
+        if k == syntax_kind_ext::ARRAY_TYPE
+            || k == syntax_kind_ext::TUPLE_TYPE
+            || k == syntax_kind_ext::TYPE_LITERAL
+            || k == syntax_kind_ext::MAPPED_TYPE
+            || k == syntax_kind_ext::FUNCTION_TYPE
+            || k == syntax_kind_ext::CONSTRUCTOR_TYPE
+            || k == syntax_kind_ext::TYPE_OPERATOR
+        {
+            return true;
+        }
+        if k == syntax_kind_ext::TYPE_REFERENCE {
+            let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
+                return true;
+            };
+            if type_ref.type_arguments.is_some() {
+                return true;
+            }
+            let Some(sym_raw) = self.resolve_type_symbol_for_lowering(type_ref.type_name) else {
+                return true;
+            };
+            let ref_sym = SymbolId(sym_raw);
+            if ref_sym == target_sym {
+                return false;
+            }
+            let Some(symbol) = self.ctx.binder.get_symbol(ref_sym) else {
+                return true;
+            };
+            if symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS == 0 {
+                return true;
+            }
+            if !self.alias_body_references_symbol(ref_sym, target_sym, visited_aliases) {
+                return true;
+            }
+            return self.alias_ast_is_deferred(ref_sym);
+        }
+        !self.ast_node_references_symbol(node_idx, target_sym, visited_aliases)
+    }
+
+    fn alias_body_references_symbol(
+        &self,
+        alias_sym: SymbolId,
+        target_sym: SymbolId,
+        visited_aliases: &mut FxHashSet<SymbolId>,
+    ) -> bool {
+        if !visited_aliases.insert(alias_sym) {
+            return false;
+        }
+        let Some(symbol) = self.ctx.binder.get_symbol(alias_sym) else {
+            return false;
+        };
+        symbol.declarations.iter().any(|&decl_idx| {
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                return false;
+            };
+            decl_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                && self
+                    .ctx
+                    .arena
+                    .get_type_alias(decl_node)
+                    .is_some_and(|alias| {
+                        self.ast_node_references_symbol(
+                            alias.type_node,
+                            target_sym,
+                            visited_aliases,
+                        )
+                    })
+        })
+    }
+
+    fn ast_node_references_symbol(
+        &self,
+        root_idx: NodeIndex,
+        target_sym: SymbolId,
+        visited_aliases: &mut FxHashSet<SymbolId>,
+    ) -> bool {
+        let mut stack = vec![root_idx];
+        while let Some(node_idx) = stack.pop() {
+            let Some(node) = self.ctx.arena.get(node_idx) else {
+                continue;
+            };
+            let lookup_target_idx = if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                self.ctx.arena.get_type_ref(node).map(|tr| tr.type_name)
+            } else if node.kind == SyntaxKind::Identifier as u16 {
+                Some(node_idx)
+            } else {
+                None
+            };
+            if let Some(target_idx) = lookup_target_idx
+                && let Some(sym_raw) = self.resolve_type_symbol_for_lowering(target_idx)
+            {
+                let sym_id = SymbolId(sym_raw);
+                if sym_id == target_sym {
+                    return true;
+                }
+                if self
+                    .ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .is_some_and(|symbol| symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0)
+                    && self.alias_body_references_symbol(sym_id, target_sym, visited_aliases)
+                {
+                    return true;
+                }
+            }
+            for child_idx in self.ctx.arena.get_children(node_idx) {
+                stack.push(child_idx);
             }
         }
         false

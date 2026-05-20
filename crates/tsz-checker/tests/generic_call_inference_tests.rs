@@ -13,9 +13,9 @@
 
 use tsz_checker::context::CheckerOptions;
 
-use std::path::Path;
 use std::sync::Arc;
 use tsz_binder::lib_loader::LibFile;
+use tsz_checker::test_utils::{check_source_with_libs_code_messages, load_compiled_lib_files};
 
 fn compile_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
     tsz_checker::test_utils::check_source(source, "test.ts", CheckerOptions::default())
@@ -24,36 +24,38 @@ fn compile_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
         .collect()
 }
 
-fn load_es5_lib_files_for_test() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_paths = [
-        manifest_dir.join("../../TypeScript/lib/lib.es5.d.ts"),
-        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-    ];
+fn compile_and_get_raw_diagnostics(source: &str) -> Vec<tsz_checker::diagnostics::Diagnostic> {
+    tsz_checker::test_utils::check_source(source, "test.ts", CheckerOptions::default())
+}
 
-    lib_paths
-        .iter()
-        .filter_map(|lib_path| {
-            let content = std::fs::read_to_string(lib_path).ok()?;
-            let file_name = lib_path.file_name()?.to_string_lossy().to_string();
-            Some(Arc::new(LibFile::from_source(file_name, content)))
-        })
-        .collect()
+fn load_es5_lib_files_for_test() -> Vec<Arc<LibFile>> {
+    load_compiled_lib_files(&["lib.es5.d.ts"])
+}
+
+fn load_es2015_lib_files_for_test() -> Vec<Arc<LibFile>> {
+    load_compiled_lib_files(&[
+        "lib.es5.d.ts",
+        "lib.es2015.d.ts",
+        "lib.es2015.core.d.ts",
+        "lib.es2015.collection.d.ts",
+        "lib.es2015.iterable.d.ts",
+        "lib.es2015.generator.d.ts",
+        "lib.es2015.promise.d.ts",
+        "lib.es2015.proxy.d.ts",
+        "lib.es2015.reflect.d.ts",
+        "lib.es2015.symbol.d.ts",
+        "lib.es2015.symbol.wellknown.d.ts",
+    ])
 }
 
 fn compile_with_es5_lib_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
     let lib_files = load_es5_lib_files_for_test();
-    tsz_checker::test_utils::check_source_with_libs(
-        source,
-        "test.ts",
-        CheckerOptions::default(),
-        &lib_files,
-    )
-    .into_iter()
-    .map(|d| (d.code, d.message_text))
-    .collect()
+    check_source_with_libs_code_messages(source, "test.ts", CheckerOptions::default(), &lib_files)
+}
+
+fn compile_with_es2015_lib_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
+    let lib_files = load_es2015_lib_files_for_test();
+    check_source_with_libs_code_messages(source, "test.ts", CheckerOptions::default(), &lib_files)
 }
 
 fn relevant_lib_diagnostics(source: &str) -> Vec<(u32, String)> {
@@ -115,16 +117,106 @@ fn relevant_strict_diagnostics(source: &str) -> Vec<(u32, String)> {
 
 fn relevant_default_lib_diagnostics(source: &str) -> Vec<(u32, String)> {
     let lib_files = tsz_checker::test_utils::load_default_lib_files();
-    tsz_checker::test_utils::check_source_with_libs(
+    check_source_with_libs_code_messages(source, "test.ts", CheckerOptions::default(), &lib_files)
+        .into_iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect()
+}
+
+fn relevant_strict_default_lib_diagnostics(source: &str) -> Vec<(u32, String)> {
+    let lib_files = tsz_checker::test_utils::load_default_lib_files();
+    check_source_with_libs_code_messages(
         source,
         "test.ts",
-        CheckerOptions::default(),
+        CheckerOptions {
+            strict: true,
+            no_implicit_any: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
         &lib_files,
     )
     .into_iter()
-    .filter(|d| d.code != 2318)
-    .map(|d| (d.code, d.message_text))
+    .filter(|(code, _)| *code != 2318)
     .collect()
+}
+
+// -----------------------------------------------------------------------------
+// Diagnostic assertion helpers
+//
+// These collapse the repeated `.iter().filter(...).count()` /
+// `.iter().any(...)` / `.iter().find(...)` patterns that show up across the
+// many generic call inference tests. They are intentionally tiny and
+// behavior-preserving: each call expands to the same closure-over-`code` /
+// `(code, message)` pattern the tests already use.
+// -----------------------------------------------------------------------------
+
+/// Number of diagnostics with the given TS code.
+fn diagnostic_count(diagnostics: &[(u32, String)], code: u32) -> usize {
+    diagnostics
+        .iter()
+        .filter(|(actual, _)| *actual == code)
+        .count()
+}
+
+/// Borrowed messages for diagnostics with the given TS code, in order.
+fn diagnostics_with_code(diagnostics: &[(u32, String)], code: u32) -> Vec<&str> {
+    diagnostics
+        .iter()
+        .filter_map(|(actual, message)| (*actual == code).then_some(message.as_str()))
+        .collect()
+}
+
+/// True if at least one diagnostic has the given TS code.
+fn has_diagnostic_code(diagnostics: &[(u32, String)], code: u32) -> bool {
+    diagnostics.iter().any(|(actual, _)| *actual == code)
+}
+
+/// True if no diagnostic has the given TS code.
+fn lacks_diagnostic_code(diagnostics: &[(u32, String)], code: u32) -> bool {
+    !has_diagnostic_code(diagnostics, code)
+}
+
+/// True if at least one diagnostic's code is in the given list.
+fn has_any_diagnostic_code(diagnostics: &[(u32, String)], codes: &[u32]) -> bool {
+    diagnostics.iter().any(|(actual, _)| codes.contains(actual))
+}
+
+/// True if no diagnostic's code is in the given list.
+fn lacks_any_diagnostic_code(diagnostics: &[(u32, String)], codes: &[u32]) -> bool {
+    !has_any_diagnostic_code(diagnostics, codes)
+}
+
+/// True if at least one diagnostic with the given code has a message
+/// containing the given fragment.
+fn has_diagnostic_message_containing(
+    diagnostics: &[(u32, String)],
+    code: u32,
+    fragment: &str,
+) -> bool {
+    diagnostics_with_code(diagnostics, code)
+        .iter()
+        .any(|message| message.contains(fragment))
+}
+
+#[test]
+fn readonly_const_tuple_spread_into_fixed_arity_generic_call_no_ts2554() {
+    let diagnostics = relevant_default_lib_diagnostics(
+        r#"
+function infer<T, U, V>(a: T, b: U, c: V): [T, U, V] {
+    return [a, b, c];
+}
+
+const args = [1, 'hello', true] as const;
+const result = infer(...args);
+const check: [1, 'hello', true] = result;
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "Expected readonly const tuple spread to satisfy fixed-arity generic call; got: {diagnostics:#?}"
+    );
 }
 
 #[test]
@@ -148,8 +240,27 @@ opt1.zip(opt2, opt3);
 
     let diagnostics = relevant_lib_diagnostics(source);
     assert!(
-        !diagnostics.iter().any(|(code, _)| *code == 2345),
+        lacks_diagnostic_code(&diagnostics, 2345),
         "rest tuple should satisfy Array<Option<any>> constraint: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn generic_rest_parameter_infers_literal_tuple_under_primitive_array_constraint() {
+    let diagnostics = relevant_default_lib_diagnostics(
+        r#"
+function typed<T extends string[]>(...args: T): T {
+    return args;
+}
+
+const t1 = typed("a", "b", "c");
+const check1: ["a", "b", "c"] = t1;
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "generic rest parameter should infer a tuple of string literal types; got: {diagnostics:#?}"
     );
 }
 
@@ -169,16 +280,18 @@ doSomething(['v']); // ok: T = string[], parameter reduces to string[]
 doSomething([{ foo() {} }]); // ok: T = { foo(): void }[]
 "#;
     let diags = relevant_diagnostics(source);
-    let ts2345: Vec<_> = diags.iter().filter(|(code, _)| *code == 2345).collect();
+    let ts2345 = diagnostics_with_code(&diags, 2345);
     assert_eq!(
         ts2345.len(),
         1,
         "Only the string argument should fail after branch inference. Diagnostics: {diags:#?}"
     );
     assert!(
-        ts2345
-            .iter()
-            .any(|(_, msg)| msg.contains("not assignable to parameter of type 'never'")),
+        has_diagnostic_message_containing(
+            &diags,
+            2345,
+            "not assignable to parameter of type 'never'",
+        ),
         "The rejected string branch should reduce the parameter to never. Diagnostics: {diags:#?}"
     );
 }
@@ -201,13 +314,13 @@ declare function acceptsComparable(value: Comparable<number>, ...rest: number[])
 acceptsComparable(1, 2);
 "#;
     let diags = relevant_diagnostics(source);
-    let ts2345: Vec<_> = diags.iter().filter(|(code, _)| *code == 2345).collect();
+    let ts2345 = diagnostics_with_code(&diags, 2345);
     assert_eq!(
         ts2345.len(),
         1,
         "expected one TS2345 for acceptsComparable(1, 2); got: {diags:#?}"
     );
-    let msg = &ts2345[0].1;
+    let msg = ts2345[0];
     assert!(
         msg.contains("parameter of type 'Comparable<number>'"),
         "diagnostic must report the declared parameter type, not a synthesized \
@@ -234,13 +347,13 @@ declare function acceptsComparable(value: Comparable<number>, ...rest: number[])
 acceptsComparable(1, 2, 3);
 "#;
     let diags = relevant_diagnostics(source);
-    let ts2345: Vec<_> = diags.iter().filter(|(code, _)| *code == 2345).collect();
+    let ts2345 = diagnostics_with_code(&diags, 2345);
     assert_eq!(
         ts2345.len(),
         1,
         "expected one TS2345 for acceptsComparable(1, 2, 3); got: {diags:#?}"
     );
-    let msg = &ts2345[0].1;
+    let msg = ts2345[0];
     assert!(
         msg.contains("parameter of type 'Comparable<number>'"),
         "diagnostic must report the declared parameter type. Got: {msg}"
@@ -249,6 +362,180 @@ acceptsComparable(1, 2, 3);
         !msg.contains("Comparable<1 | 2 | 3>"),
         "the source-text rewrite must not synthesize a literal-union \
          instantiation of `Comparable`. Got: {msg}"
+    );
+}
+
+#[test]
+fn self_referential_constraint_fallback_displays_literal_union_candidates() {
+    // The call is invalid because number primitives do not satisfy
+    // Comparable<T>. Inference still observes both literal candidates before
+    // widening them for assignability, and tsc uses that candidate union in the
+    // constraint display.
+    let source = r#"
+interface Comparable<T> {
+    compareTo(other: T): number;
+}
+interface Comparer {
+    <T extends Comparable<T>>(x: T, y: T): T;
+}
+declare const max2: Comparer;
+max2(1, 2);
+"#;
+    let diags = relevant_diagnostics(source);
+    let ts2345 = diagnostics_with_code(&diags, 2345);
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "expected one TS2345 for max2(1, 2); got: {diags:#?}"
+    );
+    let msg = ts2345[0];
+    assert!(
+        msg.contains("Argument of type 'number'"),
+        "source should still be the widened primitive. Got: {msg}"
+    );
+    assert!(
+        msg.contains("parameter of type 'Comparable<1 | 2>'"),
+        "constraint fallback should display the literal candidate union. Got: {msg}"
+    );
+    assert!(
+        !msg.contains("Comparable<number>"),
+        "constraint fallback must not lose literal candidate provenance. Got: {msg}"
+    );
+}
+
+#[test]
+fn self_referential_constraint_fallback_preserves_literal_union_after_contextual_assignment() {
+    let source = r#"
+interface Comparable<T> {
+    compareTo(other: T): number;
+}
+interface Comparer {
+    <T extends Comparable<T>>(x: T, y: T): T;
+}
+var max2: Comparer = (x, y) => { return (x.compareTo(y) > 0) ? x : y };
+var maxResult = max2(1, 2);
+"#;
+    let diags = relevant_diagnostics(source);
+    let ts2345 = diagnostics_with_code(&diags, 2345);
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "expected one TS2345 for max2(1, 2); got: {diags:#?}"
+    );
+    let msg = ts2345[0];
+    assert!(
+        msg.contains("Argument of type 'number'"),
+        "source should still be widened for primitive literal candidates. Got: {msg}"
+    );
+    assert!(
+        msg.contains("parameter of type 'Comparable<1 | 2>'"),
+        "contextual function assignment should not erase literal candidate display. Got: {msg}"
+    );
+    assert!(
+        !msg.contains("Comparable<number>"),
+        "constraint fallback must not display the widened primitive candidate. Got: {msg}"
+    );
+}
+
+#[test]
+fn self_referential_constraint_fallback_anchors_first_argument_after_contextual_assignment() {
+    let source = r#"
+interface Comparable<T> {
+    compareTo(other: T): number;
+}
+interface Comparer {
+    <T extends Comparable<T>>(x: T, y: T): T;
+}
+var max2: Comparer = (x, y) => { return (x.compareTo(y) > 0) ? x : y };
+    var maxResult = max2(1, 2);
+"#;
+    let diagnostics = compile_and_get_raw_diagnostics(source);
+    let first_arg_start = source.find("max2(1, 2)").expect("expected call") + "max2(".len();
+    let matching_ts2345: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2345 && diag.start == first_arg_start as u32)
+        .collect();
+    assert_eq!(
+        matching_ts2345.len(),
+        1,
+        "expected exactly one TS2345 anchored at max2's first argument. Got: {diagnostics:#?}"
+    );
+    let ts2345 = matching_ts2345[0];
+
+    assert_eq!(
+        ts2345.start, first_arg_start as u32,
+        "TS2345 should anchor the first failing argument. Got: {ts2345:#?}"
+    );
+    assert_eq!(ts2345.length, 1, "TS2345 should cover only `1`");
+    assert!(
+        ts2345
+            .message_text
+            .contains("parameter of type 'Comparable<1 | 2>'"),
+        "expected literal candidate display at the conformance anchor. Got: {ts2345:#?}"
+    );
+}
+
+#[test]
+fn self_referential_constraint_fallback_display_scales_beyond_two_candidates() {
+    let source = r#"
+interface Wrapped<T> {
+    value: T;
+}
+interface UseWrapped {
+    <T extends Wrapped<T>>(a: T, b: T, c: T): T;
+}
+declare const useWrapped: UseWrapped;
+useWrapped("a", "b", "c");
+"#;
+    let diags = relevant_diagnostics(source);
+    let ts2345 = diagnostics_with_code(&diags, 2345);
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "expected one TS2345 for useWrapped literals; got: {diags:#?}"
+    );
+    let msg = ts2345[0];
+    assert!(
+        msg.contains("Argument of type 'string'"),
+        "source should still be widened for primitive literal candidates. Got: {msg}"
+    );
+    assert!(
+        msg.contains("parameter of type 'Wrapped<\"a\" | \"b\" | \"c\">'"),
+        "display provenance should preserve all literal candidates. Got: {msg}"
+    );
+}
+
+#[test]
+fn self_referential_constraint_fallback_displays_canonical_boolean_candidate() {
+    let source = r#"
+interface Wrapped<T> {
+    value: T;
+}
+interface UseWrapped {
+    <T extends Wrapped<T>>(a: T, b: T): T;
+}
+declare const useWrapped: UseWrapped;
+useWrapped(true, false);
+"#;
+    let diags = relevant_diagnostics(source);
+    let ts2345 = diagnostics_with_code(&diags, 2345);
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "expected one TS2345 for boolean literal candidates; got: {diags:#?}"
+    );
+    let msg = ts2345[0];
+    assert!(
+        msg.contains("Argument of type 'boolean'"),
+        "source should still be widened for primitive boolean candidates. Got: {msg}"
+    );
+    assert!(
+        msg.contains("parameter of type 'Wrapped<boolean>'"),
+        "true/false candidate unions should display through the canonical boolean type. Got: {msg}"
+    );
+    assert!(
+        !msg.contains("Wrapped<true") && !msg.contains("Wrapped<false"),
+        "boolean constraint fallback should not spell true/false as a literal union. Got: {msg}"
     );
 }
 
@@ -269,7 +556,7 @@ var newPromise = numPromise.then(testFunction);
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        diags.iter().any(|(code, _)| *code == 2345),
+        has_diagnostic_code(&diags, 2345),
         "Overloaded function argument should infer U from the last overload and reject the number callback. Diagnostics: {diags:#?}"
     );
 }
@@ -290,8 +577,94 @@ var newPromise = numPromise.then(testFunction);
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        diags.iter().any(|(code, _)| *code == 2769),
+        has_diagnostic_code(&diags, 2769),
         "Overloaded method should reject every candidate and report TS2769. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn namespace_local_promise_overloaded_method_diagnostics_shadow_lib_promise() {
+    let source = r#"
+namespace m2 {
+    interface Promise<T> {
+        then<U>(cb: (x: T) => Promise<U>): Promise<U>;
+    }
+
+    declare function testFunction(n: number): Promise<number>;
+    declare function testFunction(s: string): Promise<string>;
+
+    declare var numPromise: Promise<number>;
+    var newPromise = numPromise.then(testFunction);
+}
+
+namespace m4 {
+    interface Promise<T> {
+        then<U>(cb: (x: T) => Promise<U>): Promise<U>;
+        then<U>(cb: (x: T) => Promise<U>, error?: (error: any) => Promise<U>): Promise<U>;
+    }
+
+    declare function testFunction(n: number): Promise<number>;
+    declare function testFunction(s: string): Promise<string>;
+
+    declare var numPromise: Promise<number>;
+    var newPromise = numPromise.then(testFunction);
+}
+
+namespace m5 {
+    interface Promise<T> {
+        then<U>(cb: (x: T) => Promise<U>): Promise<U>;
+        then<U>(cb: (x: T) => Promise<U>, error?: (error: any) => Promise<U>): Promise<U>;
+        then<U>(cb: (x: T) => Promise<U>, error?: (error: any) => U, progress?: (preservation: any) => void): Promise<U>;
+    }
+
+    declare function testFunction(n: number): Promise<number>;
+    declare function testFunction(s: string): Promise<string>;
+
+    declare var numPromise: Promise<number>;
+    var newPromise = numPromise.then(testFunction);
+}
+
+namespace m6 {
+    interface Promise<T> {
+        then<U>(cb: (x: T) => Promise<U>): Promise<U>;
+        then<U>(cb: (x: T) => Promise<U>, error?: (error: any) => Promise<U>): Promise<U>;
+    }
+
+    declare function testFunction(n: number): Promise<number>;
+    declare function testFunction(s: string): Promise<string>;
+    declare function testFunction(b: boolean): Promise<boolean>;
+
+    declare var numPromise: Promise<number>;
+    var newPromise = numPromise.then(testFunction);
+}
+"#;
+
+    let diagnostics: Vec<_> = compile_with_es2015_lib_and_get_diagnostics(source)
+        .into_iter()
+        .filter(|(code, _)| matches!(*code, 2345 | 2769))
+        .collect();
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2345 && message.contains("parameter of type '(x: number) => Promise<string>'")
+        }),
+        "m2 should diagnose against the namespace-local Promise, not lib PromiseLike. Diagnostics: {diagnostics:#?}",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .filter(|(code, message)| {
+                *code == 2769 && message.contains("No overload matches this call.")
+            })
+            .count()
+            >= 3,
+        "overloaded namespace-local Promise.then mismatches should report TS2769. Diagnostics: {diagnostics:#?}",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|(_, message)| !message.contains("PromiseLike")),
+        "namespace-local Promise diagnostics must not leak lib PromiseLike. Diagnostics: {diagnostics:#?}",
     );
 }
 
@@ -307,7 +680,7 @@ const result = map(["a", "b"], x => x.length);
     let diags = relevant_diagnostics(source);
     // x should be contextually typed as string; x.length should work
     assert!(
-        diags.iter().all(|(code, _)| *code != 2339),
+        lacks_diagnostic_code(&diags, 2339),
         "Callback parameter should be contextually typed. Diagnostics: {diags:#?}"
     );
 }
@@ -321,7 +694,7 @@ const result = zip([1, 2], ["a", "b"], (x, y) => [x, y]);
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        diags.iter().all(|(code, _)| *code != 7006),
+        lacks_diagnostic_code(&diags, 7006),
         "Multi-param generic should contextually type all callback params. Diagnostics: {diags:#?}"
     );
 }
@@ -393,6 +766,24 @@ const x: string = identity("hello");
 }
 
 #[test]
+fn generic_identity_preserves_single_literal_argument() {
+    let source = r#"
+function identity<T>(x: T): T { return x; }
+const result = identity("test");
+const check: "test" = result;
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        !has_diagnostic_message_containing(
+            &diags,
+            2322,
+            "Type 'string' is not assignable to type '\"test\"'",
+        ),
+        "generic identity should preserve a single direct literal candidate. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
 fn return_context_detects_mismatch() {
     let source = r#"
 declare function identity<T>(x: T): T;
@@ -400,7 +791,7 @@ const x: string = identity(42);
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        diags.iter().any(|(code, _)| *code == 2322),
+        has_diagnostic_code(&diags, 2322),
         "Should detect type mismatch: number not assignable to string. Diagnostics: {diags:#?}"
     );
 }
@@ -417,7 +808,7 @@ const result = apply(x => x, 42);
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        diags.iter().all(|(code, _)| *code != 7006),
+        lacks_diagnostic_code(&diags, 7006),
         "Generic callback should be refined. Diagnostics: {diags:#?}"
     );
 }
@@ -429,15 +820,17 @@ declare function bar<T>(item1: T, item2: T): T;
 bar(1, "");
 "#;
     let diags = relevant_diagnostics(source);
-    let ts2345 = diags.iter().find(|(code, _)| *code == 2345);
     assert!(
-        ts2345.is_some(),
+        has_diagnostic_code(&diags, 2345),
         "Expected TS2345 for conflicting direct inference candidates. Diagnostics: {diags:#?}"
     );
-    let msg = &ts2345.unwrap().1;
     assert!(
-        msg.contains("Argument of type '\"\"' is not assignable to parameter of type '1'."),
-        "TS2345 should preserve direct literal candidates. Got: {msg:?}"
+        has_diagnostic_message_containing(
+            &diags,
+            2345,
+            "Argument of type '\"\"' is not assignable to parameter of type '1'.",
+        ),
+        "TS2345 should preserve direct literal candidates. Diagnostics: {diags:#?}"
     );
 }
 
@@ -448,15 +841,17 @@ declare function g<T>(a: T, b: T, c: (t: T) => T): T;
 g("", 3, a => a);
 "#;
     let diags = relevant_diagnostics(source);
-    let ts2345 = diags.iter().find(|(code, _)| *code == 2345);
     assert!(
-        ts2345.is_some(),
+        has_diagnostic_code(&diags, 2345),
         "Expected TS2345 for conflicting direct candidates before callback inference. Diagnostics: {diags:#?}"
     );
-    let msg = &ts2345.unwrap().1;
     assert!(
-        msg.contains("Argument of type '3' is not assignable to parameter of type '\"\"'."),
-        "TS2345 should preserve the first direct literal inference candidate in the diagnostic. Got: {msg:?}"
+        has_diagnostic_message_containing(
+            &diags,
+            2345,
+            "Argument of type '3' is not assignable to parameter of type '\"\"'.",
+        ),
+        "TS2345 should preserve the first direct literal inference candidate. Diagnostics: {diags:#?}"
     );
 }
 
@@ -467,15 +862,17 @@ declare function rest<T>(...items: T[]): T;
 rest(1, "");
 "#;
     let diags = relevant_diagnostics(source);
-    let ts2345 = diags.iter().find(|(code, _)| *code == 2345);
     assert!(
-        ts2345.is_some(),
+        has_diagnostic_code(&diags, 2345),
         "Expected TS2345 for conflicting rest inference candidates. Diagnostics: {diags:#?}"
     );
-    let msg = &ts2345.unwrap().1;
     assert!(
-        msg.contains("Argument of type 'string' is not assignable to parameter of type 'number'."),
-        "TS2345 should display primitive bases for conflicting rest generic candidates. Got: {msg:?}"
+        has_diagnostic_message_containing(
+            &diags,
+            2345,
+            "Argument of type 'string' is not assignable to parameter of type 'number'.",
+        ),
+        "TS2345 should display primitive bases for conflicting rest generic candidates. Diagnostics: {diags:#?}"
     );
 }
 
@@ -492,8 +889,8 @@ var b = bar(1, "one", g);
 var b = bar("one", 1, g);
 "#;
     let diags = relevant_diagnostics(source);
-    let ts2345_count = diags.iter().filter(|(code, _)| *code == 2345).count();
-    let ts2403_count = diags.iter().filter(|(code, _)| *code == 2403).count();
+    let ts2345_count = diagnostic_count(&diags, 2345);
+    let ts2403_count = diagnostic_count(&diags, 2403);
     assert!(
         ts2345_count >= 3,
         "Expected TS2345 for each incompatible contextual generic callback. Diagnostics: {diags:#?}"
@@ -566,7 +963,7 @@ var newPromise = numPromise.then(testFunction);
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        diags.iter().any(|(code, _)| *code == 2345),
+        has_diagnostic_code(&diags, 2345),
         "Expected TS2345 when the overloaded argument's last signature fixes U=string. Diagnostics: {diags:#?}"
     );
 }
@@ -645,7 +1042,7 @@ testSet.transform(
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        diags.iter().any(|(code, _)| *code == 2339),
+        has_diagnostic_code(&diags, 2339),
         "Expected TS2339 after higher-order generic inference mismatch. Diagnostics: {diags:#?}"
     );
 }
@@ -658,7 +1055,7 @@ const z: number | undefined = match(y => y > 0);
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        diags.iter().any(|(code, _)| *code == 18048),
+        has_diagnostic_code(&diags, 18048),
         "Expected TS18048 when callback parameter inherits number | undefined. Diagnostics: {diags:#?}"
     );
 }
@@ -684,7 +1081,7 @@ foo2([match(y => y > 0)]);
     //
     // See `contextuallyTypedOptionalProperty.ts` in the TypeScript conformance
     // suite (issue #55164) for the canonical baseline expecting both errors.
-    let ts18048_count = diags.iter().filter(|(code, _)| *code == 18048).count();
+    let ts18048_count = diagnostic_count(&diags, 18048);
     assert_eq!(
         ts18048_count, 2,
         "Expected TS18048 for both optional-wrapper callback sites. Diagnostics: {diags:#?}"
@@ -702,7 +1099,7 @@ f13(tx2);
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        diags.iter().all(|(code, _)| *code != 2345),
+        lacks_diagnostic_code(&diags, 2345),
         "Expected no TS2345 for [string | undefined] against [T?]-based generics. Diagnostics: {diags:#?}"
     );
 }
@@ -720,7 +1117,7 @@ useMapper(["a", "b"], combine(wrap(s => s.length), wrap(n => n > 10)));
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        diags.iter().all(|(code, _)| *code != 2339),
+        lacks_diagnostic_code(&diags, 2339),
         "Expected no stale TS2339 after callback recheck narrows `n` to number. Diagnostics: {diags:#?}"
     );
 }
@@ -819,7 +1216,7 @@ layerEffect(
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        diags.iter().all(|(code, _)| *code != 2345),
+        lacks_diagnostic_code(&diags, 2345),
         "Expected no stale TS2345 for class-tag contextual generator callback. Diagnostics: {diags:#?}"
     );
 }
@@ -888,7 +1285,7 @@ layerEffect(
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        diags.iter().all(|(code, _)| *code != 2345),
+        lacks_diagnostic_code(&diags, 2345),
         "Expected return-context retry to discard stale TS2345 for the generator callback. Diagnostics: {diags:#?}"
     );
 }
@@ -926,7 +1323,7 @@ bot.on("shardDisconnect", event => {
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        diags.iter().all(|(code, _)| *code != 2339),
+        lacks_diagnostic_code(&diags, 2339),
         "Expected no stale TS2339 for tuple listener recheck. Diagnostics: {diags:#?}"
     );
 }
@@ -996,7 +1393,7 @@ process([{ x: 1, y: 2 }], ({ x }) => { const _n: number = x; });
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        diags.iter().all(|(code, _)| *code != 2345 && *code != 7031),
+        lacks_any_diagnostic_code(&diags, &[2345, 7031]),
         "Binding patterns should not pollute inference. Diagnostics: {diags:#?}"
     );
 }
@@ -1035,7 +1432,7 @@ const _n: number = result;
     let diags = relevant_diagnostics(source);
     // `result` is `any` from `any[]` input, so assigning to `number` is fine
     assert!(
-        diags.iter().all(|(code, _)| *code != 2322),
+        lacks_diagnostic_code(&diags, 2322),
         "any-inferred result should be assignable to number. Diagnostics: {diags:#?}"
     );
 }
@@ -1067,7 +1464,7 @@ const k = keys(Direction);
     let diags = relevant_diagnostics(source);
     // Should not produce TS2345 for enum passed as object
     assert!(
-        diags.iter().all(|(code, _)| *code != 2345),
+        lacks_diagnostic_code(&diags, 2345),
         "Enum should be usable as object argument. Diagnostics: {diags:#?}"
     );
 }
@@ -1101,7 +1498,7 @@ const result: string[] = wrap("hello");
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        diags.iter().all(|(code, _)| *code != 2322),
+        lacks_diagnostic_code(&diags, 2322),
         "Return context should infer T=string through array type. Diagnostics: {diags:#?}"
     );
 }
@@ -1115,7 +1512,7 @@ const result: [number, string] = pair(1, "a");
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        diags.iter().all(|(code, _)| *code != 2322),
+        lacks_diagnostic_code(&diags, 2322),
         "Return context should infer through tuple types. Diagnostics: {diags:#?}"
     );
 }
@@ -1151,7 +1548,7 @@ const result = create((x) => { const _v = x.value; });
     let diags = relevant_diagnostics(source);
     // The callback param `x` should get a usable contextual type, not `any`
     assert!(
-        diags.iter().all(|(code, _)| *code != 2339),
+        lacks_diagnostic_code(&diags, 2339),
         "Self-referential constraint should resolve to usable contextual type. Diagnostics: {diags:#?}"
     );
 }
@@ -1223,7 +1620,7 @@ const mutable = keepMutable(["a", "b"]);
 mutable[0] = "z";
 "#;
     let diags = relevant_diagnostics(source);
-    let ts2540 = diags.iter().filter(|(code, _)| *code == 2540).count();
+    let ts2540 = diagnostic_count(&diags, 2540);
     assert_eq!(
         ts2540, 4,
         "const T should infer readonly tuple/object literals while mutable T remains writable. Diagnostics: {diags:#?}"
@@ -1239,7 +1636,7 @@ let mutableArray: string[] = fromReadonlyConstraint;
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        diags.iter().any(|(code, _)| *code == 4104),
+        has_diagnostic_code(&diags, 4104),
         "const T inferred readonly tuple should not assign to mutable array. Diagnostics: {diags:#?}"
     );
 }
@@ -1255,7 +1652,7 @@ mutableRest("hello", 42);
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        !diags.iter().any(|(code, _)| *code == 2345),
+        lacks_diagnostic_code(&diags, 2345),
         "mutable array constraints on const T should not force readonly argument types. Diagnostics: {diags:#?}"
     );
 }
@@ -1270,7 +1667,7 @@ mixed([1, 2, 3]);
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        !diags.iter().any(|(code, _)| *code == 2345),
+        lacks_diagnostic_code(&diags, 2345),
         "mixed mutable/readonly array constraints on const T should accept matching array literals. Diagnostics: {diags:#?}"
     );
 }
@@ -1293,7 +1690,7 @@ objectViaConstParam.tag = "ok";
 objectViaConstParam.nested.value = 1;
 "#;
     let diags = relevant_js_diagnostics(source);
-    let ts2540 = diags.iter().filter(|(code, _)| *code == 2540).count();
+    let ts2540 = diagnostic_count(&diags, 2540);
     assert_eq!(
         ts2540, 3,
         "JSDoc @template const should infer readonly tuple/object literals. Diagnostics: {diags:#?}"
@@ -1329,7 +1726,7 @@ const result = apply((x) => x, 42);
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        diags.iter().all(|(code, _)| *code != 7006),
+        lacks_diagnostic_code(&diags, 7006),
         "Callback should get contextual typing from most specific candidate. Diagnostics: {diags:#?}"
     );
 }
@@ -1346,7 +1743,7 @@ apply((a, b) => {}, 1, "hello");
     let diags = relevant_diagnostics(source);
     // Should not produce TS7006 for callback params when rest provides context
     assert!(
-        diags.iter().all(|(code, _)| *code != 7006),
+        lacks_diagnostic_code(&diags, 7006),
         "Rest parameter should provide contextual typing for callback. Diagnostics: {diags:#?}"
     );
 }
@@ -1364,7 +1761,7 @@ const result: string | null = id("hello");
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        diags.iter().all(|(code, _)| *code != 2322),
+        lacks_diagnostic_code(&diags, 2322),
         "Return context should handle nullable union targets. Diagnostics: {diags:#?}"
     );
 }
@@ -1385,7 +1782,7 @@ consume(wrap(42));
     // May or may not produce errors depending on Iterable availability,
     // but should not crash or produce internal errors.
     assert!(
-        diags.iter().all(|(code, _)| *code != 0),
+        lacks_diagnostic_code(&diags, 0),
         "Array-to-iterable matching should not crash. Diagnostics: {diags:#?}"
     );
 }
@@ -1444,11 +1841,43 @@ choosePlain("a", "b");
 choose<"a">("a", "b");
 "#;
     let diags = relevant_diagnostics(source);
-    let ts2345: Vec<_> = diags.iter().filter(|(code, _)| *code == 2345).collect();
+    let ts2345 = diagnostics_with_code(&diags, 2345);
     assert_eq!(
         ts2345.len(),
         3,
         "NoInfer fallback positions and explicit type args should reject \"b\", while plain T should infer from both arguments. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn explicit_boolean_literal_type_arguments_stay_literal() {
+    let source = r#"
+declare function id<T>(value: T): T;
+id<true>(true);
+id<true>(false);
+id<false>(false);
+id<false>(true);
+
+declare let zero: { <T>(): T };
+const zeroTrue: true = zero<true>(true);
+const zeroFalse: false = zero<false>(false);
+
+declare let f: { <T>(): T, g<U>(): U };
+const inferred = f<true>(true);
+const keepTrue: true = inferred;
+const rejectFalse: false = inferred;
+"#;
+    let diags = relevant_diagnostics(source);
+    let ts2345 = diagnostics_with_code(&diags, 2345);
+    let ts2322 = diagnostics_with_code(&diags, 2322);
+    assert_eq!(
+        ts2345.len(),
+        2,
+        "Explicit true/false type arguments should remain boolean literal types. Diagnostics: {diags:#?}"
+    );
+    assert!(
+        ts2322.len() == 1,
+        "Instantiation expression call results should not widen boolean literals. Diagnostics: {diags:#?}"
     );
 }
 
@@ -1460,7 +1889,7 @@ chooseProp("a", { x: "b" });
 chooseProp("a", { x: "a" });
 "#;
     let diags = relevant_diagnostics(source);
-    let ts2322: Vec<_> = diags.iter().filter(|(code, _)| *code == 2322).collect();
+    let ts2322 = diagnostics_with_code(&diags, 2322);
     assert_eq!(
         ts2322.len(),
         1,
@@ -1476,11 +1905,151 @@ chooseProp("a", { x: "b" });
 chooseProp("a", { x: "a" });
 "#;
     let diags = relevant_lib_diagnostics(source);
-    let ts2322: Vec<_> = diags.iter().filter(|(code, _)| *code == 2322).collect();
+    let ts2322 = diagnostics_with_code(&diags, 2322);
     assert_eq!(
         ts2322.len(),
         1,
         "Lib intrinsic NoInfer nested in an object property should reject only the \"b\" property. Diagnostics: {diags:#?}"
+    );
+}
+
+// ─── NoInfer with array arguments (issue #6363) ──────────────────────
+
+#[test]
+fn noinfer_array_argument_widens_to_primitive() {
+    let source = r#"
+declare function choose<T>(options: T[], fallback: NoInfer<T>): T;
+choose(["a", "b", "c"], "d");
+choose(["a", "b", "c"], "a");
+choose([1, 2, 3], 4);
+choose([true, false], true);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "array literal widens T to primitive so NoInfer fallback passes. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn noinfer_array_single_element_widens_to_primitive() {
+    let source = r#"
+declare function choose<T>(options: T[], fallback: NoInfer<T>): T;
+choose(["a"], "b");
+choose([1], 2);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "single-element array widens to primitive for NoInfer fallback. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn noinfer_array_renamed_type_param_widens_to_primitive() {
+    let source = r#"
+declare function pick<U>(candidates: U[], default_value: NoInfer<U>): U;
+pick(["x", "y", "z"], "w");
+pick([10, 20], 30);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "widening is not name-sensitive: different type-param name. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn noinfer_scalar_literal_still_preserved() {
+    let source = r#"
+declare function choose<T>(value: T, fallback: NoInfer<T>): T;
+choose("a", "b");
+choose("a", "a");
+"#;
+    let diags = relevant_diagnostics(source);
+    let ts2345 = diagnostics_with_code(&diags, 2345);
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "scalar direct argument keeps literal narrow; NoInfer fallback rejects mismatch. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn noinfer_complex_return_widens_scalar_literal() {
+    let source = r#"
+function fn1<T>(a: T, b: NoInfer<T>): T {
+  return a;
+}
+
+function fn2<T>(a: T, b: NoInfer<T>): { v: T } {
+  return { v: a };
+}
+
+fn1("a", "b");
+fn2("a", "b");
+"#;
+    let diags = relevant_diagnostics(source);
+    let ts2345 = diagnostics_with_code(&diags, 2345);
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "Only direct scalar return should preserve the literal and reject the NoInfer fallback. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn noinfer_array_alias_widens_to_primitive() {
+    let source = r#"
+type NI<T> = NoInfer<T>;
+declare function choose<T>(options: T[], fallback: NI<T>): T;
+choose(["foo", "bar"], "baz");
+choose([1, 2], 3);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "NoInfer via type alias still widens array-inferred T to primitive. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn generic_callback_return_accepts_widened_numeric_array_inference() {
+    let source = r#"
+declare function process<T>(arr: T[], fn: (x: T) => T): T[];
+
+const result = process([1, 2, 3], x => x * 2);
+const check: number[] = result;
+const literalOnly: (1 | 2 | 3)[] = result;
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        !has_diagnostic_message_containing(
+            &diags,
+            2322,
+            "Type 'number' is not assignable to type '1 | 2 | 3'",
+        ),
+        "numeric array inference should widen T before checking callback return. Got: {diags:#?}"
+    );
+    assert!(
+        has_diagnostic_message_containing(&diags, 2322, "number[]"),
+        "result should be number[], not a literal-only array. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn noinfer_array_of_inferred_literal_accepts_same_literal() {
+    let source = r#"
+function test<T extends string>(value: T, options: NoInfer<T>[]): T {
+    return value;
+}
+
+const t = test("hello", ["hello"]);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "NoInfer<T>[] should check against the literal inferred from the first argument without self-contradictory TS2322. Diagnostics: {diags:#?}"
     );
 }
 
@@ -1500,7 +2069,7 @@ const result = bimap([1, 2, 3], x => x + 1, x => String(x));
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        diags.iter().all(|(code, _)| *code != 7006),
+        lacks_diagnostic_code(&diags, 7006),
         "All callbacks should receive contextual types. Diagnostics: {diags:#?}"
     );
 }
@@ -1517,7 +2086,7 @@ const result = map<number, string>([1, 2], x => String(x));
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        diags.iter().all(|(code, _)| *code != 7006 && *code != 2345),
+        lacks_any_diagnostic_code(&diags, &[7006, 2345]),
         "Explicit type args should provide callback context. Diagnostics: {diags:#?}"
     );
 }
@@ -1534,7 +2103,7 @@ const result = map([1, 2, 3], x => id(x));
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        diags.iter().all(|(code, _)| *code != 7006),
+        lacks_diagnostic_code(&diags, 7006),
         "Nested generic calls should propagate inference. Diagnostics: {diags:#?}"
     );
 }
@@ -1553,6 +2122,130 @@ const result = create();
     assert!(
         diags.is_empty(),
         "Default type parameter should be used when not inferable. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn default_type_parameter_substitutes_inside_conditional_constraint() {
+    // Regression for issue #6559: using Chainable without explicit type
+    // arguments must substitute Config = {} inside the nested conditional
+    // constraint for option's key parameter.
+    let source = r#"
+type Chainable<Config = {}> = {
+  option<K extends string>(
+    key: K extends keyof Config ? never : K,
+    value: number
+  ): void;
+};
+
+declare const explicit: Chainable<{}>;
+explicit.option('foo', 123);
+
+declare const defaulted: Chainable;
+defaulted.option('foo', 123);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "Default type parameter should substitute into conditional constraint. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn contextual_return_instantiates_defaulted_generic_call_result() {
+    let source = r#"
+interface Box<T> { value: T | undefined }
+declare function make<O>(p: { value?: O }): Box<O>
+const x: Box<string> = make({})
+function f<T>(): Box<T> { return make({}) }
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "Contextual generic return inference should instantiate the call result. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn result_union_false_branch_infers_never_and_error_type() {
+    let source = r#"
+type Result<T, E = unknown> =
+  | { ok: true; value: T }
+  | { ok: false; error: E };
+
+function failure<E = unknown>(error: E): Result<never, E> {
+  return { ok: false, error };
+}
+
+function handle<T, E>(result: Result<T, E>): T | E {
+  return result.ok ? result.value : result.error;
+}
+
+const viaInline: never | string = handle(failure("error"));
+const result = failure("error");
+const viaAlias: never | string = handle(result);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "Result-like false branch should infer T=never and E=string. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn unconstrained_generic_callback_parameter_reports_unknown_addition() {
+    let source = r#"
+function identity<T>(fn: (x: T) => T): (x: T) => T {
+  return fn;
+}
+
+const increment = identity(x => x + 1);
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        has_diagnostic_message_containing(&diags, 18046, "'x' is of type 'unknown'"),
+        "unconstrained callback parameter should be unknown for arithmetic use. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn renamed_unconstrained_generic_callback_parameter_reports_unknown_multiply() {
+    let source = r#"
+function transform<T>(mapper: (val: T) => T): T {
+  return mapper(undefined as any);
+}
+
+const doubled = transform(n => n * 2);
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        has_diagnostic_message_containing(&diags, 18046, "'n' is of type 'unknown'"),
+        "renamed unconstrained callback parameter should be unknown for arithmetic use. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn renamed_result_union_false_branch_inference_is_structural() {
+    let source = r#"
+type Outcome<A, B> =
+  | { tag: "some"; data: A }
+  | { tag: "none"; problem: B };
+
+function miss<B>(problem: B): Outcome<never, B> {
+  return { tag: "none", problem };
+}
+
+function unwrap<A, B>(outcome: Outcome<A, B>): A | B {
+  return outcome.tag === "some" ? outcome.data : outcome.problem;
+}
+
+const outcome = miss("missing");
+const value: never | string = unwrap(outcome);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "Branch inference must not depend on Result/ok/error spellings. Diagnostics: {diags:#?}"
     );
 }
 
@@ -1575,7 +2268,7 @@ apply([{ a: 1, b: "x" }], ({ a, b }) => {
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        diags.iter().all(|(code, _)| *code != 2345 && *code != 7031),
+        lacks_any_diagnostic_code(&diags, &[2345, 7031]),
         "Callable shape sanitization should not break inference. Diagnostics: {diags:#?}"
     );
 }
@@ -1627,7 +2320,7 @@ function use<F extends TypeLambda, R, A, B>(
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        !diags.iter().any(|(code, _)| matches!(*code, 2345 | 7031)),
+        lacks_any_diagnostic_code(&diags, &[2345, 7031]),
         "conditional alias inference should type destructured callback params. Diagnostics: {diags:#?}"
     );
 }
@@ -1667,7 +2360,7 @@ function use<F extends TypeLambda, R, A, B>(
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        !diags.iter().any(|(code, _)| matches!(*code, 2345 | 7031)),
+        lacks_any_diagnostic_code(&diags, &[2345, 7031]),
         "overloaded conditional alias inference should type destructured callback params. Diagnostics: {diags:#?}"
     );
 }
@@ -1697,7 +2390,7 @@ const make = (): {
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        !diags.iter().any(|(code, _)| *code == 2769),
+        lacks_diagnostic_code(&diags, 2769),
         "higher-order generic body should satisfy the rest-any function constraint. Diagnostics: {diags:#?}"
     );
 }
@@ -1787,7 +2480,7 @@ register(42, (x) => {
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        diags.iter().all(|(code, _)| *code != 7006),
+        lacks_diagnostic_code(&diags, 7006),
         "Intersection callback should get contextual type. Diagnostics: {diags:#?}"
     );
 }
@@ -1869,7 +2562,7 @@ async function test() {
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        diags.iter().all(|(code, _)| *code != 2322),
+        lacks_diagnostic_code(&diags, 2322),
         "Promise return context should propagate inference. Diagnostics: {diags:#?}"
     );
 }
@@ -1885,7 +2578,7 @@ const result = map([1, 2, 3], (x) => "not a number");
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        diags.iter().any(|(code, _)| *code == 2322 || *code == 2345),
+        has_any_diagnostic_code(&diags, &[2322, 2345]),
         "Recheck should detect type mismatch after inference. Diagnostics: {diags:#?}"
     );
 }
@@ -1936,7 +2629,7 @@ traverse(tree, (node) => {
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        diags.iter().all(|(code, _)| *code != 7006),
+        lacks_diagnostic_code(&diags, 7006),
         "Recursive generic callback should not overflow. Diagnostics: {diags:#?}"
     );
 }
@@ -1960,11 +2653,11 @@ x.f({s: 1})
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        diags.iter().any(|(code, _)| *code == 2454),
+        has_diagnostic_code(&diags, 2454),
         "Should emit TS2454 for variable used before assignment. Got: {diags:#?}"
     );
     assert!(
-        diags.iter().any(|(code, _)| *code == 2322),
+        has_diagnostic_code(&diags, 2322),
         "Should also emit TS2322 for property type mismatch. Got: {diags:#?}"
     );
 }
@@ -1985,7 +2678,7 @@ foo(1, n);
 "#;
     let diags = relevant_strict_diagnostics(source);
     assert!(
-        diags.iter().any(|(code, _)| *code == 2454),
+        has_diagnostic_code(&diags, 2454),
         "Should emit TS2454 for variable used before assignment. Got: {diags:#?}"
     );
     assert!(
@@ -2006,12 +2699,12 @@ x.f({s: 1})
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        diags.iter().any(|(code, _)| *code == 2454),
+        has_diagnostic_code(&diags, 2454),
         "Should emit TS2454. Got: {diags:#?}"
     );
     // x.f doesn't exist on {s: string}, so TS2339 should fire
     assert!(
-        diags.iter().any(|(code, _)| *code == 2339),
+        has_diagnostic_code(&diags, 2339),
         "Should also emit TS2339 for missing property. Got: {diags:#?}"
     );
 }
@@ -2053,7 +2746,7 @@ if (val.predicate()) {
 "#;
     let diags = compile_and_get_diagnostics(source);
     assert!(
-        diags.iter().any(|(code, _)| *code == 2345),
+        has_diagnostic_code(&diags, 2345),
         "Should emit TS2345 because val is not narrowed by union predicate. Got: {diags:#?}"
     );
 }
@@ -2077,7 +2770,7 @@ let x = chunk.guard() ? chunk.c : chunk.d;
 "#;
     let diags = compile_and_get_diagnostics(source);
     assert!(
-        !diags.iter().any(|(code, _)| *code == 2339),
+        lacks_diagnostic_code(&diags, 2339),
         "Should NOT emit TS2339 - chunk.c should be accessible after guard(). Got: {diags:#?}"
     );
 }
@@ -2097,7 +2790,7 @@ let x = foo(a);
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        !diags.iter().any(|(code, _)| *code == 2345),
+        lacks_diagnostic_code(&diags, 2345),
         "ReadonlyArray<T> inference from union of arrays with {{}} should work. Got: {diags:#?}"
     );
 }
@@ -2118,7 +2811,7 @@ let x = a.equalsShallow(b);
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        !diags.iter().any(|(code, _)| *code == 2684),
+        lacks_diagnostic_code(&diags, 2684),
         "Method with generic this on union of arrays should not emit TS2684. Got: {diags:#?}"
     );
 }
@@ -2143,7 +2836,7 @@ function test(r: Real | Fake) {
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        diags.iter().any(|(code, _)| *code == 2684),
+        has_diagnostic_code(&diags, 2684),
         "Should emit TS2684 for union this type mismatch. Got: {diags:#?}"
     );
 }
@@ -2276,7 +2969,7 @@ const x = pipe(es, filter(exists((n) => n > 0)));
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        !diags.iter().any(|(code, _)| *code == 2345),
+        lacks_diagnostic_code(&diags, 2345),
         "pipe(es, filter(exists(...))) should not produce TS2345. Got: {diags:#?}"
     );
 }
@@ -2295,7 +2988,7 @@ const fn30: Fn = pipe(
 "#;
     let diags = relevant_strict_diagnostics(source);
     assert!(
-        !diags.iter().any(|(code, _)| *code == 2362),
+        lacks_diagnostic_code(&diags, 2362),
         "pipe return context should type chained callback parameters before checking arithmetic. Got: {diags:#?}"
     );
 }
@@ -2329,8 +3022,714 @@ const g12: <T extends { value: T }>(x: T) => T = pipe(foo, foo);
 "#;
     let diags = relevant_strict_diagnostics(source);
     assert!(
-        !diags.iter().any(|(code, _)| *code == 2322),
-        "pipe(foo) should preserve the self-constrained generic signature. Got: {diags:#?}"
+        lacks_any_diagnostic_code(&diags, &[2322, 2345]),
+        "pipe(foo) should preserve the self-constrained generic signature without stale argument errors. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn pipe_preserves_generic_component_hoc_chain() {
+    let source = r#"
+declare function pipe<A extends any[], B>(ab: (...args: A) => B): (...args: A) => B;
+declare function pipe<A extends any[], B, C>(ab: (...args: A) => B, bc: (b: B) => C): (...args: A) => C;
+
+type Component<P> = (props: P) => {};
+declare const myHoc1: <P>(C: Component<P>) => Component<P>;
+declare const myHoc2: <P>(C: Component<P>) => Component<P>;
+declare const MyComponent1: Component<{ foo: 1 }>;
+
+const enhance = pipe(myHoc1, myHoc2);
+const MyComponent2 = enhance(MyComponent1);
+const Preserved: Component<{ foo: 1 }> = MyComponent2;
+const Wrong: Component<{ foo: 2 }> = MyComponent2;
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        lacks_diagnostic_code(&diags, 2345),
+        "pipe(myHoc1, myHoc2) should preserve the component props type through the returned HOC. Got: {diags:#?}"
+    );
+    let ts2322_count = diagnostic_count(&diags, 2322);
+    assert_eq!(
+        ts2322_count, 1,
+        "the returned HOC should reject incompatible props exactly once, proving props were not erased to unknown. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn pipe_contextual_return_flows_through_generic_function_chain() {
+    let source = r#"
+declare function pipe<A extends any[], B>(ab: (...args: A) => B): (...args: A) => B;
+declare function pipe<A extends any[], B, C>(ab: (...args: A) => B, bc: (b: B) => C): (...args: A) => C;
+declare function list<T>(a: T): T[];
+declare function box<V>(x: V): { value: V };
+
+const g01: <T>(x: T) => { value: T[] } = pipe(list, box);
+const g02: <T>(x: T) => { value: T }[] = pipe(box, list);
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        lacks_any_diagnostic_code(&diags, &[2322, 2345]),
+        "pipe(list, box) and pipe(box, list) should infer the intermediate generic argument from the contextual return. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn pipe_contextual_return_flows_through_lambda_and_generic_function_chain() {
+    let source = r#"
+declare function pipe<A extends any[], B>(ab: (...args: A) => B): (...args: A) => B;
+declare function pipe<A extends any[], B, C>(ab: (...args: A) => B, bc: (b: B) => C): (...args: A) => C;
+declare function list<T>(a: T): T[];
+declare function box<V>(x: V): { value: V };
+
+const g05: <T>(x: T) => { value: T[] } = pipe(x => list(x), x => box(x));
+const inferred = pipe(x => list(x), x => box(x));
+const keep: { value: 1[] } = inferred(1 as 1);
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        lacks_any_diagnostic_code(&diags, &[2322, 2345]),
+        "pipe lambdas should inherit contextual return bounds through the generic calls they wrap. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn pipe_contextual_return_flows_through_nested_generic_call_chain() {
+    let source = r#"
+declare function pipe<A extends any[], B>(ab: (...args: A) => B): (...args: A) => B;
+declare function pipe<A extends any[], B, C>(ab: (...args: A) => B, bc: (b: B) => C): (...args: A) => C;
+declare function list<T>(a: T): T[];
+declare function box<V>(x: V): { value: V };
+
+const g06: <T>(x: T) => { value: T[] } = pipe(list, pipe(box));
+const g07: <T>(x: T) => { value: T[] } = pipe(x => list(x), pipe(box));
+const inferred1 = pipe(list, pipe(box));
+const inferred2 = pipe(x => list(x), pipe(box));
+const keep1: { value: 1[] } = inferred1(1 as 1);
+const keep2: { value: 1[] } = inferred2(1 as 1);
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        lacks_any_diagnostic_code(&diags, &[2322, 2345]),
+        "nested pipe calls should use the outer callable context to specialize the inner generic call. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn generic_function_rest_type_param_target_keeps_return_mismatch() {
+    let source = r#"
+declare function accepts<A extends any[]>(fn: (...args: A) => string): void;
+declare function returnsNumber<T>(x: T): number;
+
+accepts(returnsNumber);
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        diags
+            .iter()
+            .any(|(code, message)| *code == 2345 && message.contains("string")),
+        "generic functions passed to rest type-parameter targets must still reject real return mismatches. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn generic_function_identifier_instantiates_against_fixed_tuple_rest_target() {
+    let source = r#"
+function callr<T extends unknown[], U>(args: T, f: (...args: T) => U) {
+    return f(...args);
+}
+
+declare const sn: [string, number];
+declare function choose<A, B>(a: A, b: B): A | B;
+
+let value = callr(sn, choose);
+let check: string | number = value;
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        lacks_any_diagnostic_code(&diags, &[2322, 2345]),
+        "generic function identifiers should infer from fixed tuple-rest parameters before return-context refinement. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn generic_function_identifier_fixed_tuple_rest_keeps_constraint_mismatch() {
+    let source = r#"
+function callr<T extends unknown[], U>(args: T, f: (...args: T) => U) {
+    return f(...args);
+}
+
+declare const sn: [string, number];
+declare function numberPair<A extends number, B extends number>(a: A, b: B): A | B;
+
+let value = callr(sn, numberPair);
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        has_diagnostic_code(&diags, 2345),
+        "fixed tuple-rest refinement must still reject constrained generic parameter mismatches. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn pipe_nested_generic_call_keeps_parameter_mismatches() {
+    let source = r#"
+declare function pipe<A extends any[], B>(ab: (...args: A) => B): (...args: A) => B;
+declare function pipe<A extends any[], B, C>(ab: (...args: A) => B, bc: (b: B) => C): (...args: A) => C;
+declare function list<T>(a: T): T[];
+declare function boxNumbers(x: number[]): { value: number[] };
+
+const bad: <T>(x: T) => { value: T[] } = pipe(list, pipe(boxNumbers));
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        has_any_diagnostic_code(&diags, &[2322, 2345]),
+        "nested generic call contextual typing must not erase real parameter mismatches. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn return_context_refresh_keeps_callback_marker_context() {
+    let source = r#"
+type Values<T> = T[keyof T];
+type EventObject = { type: string };
+
+interface ActorLogic<TEvent extends EventObject> {
+  transition: (ev: TEvent) => unknown;
+}
+
+type UnknownActorLogic = ActorLogic<never>;
+
+interface ProvidedActor {
+  src: string;
+  logic: UnknownActorLogic;
+}
+
+interface ActionFunction<TActor extends ProvidedActor> {
+  (): void;
+  _out_TActor?: TActor;
+}
+
+interface AssignAction<TActor extends ProvidedActor> {
+  (): void;
+  _out_TActor?: TActor;
+}
+
+interface MachineConfig<TActor extends ProvidedActor> {
+  entry?: ActionFunction<TActor>;
+}
+
+declare function assign<TActor extends ProvidedActor>(
+  _: (spawn: (actor: TActor["src"]) => void) => {},
+): AssignAction<TActor>;
+
+type ToProvidedActor<TActors extends Record<string, UnknownActorLogic>> =
+  Values<{
+    [K in keyof TActors & string]: {
+      src: K;
+      logic: TActors[K];
+    };
+  }>;
+
+declare function createMachineFactory<
+  TActors extends Record<string, UnknownActorLogic>,
+>(actors: TActors): {
+  createMachine: <
+    const TConfig extends MachineConfig<ToProvidedActor<TActors>>,
+  >(
+    config: TConfig,
+  ) => void;
+};
+
+declare const counterLogic: ActorLogic<{ type: "INCREMENT" }>;
+
+createMachineFactory({
+  counter: counterLogic,
+}).createMachine({
+  entry: assign((spawn) => {
+    spawn("counter");
+    spawn("alarm");
+    return {};
+  }),
+});
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    let ts2345 = diagnostics_with_code(&diags, 2345);
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "return-context refresh should preserve the marker-property context for the nested callback. Got: {diags:#?}"
+    );
+    assert!(
+        ts2345[0].contains("\"alarm\"") && ts2345[0].contains("\"counter\""),
+        "the callback parameter should stay narrowed to the contextual actor source. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn generic_constructor_argument_preserves_inferred_props() {
+    let source = r#"
+declare class Comp<P> {
+    props: P;
+    constructor(props: P);
+}
+
+type CompClass<P> = new (props: P) => Comp<P>;
+declare function myHoc<P>(C: CompClass<P>): CompClass<P>;
+type GenericProps<T> = { foo: number, stuff: T };
+declare class GenericComp<T> extends Comp<GenericProps<T>> {}
+declare class StringComp extends Comp<GenericProps<string>> {}
+
+const GenericComp2 = myHoc(GenericComp);
+const StringComp2 = myHoc(StringComp);
+const madeString = new StringComp2({ foo: 1, stuff: "ok" });
+const keepString: string = madeString.props.stuff;
+const wrongString: number = madeString.props.stuff;
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        lacks_diagnostic_code(&diags, 2345),
+        "generic class constructor arguments should preserve their props inference through constructor HOFI. Got: {diags:#?}"
+    );
+    let ts2322_count = diagnostic_count(&diags, 2322);
+    assert_eq!(
+        ts2322_count, 1,
+        "instantiating the returned constructor should preserve `stuff: string` and reject assignment to number exactly once. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn generic_static_factory_constructor_infers_method_type_parameter() {
+    let source = r#"
+class Container<T> {
+    private value: T;
+    constructor(value: T) { this.value = value; }
+
+    static of<U>(value: U): Container<U> {
+        return new Container(value);
+    }
+}
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        lacks_diagnostic_code(&diags, 2322),
+        "constructor inference inside a generic static method should preserve the method type parameter. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn generic_class_expression_method_contextualizes_callback_parameter() {
+    let source = r#"
+const Container = class<T> {
+    constructor(public value: T) {}
+
+    map<U>(fn: (v: T) => U): InstanceType<typeof Container<U>> {
+        return null as any;
+    }
+};
+
+const numContainer = new Container(42);
+const checkNumber: number = numContainer.value;
+const checkString: string = numContainer.value;
+numContainer.map(n => n.toString());
+numContainer.map((n: string) => n);
+"#;
+    let diags = relevant_strict_default_lib_diagnostics(source);
+    assert!(
+        lacks_diagnostic_code(&diags, 7006),
+        "generic class expression method should contextually type callback parameter from instantiated class type. Got: {diags:#?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|(code, message)| *code == 2322 && message.contains("number")),
+        "generic class expression constructor inference should preserve `value: number`. Got: {diags:#?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|(code, message)| *code == 2345 && message.contains("string")),
+        "generic class expression method should reject callback parameter annotations incompatible with number. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn generic_constructor_options_infer_from_context_sensitive_object_member_return() {
+    let source = r#"
+declare class Connection {
+    ok(): void;
+}
+
+declare class Pending<R> {
+    promise: Promise<R>;
+}
+
+interface PoolOptions<R> {
+    create: () => R | Promise<R>;
+    destroy: (resource: R) => void;
+    validate?: (resource: R) => boolean;
+}
+
+declare class Pool<R> {
+    constructor(options: PoolOptions<R>);
+    acquire(): Pending<R>;
+    release(resource: R): void;
+}
+
+declare const tarn: {
+    Pool: typeof Pool;
+};
+
+const pool = new tarn.Pool({
+    create: async () => new Connection(),
+    destroy: (connection) => {
+        connection.ok();
+    },
+    validate: (connection) => true,
+});
+
+const keep: Pending<Connection> = pool.acquire();
+const reject: Pending<string> = pool.acquire();
+"#;
+    let diags = relevant_strict_default_lib_diagnostics(source);
+    assert!(
+        lacks_diagnostic_code(&diags, 7006),
+        "generic constructor options should infer callback parameter types during Round 2. Got: {diags:#?}"
+    );
+    let ts2322_count = diagnostic_count(&diags, 2322);
+    assert_eq!(
+        ts2322_count, 1,
+        "Pool should infer R = Connection from create(), accept Connection assignment, and reject string assignment exactly once. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn generic_constructor_options_infer_through_method_signature_and_omit_spread() {
+    let source = r#"
+declare class Connection {
+    ok(): void;
+}
+
+declare class Pending<R> {
+    promise: Promise<R>;
+}
+
+type Exclude<T, U> = T extends U ? never : T;
+type Pick<T, K extends keyof T> = { [P in K]: T[P] };
+type Omit<T, K extends keyof any> = Pick<T, Exclude<keyof T, K>>;
+
+interface PoolOptions<R> {
+    create(cb: (err: Error | null, resource: R) => void): any | (() => Promise<R>);
+    destroy(resource: R): any;
+    validate?(resource: R): boolean;
+    min: number;
+    max: number;
+}
+
+declare class Pool<R> {
+    constructor(options: PoolOptions<R>);
+    acquire(): Pending<R>;
+}
+
+declare const tarn: {
+    options: Omit<PoolOptions<any>, "create" | "destroy" | "validate"> & {
+        validateConnections?: false;
+    };
+    Pool: typeof Pool;
+};
+
+const { validateConnections, ...poolOptions } = tarn.options;
+
+const pool: Pool<Connection> = new tarn.Pool({
+    ...poolOptions,
+    create: async () => new Connection(),
+    destroy: async (connection) => {
+        connection.ok();
+    },
+    validate:
+        validateConnections === false
+            ? undefined
+            : (connection) => {
+                connection.ok();
+                return true;
+            },
+});
+
+const keep: Pending<Connection> = pool.acquire();
+"#;
+    let diags = relevant_strict_default_lib_diagnostics(source);
+    assert!(
+        lacks_diagnostic_code(&diags, 7006),
+        "generic constructor options should contextually type callback parameters through method signatures and spreads. Got: {diags:#?}"
+    );
+    assert!(
+        lacks_diagnostic_code(&diags, 2322),
+        "Pool should infer R = Connection through method-style create and Omit spread. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn generic_constructor_argument_contextualizes_nested_discriminated_object_property() {
+    let source = r#"
+type RefinementCtx = { addIssue(message: string): void };
+interface ZodTypeDef {}
+type ZodTypeAny = ZodType<any, any, any>;
+type input<T extends ZodType<any, any, any>> = T["_input"];
+type output<T extends ZodType<any, any, any>> = T["_output"];
+type ParseReturnType<T> =
+    | { status: "valid"; value: T }
+    | { status: "dirty"; value: T }
+    | { status: "aborted" };
+
+type RefinementEffect<T> = {
+    type: "refinement";
+    refinement: (arg: T, ctx: RefinementCtx) => any;
+};
+type TransformEffect<T> = {
+    type: "transform";
+    transform: (arg: T) => any;
+};
+type PreprocessEffect<T> = {
+    type: "preprocess";
+    transform: (arg: T) => any;
+};
+type Effect<T> = RefinementEffect<T> | TransformEffect<T> | PreprocessEffect<T>;
+
+enum ZodFirstPartyTypeKind {
+    ZodEffects = "ZodEffects",
+}
+
+interface ZodEffectsDef<T extends ZodTypeAny = ZodTypeAny> extends ZodTypeDef {
+    schema: T;
+    typeName: ZodFirstPartyTypeKind.ZodEffects;
+    effect: Effect<any>;
+}
+
+abstract class ZodType<Output, Def extends ZodTypeDef = ZodTypeDef, Input = Output> {
+    _output!: Output;
+    _input!: Input;
+    _def!: Def;
+
+    abstract _parse(): ParseReturnType<Output>;
+
+    constructor(def: Def) {}
+
+    _refinement(refinement: RefinementEffect<Output>["refinement"]): ZodEffects<this> {
+        return new ZodEffects({
+            schema: this,
+            typeName: ZodFirstPartyTypeKind.ZodEffects,
+            effect: { type: "refinement", refinement },
+        });
+    }
+}
+
+class ZodEffects<
+    T extends ZodTypeAny,
+    Output = output<T>,
+    Input = input<T>
+> extends ZodType<Output, ZodEffectsDef<T>, Input> {
+    _parse(): ParseReturnType<Output> {
+        return null as any;
+    }
+}
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("Effect<any>") && message.contains("type: string")
+        }),
+        "nested discriminated object literal in a constructor argument should inherit the Effect<any> context. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn contextual_generic_new_return_recovers_unresolved_constructor_type_params() {
+    let source = r#"
+type ParseReturnType<T> = { ok: true; value: T } | { ok: false };
+interface BaseDef {}
+
+abstract class Schema<Out, Def extends BaseDef = BaseDef, In = Out> {
+    readonly _output!: Out;
+    readonly _input!: In;
+    readonly _def!: Def;
+    abstract _parse(): ParseReturnType<Out>;
+    constructor(def: Def) {}
+}
+
+type AnySchema = Schema<any, any, any>;
+type Effect<T> = { type: "refinement"; refine: (arg: T) => unknown };
+
+interface WrapperDef<S extends AnySchema = AnySchema> extends BaseDef {
+    schema: S;
+    effect: Effect<any>;
+}
+
+class Wrapper<
+    S extends AnySchema,
+    Out = S["_output"],
+    In = S["_input"]
+> extends Schema<Out, WrapperDef<S>, In> {
+    _parse(): ParseReturnType<Out> {
+        return null as never;
+    }
+
+    static make = <Source extends AnySchema>(
+        schema: Source,
+        effect: Effect<Source["_output"]>
+    ): Wrapper<Source, Source["_output"]> => {
+        return new Wrapper({ schema, effect });
+    };
+}
+
+interface DecoratedDef<Item extends AnyCarrier = AnyCarrier> extends BaseDef {
+    item: Item;
+    hook: Hook<any>;
+}
+
+abstract class Carrier<Value, Def extends BaseDef = BaseDef, Raw = Value> {
+    readonly value!: Value;
+    readonly raw!: Raw;
+    readonly def!: Def;
+    abstract parse(): ParseReturnType<Value>;
+    constructor(def: Def) {}
+}
+
+type AnyCarrier = Carrier<any, any, any>;
+type Hook<T> = { run: (value: T) => unknown };
+
+class Decorated<
+    Item extends AnyCarrier,
+    Value = Item["value"],
+    Raw = Item["raw"]
+> extends Carrier<Value, DecoratedDef<Item>, Raw> {
+    parse(): ParseReturnType<Value> {
+        return null as never;
+    }
+
+    static build = <Entity extends AnyCarrier>(
+        item: Entity,
+        hook: Hook<Entity["value"]>
+    ): Decorated<Entity, Entity["value"]> => {
+        return new Decorated({ item, hook });
+    };
+}
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2322 && *code != 2739),
+        "contextual generic new returns should recover the enclosing application when constructor args leave class params unresolved. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn contextual_generic_new_return_keeps_different_constructor_base_mismatch() {
+    let source = r#"
+type ParseReturnType<T> = { ok: true; value: T } | { ok: false };
+interface BaseDef {}
+
+abstract class Schema<Out, Def extends BaseDef = BaseDef, In = Out> {
+    readonly _output!: Out;
+    readonly _input!: In;
+    readonly _def!: Def;
+    abstract _parse(): ParseReturnType<Out>;
+    constructor(def: Def) {}
+}
+
+type AnySchema = Schema<any, any, any>;
+type Effect<T> = { type: "refinement"; refine: (arg: T) => unknown };
+
+interface WrapperDef<S extends AnySchema = AnySchema> extends BaseDef {
+    schema: S;
+    marker: "wrapper";
+    effect: Effect<any>;
+}
+
+interface OtherDef<S extends AnySchema = AnySchema> extends BaseDef {
+    other: S;
+    marker: "other";
+}
+
+class Wrapper<
+    S extends AnySchema,
+    Out = S["_output"],
+    In = S["_input"]
+> extends Schema<Out, WrapperDef<S>, In> {
+    _parse(): ParseReturnType<Out> {
+        return null as never;
+    }
+}
+
+class Other<
+    S extends AnySchema,
+    Out = S["_output"],
+    In = S["_input"]
+> extends Schema<Out, OtherDef<S>, In> {
+    _parse(): ParseReturnType<Out> {
+        return null as never;
+    }
+}
+
+function wrong<Source extends AnySchema>(
+    schema: Source,
+    effect: Effect<Source["_output"]>
+): Other<Source, Source["_output"]> {
+    return new Wrapper({ schema, marker: "wrapper", effect });
+}
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2322),
+        "contextual recovery must not hide a different constructor application base. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn conflicting_contextual_instantiation_keeps_enclosing_return_type_param() {
+    let source = r#"
+declare function accept<R>(fn: (a: string, b: number) => R): R;
+
+function outer<X>(source: <T>(a: T, b: T) => X) {
+    const out = accept(source);
+    const keep: X = out;
+}
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        !diags
+            .iter()
+            .any(|(_code, message)| message.contains("unknown")),
+        "contextual conflict handling must not rewrite enclosing return type parameters to unknown. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn generic_callback_parameter_does_not_override_concrete_array_inference() {
+    let source = r#"
+export function keyOf<a>(value: { key: a; }): a {
+    return value.key;
+}
+declare class Date {}
+export interface Data {
+    key: number;
+    value: Date;
+}
+
+var data: Data[] = [];
+declare function toKeys<a>(values: a[], toKey: (value: a) => string): string[];
+
+toKeys(data, keyOf);
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        !diags
+            .iter()
+            .any(|(code, message)| *code == 2345 && message.contains("Data[]")),
+        "the concrete array argument should own `a`; the callback should be checked against `(value: Data) => string`. Got: {diags:#?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|(code, message)| *code == 2345 && message.contains("(value: Data) => string")),
+        "generic callback return mismatch should be reported at the callback parameter. Got: {diags:#?}"
     );
 }
 
@@ -2370,7 +3769,7 @@ pipe(
 "#;
     let diags = relevant_lib_diagnostics(source);
     assert!(
-        !diags.iter().any(|(code, _)| *code == 2345),
+        lacks_diagnostic_code(&diags, 2345),
         "self-referential NoExcessProperties constraint should not raise false TS2345. Got: {diags:#?}"
     );
 }
@@ -2385,7 +3784,7 @@ const leak = call(wrap(<T>(x: T) => x), 1);
 "#;
     let diags = relevant_strict_diagnostics(source);
     assert!(
-        !diags.iter().any(|(code, _)| *code == 2345),
+        lacks_diagnostic_code(&diags, 2345),
         "nested generic spread inference should not produce TS2345. Got: {diags:#?}"
     );
 }
@@ -2400,7 +3799,7 @@ var s = map("", identity);
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        !diags.iter().any(|(code, _)| *code == 2345),
+        lacks_diagnostic_code(&diags, 2345),
         "generic function argument identity should not produce TS2345. Got: {diags:#?}"
     );
 }
@@ -2434,7 +3833,7 @@ var widths:number[] = elements.map(function (e) {
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        !diags.iter().any(|(code, _)| *code == 2344),
+        lacks_diagnostic_code(&diags, 2344),
         "generic method overspecialization should not produce TS2344. Got: {diags:#?}"
     );
 }
@@ -2475,7 +3874,7 @@ function flatMapChildren2<T>(node: Node, cb: (child: Node) => readonly T[] | T |
 "#;
     let diags = relevant_strict_diagnostics(source);
     assert!(
-        !diags.iter().any(|(code, _)| *code == 2344),
+        lacks_diagnostic_code(&diags, 2344),
         "inference should not add undefined or null to T. Got: {diags:#?}"
     );
 }
@@ -2578,7 +3977,7 @@ const t2 = testSet.transform(
 "#;
     let diags = relevant_default_lib_diagnostics(source);
     assert!(
-        !diags.iter().any(|(code, _)| *code == 2322 || *code == 2345),
+        lacks_any_diagnostic_code(&diags, &[2322, 2345]),
         "higher-order inference should not produce extra TS2322/TS2345. Got: {diags:#?}"
     );
 }
@@ -2598,7 +3997,7 @@ const a = f({ d: [1, 2] });
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        !diags.iter().any(|(code, _)| *code == 2322),
+        lacks_diagnostic_code(&diags, 2322),
         "const type param with multi-param function should not produce false TS2322. Got: {diags:#?}"
     );
 }
@@ -2612,7 +4011,7 @@ const a = f({ d: [1, 2] });
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        !diags.iter().any(|(code, _)| *code == 2322),
+        lacks_diagnostic_code(&diags, 2322),
         "const type param with single-param function should not produce TS2322. Got: {diags:#?}"
     );
 }
@@ -2627,8 +4026,175 @@ const a = f({ d: [] });
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        !diags.iter().any(|(code, _)| *code == 2322),
+        lacks_diagnostic_code(&diags, 2322),
         "const type param with empty array should not produce false TS2322. Got: {diags:#?}"
+    );
+}
+
+// ─── Issue #6261: const type param preserves literals across multiple params ──
+//
+// Structural rule: when a generic call has a `const` type parameter whose
+// constraint does not allow a mutable array-like target, the literal shape of
+// the argument expression must be the round-1 inference seed. The presence
+// of additional non-const parameters, multiple type parameters, class
+// constructors, or interface methods does not change this rule.
+
+#[test]
+fn const_type_param_class_constructor_preserves_object_literal() {
+    // tsc preserves `g.value.x: 1` even though the constructor signature
+    // includes the const type param via a property.
+    let source = r#"
+class ConstContainer<const T> { constructor(public value: T) {} }
+const g = new ConstContainer({ x: 1 });
+const _gx: 1 = g.value.x;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        lacks_diagnostic_code(&diags, 2322),
+        "class const type param should preserve literal property type. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn const_type_param_multiple_const_params_preserve_each_literal() {
+    let source = r#"
+function multiConst<const T, const U>(x: T, y: U): [T, U] { return [x, y]; }
+const e = multiConst({ a: 1 }, { b: 2 });
+const _e0a: 1 = e[0].a;
+const _e1b: 2 = e[1].b;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        lacks_diagnostic_code(&diags, 2322),
+        "multiple const type params must each preserve literal property types. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn const_type_param_with_sibling_primitive_param_preserves_literal() {
+    // The presence of a sibling non-const parameter (`y: number`) must not
+    // cause T to be widened.
+    let source = r#"
+function f<const T>(x: T, y: number): T { return x; }
+const r = f({ a: 1 }, 2);
+const _ra: 1 = r.a;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        lacks_diagnostic_code(&diags, 2322),
+        "sibling primitive param must not break const literal preservation. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn const_type_param_when_const_param_is_second_preserves_literal() {
+    // Position of the const-typed parameter must not matter.
+    let source = r#"
+function f<const T>(x: number, y: T): T { return y; }
+const r = f(2, { b: 1 });
+const _rb: 1 = r.b;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        lacks_diagnostic_code(&diags, 2322),
+        "const param at non-first position must still preserve literals. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn const_type_param_renamed_preserves_literal() {
+    // Renaming the type parameter must not affect the rule (the fix is
+    // structural, not name-driven).
+    let source = r#"
+function renamed<const P>(x: P, y: number): P { return x; }
+const r = renamed({ a: 1 }, 2);
+const _ra: 1 = r.a;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        lacks_diagnostic_code(&diags, 2322),
+        "renaming const type param must not break preservation. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn const_type_param_mixed_const_and_non_const_preserves_const_literal() {
+    // `const T` preserves; `U` (non-const) widens normally.
+    let source = r#"
+function mixed<const T, U>(x: T, y: U): [T, U] { return [x, y]; }
+const r = mixed({ a: 1 }, { b: 2 });
+const _ra: 1 = r[0].a;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        lacks_diagnostic_code(&diags, 2322),
+        "const T should preserve literal even when sibling U is non-const. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn const_type_param_interface_method_preserves_literal() {
+    let source = r#"
+interface ConstMethod { process<const T>(value: T): T; }
+declare const cm: ConstMethod;
+const h = cm.process({ y: 2 });
+const _hy: 2 = h.y;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        lacks_diagnostic_code(&diags, 2322),
+        "interface method with const type param should preserve literal. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn const_type_param_with_aliased_readonly_array_constraint_preserves_literal() {
+    // An alias wrapping the readonly-array constraint must still trigger
+    // literal preservation (the constraint is resolved before the
+    // mutable-array check).
+    let source = r#"
+type ROArr = readonly unknown[];
+function f<const T extends ROArr>(x: T, y: number): T { return x; }
+const r = f([1, 2, 3], 0);
+const _r: readonly [1, 2, 3] = r;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        lacks_diagnostic_code(&diags, 2322),
+        "aliased readonly-array constraint must still preserve literals. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn non_const_type_param_still_widens_object_literal_property() {
+    // Negative case: without `const`, the literal property type must widen
+    // (proves the fix is gated on `is_const`, not unconditional).
+    let source = r#"
+function f<T>(x: T, y: number): T { return x; }
+const r = f({ a: 1 }, 2);
+const _ra: 1 = r.a;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        has_diagnostic_code(&diags, 2322),
+        "non-const T must still widen property literal to number. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn const_type_param_with_mutable_array_constraint_widens() {
+    // Negative case: `const T extends unknown[]` (mutable array) should
+    // widen because the constraint allows a mutable-array target. This
+    // proves the (c) branch is gated on `constraint_allows_mutable_array_like`.
+    let source = r#"
+function f<const T extends unknown[]>(x: T): T { return x; }
+const r = f([1, 2, 3]);
+const _r: [1, 2, 3] = r;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        has_diagnostic_code(&diags, 2322),
+        "mutable-array constraint must keep widening behavior. Got: {diags:#?}"
     );
 }
 
@@ -2654,7 +4220,7 @@ const result: string = f(input);
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        !diags.iter().any(|(code, _)| *code == 2345 || *code == 2322),
+        lacks_any_diagnostic_code(&diags, &[2345, 2322]),
         "symbol property in intersection must not cause false type error. Got: {diags:#?}"
     );
 }
@@ -2686,11 +4252,11 @@ out.a.a.a.a.a.a.a;
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        !diags.iter().any(|(code, _)| *code == 18046),
+        lacks_diagnostic_code(&diags, 18046),
         "recursive Deep<A> inference must not leave nested accesses as unknown. Got: {diags:#?}"
     );
     assert!(
-        !diags.iter().any(|(code, _)| *code == 2345 || *code == 2322),
+        lacks_any_diagnostic_code(&diags, &[2345, 2322]),
         "recursive Deep<A> inference must not raise an assignability error for the self-referential source. Got: {diags:#?}"
     );
 }
@@ -2712,11 +4278,11 @@ oub.b.a.n.a.n.a;
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        !diags.iter().any(|(code, _)| *code == 18046),
+        lacks_diagnostic_code(&diags, 18046),
         "recursive Deep<B> inference must not leave nested accesses as unknown. Got: {diags:#?}"
     );
     assert!(
-        !diags.iter().any(|(code, _)| *code == 2345 || *code == 2322),
+        lacks_any_diagnostic_code(&diags, &[2345, 2322]),
         "recursive Deep<B> inference must not raise an assignability error for the self-referential source. Got: {diags:#?}"
     );
 }
@@ -2743,11 +4309,11 @@ const ok = out.responseXML.url; // must NOT raise TS18046
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        !diags.iter().any(|(code, _)| *code == 18046),
+        lacks_diagnostic_code(&diags, 18046),
         "Nullable property reverse inference must materialise as `any` so chained accesses are well-typed. Got: {diags:#?}"
     );
     assert!(
-        diags.iter().any(|(code, _)| *code == 2345),
+        has_diagnostic_code(&diags, 2345),
         "Outer Deep<...> assignability must still reject the `null` constituent. Got: {diags:#?}"
     );
 }
@@ -2780,7 +4346,7 @@ const callbackNumber: number = out.onreadystatechange;
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        !diags.iter().any(|(code, _)| *code == 18046),
+        lacks_diagnostic_code(&diags, 18046),
         "Nullable object property should remain usable after recursive reverse inference. Got: {diags:#?}"
     );
     let ts2322_messages: Vec<_> = diags
@@ -2815,8 +4381,44 @@ const childLabel: string = out.response.child.label;
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
-        !diags.iter().any(|(code, _)| *code == 18046),
+        lacks_diagnostic_code(&diags, 18046),
         "nested Deep<T[K]> reverse inference must not leave chained accesses as unknown. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn recursive_homomorphic_mapped_against_builtin_xml_http_request_no_unknown_property() {
+    // Mirrors TypeScript's `mappedTypeRecursiveInference.ts` DOM case.
+    let source = r#"
+interface A { a: A }
+declare let a: A;
+type Deep<T> = { [K in keyof T]: Deep<T[K]> }
+declare function foo<T>(deep: Deep<T>): T;
+const out = foo(a);
+out.a;
+out.a.a;
+out.a.a.a.a.a.a.a;
+
+interface B { [s: string]: B }
+declare let b: B;
+const oub = foo(b);
+oub.b;
+oub.b.b;
+oub.b.a.n.a.n.a;
+
+declare let xhr: XMLHttpRequest;
+const out2 = foo(xhr);
+out2.responseXML;
+out2.responseXML.activeElement.className.length;
+"#;
+    let diags = relevant_default_lib_diagnostics(source);
+    assert!(
+        lacks_diagnostic_code(&diags, 18046),
+        "recursive Deep<XMLHttpRequest> inference must not leave DOM chained accesses as unknown. Got: {diags:#?}"
+    );
+    assert!(
+        has_diagnostic_code(&diags, 2345),
+        "recursive Deep<XMLHttpRequest> inference should still reject the nullable DOM callback property like tsc. Got: {diags:#?}"
     );
 }
 
@@ -2847,7 +4449,7 @@ const d = pipe(fooBare);
 "#;
     let diags = relevant_strict_diagnostics(source);
     assert!(
-        diags.iter().all(|(code, _)| *code != 2345),
+        lacks_diagnostic_code(&diags, 2345),
         "pipe(<T extends C>(x: T) => T) with non-self-referential C must not raise TS2345. Got: {diags:#?}"
     );
 }
@@ -2871,7 +4473,316 @@ const f = pipe(fooSelf);
 "#;
     let diags = relevant_strict_diagnostics(source);
     assert!(
-        diags.iter().all(|(code, _)| *code != 2345),
+        lacks_diagnostic_code(&diags, 2345),
         "pipe(<T extends {{ value: T }}>(x: T) => T) must not raise TS2345 once HOFI is implemented. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn type_literal_generic_method_retains_method_type_params_for_call_inference() {
+    let source = r#"
+type Matcher<T> = {
+    with<P, R>(pattern: P, handler: (value: T) => R): Matcher<T>;
+};
+
+declare function match<T>(value: T): Matcher<T>;
+declare function oneOf<T>(left: T, right: T): T;
+declare const item: { kind: "issue"; priority: "low" | "medium" | "high" };
+
+match(item).with({ kind: "issue", priority: oneOf("medium", "high") }, () => true);
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        lacks_diagnostic_code(&diags, 2345),
+        "generic methods declared in type literals must retain method type params for call inference. Got: {diags:#?}"
+    );
+}
+
+// ─── Variadic tuple spread with type-assertion arguments ─────────────────────
+
+#[test]
+fn variadic_tuple_spread_type_assertion_preserves_literals() {
+    let source = r#"
+declare function concat<T extends readonly unknown[], U extends readonly unknown[]>(a: T, b: U): [...T, ...U];
+const result = concat([1, 2] as [1, 2], ["a", "b"] as ["a", "b"]);
+const _r: [1, 2, "a", "b"] = result;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        lacks_diagnostic_code(&diags, 2322),
+        "variadic tuple spread with type-asserted args must preserve literal types. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn variadic_tuple_spread_type_assertion_preserves_literals_renamed_params() {
+    let source = r#"
+declare function concat<K extends readonly unknown[], V extends readonly unknown[]>(a: K, b: V): [...K, ...V];
+const result = concat([true, false] as [true, false], [42] as [42]);
+const _r: [true, false, 42] = result;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        lacks_diagnostic_code(&diags, 2322),
+        "variadic tuple spread literal preservation must not depend on parameter names K/V. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn variadic_tuple_spread_without_assertion_widens_to_primitives() {
+    let source = r#"
+declare function concat<T extends readonly unknown[], U extends readonly unknown[]>(a: T, b: U): [...T, ...U];
+const result = concat([1, 2], ["a", "b"]);
+const _bad: [1, 2, "a", "b"] = result;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        has_diagnostic_code(&diags, 2322),
+        "variadic tuple spread from fresh (non-asserted) tuple must widen literals. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn variadic_tuple_spread_three_way_with_assertions_preserves_literals() {
+    let source = r#"
+declare function concat3<A extends readonly unknown[], B extends readonly unknown[], C extends readonly unknown[]>(
+    a: A, b: B, c: C
+): [...A, ...B, ...C];
+const r = concat3([1] as [1], ["x"] as ["x"], [true] as [true]);
+const _check: [1, "x", true] = r;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        lacks_diagnostic_code(&diags, 2322),
+        "three-way variadic spread with asserted tuples must preserve all literals. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn conditional_type_parameter_default_evaluates_after_prior_arg_known() {
+    let source = r#"
+type Wrapper<T, W = T extends string ? number : boolean> = {
+  value: T;
+  wrapped: W;
+};
+
+type WrapStr = Wrapper<string>;
+const ws: WrapStr = { value: "hello", wrapped: 42 };
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        lacks_diagnostic_code(&diags, 2322),
+        "conditional default depending on earlier known type parameter must evaluate. Got: {diags:#?}"
+    );
+}
+
+// ─── Template literal type parameter inference (issue #6147) ─────────────────
+
+/// f(x: prefix-T) where T extends string — call with matching literal should infer T.
+#[test]
+fn template_literal_infers_type_param_trailing_span() {
+    let source = r#"
+declare function f<T extends string>(x: `prefix-${T}`): T;
+const result = f("prefix-hello");
+const _check: "hello" = result;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "T should be inferred as \"hello\" from template literal argument. Got: {diags:#?}"
+    );
+}
+
+/// Same rule with a renamed type parameter (`K`) to confirm no identifier is hardcoded.
+#[test]
+fn template_literal_infers_type_param_renamed() {
+    let source = r#"
+declare function get<K extends string>(x: `get-${K}`): K;
+const result = get("get-name");
+const _check: "name" = result;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "K should be inferred as \"name\" from template literal argument. Got: {diags:#?}"
+    );
+}
+
+/// f(x: pre-T-suf) where T extends string — T is surrounded by text anchors.
+#[test]
+fn template_literal_infers_type_param_prefix_and_suffix() {
+    let source = r#"
+declare function f<T extends string>(x: `pre-${T}-suf`): T;
+const result = f("pre-mid-suf");
+const _check: "mid" = result;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "T should be inferred as \"mid\" from surrounded template. Got: {diags:#?}"
+    );
+}
+
+/// f(x: T-U) where T and U extend string — two type params inferred from a separator-delimited literal.
+#[test]
+fn template_literal_infers_multiple_type_params() {
+    let source = r#"
+declare function f<T extends string, U extends string>(x: `${T}-${U}`): [T, U];
+const result = f("hello-world");
+const _check: ["hello", "world"] = result;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "T and U should be inferred from two-param template. Got: {diags:#?}"
+    );
+}
+
+/// Same two-param rule using different names (`A`, `B`) to confirm generality.
+#[test]
+fn template_literal_infers_multiple_type_params_renamed() {
+    let source = r#"
+declare function split<A extends string, B extends string>(x: `${A}/${B}`): [A, B];
+const result = split("foo/bar");
+const _check: ["foo", "bar"] = result;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "A and B should be inferred from split template. Got: {diags:#?}"
+    );
+}
+
+/// When the argument does not match the template pattern, a TS2345 error is expected.
+#[test]
+fn template_literal_type_param_mismatch_errors() {
+    let source = r#"
+declare function f<T extends string>(x: `prefix-${T}`): T;
+f("wrong");
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        has_diagnostic_code(&diags, 2345),
+        "passing a non-matching literal should raise TS2345. Got: {diags:#?}"
+    );
+}
+
+/// f(x: T-suffix) where T extends string — T is a leading span with a fixed suffix.
+#[test]
+fn template_literal_type_param_leading_span() {
+    let source = r#"
+declare function f<T extends string>(x: `${T}-suffix`): T;
+const result = f("hello-suffix");
+const _check: "hello" = result;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "T should be inferred as \"hello\" from leading template span. Got: {diags:#?}"
+    );
+}
+
+// Nullish in T|null: nullish source provides no info about T (conformance: inferenceFromParameterlessLambda)
+
+#[test]
+fn nullish_in_t_or_null_param_does_not_infer_t_null() {
+    let source = r#"
+function withDefault<T>(value: T | null, f: () => T): T { return value ?? f(); }
+const r1 = withDefault(null, () => 42);
+const r2 = withDefault(null, () => "hello");
+const r3 = withDefault(null, () => true);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "null in T|null should not yield T=null; T should come from callback return. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn nullish_undefined_in_t_or_undefined_param_does_not_infer_t() {
+    let source = r#"
+function maybe<T>(x: T | undefined, f: () => T): T { return x ?? f(); }
+const r1 = maybe(undefined, () => 99);
+const r2 = maybe(undefined, () => "hi");
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "undefined in T|undefined should not constrain T; callback return supplies T. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn cross_nullish_source_still_infers_into_t() {
+    let source = r#"
+declare function f<T>(x: T | null): T;
+const a = f(undefined);
+const checkA: undefined = a;
+
+declare function g<T>(x: T | undefined): T;
+const b = g(null);
+const checkB: null = b;
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "opposite nullish source should infer into T, not be explained by the other nullish arm. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn non_nullish_in_t_or_null_still_constrains_t() {
+    let source = r#"
+function withDefault<T>(value: T | null, f: () => T): T { return value ?? f(); }
+const r1 = withDefault(42, () => 0);
+const r2 = withDefault("x", () => "y");
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "non-null concrete arg should not produce false positives. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn nullish_in_t_or_null_with_nullable_union_source_still_constrains_t() {
+    let source = r#"
+function withDefault<T>(value: T | null, f: () => T): T { return value ?? f(); }
+declare const maybeStr: string | null;
+const r = withDefault(maybeStr, () => "fallback");
+const _check: string = r;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "string|null source in T|null should still infer T=string. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn nullish_in_array_wrapped_t_or_null_does_not_infer_t() {
+    let source = r#"
+function orNull<T>(x: T[] | null, factory: () => T[]): T[] { return x ?? factory(); }
+const r = orNull(null, () => [42]);
+const _check: number[] = r;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "null in T[]|null should not infer T=null; callback supplies T[]=number[]. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn real_type_mismatch_still_errors_with_nullable_union_inference() {
+    let source = r#"
+function bar<T>(x: T, f: () => T): T { return f(); }
+bar("hi", () => 42);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.is_empty(),
+        "type mismatch (string vs number for T) should still produce an error. Got: {diags:#?}"
     );
 }

@@ -3,9 +3,11 @@
 //! Type literals represent inline object types like `{ x: string; y: number }` or
 //! callable types with call/construct signatures.
 
+use super::type_node_helpers::type_node_includes_explicit_undefined;
 use crate::query_boundaries::common::is_template_literal_type;
 use crate::state::{CheckerState, ParamTypeResolutionMode};
 use crate::symbol_resolver::TypeSymbolResolution;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
@@ -153,7 +155,7 @@ impl<'a> CheckerState<'a> {
                     self.validate_type_reference_type_arguments(sym_id, args, idx);
                 }
                 // Stable-identity helper: resolve symbol body + create Lazy(DefId)
-                let base_type = self.resolve_symbol_as_lazy_type(sym_id);
+                let base_type = self.resolve_symbol_as_lazy_type_named(sym_id, name);
                 if has_type_args {
                     let type_args = type_ref
                         .type_arguments
@@ -195,7 +197,57 @@ impl<'a> CheckerState<'a> {
                     }
                     TypeSymbolResolution::NotFound => None,
                 };
-
+                let sym_id = sym_id.or_else(|| {
+                    self.ctx
+                        .binder
+                        .file_locals
+                        .get(name)
+                        .filter(|&sym_id| self.symbol_has_declared_type_meaning(sym_id))
+                        .map(|sym_id| {
+                            self.ctx
+                                .binder
+                                .get_symbol(sym_id)
+                                .and_then(|symbol| {
+                                    symbol.import_module.as_ref().and_then(|module_name| {
+                                        symbol.import_name.as_deref().and_then(|import_name| {
+                                            self.resolve_cross_file_export_from_file(
+                                                module_name,
+                                                import_name,
+                                                Some(self.ctx.current_file_idx),
+                                            )
+                                        })
+                                    })
+                                })
+                                .unwrap_or_else(|| {
+                                    let mut visited = AliasCycleTracker::new();
+                                    self.resolve_alias_symbol(sym_id, &mut visited)
+                                        .unwrap_or(sym_id)
+                                })
+                        })
+                        .or_else(|| {
+                            let lib_binders = self.get_lib_binders();
+                            self.ctx
+                                .binder
+                                .get_global_type_with_libs(name, &lib_binders)
+                        })
+                });
+                let sym_id = sym_id.map(|sym_id| {
+                    self.ctx
+                        .binder
+                        .get_symbol(sym_id)
+                        .and_then(|symbol| {
+                            symbol.import_module.as_ref().and_then(|module_name| {
+                                symbol.import_name.as_deref().and_then(|import_name| {
+                                    self.resolve_cross_file_export_from_file(
+                                        module_name,
+                                        import_name,
+                                        Some(self.ctx.current_file_idx),
+                                    )
+                                })
+                            })
+                        })
+                        .unwrap_or(sym_id)
+                });
                 let intrinsic_reference_is_unshadowed = type_param.is_none()
                     && match sym_id {
                         Some(sym_id) => self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id),
@@ -218,7 +270,11 @@ impl<'a> CheckerState<'a> {
                             {
                                 let type_arg =
                                     self.get_type_from_type_node_in_type_literal(first_arg);
-                                return self.ctx.types.string_intrinsic_by_name(name, type_arg);
+                                return crate::query_boundaries::type_construction::string_intrinsic_by_name(
+                                    self.ctx.types,
+                                    name,
+                                    type_arg,
+                                );
                             }
                             return TypeId::ERROR;
                         }
@@ -226,7 +282,11 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                if is_builtin_array && type_param.is_none() && sym_id.is_none() {
+                if is_builtin_array
+                    && type_param.is_none()
+                    && sym_id.is_none()
+                    && !self.ctx.file_local_type_shadow_for_lib_name(name)
+                {
                     // Array/ReadonlyArray not found - check if lib files are loaded
                     // When --noLib is used, emit TS2318 instead of silently creating Array type
                     if !self.ctx.has_lib_loaded() {
@@ -253,6 +313,39 @@ impl<'a> CheckerState<'a> {
                         return factory.readonly_type(array_type);
                     }
                     return array_type;
+                }
+
+                if !self.ctx.compiler_options.no_lib
+                    && type_param.is_none()
+                    && sym_id.is_none()
+                    && matches!(name, "Promise" | "PromiseLike")
+                    && let Some(args) = &type_ref.type_arguments
+                {
+                    let type_args: Vec<TypeId> = args
+                        .nodes
+                        .iter()
+                        .map(|&arg_idx| self.get_type_from_type_node_in_type_literal(arg_idx))
+                        .collect();
+                    if !type_args.is_empty() {
+                        let promise_base =
+                            crate::types_domain::queries::lib_resolution::resolve_name_to_lib_symbol(
+                                name,
+                                self.ctx.binder,
+                                self.ctx.global_file_locals_index.as_deref(),
+                                self.ctx
+                                    .all_binders
+                                    .as_ref()
+                                    .map(|binders| binders.as_ref().as_slice()),
+                                &self.ctx.lib_contexts,
+                            )
+                            .map(|sym_id| {
+                                let _ = self.resolve_lib_type_by_name(name);
+                                let def_id = self.ctx.get_canonical_lib_def_id(name, sym_id);
+                                factory.lazy(def_id)
+                            })
+                            .unwrap_or(TypeId::PROMISE_BASE);
+                        return factory.application(promise_base, type_args);
+                    }
                 }
 
                 if !is_builtin_array && type_param.is_none() && sym_id.is_none() {
@@ -297,13 +390,9 @@ impl<'a> CheckerState<'a> {
                         self.ctx.types.application(base, lowered_args)
                     };
                 }
-                let local_array_name =
-                    self.ctx.binder.file_locals.get(name).is_some_and(|sym_id| {
-                        !self.ctx.symbol_is_from_actual_lib(sym_id)
-                            && self.symbol_has_declared_type_meaning(sym_id)
-                    });
-                let array_is_unshadowed =
-                    is_builtin_array && type_param.is_none() && !local_array_name;
+                let array_is_unshadowed = is_builtin_array
+                    && type_param.is_none()
+                    && !self.ctx.file_local_type_shadow_for_lib_name(name);
 
                 // For Array<T> / ReadonlyArray<T> with type arguments, convert to
                 // proper array types (Array(T) / Readonly(Array(T))) instead of
@@ -337,7 +426,7 @@ impl<'a> CheckerState<'a> {
                     type_param
                 } else if let Some(sym_id) = sym_id {
                     // Stable-identity helper: resolve symbol body + create Lazy(DefId)
-                    self.resolve_symbol_as_lazy_type(sym_id)
+                    self.resolve_symbol_as_lazy_type_named(sym_id, name)
                 } else {
                     TypeId::ERROR
                 };
@@ -360,7 +449,7 @@ impl<'a> CheckerState<'a> {
                     self.resolve_identifier_symbol_in_type_position(type_name_idx)
                 {
                     // Stable-identity helper: resolve symbol body + create Lazy(DefId)
-                    return self.resolve_symbol_as_lazy_type(sym_id);
+                    return self.resolve_symbol_as_lazy_type_named(sym_id, name);
                 }
                 if let Some(type_param) = self.lookup_type_parameter(name) {
                     return type_param;
@@ -409,26 +498,42 @@ impl<'a> CheckerState<'a> {
                 _ => {}
             }
 
-            if name != "Array"
+            let recovered_type_symbol = if name != "Array"
                 && let TypeSymbolResolution::ValueOnly(sym_id) =
                     self.resolve_identifier_symbol_in_type_position(type_name_idx)
             {
-                self.report_wrong_meaning(
-                    name,
-                    type_name_idx,
-                    sym_id,
-                    crate::query_boundaries::name_resolution::NameLookupKind::Value,
-                    crate::query_boundaries::name_resolution::NameLookupKind::Type,
-                );
-                return TypeId::ERROR;
-            }
+                match self
+                    .resolve_type_symbol_for_lowering(type_name_idx)
+                    .map(tsz_binder::SymbolId)
+                {
+                    Some(type_sym_id) => Some(type_sym_id),
+                    None => {
+                        self.report_wrong_meaning(
+                            name,
+                            type_name_idx,
+                            sym_id,
+                            crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                            crate::query_boundaries::name_resolution::NameLookupKind::Type,
+                        );
+                        return TypeId::ERROR;
+                    }
+                }
+            } else {
+                None
+            };
 
             if let Some(type_param) = self.lookup_type_parameter(name) {
                 return type_param;
             }
-            if let TypeSymbolResolution::Type(sym_id) =
-                self.resolve_identifier_symbol_in_type_position(type_name_idx)
-            {
+            if let Some(sym_id) = recovered_type_symbol.or_else(|| {
+                if let TypeSymbolResolution::Type(sym_id) =
+                    self.resolve_identifier_symbol_in_type_position(type_name_idx)
+                {
+                    Some(sym_id)
+                } else {
+                    None
+                }
+            }) {
                 // Prime lib generic metadata before resolving the symbol body so
                 // bare lib references inside type literals keep their default
                 // type arguments instead of caching an uninstantiated Lazy type.
@@ -477,6 +582,15 @@ impl<'a> CheckerState<'a> {
                 if required_count > 0 {
                     return TypeId::ERROR;
                 }
+                let is_class = self
+                    .get_cross_file_symbol(sym_id)
+                    .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::CLASS))
+                    || self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                        symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
+                    });
+                if is_class && type_params.is_empty() {
+                    return self.type_reference_symbol_type(sym_id);
+                }
                 // For generic types with all-default type parameters (e.g., Uint8Array<T = ArrayBufferLike>),
                 // wrap in Application(Lazy(DefId), defaults) to match resolve_simple_type_reference behavior.
                 // Without this, bare Lazy(DefId) misses the default instantiation and causes false
@@ -493,7 +607,79 @@ impl<'a> CheckerState<'a> {
                     let base_type_id = factory.lazy(def_id);
                     return factory.application(base_type_id, default_args);
                 }
+                let is_class = self
+                    .get_cross_file_symbol(sym_id)
+                    .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::CLASS))
+                    || self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                        symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
+                    });
+                if is_class {
+                    return self.type_reference_symbol_type(sym_id);
+                }
                 // Stable-identity: create Lazy(DefId) (body already resolved above)
+                return self.ctx.create_lazy_type_ref(sym_id);
+            }
+            if let Some(sym_id) = self.ctx.binder.file_locals.get(name)
+                && self.symbol_has_declared_type_meaning(sym_id)
+            {
+                let mut visited = AliasCycleTracker::new();
+                let sym_id = self
+                    .ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .and_then(|symbol| {
+                        symbol.import_module.as_ref().and_then(|module_name| {
+                            symbol.import_name.as_deref().and_then(|import_name| {
+                                self.resolve_cross_file_export_from_file(
+                                    module_name,
+                                    import_name,
+                                    Some(self.ctx.current_file_idx),
+                                )
+                            })
+                        })
+                    })
+                    .unwrap_or_else(|| {
+                        self.resolve_alias_symbol(sym_id, &mut visited)
+                            .unwrap_or(sym_id)
+                    });
+                let _ = self.type_reference_symbol_type(sym_id);
+                let type_params = self.get_type_params_for_symbol(sym_id);
+                let required_count = type_params
+                    .iter()
+                    .filter(|param| param.default.is_none())
+                    .count();
+                if required_count > 0 {
+                    return TypeId::ERROR;
+                }
+                let is_class = self
+                    .get_cross_file_symbol(sym_id)
+                    .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::CLASS))
+                    || self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                        symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
+                    });
+                if is_class && type_params.is_empty() {
+                    return self.type_reference_symbol_type(sym_id);
+                }
+                if !type_params.is_empty() && type_params.iter().all(|p| p.default.is_some()) {
+                    let default_args: Vec<TypeId> =
+                        crate::query_boundaries::common::resolve_default_type_args(
+                            self.ctx.types,
+                            &type_params,
+                        );
+                    let def_id = self
+                        .ctx
+                        .get_or_create_def_id_with_params(sym_id, type_params);
+                    return factory.application(factory.lazy(def_id), default_args);
+                }
+                let is_class = self
+                    .get_cross_file_symbol(sym_id)
+                    .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::CLASS))
+                    || self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                        symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
+                    });
+                if is_class {
+                    return self.type_reference_symbol_type(sym_id);
+                }
                 return self.ctx.create_lazy_type_ref(sym_id);
             }
 
@@ -916,20 +1102,28 @@ impl<'a> CheckerState<'a> {
         let mut construct_signatures = Vec::new();
         let mut string_index = None;
         let mut number_index = None;
-        let mut extra_string_indices = Vec::new();
         let mut extra_number_indices = Vec::new();
         let mut has_abstract_construct_sig = false;
+        let mut has_late_bound_members = false;
         // Global member counter for preserving source declaration order across
         // both properties and methods. Using properties.len() would give methods
         // higher declaration_order than all properties since methods are merged
         // after the loop, breaking tsc's interleaved display order.
         let mut member_order: u32 = 0;
-        // Collect method signatures grouped by name to support overloaded methods.
-        // Each entry maps method name -> list of (CallSignature, optional, readonly).
-        let mut method_overloads: FxHashMap<Atom, Vec<(CallSignature, bool, bool)>> =
-            FxHashMap::default();
-        // Track insertion order and declaration_order for method overloads.
-        let mut method_overload_order: Vec<(Atom, u32)> = Vec::new();
+        struct OverloadEntry {
+            signature: CallSignature,
+            optional: bool,
+            readonly: bool,
+            is_symbol_named: bool,
+        }
+        struct OverloadOrderKey {
+            name: Atom,
+            decl_order: u32,
+            is_string_named: bool,
+            single_quoted_name: bool,
+        }
+        let mut method_overloads: FxHashMap<Atom, Vec<OverloadEntry>> = FxHashMap::default();
+        let mut method_overload_order: Vec<OverloadOrderKey> = Vec::new();
 
         for &member_idx in &data.members.nodes {
             let Some(member) = self.ctx.arena.get(member_idx) else {
@@ -988,10 +1182,20 @@ impl<'a> CheckerState<'a> {
                     }
                     METHOD_SIGNATURE | PROPERTY_SIGNATURE => {
                         let Some(name) = self.get_property_name_resolved(sig.name) else {
+                            if self
+                                .ctx
+                                .arena
+                                .get(sig.name)
+                                .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+                            {
+                                has_late_bound_members = true;
+                            }
                             continue;
                         };
                         let name_atom = self.ctx.types.intern_string(&name);
                         let is_symbol_named = self.is_symbol_property_name(sig.name);
+                        let (is_string_named, single_quoted_name) =
+                            self.ctx.arena.string_property_name_flags(sig.name);
 
                         if member.kind == METHOD_SIGNATURE {
                             if let Some(ref _params) = sig.parameters {}
@@ -1018,9 +1222,19 @@ impl<'a> CheckerState<'a> {
                             let entry = method_overloads.entry(name_atom).or_default();
                             if entry.is_empty() {
                                 member_order += 1;
-                                method_overload_order.push((name_atom, member_order));
+                                method_overload_order.push(OverloadOrderKey {
+                                    name: name_atom,
+                                    decl_order: member_order,
+                                    is_string_named,
+                                    single_quoted_name,
+                                });
                             }
-                            entry.push((call_sig, optional, readonly));
+                            entry.push(OverloadEntry {
+                                signature: call_sig,
+                                optional,
+                                readonly,
+                                is_symbol_named,
+                            });
                         } else {
                             let circular_self_reference = sig.type_annotation.is_some()
                                 && owner_name.as_deref().is_some_and(|owner_name| {
@@ -1041,11 +1255,27 @@ impl<'a> CheckerState<'a> {
                             } else {
                                 TypeId::ANY
                             };
+                            let write_type =
+                                if self.ctx.compiler_options.exact_optional_property_types
+                                    && sig.question_token
+                                    && sig.type_annotation.is_some()
+                                    && !type_node_includes_explicit_undefined(
+                                        self.ctx.arena,
+                                        sig.type_annotation,
+                                    )
+                                {
+                                    crate::query_boundaries::common::remove_undefined(
+                                        self.ctx.types.as_type_database(),
+                                        type_id,
+                                    )
+                                } else {
+                                    type_id
+                                };
                             member_order += 1;
                             properties.push(PropertyInfo {
                                 name: name_atom,
                                 type_id,
-                                write_type: type_id,
+                                write_type,
                                 optional: sig.question_token,
                                 readonly: self.has_readonly_modifier(&sig.modifiers),
                                 is_method: false,
@@ -1053,9 +1283,9 @@ impl<'a> CheckerState<'a> {
                                 visibility: Visibility::Public,
                                 parent_id: None,
                                 declaration_order: member_order,
-                                is_string_named: false,
+                                is_string_named,
                                 is_symbol_named,
-                                single_quoted_name: false,
+                                single_quoted_name,
                             });
                         }
                     }
@@ -1202,10 +1432,13 @@ impl<'a> CheckerState<'a> {
                             extra_number_indices.push(info);
                         }
                     } else {
-                        if string_index.is_none() {
-                            string_index = Some(info);
-                        } else {
-                            extra_string_indices.push(info);
+                        match string_index.as_mut() {
+                            None => string_index = Some(info),
+                            Some(existing) => {
+                                super::interface_type::merge_string_index_by_union(
+                                    existing, info, factory,
+                                );
+                            }
                         }
                     }
                 }
@@ -1280,6 +1513,15 @@ impl<'a> CheckerState<'a> {
                         circular_self_reference,
                     });
                 }
+            } else if member.is_accessor()
+                && let Some(accessor) = self.ctx.arena.get_accessor(member)
+                && self
+                    .ctx
+                    .arena
+                    .get(accessor.name)
+                    .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+            {
+                has_late_bound_members = true;
             }
         }
 
@@ -1336,11 +1578,16 @@ impl<'a> CheckerState<'a> {
             let read_type = getter_type.or(setter_type).unwrap_or(TypeId::UNKNOWN);
             let write_type = setter_type.or(getter_type).unwrap_or(read_type);
             let readonly = getter_type.is_some() && setter_type.is_none();
-            let is_symbol_named = accessor
+            let primary_name_idx = accessor
                 .getter
                 .as_ref()
                 .or(accessor.setter.as_ref())
-                .is_some_and(|member| self.is_symbol_property_name(member.name_idx));
+                .map(|member| member.name_idx);
+            let is_symbol_named =
+                primary_name_idx.is_some_and(|name_idx| self.is_symbol_property_name(name_idx));
+            let (is_string_named, single_quoted_name) = primary_name_idx
+                .map(|name_idx| self.ctx.arena.string_property_name_flags(name_idx))
+                .unwrap_or((false, false));
             properties.push(PropertyInfo {
                 name,
                 type_id: read_type,
@@ -1352,23 +1599,25 @@ impl<'a> CheckerState<'a> {
                 visibility: Visibility::Public,
                 parent_id: None,
                 declaration_order: accessor.declaration_order,
-                is_string_named: false,
+                is_string_named,
                 is_symbol_named,
-                single_quoted_name: false,
+                single_quoted_name,
             });
         }
 
         // Merge overloaded method signatures into properties.
         // Single-signature methods become Function types; multi-signature become Callable types.
-        for (name_atom, decl_order) in method_overload_order {
-            if let Some(sigs) = method_overloads.remove(&name_atom) {
-                let optional = sigs.iter().all(|(_, opt, _)| *opt);
-                let readonly = sigs.iter().any(|(_, _, ro)| *ro);
+        for key in method_overload_order {
+            if let Some(sigs) = method_overloads.remove(&key.name) {
+                let optional = sigs.iter().all(|entry| entry.optional);
+                let readonly = sigs.iter().any(|entry| entry.readonly);
+                let is_symbol_named = sigs.iter().any(|entry| entry.is_symbol_named);
                 let method_type = if sigs.len() == 1 {
-                    let (sig, _, _) = sigs
+                    let sig = sigs
                         .into_iter()
                         .next()
-                        .expect("sigs.len() == 1 guard ensures at least one element");
+                        .expect("sigs.len() == 1 guard ensures at least one element")
+                        .signature;
                     factory.function(FunctionShape {
                         type_params: sig.type_params,
                         params: sig.params,
@@ -1380,7 +1629,7 @@ impl<'a> CheckerState<'a> {
                     })
                 } else {
                     let merged_sigs: Vec<CallSignature> =
-                        sigs.into_iter().map(|(sig, _, _)| sig).collect();
+                        sigs.into_iter().map(|entry| entry.signature).collect();
                     factory.callable(CallableShape {
                         call_signatures: merged_sigs,
                         construct_signatures: Vec::new(),
@@ -1392,7 +1641,7 @@ impl<'a> CheckerState<'a> {
                     })
                 };
                 properties.push(PropertyInfo {
-                    name: name_atom,
+                    name: key.name,
                     type_id: method_type,
                     write_type: method_type,
                     optional,
@@ -1401,10 +1650,10 @@ impl<'a> CheckerState<'a> {
                     is_class_prototype: false,
                     visibility: Visibility::Public,
                     parent_id: None,
-                    declaration_order: decl_order,
-                    is_string_named: false,
-                    is_symbol_named: false,
-                    single_quoted_name: false,
+                    declaration_order: key.decl_order,
+                    is_string_named: key.is_string_named,
+                    is_symbol_named,
+                    single_quoted_name: key.single_quoted_name,
                 });
             }
         }
@@ -1419,13 +1668,6 @@ impl<'a> CheckerState<'a> {
                 symbol: None,
                 is_abstract: has_abstract_construct_sig,
             });
-            for idx in extra_string_indices {
-                let member = factory.object_with_index(ObjectShape {
-                    string_index: Some(idx),
-                    ..ObjectShape::default()
-                });
-                result = self.ctx.types.intersect_types_raw2(result, member);
-            }
             for idx in extra_number_indices {
                 let member = factory.object_with_index(ObjectShape {
                     number_index: Some(idx),
@@ -1437,19 +1679,16 @@ impl<'a> CheckerState<'a> {
         }
 
         if string_index.is_some() || number_index.is_some() {
-            let mut result = factory.object_with_index(ObjectShape {
+            let mut shape = ObjectShape {
                 properties,
                 string_index,
                 number_index,
                 ..ObjectShape::default()
-            });
-            for idx in extra_string_indices {
-                let member = factory.object_with_index(ObjectShape {
-                    string_index: Some(idx),
-                    ..ObjectShape::default()
-                });
-                result = self.ctx.types.intersect_types_raw2(result, member);
+            };
+            if has_late_bound_members {
+                shape.mark_has_late_bound_members();
             }
+            let mut result = factory.object_with_index(shape);
             for idx in extra_number_indices {
                 let member = factory.object_with_index(ObjectShape {
                     number_index: Some(idx),
@@ -1460,6 +1699,10 @@ impl<'a> CheckerState<'a> {
             return result;
         }
 
-        factory.object(properties)
+        if has_late_bound_members {
+            factory.object_with_late_bound_members(properties, None)
+        } else {
+            factory.object_with_symbol(properties, None)
+        }
     }
 }

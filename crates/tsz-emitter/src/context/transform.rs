@@ -339,6 +339,21 @@ pub enum TransformDirective {
     Chain(Vec<Self>),
 }
 
+impl TransformDirective {
+    pub(crate) fn es5_namespace_should_declare_var(&self) -> Option<bool> {
+        match self {
+            Self::ES5Namespace {
+                should_declare_var, ..
+            } => Some(*should_declare_var),
+            Self::Chain(items) => items
+                .iter()
+                .find_map(Self::es5_namespace_should_declare_var),
+            Self::CommonJSExport { inner, .. } => inner.es5_namespace_should_declare_var(),
+            _ => None,
+        }
+    }
+}
+
 /// Module formats that require wrapping transforms
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModuleFormat {
@@ -363,6 +378,12 @@ pub struct TransformContext {
     /// body block is added here so the emitter knows to inject the capture statement.
     /// The value is the capture variable name (e.g., "_this" or "_`this_1`" on collision).
     this_capture_scopes: FxHashMap<NodeIndex, Arc<str>>,
+    /// For each local enum/namespace binding, every export alias that will be
+    /// folded into its IIFE tail. Populated by lowering (`commonjs` mode) so
+    /// re-export clauses emitted *before* the corresponding declaration can
+    /// suppress their redundant `exports.<alias> = local;` statement without
+    /// reading future directives.
+    cjs_iife_folded_bindings: FxHashMap<String, Vec<String>>,
 }
 
 impl TransformContext {
@@ -373,7 +394,20 @@ impl TransformContext {
             helpers: HelpersNeeded::default(),
             helpers_populated: false,
             this_capture_scopes: FxHashMap::default(),
+            cjs_iife_folded_bindings: FxHashMap::default(),
         }
+    }
+
+    /// Record that `local_name` will have every alias in `aliases` folded into
+    /// its IIFE tail. Called by lowering once per file so the source-order
+    /// re-export emitter can detect future folds.
+    pub fn set_cjs_iife_folded_bindings(&mut self, bindings: FxHashMap<String, Vec<String>>) {
+        self.cjs_iife_folded_bindings = bindings;
+    }
+
+    /// Lookup future fold aliases for `local_name`.
+    pub const fn cjs_iife_folded_bindings(&self) -> &FxHashMap<String, Vec<String>> {
+        &self.cjs_iife_folded_bindings
     }
 
     /// Register a transform directive for a node

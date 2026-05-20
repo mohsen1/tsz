@@ -1453,18 +1453,6 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        if let Some(callable_shape) = query::callable_shape_for_type(self.ctx.types, type_id) {
-            if callable_shape.is_abstract {
-                return true;
-            }
-            if let Some(sym_id) = callable_shape.symbol
-                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                && symbol.has_any_flags(symbol_flags::ABSTRACT)
-            {
-                return true;
-            }
-        }
-
         if let Some(def_id) = query::lazy_def_id(self.ctx.types, type_id)
             && let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
@@ -1487,10 +1475,36 @@ impl<'a> CheckerState<'a> {
             query::AbstractClassCheckKind::Union(members) => members
                 .iter()
                 .any(|&member| self.type_contains_abstract_class_inner(member, visited)),
-            query::AbstractClassCheckKind::Intersection(members) => members
-                .iter()
-                .any(|&member| self.type_contains_abstract_class_inner(member, visited)),
-            query::AbstractClassCheckKind::NotAbstract => false,
+            query::AbstractClassCheckKind::Intersection(members) => {
+                let constructor_members: Vec<TypeId> = members
+                    .iter()
+                    .copied()
+                    .filter(|&member| {
+                        query::callable_shape_for_type(self.ctx.types, member)
+                            .is_some_and(|shape| !shape.construct_signatures.is_empty())
+                    })
+                    .collect();
+                !constructor_members.is_empty()
+                    && constructor_members
+                        .iter()
+                        .all(|&member| self.type_contains_abstract_class_inner(member, visited))
+            }
+            query::AbstractClassCheckKind::NotAbstract => {
+                if let Some(callable_shape) =
+                    query::callable_shape_for_type(self.ctx.types, type_id)
+                {
+                    if callable_shape.is_abstract {
+                        return true;
+                    }
+                    if let Some(sym_id) = callable_shape.symbol
+                        && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                        && symbol.has_any_flags(symbol_flags::ABSTRACT)
+                    {
+                        return true;
+                    }
+                }
+                false
+            }
         }
     }
 

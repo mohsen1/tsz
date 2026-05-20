@@ -170,7 +170,9 @@ createMappingComponent({
     let messages = check_source_code_messages(source);
     let ts2322 = messages
         .iter()
-        .find_map(|(code, message)| (*code == 2322).then_some(message))
+        .find_map(|(code, message)| {
+            (*code == 2322 && message.contains("=> Unwrap<")).then_some(message)
+        })
         .unwrap_or_else(|| panic!("expected TS2322 diagnostic, got: {messages:#?}"));
 
     assert!(
@@ -232,7 +234,9 @@ buildComp({
     let messages = check_source_code_messages(source);
     let ts2322 = messages
         .iter()
-        .find_map(|(code, message)| (*code == 2322).then_some(message))
+        .find_map(|(code, message)| {
+            (*code == 2322 && message.contains("=> Open<")).then_some(message)
+        })
         .unwrap_or_else(|| panic!("expected TS2322 diagnostic, got: {messages:#?}"));
 
     assert!(
@@ -252,5 +256,46 @@ buildComp({
     assert!(
         !ts2322.contains("| undefined"),
         "renamed optional callable target should not display synthetic undefined; got: {ts2322}"
+    );
+}
+
+/// Regression test for issue #5928.
+///
+/// When `T extends unknown[]` and both a function arg and an array literal arg
+/// contribute to inferring T, the contra-candidate `[string, number]` (from the
+/// function's parameter list) must win over the covariant array candidate when
+/// the covariant candidate is not assignable to the contra-candidate.
+#[test]
+fn issue_5928_generic_rest_param_infers_tuple_not_array() {
+    let codes = check_source_codes(
+        r#"
+function apply<T extends unknown[]>(fn: (...args: T) => void, args: T): void {
+    fn(...args);
+}
+function log(a: string, b: number): void {}
+apply(log, ["hello", 42]);
+"#,
+    );
+    assert!(
+        codes.is_empty(),
+        "Expected no errors: T should infer as [string, number], not (string|number)[]; got codes: {codes:?}"
+    );
+}
+
+/// Higher-order function (curry) pattern: rest-param tuple inference must propagate.
+#[test]
+fn issue_5928_curry_pattern_no_error() {
+    let codes = check_source_codes(
+        r#"
+function curry<A extends unknown[], B>(fn: (...args: A) => B): (...args: A) => B {
+    return fn;
+}
+declare function add(a: number, b: number): number;
+const curriedAdd = curry(add);
+"#,
+    );
+    assert!(
+        codes.is_empty(),
+        "Expected no errors for curry(add); got codes: {codes:?}"
     );
 }
