@@ -783,7 +783,7 @@ fn jsx_empty_element_attributes_property_uses_instance_type() {
     assert!(
         ts2322.iter().any(|d| d
             .message_text
-            .contains("is not assignable to type '{ q?: number | undefined; }'") ),
+            .contains("is not assignable to type '{ q?: number | undefined; }'")),
         "expected TS2322 to compare against the instance type, got: {diagnostics:?}"
     );
     assert!(
@@ -1364,7 +1364,7 @@ fn jsx_intrinsic_excess_attrs_report_for_intersection_alias_props() {
     assert!(
         ts2322.iter().any(|diag| diag
             .message_text
-            .contains("and 'class' does not exist in type '{ className?: string | undefined; }'") ),
+            .contains("and 'class' does not exist in type '{ className?: string | undefined; }'")),
         "Expected plain intrinsic excess attr diagnostic, got: {diagnostics:?}"
     );
     assert_eq!(
@@ -3351,14 +3351,14 @@ fn jsx_component_type_application_no_ts2786() {
             type ComponentType<{tp} = {{}}> = ComponentClass<{tp}> | FunctionComponent<{tp}>;
         }}
         interface Props {{ x?: number; }}
-        declare var elem: React.ComponentType<Props>;
+        declare var Elem: React.ComponentType<Props>;
         const _ = <{jsx_tag} />;
         "#
         )
     };
 
     // Shape 1: type-param spelled `T` — ComponentType<T> Application
-    let src1 = make_source("T", "elem");
+    let src1 = make_source("T", "Elem");
     let d1 = check_jsx_codes(&src1);
     assert!(
         !d1.contains(&2786),
@@ -3366,7 +3366,7 @@ fn jsx_component_type_application_no_ts2786() {
     );
 
     // Shape 2: type-param spelled `K` — proves the rule is not tied to `T`
-    let src2 = make_source("K", "elem");
+    let src2 = make_source("K", "Elem");
     let d2 = check_jsx_codes(&src2);
     assert!(
         !d2.contains(&2786),
@@ -3401,7 +3401,7 @@ fn jsx_function_component_application_no_ts2786() {
 
     // FunctionComponent<Props> as JSX tag — must not emit TS2786
     let src_good =
-        format!("{base} declare var fc: React.FunctionComponent<Props>; const _ = <fc />;");
+        format!("{base} declare var Fc: React.FunctionComponent<Props>; const _ = <Fc />;");
     let d_good = check_jsx_codes(&src_good);
     assert!(
         !d_good.contains(&2786),
@@ -3414,8 +3414,8 @@ fn jsx_function_component_application_no_ts2786() {
         interface NonReactSfc {{
             (props: Props): {{ notAnElement: true }};
         }}
-        declare var bad: NonReactSfc;
-        const _ = <bad />;
+        declare var Bad: NonReactSfc;
+        const _ = <Bad />;
         "#
     );
     let d_bad = check_jsx_codes(&src_bad);

@@ -997,7 +997,6 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
-
         }
 
         if any_checked && !all_valid {
