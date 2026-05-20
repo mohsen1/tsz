@@ -420,12 +420,6 @@ impl<'a> CheckerContext<'a> {
         self.symbol_instance_types =
             crate::context::SymbolTypeCache::with_capacity(binder.symbols.len());
         self.enum_namespace_types.clear();
-        // Only the SymbolId-keyed part of the delegation cache is file-local.
-        // The arena-pointer-keyed `declaration_node_types` map is safe to keep:
-        // each NodeArena is a distinct heap object, so keys from file A cannot
-        // match a lookup for file B.  Preserving it amortises cross-file
-        // delegation costs when the same foreign declaration is resolved from
-        // multiple source files.
         self.lib_delegation_cache.clear_file_local();
         self.var_decl_types.clear();
         self.merged_value_types.clear();
