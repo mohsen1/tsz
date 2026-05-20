@@ -1940,13 +1940,15 @@ c = d;
             tsz_solver::TypeResolver::resolve_lazy(&checker.ctx, def_id, &program.type_interner)
                 .map(|body| checker.format_type(body))
                 .unwrap_or_else(|| "<none>".to_string());
-        let policy = tsz_solver::RelationPolicy::from_flags(checker.ctx.pack_relation_flags());
-        let context = tsz_solver::RelationContext {
+        let policy = tsz_solver::relations::relation_queries::RelationPolicy::from_flags(
+            checker.ctx.pack_relation_flags(),
+        );
+        let context = tsz_solver::relations::relation_queries::RelationContext {
             query_db: Some(&query_cache),
             inheritance_graph: Some(&checker.ctx.inheritance_graph),
             class_check: None,
         };
-        let solver_variance = tsz_solver::check_application_variance(
+        let solver_variance = tsz_solver::relations::relation_queries::check_application_variance(
             &program.type_interner,
             &checker.ctx,
             Some(&query_cache),

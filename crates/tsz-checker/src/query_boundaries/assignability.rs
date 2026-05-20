@@ -404,7 +404,7 @@ pub(crate) fn assignability_cache_key(
     RelationCacheKey::for_assignability(
         source,
         target,
-        tsz_solver::RelationPolicy::from_flags(flags).cache_config(),
+        tsz_solver::relations::relation_queries::RelationPolicy::from_flags(flags).cache_config(),
     )
 }
 
@@ -413,7 +413,7 @@ pub(crate) fn subtype_cache_key(source: TypeId, target: TypeId, flags: u16) -> R
     RelationCacheKey::for_subtype(
         source,
         target,
-        tsz_solver::RelationPolicy::from_flags(flags).cache_config(),
+        tsz_solver::relations::relation_queries::RelationPolicy::from_flags(flags).cache_config(),
     )
 }
 pub(crate) use tsz_solver::type_queries::{
@@ -562,15 +562,15 @@ pub(crate) fn are_types_overlapping_with_env(
         flags |= tsz_solver::RelationCacheKey::FLAG_STRICT_NULL_CHECKS;
     }
 
-    let policy = tsz_solver::RelationPolicy::from_flags(flags);
-    tsz_solver::query_relation_with_resolver(
+    let policy = tsz_solver::relations::relation_queries::RelationPolicy::from_flags(flags);
+    tsz_solver::relations::relation_queries::query_relation_with_resolver(
         db,
         env,
         left,
         right,
-        tsz_solver::RelationKind::Overlap,
+        tsz_solver::relations::relation_queries::RelationKind::Overlap,
         policy,
-        tsz_solver::RelationContext::default(),
+        tsz_solver::relations::relation_queries::RelationContext::default(),
     )
     .is_related()
 }
@@ -578,7 +578,7 @@ pub(crate) fn are_types_overlapping_with_env(
 pub(crate) fn is_assignable_with_overrides<R: tsz_solver::TypeResolver>(
     inputs: &AssignabilityQueryInputs<'_, R>,
     overrides: &dyn tsz_solver::relations::compat::AssignabilityOverrideProvider,
-) -> tsz_solver::RelationResult {
+) -> tsz_solver::relations::relation_queries::RelationResult {
     let _span = tracing::debug_span!(
         "is_assignable",
         src = inputs.source.0,
@@ -595,24 +595,26 @@ pub(crate) fn is_assignable_with_overrides<R: tsz_solver::TypeResolver>(
         inheritance_graph,
         sound_mode,
     } = *inputs;
-    let policy = tsz_solver::RelationPolicy::from_flags(flags)
+    let policy = tsz_solver::relations::relation_queries::RelationPolicy::from_flags(flags)
         .with_strict_subtype_checking(sound_mode)
         .with_strict_any_propagation(sound_mode);
-    let context = tsz_solver::RelationContext {
+    let context = tsz_solver::relations::relation_queries::RelationContext {
         query_db: Some(db),
         inheritance_graph: Some(inheritance_graph),
         class_check: None,
     };
-    tsz_solver::query_relation_with_overrides(tsz_solver::RelationQueryInputs {
-        interner: db.as_type_database(),
-        resolver,
-        source,
-        target,
-        kind: tsz_solver::RelationKind::Assignable,
-        policy,
-        context,
-        overrides,
-    })
+    tsz_solver::relations::relation_queries::query_relation_with_overrides(
+        tsz_solver::relations::relation_queries::RelationQueryInputs {
+            interner: db.as_type_database(),
+            resolver,
+            source,
+            target,
+            kind: tsz_solver::relations::relation_queries::RelationKind::Assignable,
+            policy,
+            context,
+            overrides,
+        },
+    )
 }
 
 /// Like `is_assignable_with_overrides` but skips weak type checks (TS2559).
@@ -632,25 +634,27 @@ pub(crate) fn is_assignable_no_weak_checks<R: tsz_solver::TypeResolver>(
         inheritance_graph,
         sound_mode,
     } = *inputs;
-    let policy = tsz_solver::RelationPolicy::from_flags(flags)
+    let policy = tsz_solver::relations::relation_queries::RelationPolicy::from_flags(flags)
         .with_strict_subtype_checking(sound_mode)
         .with_strict_any_propagation(sound_mode)
         .with_skip_weak_type_checks(true);
-    let context = tsz_solver::RelationContext {
+    let context = tsz_solver::relations::relation_queries::RelationContext {
         query_db: Some(db),
         inheritance_graph: Some(inheritance_graph),
         class_check: None,
     };
-    tsz_solver::query_relation_with_overrides(tsz_solver::RelationQueryInputs {
-        interner: db.as_type_database(),
-        resolver,
-        source,
-        target,
-        kind: tsz_solver::RelationKind::Assignable,
-        policy,
-        context,
-        overrides,
-    })
+    tsz_solver::relations::relation_queries::query_relation_with_overrides(
+        tsz_solver::relations::relation_queries::RelationQueryInputs {
+            interner: db.as_type_database(),
+            resolver,
+            source,
+            target,
+            kind: tsz_solver::relations::relation_queries::RelationKind::Assignable,
+            policy,
+            context,
+            overrides,
+        },
+    )
     .is_related()
 }
 
@@ -674,20 +678,20 @@ pub(crate) fn is_assignable_bivariant_with_resolver<R: tsz_solver::TypeResolver>
     inheritance_graph: &InheritanceGraph,
     sound_mode: bool,
 ) -> bool {
-    let policy = tsz_solver::RelationPolicy::from_flags(flags)
+    let policy = tsz_solver::relations::relation_queries::RelationPolicy::from_flags(flags)
         .with_strict_subtype_checking(sound_mode)
         .with_strict_any_propagation(sound_mode);
-    let context = tsz_solver::RelationContext {
+    let context = tsz_solver::relations::relation_queries::RelationContext {
         query_db: Some(db),
         inheritance_graph: Some(inheritance_graph),
         class_check: None,
     };
-    tsz_solver::query_relation_with_resolver(
+    tsz_solver::relations::relation_queries::query_relation_with_resolver(
         db,
         resolver,
         source,
         target,
-        tsz_solver::RelationKind::AssignableBivariantCallbacks,
+        tsz_solver::relations::relation_queries::RelationKind::AssignableBivariantCallbacks,
         policy,
         context,
     )
@@ -702,19 +706,19 @@ pub(crate) fn is_subtype_with_resolver<R: tsz_solver::TypeResolver>(
     flags: u16,
     inheritance_graph: &InheritanceGraph,
     class_check: Option<&dyn Fn(tsz_solver::SymbolRef) -> bool>,
-) -> tsz_solver::RelationResult {
-    let policy = tsz_solver::RelationPolicy::from_flags(flags);
-    let context = tsz_solver::RelationContext {
+) -> tsz_solver::relations::relation_queries::RelationResult {
+    let policy = tsz_solver::relations::relation_queries::RelationPolicy::from_flags(flags);
+    let context = tsz_solver::relations::relation_queries::RelationContext {
         query_db: Some(db),
         inheritance_graph: Some(inheritance_graph),
         class_check,
     };
-    tsz_solver::query_relation_with_resolver(
+    tsz_solver::relations::relation_queries::query_relation_with_resolver(
         db,
         resolver,
         source,
         target,
-        tsz_solver::RelationKind::Subtype,
+        tsz_solver::relations::relation_queries::RelationKind::Subtype,
         policy,
         context,
     )
@@ -729,20 +733,20 @@ pub(crate) fn is_redeclaration_identical_with_resolver<R: tsz_solver::TypeResolv
     inheritance_graph: &InheritanceGraph,
     sound_mode: bool,
 ) -> bool {
-    let policy = tsz_solver::RelationPolicy::from_flags(flags)
+    let policy = tsz_solver::relations::relation_queries::RelationPolicy::from_flags(flags)
         .with_strict_subtype_checking(sound_mode)
         .with_strict_any_propagation(sound_mode);
-    let context = tsz_solver::RelationContext {
+    let context = tsz_solver::relations::relation_queries::RelationContext {
         query_db: Some(db),
         inheritance_graph: Some(inheritance_graph),
         class_check: None,
     };
-    tsz_solver::query_relation_with_resolver(
+    tsz_solver::relations::relation_queries::query_relation_with_resolver(
         db,
         resolver,
         source,
         target,
-        tsz_solver::RelationKind::RedeclarationIdentical,
+        tsz_solver::relations::relation_queries::RelationKind::RedeclarationIdentical,
         policy,
         context,
     )
@@ -1403,13 +1407,14 @@ pub(crate) fn analyze_assignability_failure_with_context<R: tsz_solver::TypeReso
     source: TypeId,
     target: TypeId,
 ) -> AssignabilityFailureAnalysis {
-    let analysis = tsz_solver::analyze_assignability_failure_with_resolver(
-        db,
-        resolver,
-        source,
-        target,
-        |checker| ctx.configure_compat_checker(checker),
-    );
+    let analysis =
+        tsz_solver::relations::relation_queries::analyze_assignability_failure_with_resolver(
+            db,
+            resolver,
+            source,
+            target,
+            |checker| ctx.configure_compat_checker(checker),
+        );
     AssignabilityFailureAnalysis {
         weak_union_violation: analysis.weak_union_violation,
         failure_reason: analysis.failure_reason,
@@ -1435,15 +1440,15 @@ pub(crate) fn check_application_variance_assignability<R: tsz_solver::TypeResolv
         inheritance_graph,
         sound_mode,
     } = *inputs;
-    let policy = tsz_solver::RelationPolicy::from_flags(flags)
+    let policy = tsz_solver::relations::relation_queries::RelationPolicy::from_flags(flags)
         .with_strict_subtype_checking(sound_mode)
         .with_strict_any_propagation(sound_mode);
-    let context = tsz_solver::RelationContext {
+    let context = tsz_solver::relations::relation_queries::RelationContext {
         query_db: Some(db),
         inheritance_graph: Some(inheritance_graph),
         class_check: None,
     };
-    tsz_solver::check_application_variance(
+    tsz_solver::relations::relation_queries::check_application_variance(
         db.as_type_database(),
         resolver,
         Some(db),
