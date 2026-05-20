@@ -224,6 +224,7 @@ impl<'a> CheckerState<'a> {
         };
         if let Some(display) = self.declared_generic_alias_source_display_for_target_display(
             anchor_idx,
+            source_for_display,
             &source_str,
             &target_str,
         ) {

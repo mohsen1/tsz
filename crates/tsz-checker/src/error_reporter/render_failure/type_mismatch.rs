@@ -443,8 +443,14 @@ impl<'a> CheckerState<'a> {
                 source_str = direct_source;
                 target_str = direct_target;
             }
-            if let Some((display_source, display_target)) =
-                self.declared_generic_alias_assignment_pair_display(idx, &source_str, &target_str)
+            if let Some((display_source, display_target)) = self
+                .declared_generic_alias_assignment_pair_display(
+                    idx,
+                    source,
+                    target,
+                    &source_str,
+                    &target_str,
+                )
             {
                 source_str = display_source;
                 target_str = display_target;

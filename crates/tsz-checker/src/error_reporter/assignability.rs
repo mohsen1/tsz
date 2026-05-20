@@ -803,6 +803,8 @@ impl<'a> CheckerState<'a> {
                     diag.message_text = self
                         .rewrite_declared_generic_alias_source_in_ts2322_message(
                             anchor_idx,
+                            source,
+                            target,
                             diag.message_text,
                         );
                 }
@@ -1227,6 +1229,7 @@ impl<'a> CheckerState<'a> {
         if !source_from_annotation
             && let Some(display) = self.declared_generic_alias_source_display_for_target_display(
                 anchor_idx,
+                source,
                 &source_str,
                 &target_str,
             )
@@ -1820,7 +1823,7 @@ impl<'a> CheckerState<'a> {
                 tgt_str = self.format_type_diagnostic(unfolded);
             }
             if let Some(display) = self.declared_generic_alias_source_display_for_target_display(
-                anchor_idx, &src_str, &tgt_str,
+                anchor_idx, source, &src_str, &tgt_str,
             ) {
                 src_str = display;
             }
