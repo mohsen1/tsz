@@ -1089,8 +1089,10 @@ run_conformance() {
   echo "Conformance skipped: ${skipped_tests}"
 
   local failures_file="$METRICS_DIR/conformance-failures-${shard_index}.txt"
-  grep -a '^\(FAIL\|XFAIL\|CRASH\|TIMEOUT\) ' "$log_file" \
-    | sed 's/^\(FAIL\|XFAIL\|CRASH\|TIMEOUT\) \([^ |]*\).*/\2/' \
+  # XFAIL entries are expected by the conformance harness; only real failing
+  # statuses should participate in aggregate regression allowlist checks.
+  grep -a '^\(FAIL\|CRASH\|TIMEOUT\) ' "$log_file" \
+    | sed 's/^\(FAIL\|CRASH\|TIMEOUT\) \([^ |]*\).*/\2/' \
     | sort -u > "$failures_file" 2>/dev/null || true
 
   if [[ "$rc" -ne 0 ]]; then

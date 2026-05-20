@@ -36,10 +36,12 @@ class ConformanceArtifactHandoffTests(unittest.TestCase):
     def test_shard_writes_failure_list_before_optional_gcs_upload(self):
         body = self.function_body("run_conformance", "\nrun_conformance_aggregate() {")
         failure_write = body.index(
-            'grep -a \'^\\(FAIL\\|XFAIL\\|CRASH\\|TIMEOUT\\) \' "$log_file"',
+            'grep -a \'^\\(FAIL\\|CRASH\\|TIMEOUT\\) \' "$log_file"',
         )
         upload_block = body.index("# Upload shard result to GCS")
         self.assertLess(failure_write, upload_block)
+        failure_write_block = body[failure_write:upload_block]
+        self.assertNotIn("XFAIL", failure_write_block)
 
     def test_aggregate_prefers_artifact_failure_lists_before_gcs(self):
         aggregate = self.function_body(
