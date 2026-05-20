@@ -14,6 +14,24 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
+/// Parameters for finalizing a tagged template call after argument collection.
+struct TaggedTemplateCallCtx {
+    /// The full tagged-template expression index.
+    idx: NodeIndex,
+    /// The resolved callee type used for the primary call resolution.
+    callee_type: TypeId,
+    /// The collected substitution argument types.
+    arg_types: Vec<TypeId>,
+    /// Whether callbacks should be checked bivariantly.
+    force_bivariant_callbacks: bool,
+    /// Contextual return type for generic inference, if any.
+    contextual_type: Option<TypeId>,
+    /// Explicit `this` type for the call, if any.
+    actual_this_type: Option<TypeId>,
+    /// The selected (overload-resolved) callee type, may equal `callee_type`.
+    selected_callee_type: TypeId,
+}
+
 impl<'a> CheckerState<'a> {
     /// Get the type of a tagged template expression (e.g., tag`hello ${x}`).
     ///
@@ -258,15 +276,17 @@ impl<'a> CheckerState<'a> {
                 }
 
                 return self.finish_tagged_template_call(
-                    idx,
+                    TaggedTemplateCallCtx {
+                        idx,
+                        callee_type: call_target_type,
+                        arg_types,
+                        force_bivariant_callbacks,
+                        contextual_type: request.contextual_type,
+                        actual_this_type,
+                        selected_callee_type,
+                    },
                     &tagged,
                     &substitution_exprs,
-                    call_target_type,
-                    arg_types,
-                    force_bivariant_callbacks,
-                    request.contextual_type,
-                    actual_this_type,
-                    selected_callee_type,
                 );
             }
 
@@ -367,15 +387,17 @@ impl<'a> CheckerState<'a> {
                 }
 
                 return self.finish_tagged_template_call(
-                    idx,
+                    TaggedTemplateCallCtx {
+                        idx,
+                        callee_type: call_target_type,
+                        arg_types,
+                        force_bivariant_callbacks,
+                        contextual_type: request.contextual_type,
+                        actual_this_type,
+                        selected_callee_type,
+                    },
                     &tagged,
                     &substitution_exprs,
-                    call_target_type,
-                    arg_types,
-                    force_bivariant_callbacks,
-                    request.contextual_type,
-                    actual_this_type,
-                    selected_callee_type,
                 );
             }
         }
@@ -392,31 +414,50 @@ impl<'a> CheckerState<'a> {
         }
 
         self.finish_tagged_template_call(
-            idx,
+            TaggedTemplateCallCtx {
+                idx,
+                callee_type: call_target_type,
+                arg_types,
+                force_bivariant_callbacks,
+                contextual_type: request.contextual_type,
+                actual_this_type,
+                selected_callee_type,
+            },
             &tagged,
             &substitution_exprs,
-            call_target_type,
-            arg_types,
-            force_bivariant_callbacks,
-            request.contextual_type,
-            actual_this_type,
-            selected_callee_type,
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    fn actual_this_type_for_tagged_template_call(
+        &mut self,
+        unwrapped_tag: NodeIndex,
+    ) -> Option<TypeId> {
+        let tag_node = self.ctx.arena.get(unwrapped_tag)?;
+        if tag_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && tag_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return None;
+        }
+
+        let access = self.ctx.arena.get_access_expr(tag_node)?;
+        Some(self.get_type_of_node(access.expression))
+    }
+
     fn finish_tagged_template_call(
         &mut self,
-        idx: NodeIndex,
+        call_ctx: TaggedTemplateCallCtx,
         tagged: &tsz_parser::parser::node::TaggedTemplateData,
         substitution_exprs: &[NodeIndex],
-        callee_type: TypeId,
-        arg_types: Vec<TypeId>,
-        force_bivariant_callbacks: bool,
-        contextual_type: Option<TypeId>,
-        actual_this_type: Option<TypeId>,
-        selected_callee_type: TypeId,
     ) -> TypeId {
+        let TaggedTemplateCallCtx {
+            idx,
+            callee_type,
+            arg_types,
+            force_bivariant_callbacks,
+            contextual_type,
+            actual_this_type,
+            selected_callee_type,
+        } = call_ctx;
         let mut args = Vec::with_capacity(1 + substitution_exprs.len());
         args.push(tagged.template);
         args.extend_from_slice(substitution_exprs);

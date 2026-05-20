@@ -1402,14 +1402,16 @@ impl<'a> CheckerState<'a> {
 
             if has_mixed_non_callable_declaration {
                 return self.compute_type_of_symbol_type_alias_variable_alias(
-                    sym_id,
-                    flags,
-                    value_decl,
-                    &declarations,
-                    &import_module,
-                    &import_name,
-                    &escaped_name,
-                    &factory,
+                    type_alias_variable_alias::SymbolAliasCtx {
+                        sym_id,
+                        flags,
+                        value_decl,
+                        declarations: &declarations,
+                        import_module: &import_module,
+                        import_name: &import_name,
+                        escaped_name: &escaped_name,
+                        factory: &factory,
+                    },
                 );
             }
 
@@ -1893,14 +1895,16 @@ impl<'a> CheckerState<'a> {
         // Remaining symbol kinds (type alias, class property, variable, alias)
         // are handled in a separate submodule to keep file sizes manageable.
         self.compute_type_of_symbol_type_alias_variable_alias(
-            sym_id,
-            flags,
-            value_decl,
-            &declarations,
-            &import_module,
-            &import_name,
-            &escaped_name,
-            &factory,
+            type_alias_variable_alias::SymbolAliasCtx {
+                sym_id,
+                flags,
+                value_decl,
+                declarations: &declarations,
+                import_module: &import_module,
+                import_name: &import_name,
+                escaped_name: &escaped_name,
+                factory: &factory,
+            },
         )
     }
 }

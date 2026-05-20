@@ -206,7 +206,6 @@ pub(crate) fn resolve_call<C: AssignabilityChecker>(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn resolve_call_with_arg_sources<C: AssignabilityChecker>(
     db: &dyn QueryDatabase,
     checker: &mut C,

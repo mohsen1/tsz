@@ -12,19 +12,32 @@ use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{TypeId, Visibility};
 
+pub(super) struct SymbolAliasCtx<'a> {
+    pub(super) sym_id: SymbolId,
+    pub(super) flags: u32,
+    pub(super) value_decl: NodeIndex,
+    pub(super) declarations: &'a [NodeIndex],
+    pub(super) import_module: &'a Option<String>,
+    pub(super) import_name: &'a Option<String>,
+    pub(super) escaped_name: &'a str,
+    pub(super) factory: &'a tsz_solver::construction::TypeFactory<'a>,
+}
+
 impl<'a> CheckerState<'a> {
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn compute_type_of_symbol_type_alias_variable_alias(
         &mut self,
-        sym_id: SymbolId,
-        flags: u32,
-        value_decl: NodeIndex,
-        declarations: &[NodeIndex],
-        import_module: &Option<String>,
-        import_name: &Option<String>,
-        escaped_name: &str,
-        factory: &tsz_solver::construction::TypeFactory<'_>,
+        ctx: SymbolAliasCtx<'_>,
     ) -> (TypeId, Vec<tsz_solver::TypeParamInfo>) {
+        let SymbolAliasCtx {
+            sym_id,
+            flags,
+            value_decl,
+            declarations,
+            import_module,
+            import_name,
+            escaped_name,
+            factory,
+        } = ctx;
         if flags & symbol_flags::TYPE_ALIAS != 0 {
             if escaped_name == "BuiltinIteratorReturn"
                 && self.is_compiler_builtin_iterator_return_alias(sym_id, declarations)
