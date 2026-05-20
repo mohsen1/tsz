@@ -6,6 +6,14 @@ import { pathToFileURL } from "node:url";
 import { PROJECT_ROWS_BY_NAME } from "./project-rows.mjs";
 import { isGreen } from "./row-utils.mjs";
 
+const REQUIRED_CALIBRATION_FAMILIES = [
+  "compiler-file",
+  "synthetic",
+  "solver-stress",
+  "project",
+  "large-ts-repo",
+];
+
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, "utf8"));
 }
@@ -111,6 +119,14 @@ function summarizeFamilies(rows) {
   return [...byFamily.values()].sort((a, b) => a.family.localeCompare(b.family));
 }
 
+function summarizeRequiredFamilyCoverage(rows) {
+  const present = new Set(rows.map((row) => row.family));
+  return REQUIRED_CALIBRATION_FAMILIES.map((family) => ({
+    family,
+    compared: present.has(family),
+  }));
+}
+
 function median(values) {
   const sorted = values.filter((value) => value != null).sort((a, b) => a - b);
   if (sorted.length === 0) return null;
@@ -119,7 +135,7 @@ function median(values) {
   return (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
-function collectWarnings(baseline, candidate, rows) {
+function collectWarnings(baseline, candidate, rows, required_family_coverage) {
   const warnings = [];
   if (!baseline?.source_commit || !candidate?.source_commit) {
     warnings.push("source_commit missing from one or both artifacts");
@@ -129,6 +145,12 @@ function collectWarnings(baseline, candidate, rows) {
   if (!baseline?.runner_environment) warnings.push("baseline runner_environment missing");
   if (!candidate?.runner_environment) warnings.push("candidate runner_environment missing");
   if (rows.length === 0) warnings.push("no shared green rows with timing data");
+  const missingFamilies = required_family_coverage
+    .filter((entry) => !entry.compared)
+    .map((entry) => entry.family);
+  if (missingFamilies.length > 0) {
+    warnings.push(`missing required calibration families: ${missingFamilies.join(", ")}`);
+  }
   return warnings;
 }
 
@@ -162,6 +184,7 @@ export function createRunnerCalibrationReport(baseline, candidate, baselinePath,
     return a.name.localeCompare(b.name);
   });
 
+  const required_family_coverage = summarizeRequiredFamilyCoverage(rows);
   const report = {
     schema_version: 1,
     generated_at: new Date().toISOString(),
@@ -184,9 +207,10 @@ export function createRunnerCalibrationReport(baseline, candidate, baselinePath,
       excluded_missing_timing_rows: excludedMissingTiming,
     },
     family_summary: summarizeFamilies(rows),
+    required_family_coverage,
     rows,
   };
-  report.warnings = collectWarnings(baseline, candidate, rows);
+  report.warnings = collectWarnings(baseline, candidate, rows, required_family_coverage);
   report.calibration_ready = report.warnings.length === 0;
   return report;
 }
@@ -197,6 +221,30 @@ function fmtRatio(value) {
 
 function fmtMs(value) {
   return value == null ? "-" : `${value.toFixed(2)}ms`;
+}
+
+function fmtSignatureValue(value) {
+  return value == null || value === "" ? "-" : String(value);
+}
+
+function runnerSignatureRows(report) {
+  const fields = [
+    ["Platform", "platform"],
+    ["Arch", "arch"],
+    ["Release", "release"],
+    ["CPU count", "cpu_count"],
+    ["CPU model", "cpu_model"],
+    ["Memory bytes", "total_memory_bytes"],
+    ["GitHub runner OS", "github_runner_os"],
+    ["GitHub runner arch", "github_runner_arch"],
+    ["Cloud Build machine", "cloud_build_machine_type"],
+  ];
+
+  return fields.map(([label, key]) => [
+    label,
+    fmtSignatureValue(report.baseline.runner_signature?.[key]),
+    fmtSignatureValue(report.candidate.runner_signature?.[key]),
+  ]);
 }
 
 export function markdownReport(report) {
@@ -214,6 +262,22 @@ export function markdownReport(report) {
     `| Excluded missing timing rows | ${report.totals.excluded_missing_timing_rows} |`,
     "",
   ];
+
+  lines.push("## Runner Signatures", "");
+  lines.push("| Field | Baseline | Candidate |");
+  lines.push("| --- | --- | --- |");
+  for (const [label, baseline, candidate] of runnerSignatureRows(report)) {
+    lines.push(`| ${label} | ${baseline} | ${candidate} |`);
+  }
+  lines.push("");
+
+  lines.push("## Required Family Coverage", "");
+  lines.push("| Family | Compared |");
+  lines.push("| --- | --- |");
+  for (const entry of report.required_family_coverage) {
+    lines.push(`| ${entry.family} | ${entry.compared ? "yes" : "no"} |`);
+  }
+  lines.push("");
 
   if (report.warnings.length > 0) {
     lines.push("## Warnings", "");

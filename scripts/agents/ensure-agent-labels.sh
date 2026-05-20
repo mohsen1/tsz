@@ -13,9 +13,22 @@ AGENTS=(
 
 COLOR="ededed"
 
+usage() {
+  cat <<'USAGE'
+usage: scripts/agents/ensure-agent-labels.sh
+
+Create or refresh the GitHub labels used by multi-agent sessions.
+USAGE
+}
+
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  echo "usage: scripts/agents/ensure-agent-labels.sh"
+  usage
   exit 0
+fi
+
+if [[ $# -ne 0 ]]; then
+  echo "Unknown option: $1 (try --help)" >&2
+  exit 2
 fi
 
 existing="$(gh label list --limit 300 --json name --jq '.[].name')"
