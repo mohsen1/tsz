@@ -21,8 +21,8 @@ use crate::objects::{PropertyCollectionResult, collect_properties};
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{
-    IntrinsicKind, LiteralValue, ObjectFlags, ObjectShape, PropertyInfo, SymbolRef, TemplateSpan,
-    TypeData, TypeId, TypeListId,
+    IntrinsicKind, LiteralValue, ObjectFlags, ObjectShape, PropertyInfo, RelationFlags, SymbolRef,
+    TemplateSpan, TypeData, TypeId, TypeListId,
 };
 use crate::visitor::{
     TypeVisitor, application_id, array_element_type, callable_shape_id, conditional_type_id,
@@ -556,32 +556,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         result
     }
 
-    /// Apply compiler flags from a packed u16 bitmask.
+    /// Apply typed relation flags.
     ///
-    /// This unpacks the flags used by `RelationCacheKey` and applies them to the checker.
-    /// The bit layout matches the cache key definition in types.rs:
-    /// - bit 0: `strict_null_checks`
-    /// - bit 1: `strict_function_types`
-    /// - bit 2: `exact_optional_property_types`
-    /// - bit 3: `no_unchecked_indexed_access`
-    /// - bit 4: `disable_method_bivariance`
-    /// - bit 5: `allow_void_return`
-    /// - bit 6: `allow_bivariant_rest`
-    /// - bit 7: `allow_bivariant_param_count`
-    /// - bit 15: `strict_readonly_identity`
-    pub(crate) const fn apply_flags(mut self, flags: u16) -> Self {
-        self.strict_null_checks = (flags & (1 << 0)) != 0;
-        self.strict_function_types = (flags & (1 << 1)) != 0;
-        self.exact_optional_property_types = (flags & (1 << 2)) != 0;
-        self.no_unchecked_indexed_access = (flags & (1 << 3)) != 0;
-        self.disable_method_bivariance = (flags & (1 << 4)) != 0;
-        self.allow_void_return = (flags & (1 << 5)) != 0;
-        self.allow_bivariant_rest = (flags & (1 << 6)) != 0;
-        self.allow_bivariant_param_count = (flags & (1 << 7)) != 0;
-        self.strict_readonly_identity = (flags & (1 << 15)) != 0;
-        self.erase_generics = (flags & crate::RelationCacheKey::FLAG_NO_ERASE_GENERICS) == 0;
+    /// This applies only flags that map directly onto subtype-checker behavior;
+    /// higher-level policy fields are handled by the relation query boundary.
+    pub(crate) const fn apply_flags(mut self, flags: RelationFlags) -> Self {
+        self.strict_null_checks = flags.contains(RelationFlags::STRICT_NULL_CHECKS);
+        self.strict_function_types = flags.contains(RelationFlags::STRICT_FUNCTION_TYPES);
+        self.exact_optional_property_types =
+            flags.contains(RelationFlags::EXACT_OPTIONAL_PROPERTY_TYPES);
+        self.no_unchecked_indexed_access =
+            flags.contains(RelationFlags::NO_UNCHECKED_INDEXED_ACCESS);
+        self.disable_method_bivariance = flags.contains(RelationFlags::DISABLE_METHOD_BIVARIANCE);
+        self.allow_void_return = flags.contains(RelationFlags::ALLOW_VOID_RETURN);
+        self.allow_bivariant_rest = flags.contains(RelationFlags::ALLOW_BIVARIANT_REST);
+        self.allow_bivariant_param_count =
+            flags.contains(RelationFlags::ALLOW_BIVARIANT_PARAM_COUNT);
+        self.strict_readonly_identity = flags.contains(RelationFlags::STRICT_READONLY_IDENTITY);
+        self.erase_generics = !flags.contains(RelationFlags::NO_ERASE_GENERICS);
         self.allow_erased_generic_signature_retry =
-            (flags & crate::RelationCacheKey::FLAG_ALLOW_ERASED_GENERIC_SIGNATURE_RETRY) != 0;
+            flags.contains(RelationFlags::ALLOW_ERASED_GENERIC_SIGNATURE_RETRY);
         self
     }
 

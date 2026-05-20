@@ -85,6 +85,22 @@ fn unflagged_compatibility_policy_matches_empty_legacy_flags() {
     );
 }
 
+#[test]
+fn legacy_flag_constructor_stores_typed_relation_flags() {
+    let policy = RelationPolicy::from_flags(
+        RelationCacheKey::FLAG_STRICT_NULL_CHECKS
+            | RelationCacheKey::FLAG_DISABLE_METHOD_BIVARIANCE,
+    );
+
+    assert!(policy.flags.contains(RelationFlags::STRICT_NULL_CHECKS));
+    assert!(
+        policy
+            .flags
+            .contains(RelationFlags::DISABLE_METHOD_BIVARIANCE)
+    );
+    assert!(!policy.flags.contains(RelationFlags::STRICT_ANY_PROPAGATION));
+}
+
 // =============================================================================
 // 1. Every behavior-affecting setting must change the key
 // =============================================================================

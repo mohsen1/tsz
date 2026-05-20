@@ -41,11 +41,12 @@ pub enum RelationKind {
 /// the cache config and documented as such here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RelationPolicy {
-    /// Packed behavior-affecting boolean options (bits 0..=8).
+    /// Typed behavior-affecting boolean options.
     ///
-    /// This mirrors the legacy `RelationCacheKey.flags` layout so that older
-    /// callers that still pass `u16` bitmasks interoperate without change.
-    pub flags: u16,
+    /// Callers that still receive legacy packed `u16` masks should use
+    /// [`RelationPolicy::from_flags`] at the boundary instead of storing or
+    /// forwarding packed masks through relation policy internals.
+    pub flags: RelationFlags,
     /// Enables additional strictness in the compatibility layer.
     pub strict_subtype_checking: bool,
     /// When true, `any` does NOT silence structural mismatches in the
@@ -75,7 +76,7 @@ pub struct RelationPolicy {
 impl Default for RelationPolicy {
     fn default() -> Self {
         Self {
-            flags: RelationCacheKey::FLAG_STRICT_NULL_CHECKS,
+            flags: RelationFlags::STRICT_NULL_CHECKS,
             strict_subtype_checking: false,
             strict_any_propagation: false,
             any_propagation_mode: AnyPropagationMode::All,
@@ -94,7 +95,7 @@ impl RelationPolicy {
     /// spelling the legacy packed flag protocol at every no-flags call site.
     pub const fn unflagged_compatibility() -> Self {
         Self {
-            flags: 0,
+            flags: RelationFlags::empty(),
             strict_subtype_checking: false,
             strict_any_propagation: false,
             any_propagation_mode: AnyPropagationMode::All,
@@ -117,12 +118,13 @@ impl RelationPolicy {
     /// > silently coupled two independent compiler options. See the
     /// > `strict_function_types_does_not_imply_strict_any` regression test.
     pub const fn from_flags(flags: u16) -> Self {
+        let typed_flags = Self::cache_flags_from_packed(flags);
         // erase_generics defaults to true unless the NO_ERASE_GENERICS flag is set.
         // This preserves backward compatibility while allowing specific paths
         // (implements/extends checking) to disable erasure.
-        let erase_generics = (flags & RelationCacheKey::FLAG_NO_ERASE_GENERICS) == 0;
+        let erase_generics = !typed_flags.contains(RelationFlags::NO_ERASE_GENERICS);
         Self {
-            flags,
+            flags: typed_flags,
             strict_subtype_checking: false,
             strict_any_propagation: false,
             any_propagation_mode: AnyPropagationMode::All,
@@ -169,7 +171,7 @@ impl RelationPolicy {
     /// `config` field of a [`RelationCacheKey`]. Every behavior-affecting field
     /// on `RelationPolicy` must be reflected here.
     pub const fn cache_config(self) -> RelationCacheConfig {
-        let mut bits = Self::cache_flags_from_packed(self.flags);
+        let mut bits = self.flags;
         if self.strict_subtype_checking {
             bits = bits.union(RelationFlags::STRICT_SUBTYPE_CHECKING);
         }
@@ -182,10 +184,9 @@ impl RelationPolicy {
         if self.assume_related_on_cycle {
             bits = bits.union(RelationFlags::ASSUME_RELATED_ON_CYCLE);
         }
-        // `erase_generics=false` maps to NO_ERASE_GENERICS bit. The legacy
-        // `flags` field may already carry this bit; merging here keeps the
-        // two representations coherent even if a caller sets only the typed
-        // field.
+        // `erase_generics=false` maps to NO_ERASE_GENERICS bit. The typed
+        // `flags` field may already carry this bit; merging here keeps explicit
+        // flag and builder representations coherent.
         if !self.erase_generics {
             bits = bits.union(RelationFlags::NO_ERASE_GENERICS);
         }

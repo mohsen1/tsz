@@ -11,7 +11,7 @@ use crate::visitor::{
     is_empty_object_type_through_type_constraints, is_error_type, keyof_inner_type, lazy_def_id,
     mapped_type_id, type_param_info, union_list_id,
 };
-use crate::{AnyPropagationRules, AssignabilityChecker, TypeDatabase};
+use crate::{AnyPropagationRules, AssignabilityChecker, RelationFlags, TypeDatabase};
 use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
 
@@ -742,9 +742,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
     }
 
-    /// Apply compiler options from a bitmask flags value.
+    /// Apply compiler options from typed relation flags.
     ///
-    /// Applies the `RelationCacheKey` bits that still have direct setters on
+    /// Applies the `RelationFlags` bits that still have direct setters on
     /// this legacy checker:
     /// - bit 0: `strict_null_checks`
     /// - bit 1: `strict_function_types`
@@ -766,13 +766,15 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// checker instance. Higher-level relation query paths should prefer
     /// `RelationPolicy`, whose `cache_config()` is the canonical
     /// cache-partitioning surface for policy-affecting knobs.
-    pub fn apply_flags(&mut self, flags: u16) {
+    pub fn apply_flags(&mut self, flags: RelationFlags) {
         // Apply flags to CompatChecker's own fields
-        let strict_null_checks = (flags & (1 << 0)) != 0;
-        let strict_function_types = (flags & (1 << 1)) != 0;
-        let exact_optional_property_types = (flags & (1 << 2)) != 0;
-        let no_unchecked_indexed_access = (flags & (1 << 3)) != 0;
-        let disable_method_bivariance = (flags & (1 << 4)) != 0;
+        let strict_null_checks = flags.contains(RelationFlags::STRICT_NULL_CHECKS);
+        let strict_function_types = flags.contains(RelationFlags::STRICT_FUNCTION_TYPES);
+        let exact_optional_property_types =
+            flags.contains(RelationFlags::EXACT_OPTIONAL_PROPERTY_TYPES);
+        let no_unchecked_indexed_access =
+            flags.contains(RelationFlags::NO_UNCHECKED_INDEXED_ACCESS);
+        let disable_method_bivariance = flags.contains(RelationFlags::DISABLE_METHOD_BIVARIANCE);
 
         self.set_strict_null_checks(strict_null_checks);
         self.set_strict_function_types(strict_function_types);
@@ -787,11 +789,12 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         self.subtype.exact_optional_property_types = exact_optional_property_types;
         self.subtype.no_unchecked_indexed_access = no_unchecked_indexed_access;
         self.subtype.disable_method_bivariance = disable_method_bivariance;
-        self.subtype.allow_void_return = (flags & (1 << 5)) != 0;
-        self.subtype.allow_bivariant_rest = (flags & (1 << 6)) != 0;
-        self.subtype.allow_bivariant_param_count = (flags & (1 << 7)) != 0;
+        self.subtype.allow_void_return = flags.contains(RelationFlags::ALLOW_VOID_RETURN);
+        self.subtype.allow_bivariant_rest = flags.contains(RelationFlags::ALLOW_BIVARIANT_REST);
+        self.subtype.allow_bivariant_param_count =
+            flags.contains(RelationFlags::ALLOW_BIVARIANT_PARAM_COUNT);
         self.subtype.allow_erased_generic_signature_retry =
-            (flags & crate::RelationCacheKey::FLAG_ALLOW_ERASED_GENERIC_SIGNATURE_RETRY) != 0;
+            flags.contains(RelationFlags::ALLOW_ERASED_GENERIC_SIGNATURE_RETRY);
     }
 
     ///
