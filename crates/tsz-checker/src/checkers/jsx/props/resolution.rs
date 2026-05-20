@@ -1497,7 +1497,7 @@ impl<'a> CheckerState<'a> {
             && !suppress_for_primitive_props_with_missing_ia_required
         {
             let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
-            if !self.is_assignable_to(attrs_type, props_type) {
+            if !self.diagnostic_relation_boolean_guard(attrs_type, props_type) {
                 self.report_jsx_synthesized_props_assignability_error(
                     attrs_type,
                     &display_target,
@@ -1554,9 +1554,9 @@ impl<'a> CheckerState<'a> {
         // Checking a synthesized object (which loses the type parameter identity)
         // against the type parameter would produce a false TS2322.
         let spread_satisfies_type_param = props_is_type_param
-            && spread_entries
-                .iter()
-                .any(|&(spread_type, _, _, _)| self.is_assignable_to(spread_type, props_type));
+            && spread_entries.iter().any(|&(spread_type, _, _, _)| {
+                self.diagnostic_relation_boolean_guard(spread_type, props_type)
+            });
         let reported_type_param_assignability = if !reported_custom_children_assignability
             && !reported_special_attr_assignability
             && !reported_class_missing_props_assignability
@@ -1568,7 +1568,7 @@ impl<'a> CheckerState<'a> {
             && !spread_satisfies_type_param
         {
             let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
-            if !self.is_assignable_to(attrs_type, props_type) {
+            if !self.diagnostic_relation_boolean_guard(attrs_type, props_type) {
                 // tsc uses just the type parameter name here (e.g. "P"), not the
                 // full "IntrinsicAttributes & P" display target. The IntrinsicAttributes
                 // intersection check for spread attributes is handled separately by
@@ -1639,7 +1639,7 @@ impl<'a> CheckerState<'a> {
                 && self.jsx_props_type_is_library_managed_attributes_application(raw_props_type)
             {
                 let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
-                if !self.is_assignable_to(attrs_type, raw_props_type) {
+                if !self.diagnostic_relation_boolean_guard(attrs_type, raw_props_type) {
                     let mut target = self.format_type(raw_props_type);
                     if target.starts_with("LibraryManagedAttributes<")
                         && target.ends_with(", Element>")
@@ -2010,7 +2010,7 @@ impl<'a> CheckerState<'a> {
                     })
                     .collect();
                 let attrs_type = self.ctx.types.factory().object(properties);
-                if self.is_assignable_to(attrs_type, props_type) {
+                if self.diagnostic_relation_boolean_guard(attrs_type, props_type) {
                     return;
                 }
                 // tsc anchors JSX union props errors at the tag name (e.g., <TextComponent>),
