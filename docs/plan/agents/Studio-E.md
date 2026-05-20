@@ -22,7 +22,9 @@ scripts/agents/list-owned-work.sh Studio-E
 
 ## Current Assignment
 
-- Primary issues: `#8759`, `#8528`, `#8529`, `#8527`, `#8270`.
+- Initial priority: land, close, or clearly hand off existing PRs in this lane
+  before claiming issue backlog.
+- Issue context: `#8759`, `#8528`, `#8529`, `#8527`, `#8270`.
 - Related PRs to inspect: `#9246`, `#9243`, `#9161`, `#8615`.
 - Track: LSP roadmap companion plus roadmap Track 9 consumer boundaries.
 - Next concrete step: inspect whether `#9243` and `#9161` are still the right

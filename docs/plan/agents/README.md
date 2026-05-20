@@ -48,13 +48,15 @@ Each session owns work through exactly one GitHub label:
 
 Rules:
 
-1. An issue or PR may have at most one `agent:*` label.
-2. The label means "owns the next concrete step", not permanent subsystem
+1. For the initial launch, apply `agent:*` labels to PRs only. Do not label
+   issues yet; issues are context until the open PR runway is drained.
+2. A labelled PR may have at most one `agent:*` label.
+3. The label means "owns the next concrete step", not permanent subsystem
    ownership.
-3. If a session pauses or abandons work, it comments with `AgentName:`, current
+4. If a session pauses or abandons work, it comments with `AgentName:`, current
    findings, next action, then removes its `agent:*` label.
-4. Every PR body and substantive PR comment includes the same `AgentName`.
-5. Draft PRs are coordination state. Do not merge anything draft, labelled
+5. Every PR body and substantive PR comment includes the same `AgentName`.
+6. Draft PRs are coordination state. Do not merge anything draft, labelled
    `WIP`, titled `[WIP]`, or described as blocked/not ready.
 
 ## Source-Of-Truth Goal Loop
@@ -125,6 +127,11 @@ full disk without throwing away build caches.
 
 ## Lane Assignments
 
+Initial priority for every implementation lane is to land, close, or clearly
+handoff existing PRs in that lane before claiming issue backlog. Issue numbers
+inside the per-agent files are context only until the PR runway is under
+control.
+
 | Agent | Track | Initial focus |
 | --- | --- | --- |
 | `M1-A` | Coordination | PR garden, ready/WIP cleanup, ownership label hygiene |
@@ -143,7 +150,7 @@ full disk without throwing away build caches.
 | `Studio-F` | Track 10 | Disk/worktree hygiene, launch scripts, stalled-CI/runway work |
 | `Reviewer` | Review | High-level PR review, architecture/parity risk comments, waits for new PRs |
 
-Each file in this directory expands the lane with concrete issues, PRs to
+Each file in this directory expands the lane with concrete PRs and issues to
 inspect, non-overlap notes, and a launch checklist.
 
 ## Launch Checklist
@@ -153,8 +160,8 @@ inspect, non-overlap notes, and a launch checklist.
 3. For each session, run `scripts/agents/disk-preflight.sh <AgentName>`.
 4. Give each Codex session the `/goal` prompt from
    `docs/plan/agents/LAUNCH.md`.
-5. Each session labels its first issue or PR with its `agent:*` label before
-   writing code.
+5. Each session labels the existing PR it is landing with its `agent:*` label
+   before writing code. Do not apply `agent:*` labels to issues yet.
 6. Each session opens or updates a draft PR early, then keeps the PR body
    current with root cause, scope changes, verification, and handoff notes.
 7. Launch `Reviewer` as a standing `/goal` session when review bandwidth is

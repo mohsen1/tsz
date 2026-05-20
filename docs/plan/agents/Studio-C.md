@@ -21,7 +21,9 @@ scripts/agents/list-owned-work.sh Studio-C
 
 ## Current Assignment
 
-- Primary issues: `#8755`, `#8754`, `#8752`, `#8751`, `#8750`, `#8737`,
+- Initial priority: land, close, or clearly hand off existing PRs in this lane
+  before claiming issue backlog.
+- Issue context: `#8755`, `#8754`, `#8752`, `#8751`, `#8750`, `#8737`,
   `#8734`, `#8731`, `#8516`, `#8515`, `#8511`, `#8510`, `#8509`, `#8507`,
   `#8506`.
 - Related PRs to inspect: `#9287`, `#9308`, `#9303`, `#9299`, `#9111`.

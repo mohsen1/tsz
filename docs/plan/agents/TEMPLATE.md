@@ -20,8 +20,8 @@ scripts/agents/list-owned-work.sh <AgentName>
 
 ## Current Assignment
 
-- Primary issue:
-- Primary PR:
+- Primary PR to land/close/handoff:
+- Issue context:
 - Branch/worktree:
 - Next concrete step:
 

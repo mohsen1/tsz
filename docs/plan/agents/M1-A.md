@@ -9,7 +9,7 @@ GitHub label: `agent:M1-A`
 
 Drain the PR garden and keep active work legible. This lane moves the roadmap's
 Phase 0 runway forward by closing stale branches, removing incorrect `WIP`
-state, and making sure every active issue or PR has one next owner.
+state, and making sure every active PR has one next owner.
 
 ## Start Every Cycle
 

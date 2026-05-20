@@ -21,7 +21,9 @@ scripts/agents/list-owned-work.sh Studio-F
 
 ## Current Assignment
 
-- Primary issues: `#8428`, `#8282`, plus this coordination PR while active.
+- Initial priority: land, close, or clearly hand off existing PRs in this lane
+  before claiming issue backlog.
+- Issue context: `#8428`, `#8282`, plus this coordination PR while active.
 - Related PRs to inspect: `#9280`, `#9270`, `#9262`, `#9258`, `#9254`.
 - Track: roadmap Track 10.
 - Next concrete step: keep this launch system mergeable, then make sure every

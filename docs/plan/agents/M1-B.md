@@ -22,7 +22,9 @@ scripts/agents/list-owned-work.sh M1-B
 
 ## Current Assignment
 
-- Primary issues: `#8227`, `#8225`, `#8223`.
+- Initial priority: land, close, or clearly hand off existing PRs in this lane
+  before claiming issue backlog.
+- Issue context: `#8227`, `#8225`, `#8223`.
 - Related active stack: `#9222`, `#9236`, `#9238`, `#9242`, `#9245`,
   `#9247`, `#9306`, `#9315`.
 - Track: roadmap Tracks 4 and 10.

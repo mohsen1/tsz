@@ -79,8 +79,9 @@ changes the picture.
 2. Multi-computer coordination is now explicit. Fourteen implementation-session
    labels exist:
    `agent:M1-A` through `agent:M1-D`, `agent:M4-A` through `agent:M4-D`, and
-   `agent:Studio-A` through `agent:Studio-F`. A PR or issue should have at most
-   one `agent:*` label, meaning that session owns the next concrete step.
+   `agent:Studio-A` through `agent:Studio-F`. For the initial launch, apply
+   `agent:*` labels to PRs only; issues are context until the open PR runway is
+   drained. A labelled PR has exactly one next-step owner.
    `agent:Reviewer` is a standing review lane that comments on PRs but does not
    own implementation.
 3. Open issue language is concentrated around recursive conditionals, mapped
@@ -155,6 +156,9 @@ GitHub is the coordination surface.
     roadmap fit, architecture boundaries, parity risk, duplicate work, tests,
     and readiness; when no PRs are reviewable, it waits for new PRs instead of
     marking the goal complete.
+15. Initial launch priority is to land, close, or clearly hand off existing
+    PRs before claiming issue backlog. Use issues to understand context, not as
+    the first ownership surface.
 
 Draft PR body shape:
 

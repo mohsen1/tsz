@@ -22,7 +22,9 @@ scripts/agents/list-owned-work.sh M4-A
 
 ## Current Assignment
 
-- Primary issues: `#9305`, `#8778`, `#8726`, `#8702`, `#8687`, `#8423`,
+- Initial priority: land, close, or clearly hand off existing PRs in this lane
+  before claiming issue backlog.
+- Issue context: `#9305`, `#8778`, `#8726`, `#8702`, `#8687`, `#8423`,
   `#7648`.
 - Related PRs to inspect: `#9304`, `#9214`, `#9210`, `#9006`, `#8985`,
   `#8939`, `#8904`.

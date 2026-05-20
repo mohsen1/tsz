@@ -22,7 +22,9 @@ scripts/agents/list-owned-work.sh M1-D
 
 ## Current Assignment
 
-- Primary issues: `#8780`, `#8424`.
+- Initial priority: land, close, or clearly hand off existing PRs in this lane
+  before claiming issue backlog.
+- Issue context: `#8780`, `#8424`.
 - Related PRs to inspect: `#8919`, `#8903`, `#8982`, `#8661`, `#8470`.
 - Track: roadmap Track 6.
 - Next concrete step: determine whether the destructured-discriminant work has

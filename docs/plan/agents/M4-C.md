@@ -21,7 +21,9 @@ scripts/agents/list-owned-work.sh M4-C
 
 ## Current Assignment
 
-- Primary issues: `#8773`, `#8711`, `#8707`, `#8703`, `#6407`.
+- Initial priority: land, close, or clearly hand off existing PRs in this lane
+  before claiming issue backlog.
+- Issue context: `#8773`, `#8711`, `#8707`, `#8703`, `#6407`.
 - Related PRs to inspect: `#9257`, `#9224`, `#9200`, `#9103`, `#9002`,
   `#8901`, `#8471`, `#8466`.
 - Track: roadmap Track 3.
