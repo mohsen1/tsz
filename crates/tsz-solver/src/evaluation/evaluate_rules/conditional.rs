@@ -298,32 +298,29 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return TailCallStep::NoTailCall;
         }
 
-        if let Some(TypeData::Conditional(next_cond_id)) = self.interner().lookup(branch) {
-            let next_cond = self.interner().get_conditional(next_cond_id);
-            return TailCallStep::Continue(next_cond);
-        }
-
-        if let Some(instantiated) = self.try_instantiate_application_for_tail_call(branch) {
-            if let Some(TypeData::Conditional(next_cond_id)) = self.interner().lookup(instantiated)
-            {
-                tail_application_branch.get_or_insert(branch);
-                let next_cond = self.interner().get_conditional(next_cond_id);
-                return TailCallStep::Continue(next_cond);
+        match self.interner().lookup(branch) {
+            Some(TypeData::Conditional(next_cond_id)) => {
+                TailCallStep::Continue(self.interner().get_conditional(next_cond_id))
             }
-            return TailCallStep::InstantiatedApp {
-                original: branch,
-                resolved: instantiated,
-            };
+            Some(TypeData::Application(_)) => {
+                if let Some(instantiated) = self.try_instantiate_application_for_tail_call(branch) {
+                    if let Some(TypeData::Conditional(next_cond_id)) =
+                        self.interner().lookup(instantiated)
+                    {
+                        tail_application_branch.get_or_insert(branch);
+                        TailCallStep::Continue(self.interner().get_conditional(next_cond_id))
+                    } else {
+                        TailCallStep::InstantiatedApp {
+                            original: branch,
+                            resolved: instantiated,
+                        }
+                    }
+                } else {
+                    TailCallStep::BareApplication
+                }
+            }
+            _ => TailCallStep::NoTailCall,
         }
-
-        if matches!(
-            self.interner().lookup(branch),
-            Some(TypeData::Application(_))
-        ) {
-            return TailCallStep::BareApplication;
-        }
-
-        TailCallStep::NoTailCall
     }
 
     /// Evaluate a conditional type: T extends U ? X : Y
