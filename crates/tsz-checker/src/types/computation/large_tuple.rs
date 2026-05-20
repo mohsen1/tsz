@@ -5,10 +5,9 @@ use crate::symbol_resolver::TypeSymbolResolution;
 use crate::types_domain::unique_symbol_arena::unwrap_parenthesized_type;
 use rustc_hash::FxHashSet;
 use tsz_binder::{SymbolId, symbol_flags};
+use tsz_common::limits::MAX_REPRESENTABLE_TUPLE_LENGTH;
 use tsz_parser::parser::{NodeIndex, node::NodeAccess, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-
-const MAX_REPRESENTABLE_TUPLE_LENGTH: usize = 10_000;
 const MAX_AST_RECURSION_DEPTH: usize = 128;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

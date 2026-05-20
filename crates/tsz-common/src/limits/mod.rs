@@ -212,6 +212,13 @@ pub const MAX_TYPE_RESOLUTION_OPS: u32 = 20_000;
 #[cfg(not(target_arch = "wasm32"))]
 pub const MAX_TYPE_RESOLUTION_OPS: u32 = 100_000;
 
+/// Maximum number of elements in a synthesized tuple type.
+///
+/// When a tuple-spread synthesis exceeds this limit the solver sets a flag and the
+/// checker emits TS2799 ("Type produces a tuple type that is too large to represent").
+/// Mirrors tsc's `checkTupleType` cardinality guard.
+pub const MAX_REPRESENTABLE_TUPLE_LENGTH: usize = 10_000;
+
 // =============================================================================
 // Thread / Runtime Limits
 // =============================================================================
