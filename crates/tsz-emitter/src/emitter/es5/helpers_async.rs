@@ -196,6 +196,41 @@ impl<'a> Printer<'a> {
         })
     }
 
+    fn es5_class_expression_has_computed_instance_fields(
+        &self,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) -> bool {
+        class_data.members.nodes.iter().copied().any(|member_idx| {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                return false;
+            };
+            if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                return false;
+            }
+            let Some(prop) = self.arena.get_property_decl(member_node) else {
+                return false;
+            };
+            if self.has_effective_static_modifier_js(&prop.modifiers)
+                || self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
+                || self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                || self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+            {
+                return false;
+            }
+            // Check if the property name is a computed name (e.g. `[expr] = value`)
+            let Some(name_node) = self.arena.get(prop.name) else {
+                return false;
+            };
+            name_node.kind == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
+        })
+    }
+
     fn static_block_inner_comment_index(&self, member_node: &Node) -> usize {
         let brace_pos = if let Some(text) = self.source_text_for_map() {
             let bytes = text.as_bytes();
@@ -241,6 +276,9 @@ impl<'a> Printer<'a> {
         text: &str,
         continuation_indent_level: u32,
     ) {
+        let indent_unit = self.writer.indent_unit_width() as usize;
+        let indent_unit = if indent_unit == 0 { 4 } else { indent_unit };
+
         let mut lines = text.lines();
         if let Some(first) = lines.next() {
             self.write(first);
@@ -248,13 +286,14 @@ impl<'a> Printer<'a> {
         for line in lines {
             self.write_line();
             if !line.is_empty() {
-                let trimmed = line.trim_start_matches(' ');
-                if trimmed.starts_with("}())") {
-                    let closing_indent_level = continuation_indent_level.saturating_sub(1);
-                    self.write_line_with_absolute_indent(closing_indent_level, trimmed);
-                } else {
-                    self.write_line_with_absolute_indent(continuation_indent_level, trimmed);
-                }
+                let leading = line.len() - line.trim_start_matches(' ').len();
+                let original_level = (leading / indent_unit) as u32;
+                let trimmed = &line[leading..];
+                // Formula: output_level = (continuation - 1) + original_level
+                // Naturally handles the `}())` closing (original_level=0 → continuation-1)
+                // and all deeper lines by adding their nesting relative to the IIFE root.
+                let output_level = continuation_indent_level.saturating_sub(1) + original_level;
+                self.write_line_with_absolute_indent(output_level, trimmed);
             }
         }
     }
@@ -1384,6 +1423,64 @@ impl<'a> Printer<'a> {
                 let output = es5_emitter.emit_class(class_node);
                 (candidate, output)
             }
+        } else if !use_static_comma
+            && self.es5_class_expression_has_computed_instance_fields(class_data)
+        {
+            // Class expression whose computed instance-field names must live outside
+            // the IIFE so the constructor can reference them.  tsc emits:
+            //   (_classTemp = IIFE, _propTemp = expr, _classTemp)
+            let temp_name = self.make_unique_name_from_base("class");
+            let (iife_expr, computed_decls, computed_init_exprs) =
+                es5_emitter.emit_class_as_iife_expr(class_node, &temp_name);
+            self.sync_es5_class_emitter_state(&mut es5_emitter);
+            let _ = es5_emitter.take_mappings();
+
+            // Hoist computed prop name temps first, then allocate the class temp.
+            // This ordering matches tsc: _a (prop) before _b (class).
+            let in_loop = self.class_expression_is_in_loop_body(class_node);
+            for decl in &computed_decls {
+                if in_loop {
+                    self.block_scoped_private_temps.push(decl.clone());
+                } else {
+                    self.hoisted_assignment_temps.push(decl.clone());
+                }
+            }
+            let class_temp = if in_loop {
+                let t = self.make_unique_name();
+                self.block_scoped_private_temps.push(t.clone());
+                t
+            } else {
+                self.make_unique_name_hoisted()
+            };
+
+            // Emit: (classTmp = IIFE, propTemp = expr, classTmp)
+            let needs_parens = self.class_expression_static_comma_needs_parens(class_node);
+            let continuation_indent_level = self.current_statement_continuation_indent_level();
+            if needs_parens {
+                self.write("(");
+            }
+            self.write(&class_temp);
+            self.write(" = ");
+            self.write_multiline_fragment_with_continuation_indent(
+                &iife_expr,
+                continuation_indent_level,
+            );
+            for init_expr in &computed_init_exprs {
+                self.write(",");
+                self.write_line();
+                self.increase_indent();
+                self.write(init_expr);
+                self.decrease_indent();
+            }
+            self.write(",");
+            self.write_line();
+            self.increase_indent();
+            self.write(&class_temp);
+            if needs_parens {
+                self.write(")");
+            }
+            self.decrease_indent();
+            return;
         } else if use_static_comma || self.es5_class_expression_has_instance_fields(class_data) {
             let temp_name = self.make_unique_name_from_base("class");
             let output = es5_emitter.emit_class_with_name(class_node, &temp_name);
