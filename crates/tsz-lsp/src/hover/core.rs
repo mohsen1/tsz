@@ -1975,7 +1975,7 @@ struct HoverLinkResolver<'a, 'p> {
 }
 
 impl<'a, 'p> HoverLinkResolver<'a, 'p> {
-    fn new(provider: &'p HoverProvider<'a>, root: NodeIndex, anchor: NodeIndex) -> Self {
+    const fn new(provider: &'p HoverProvider<'a>, root: NodeIndex, anchor: NodeIndex) -> Self {
         Self {
             provider,
             root,
@@ -1989,10 +1989,7 @@ impl<'a, 'p> HoverLinkResolver<'a, 'p> {
         // `pkg/Foo`) are intentionally not followed: they require type or
         // module-context lookup that the single-file hover does not own, and
         // landing on the namespace declaration is still useful for navigation.
-        let head = target
-            .split(|c: char| c == '.' || c == '#' || c == '/')
-            .next()?
-            .trim();
+        let head = target.split(['.', '#', '/']).next()?.trim();
         if head.is_empty() {
             return None;
         }

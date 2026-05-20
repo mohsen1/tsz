@@ -11,7 +11,7 @@ struct StubResolver<'a> {
 
 impl LinkUriResolver for StubResolver<'_> {
     fn resolve_link_uri(&mut self, target: &str) -> Option<String> {
-        if self.allow.iter().any(|name| *name == target) {
+        if self.allow.contains(&target) {
             Some(self.uri.to_string())
         } else {
             None
