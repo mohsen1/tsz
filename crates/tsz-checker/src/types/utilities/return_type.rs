@@ -586,7 +586,7 @@ impl<'a> CheckerState<'a> {
             && self.ctx.symbol_resolution_set.contains(&sym_id)
             && self.all_returns_are_direct_self_calls(body_idx, sym_id)
         {
-            self.ctx.rollback_return_type(&snap);
+            snap.rollback(&mut self.ctx.speculation_state());
             return TypeId::NEVER;
         }
 
@@ -605,7 +605,9 @@ impl<'a> CheckerState<'a> {
         // for any that truly lack contextual parameter types.
         {
             use crate::diagnostics::diagnostic_codes;
-            let speculative_diags = self.ctx.speculative_diagnostics_since(&snap.full.diag);
+            let speculative_diags = self
+                .ctx
+                .speculative_diagnostics_since(snap.diagnostic_snapshot());
             let has_implicit_any_diags = speculative_diags.iter().any(|d| {
                 d.code == diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE
                     || d.code == diagnostic_codes::REST_PARAMETER_IMPLICITLY_HAS_AN_ANY_TYPE
@@ -627,7 +629,7 @@ impl<'a> CheckerState<'a> {
                     .extend(new_checked);
             }
         }
-        self.ctx.rollback_return_type(&snap);
+        snap.rollback(&mut self.ctx.speculation_state());
 
         // Widening of inferred return types is performed per-return-expression
         // during collection (`maybe_widen_return_contribution`), so that
