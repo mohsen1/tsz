@@ -1243,6 +1243,53 @@ var y = [() => new c()];
 }
 
 #[test]
+fn test_short_circuit_decl_type_uses_truthy_left_expression() {
+    let output = emit_dts_with_binding(
+        r#"
+class C {
+    private value: string;
+}
+namespace Box {
+    export class C {
+        private other: string;
+    }
+    export class G<T> {
+        private item: T;
+    }
+}
+class G<T> {
+    private item: T;
+}
+
+var f = (() => new C()) || "";
+var g = new C() || new Box.C();
+var h = new G<string>() || new Box.G<number>() || (() => new C());
+"#,
+    );
+
+    assert!(
+        output.contains("declare var f: () => C;"),
+        "Expected function expression left operand to determine || declaration type: {output}"
+    );
+    assert!(
+        output.contains("declare var g: C;"),
+        "Expected new-expression left operand to determine || declaration type: {output}"
+    );
+    assert!(
+        output.contains("declare var h: G<string>;"),
+        "Expected left-associative truthy || chain to keep the first new-expression type: {output}"
+    );
+    assert!(
+        !output.contains("declare var g: C | Box.C;"),
+        "Did not expect unreachable || right operand in inferred declaration type: {output}"
+    );
+    assert!(
+        !output.contains("declare var h: G<string> | Box.G<number>"),
+        "Did not expect nested unreachable || right operands in inferred declaration type: {output}"
+    );
+}
+
+#[test]
 fn test_non_null_call_initializer_recovers_return_type() {
     let source = r#"
 declare const fn: (() => string) | undefined;
