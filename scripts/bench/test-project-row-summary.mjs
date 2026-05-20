@@ -10,6 +10,7 @@ import {
   extractFixtureSourceRows,
   formatMarkdown,
   formatPlainText,
+  rowRequiresFixtureSource,
 } from "./project-row-summary.mjs";
 import {
   COMPILE_CANARY_PROJECT_ROWS,
@@ -33,7 +34,7 @@ function baseSurfaces() {
       .filter((name) => !COMPILE_GUARD_EXCLUDED_ROWS.has(name))
       .sort(),
     fixtureSourceRows: PROJECT_ROW_DEFINITIONS
-      .filter((r) => r.repo !== undefined || r.ref !== undefined)
+      .filter(rowRequiresFixtureSource)
       .map((r) => r.name)
       .sort(),
     compatCorpusRows: COMPATIBILITY_CORPUS_ROWS.map((r) => r.name).sort(),
@@ -153,6 +154,27 @@ function baseSurfaces() {
   assert.ok(
     coverage.drift.some((d) => d.includes("pinned-no-fixture") && d.includes("project-fixtures.sh")),
     `Expected fixture source drift for pinned-no-fixture, got: ${coverage.drift.join("; ")}`,
+  );
+}
+
+// Row has a generated fixture script but missing from fixture source.
+{
+  const surfaces = baseSurfaces();
+  surfaces.rowDefinitions = [
+    ...PROJECT_ROW_DEFINITIONS,
+    {
+      name: "generated-no-fixture",
+      benchmark_set: "required",
+      guard_set: "required",
+      category: "generated",
+      generated_by: "scripts/bench/generate-example-fixture.mjs",
+    },
+  ];
+  surfaces.requiredRows = [...surfaces.requiredRows, "generated-no-fixture"].sort();
+  const coverage = computeCoverage(surfaces);
+  assert.ok(
+    coverage.drift.some((d) => d.includes("generated-no-fixture") && d.includes("project-fixtures.sh")),
+    `Expected fixture source drift for generated-no-fixture, got: ${coverage.drift.join("; ")}`,
   );
 }
 
