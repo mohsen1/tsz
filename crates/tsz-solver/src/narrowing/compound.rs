@@ -936,7 +936,7 @@ impl<'a> NarrowingContext<'a> {
             return None;
         };
         let app = self.db.type_application(app_id);
-        if app.args.len() == 1 && self.application_base_name_is(app.base, "ReadonlyArray") {
+        if app.args.len() == 1 && self.application_base_is_readonly_array(app.base) {
             Some(app.args[0])
         } else {
             None
@@ -945,11 +945,11 @@ impl<'a> NarrowingContext<'a> {
 
     /// True iff `base` is the canonical `ReadonlyArray` generic definition.
     ///
-    /// Checks by registered TypeId first (works without a resolver), then by
-    /// the builtin-def predicate when a resolver is present.
+    /// Three-tier check: O(1) registered TypeId, builtin-def predicate for
+    /// `Lazy` bases, then name-match for `UnresolvedTypeName` and alias
+    /// fallback — matching the shape of `readonly_array_application_base` in
+    /// the subtype checker.
     fn application_base_is_readonly_array(&self, base: TypeId) -> bool {
-        // TypeId equality against the registered canonical base — O(1) atomic
-        // read, no resolver needed.
         if self
             .db
             .as_type_resolver()
@@ -958,33 +958,17 @@ impl<'a> NarrowingContext<'a> {
         {
             return true;
         }
-        // For Lazy(DefId) bases: use the reliable builtin-def predicate that
-        // checks both name and lib-origin. Name-only lookup can return None for
-        // stdlib defs when the resolver does not index that def.
-        if let Some(TypeData::Lazy(def_id)) = self.db.lookup(base) {
-            return self
-                .resolver
-                .is_some_and(|r| r.is_builtin_readonly_array_def(def_id));
-        }
-        false
-    }
-
-    fn application_base_name_is(&self, base: TypeId, expected: &str) -> bool {
-        if expected == "ReadonlyArray" && self.application_base_is_readonly_array(base) {
-            return true;
-        }
         match self.db.lookup(base) {
             Some(TypeData::Lazy(def_id)) => self
                 .resolver
-                .and_then(|resolver| resolver.get_def_name(def_id))
-                .is_some_and(|name| self.db.resolve_atom_ref(name).as_ref() == expected),
+                .is_some_and(|r| r.is_builtin_readonly_array_def(def_id)),
             Some(TypeData::UnresolvedTypeName(name)) => {
-                self.db.resolve_atom_ref(name).as_ref() == expected
+                self.db.resolve_atom_ref(name).as_ref() == "ReadonlyArray"
             }
             _ => self
                 .db
                 .get_display_alias(base)
-                .is_some_and(|alias| self.application_base_name_is(alias, expected)),
+                .is_some_and(|alias| self.application_base_is_readonly_array(alias)),
         }
     }
 }
