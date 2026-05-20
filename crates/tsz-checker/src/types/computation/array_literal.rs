@@ -342,6 +342,10 @@ impl<'a> CheckerState<'a> {
         };
 
         if self.ctx.in_const_assertion && self.array_literal_produces_too_large_tuple(idx) {
+            // Clear any prior solver-side `tuple_too_large` so this short-circuit
+            // (which has already decided to widen) does not also surface a
+            // downstream TS2799 on the next type alias.
+            let _ = self.ctx.types.take_tuple_too_large();
             self.error_at_node(
                 idx,
                 crate::diagnostics::diagnostic_messages::EXPRESSION_PRODUCES_A_TUPLE_TYPE_THAT_IS_TOO_LARGE_TO_REPRESENT,

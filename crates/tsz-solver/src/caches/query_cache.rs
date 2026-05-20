@@ -1144,6 +1144,14 @@ impl TypeDatabase for QueryCache<'_> {
         self.interner.set_union_too_complex();
     }
 
+    fn take_tuple_too_large(&self) -> bool {
+        self.interner.take_tuple_too_large()
+    }
+
+    fn mark_tuple_too_large(&self) {
+        self.interner.set_tuple_too_large();
+    }
+
     fn get_class_base_type(&self, symbol_id: SymbolId) -> Option<TypeId> {
         // Delegate to the interner
         self.interner.get_class_base_type(symbol_id)

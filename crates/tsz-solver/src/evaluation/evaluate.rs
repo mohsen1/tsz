@@ -2818,7 +2818,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// to avoid exponential blowup with recursive conditional types that
     /// produce tuples.
     fn visit_tuple(&mut self, tuple_list_id: TupleListId, original_type_id: TypeId) -> TypeId {
-        use crate::intern::TEMPLATE_LITERAL_EXPANSION_LIMIT;
+        use crate::intern::{MAX_TUPLE_LENGTH, TEMPLATE_LITERAL_EXPANSION_LIMIT};
 
         let elements = self.interner.tuple_list(tuple_list_id);
 
@@ -2868,6 +2868,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 if let Some(TypeData::Tuple(inner_list_id)) = self.interner.lookup(evaluated_inner)
                 {
                     let inner_elements = self.interner.tuple_list(inner_list_id);
+                    // Cardinality gate: refuse to materialize a tuple wider
+                    // than `MAX_TUPLE_LENGTH`. Without this, recursive
+                    // conditional types that exponentially grow their tuple
+                    // argument (e.g. `BuildTuple<L, [...T, ...T]>`) extend the
+                    // alternative `Vec` to `2^k` elements per recursion level
+                    // and OOM before the per-DefId depth limit fires.
+                    if widest_alternative_len(&alternatives).saturating_add(inner_elements.len())
+                        > MAX_TUPLE_LENGTH
+                    {
+                        self.interner.mark_tuple_too_large();
+                        return TypeId::ERROR;
+                    }
                     for alternative in &mut alternatives {
                         alternative.extend(inner_elements.iter().copied());
                     }
@@ -2925,6 +2937,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         return TypeId::ERROR;
                     }
 
+                    // Per-alternative cardinality gate: each distributed
+                    // alternative grows by at least the smallest spread arm;
+                    // if any prefix+arm would exceed `MAX_TUPLE_LENGTH` we
+                    // surface TS2799/TS2800 before allocating.
+                    if widest_alternative_len(&alternatives)
+                        .saturating_add(widest_alternative_len(&spread_alternatives))
+                        > MAX_TUPLE_LENGTH
+                    {
+                        self.interner.mark_tuple_too_large();
+                        return TypeId::ERROR;
+                    }
+
                     let mut distributed = Vec::with_capacity(alternative_count);
                     for prefix in alternatives {
                         for spread in &spread_alternatives {
@@ -2973,7 +2997,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             _ => None,
         }
     }
+}
 
+/// Return the widest current alternative length. The simple-tuple path (no
+/// preceding union spread) keeps `alternatives.len() == 1`, so the iterator
+/// path is the cold case; the slice match makes the hot case allocation- and
+/// branch-free.
+#[inline]
+fn widest_alternative_len(alternatives: &[Vec<TupleElement>]) -> usize {
+    match alternatives {
+        [] => 0,
+        [single] => single.len(),
+        many => many.iter().map(Vec::len).max().unwrap_or(0),
+    }
+}
+
+impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Check if a type is a meta-type that would benefit from evaluation
     /// inside a tuple element. Excludes type parameters and concrete types
     /// to avoid recursive blowup.

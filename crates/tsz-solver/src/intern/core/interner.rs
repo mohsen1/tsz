@@ -201,6 +201,24 @@ pub(crate) const TEMPLATE_LITERAL_EXPANSION_LIMIT: usize = 2_000;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const TEMPLATE_LITERAL_EXPANSION_LIMIT: usize = 100_000;
 
+/// Maximum representable tuple length, matching tsc's
+/// `Type produces a tuple type that is too large to represent` cardinality
+/// limit (`getTypeFromTupleNode` / `instantiateMappedTupleType` in tsc).
+///
+/// When a tuple synthesis path (spread instantiation, spread evaluation,
+/// rest-element flattening) would produce a tuple with strictly more than
+/// `MAX_TUPLE_LENGTH` elements, the path aborts to `TypeId::ERROR` and
+/// marks the `tuple_too_large` flag so the checker can emit TS2799/TS2800
+/// without first allocating an unbounded `Vec<TupleElement>`. The flag is
+/// the only mechanism that lets non-AST tuple synthesis (recursive
+/// conditional types like `BuildTuple<L>` that exponentially grow their
+/// type argument) surface as a parity diagnostic instead of OOM.
+///
+/// Kept identical to tsc's limit on every target — §0/§21 require parity
+/// even on wasm, and a `MAX_TUPLE_LENGTH`-element `Vec<TupleElement>` is
+/// ~160KB, well inside wasm's 4GB linear-memory budget.
+pub const MAX_TUPLE_LENGTH: usize = 10_000;
+
 /// Maximum number of interned types before the interner returns `TypeId::ERROR`.
 ///
 /// Native and WASM currently share the same 500k policy. The circuit breaker
@@ -635,6 +653,14 @@ pub struct TypeInterner {
     /// reduction). Mirrors tsc's `removeSubtypes` complexity heuristic that
     /// emits TS2590. The checker reads and clears this flag to emit the diagnostic.
     pub(super) union_too_complex: AtomicBool,
+    /// Flag set when a tuple synthesis path (instantiation flatten, evaluation
+    /// flatten) would produce a tuple with more than `MAX_TUPLE_LENGTH`
+    /// elements. Mirrors tsc's `getTypeFromTupleNode` cardinality gate that
+    /// emits TS2799 (type position) and TS2800 (value position). The checker
+    /// reads and clears this flag to emit the diagnostic. Synthesis paths that
+    /// set this flag must also abort to `TypeId::ERROR` so the unbounded `Vec`
+    /// is never materialized.
+    pub(super) tuple_too_large: AtomicBool,
     /// Global evaluation fuel counter.
     ///
     /// Tracks cumulative evaluation work across ALL `TypeEvaluator` instances.
@@ -701,6 +727,7 @@ impl TypeInterner {
             conditional_alias_bases: DashMap::with_hasher(FxBuildHasher),
             display_union_origin: DashMap::with_hasher(FxBuildHasher),
             union_too_complex: AtomicBool::new(false),
+            tuple_too_large: AtomicBool::new(false),
             evaluation_fuel: AtomicU32::new(0),
             instance_id: NEXT_INTERNER_INSTANCE_ID.fetch_add(1, Ordering::Relaxed),
         }
@@ -743,6 +770,24 @@ impl TypeInterner {
     #[inline]
     pub(crate) fn set_union_too_complex(&self) {
         self.union_too_complex.store(true, Ordering::Relaxed);
+    }
+
+    /// Atomically read and clear the "tuple too large" flag.
+    ///
+    /// Returns `true` if a tuple synthesis path aborted because the resulting
+    /// tuple would exceed `MAX_TUPLE_LENGTH` elements since the last call to
+    /// this method. The flag is cleared after reading. The checker uses this
+    /// to emit TS2799 (type alias body) or TS2800 (`as const` array literal).
+    #[inline]
+    pub fn take_tuple_too_large(&self) -> bool {
+        self.tuple_too_large.swap(false, Ordering::Relaxed)
+    }
+
+    /// Mark that a tuple synthesis exceeded the representable cardinality.
+    /// Called from instantiation/evaluation rest-spread flatten paths.
+    #[inline]
+    pub(crate) fn set_tuple_too_large(&self) {
+        self.tuple_too_large.store(true, Ordering::Relaxed);
     }
 
     /// Set the global Array base type (e.g., Array<T> from lib.d.ts).

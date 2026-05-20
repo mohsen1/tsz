@@ -1018,6 +1018,15 @@ pub(crate) fn is_evaluable_meta_type(db: &dyn TypeDatabase, type_id: TypeId) -> 
         || is_keyof_type(db, type_id)
 }
 
+/// Returns true when `type_id`'s outer shape performs fresh tuple synthesis
+/// on evaluation. Checker uses this to attribute the solver's
+/// `tuple_too_large` flag to an alias whose body actually owns the
+/// synthesis, instead of to a referring alias whose body is a plain
+/// `Lazy` or already-built `Tuple`.
+pub(crate) fn is_fresh_tuple_synthesis_site(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::is_fresh_tuple_synthesis_site(db, type_id)
+}
+
 // ── Type parameter constraint query ──
 
 pub(crate) fn type_parameter_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {

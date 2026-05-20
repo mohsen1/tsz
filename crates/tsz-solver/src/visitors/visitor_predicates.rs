@@ -449,6 +449,31 @@ pub fn is_index_access_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(types.lookup(type_id), Some(TypeData::IndexAccess(_, _)))
 }
 
+/// Returns true when `type_id`'s outer shape is the kind of meta-type that
+/// performs *fresh* tuple synthesis on evaluation — i.e. a generic
+/// `Application`, a `Conditional`, a `Mapped`, an `IndexAccess`, or a `KeyOf`.
+/// Used by the checker to attribute `tuple_too_large` flag trips to the
+/// alias whose body is the synthesis site, rather than to a transitive
+/// referrer whose body is just `Lazy`/`Tuple`. Excluding `Lazy` is
+/// load-bearing: `type Ref = T14` must not inherit TS2799 from `T14`'s
+/// own spread, even though evaluating `Ref`'s body transitively re-trips
+/// the cardinality gate.
+pub fn is_fresh_tuple_synthesis_site(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    matches!(
+        types.lookup(type_id),
+        Some(
+            TypeData::Application(_)
+                | TypeData::Conditional(_)
+                | TypeData::Mapped(_)
+                | TypeData::IndexAccess(_, _)
+                | TypeData::KeyOf(_),
+        )
+    )
+}
+
 /// Check if a type is a type query (typeof) type.
 pub fn is_type_query_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id.is_intrinsic() {

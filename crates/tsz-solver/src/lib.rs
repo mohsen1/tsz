@@ -106,11 +106,12 @@ pub mod query {
         function_shape_id, has_deferred_conditional_member, index_access_parts,
         intersection_list_id, intrinsic_kind, is_array_type, is_conditional_type,
         is_empty_object_type, is_empty_object_type_through_type_constraints, is_enum_type,
-        is_error_type, is_function_type, is_function_type_through_type_constraints,
-        is_generic_application, is_identity_comparable_type, is_index_access_type, is_infer_type,
-        is_intersection_type, is_lazy_type, is_literal_type,
-        is_literal_type_through_type_constraints, is_mapped_type, is_module_namespace_type,
-        is_object_like_type, is_object_like_type_through_type_constraints, is_primitive_type,
+        is_error_type, is_fresh_tuple_synthesis_site, is_function_type,
+        is_function_type_through_type_constraints, is_generic_application,
+        is_identity_comparable_type, is_index_access_type, is_infer_type, is_intersection_type,
+        is_lazy_type, is_literal_type, is_literal_type_through_type_constraints, is_mapped_type,
+        is_module_namespace_type, is_object_like_type,
+        is_object_like_type_through_type_constraints, is_primitive_type,
         is_structurally_deferred_type, is_template_literal_type, is_this_type, is_tuple_type,
         is_type_parameter, is_type_query_type, is_type_reference, is_union_type, keyof_inner_type,
         lazy_def_id, literal_number, literal_string, literal_value, mapped_type_id,
@@ -192,19 +193,19 @@ pub use visitors::visitor::{
     for_each_child, for_each_child_by_id, function_shape_id, has_deferred_conditional_member,
     index_access_parts, intersection_list_id, intrinsic_kind, is_array_type, is_conditional_type,
     is_empty_object_type, is_empty_object_type_through_type_constraints, is_enum_type,
-    is_error_type, is_function_type, is_function_type_through_type_constraints,
-    is_generic_application, is_identity_comparable_type, is_index_access_type,
-    is_intersection_type, is_lazy_type, is_literal_type, is_literal_type_through_type_constraints,
-    is_mapped_type, is_module_namespace_type, is_object_like_type,
-    is_object_like_type_through_type_constraints, is_primitive_type, is_structurally_deferred_type,
-    is_template_literal_type, is_this_type, is_tuple_type, is_type_parameter, is_type_query_type,
-    is_type_reference, is_union_type, keyof_inner_type, lazy_def_id, literal_number,
-    literal_string, literal_value, mapped_type_id, module_namespace_symbol_ref,
-    no_infer_inner_type, object_shape_id, object_with_index_shape_id, readonly_inner_type,
-    recursive_index, references_any_type_param_named, resolve_default_type_args,
-    string_intrinsic_components, template_literal_id, tuple_list_id, type_param_info,
-    type_query_symbol, union_list_id, unique_symbol_ref, unwrap_readonly_or_noinfer,
-    walk_referenced_types,
+    is_error_type, is_fresh_tuple_synthesis_site, is_function_type,
+    is_function_type_through_type_constraints, is_generic_application, is_identity_comparable_type,
+    is_index_access_type, is_intersection_type, is_lazy_type, is_literal_type,
+    is_literal_type_through_type_constraints, is_mapped_type, is_module_namespace_type,
+    is_object_like_type, is_object_like_type_through_type_constraints, is_primitive_type,
+    is_structurally_deferred_type, is_template_literal_type, is_this_type, is_tuple_type,
+    is_type_parameter, is_type_query_type, is_type_reference, is_union_type, keyof_inner_type,
+    lazy_def_id, literal_number, literal_string, literal_value, mapped_type_id,
+    module_namespace_symbol_ref, no_infer_inner_type, object_shape_id, object_with_index_shape_id,
+    readonly_inner_type, recursive_index, references_any_type_param_named,
+    resolve_default_type_args, string_intrinsic_components, template_literal_id, tuple_list_id,
+    type_param_info, type_query_symbol, union_list_id, unique_symbol_ref,
+    unwrap_readonly_or_noinfer, walk_referenced_types,
 };
 
 pub use caches::db::{QueryDatabase, TypeDatabase};
@@ -456,6 +457,9 @@ mod subtype_cache_tests;
 #[cfg(test)]
 #[path = "../tests/template_literal_comprehensive_tests.rs"]
 mod template_literal_comprehensive_tests;
+#[cfg(test)]
+#[path = "../tests/tuple_cardinality_tests.rs"]
+mod tuple_cardinality_tests;
 #[cfg(test)]
 #[path = "../tests/tuple_comprehensive_tests.rs"]
 mod tuple_comprehensive_tests;

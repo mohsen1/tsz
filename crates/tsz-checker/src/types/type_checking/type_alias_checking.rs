@@ -119,6 +119,20 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    /// Read-and-clear the solver's `tuple_too_large` flag, returning `true`
+    /// only when the flag was set AND `body_type`'s outer shape owns the
+    /// synthesis (so the trip is attributable to this alias rather than to
+    /// a referenced alias evaluated transitively). The flag must always be
+    /// cleared so the next alias starts from a clean state, regardless of
+    /// attribution.
+    fn alias_body_owns_too_large_tuple(&self, body_type: TypeId) -> bool {
+        self.ctx.types.take_tuple_too_large()
+            && crate::query_boundaries::common::is_fresh_tuple_synthesis_site(
+                self.ctx.types,
+                body_type,
+            )
+    }
+
     /// Check a type alias declaration.
     pub(crate) fn check_type_alias_declaration(&mut self, node_idx: NodeIndex) {
         let Some(node) = self.ctx.arena.get(node_idx) else {
@@ -219,6 +233,7 @@ impl<'a> CheckerState<'a> {
         });
         let body_type = {
             let _ = self.ctx.types.take_union_too_complex();
+            let _ = self.ctx.types.take_tuple_too_large();
             let body_type = if has_deferred_self_reference {
                 crate::TypeNodeChecker::new(&mut self.ctx).check(alias.type_node)
             } else {
@@ -235,6 +250,13 @@ impl<'a> CheckerState<'a> {
             body_type
         };
         let body_construction_too_complex = self.ctx.types.take_union_too_complex();
+        // Non-synthesis bodies (`type Ref = T14`, `type Wrapped = [T14]`) can
+        // trip the solver gate transitively while evaluating a referenced
+        // alias; the structural AST pre-check below catches direct
+        // tuple-spread bodies like `type T14 = [...T13, ...T13]`, so we only
+        // attribute the solver flag to this alias when its body owns the
+        // synthesis.
+        let mut body_produced_too_large_tuple = self.alias_body_owns_too_large_tuple(body_type);
         let has_type_params = alias
             .type_parameters
             .as_ref()
@@ -245,6 +267,8 @@ impl<'a> CheckerState<'a> {
             false
         } else {
             let _ = self.evaluate_type_with_env_uncached(body_type);
+            body_produced_too_large_tuple =
+                body_produced_too_large_tuple || self.alias_body_owns_too_large_tuple(body_type);
             self.ctx.types.take_union_too_complex()
         };
         if body_type != TypeId::ERROR
@@ -270,7 +294,8 @@ impl<'a> CheckerState<'a> {
                 self.ctx.clear_type_evaluation_caches_for_def(alias_def_id);
             }
         }
-        if self.type_node_produces_too_large_tuple(alias.type_node) {
+        if body_produced_too_large_tuple || self.type_node_produces_too_large_tuple(alias.type_node)
+        {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             self.error_at_node(
                 alias.type_node,

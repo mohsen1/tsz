@@ -225,6 +225,20 @@ pub trait TypeDatabase {
     /// complexity limit during evaluation rather than initial construction.
     fn mark_union_too_complex(&self) {}
 
+    /// Atomically read and clear the "tuple too large" flag.
+    ///
+    /// Returns `true` if a tuple synthesis path aborted because the resulting
+    /// tuple would exceed `MAX_TUPLE_LENGTH` elements since the last call.
+    /// The checker uses this to emit TS2799 / TS2800.
+    fn take_tuple_too_large(&self) -> bool {
+        false
+    }
+
+    /// Mark that the current tuple synthesis path exceeded the representable
+    /// cardinality. Synthesis sites that call this must also short-circuit to
+    /// `TypeId::ERROR` so the unbounded `Vec<TupleElement>` is not allocated.
+    fn mark_tuple_too_large(&self) {}
+
     /// Get the base class type for a symbol (class/interface).
     /// Returns the `TypeId` of the extends clause, or None if the symbol doesn't extend anything.
     /// This is used by the BCT algorithm to find common base classes.
@@ -668,6 +682,14 @@ impl TypeDatabase for TypeInterner {
 
     fn mark_union_too_complex(&self) {
         self.set_union_too_complex();
+    }
+
+    fn take_tuple_too_large(&self) -> bool {
+        Self::take_tuple_too_large(self)
+    }
+
+    fn mark_tuple_too_large(&self) {
+        self.set_tuple_too_large();
     }
 
     fn get_class_base_type(&self, _symbol_id: SymbolId) -> Option<TypeId> {

@@ -897,7 +897,23 @@ impl<'a> TypeInstantiator<'a> {
             // tuple type `[A, B, C]`, the spread is flattened into individual
             // elements `A, B, C` (matching tsc's instantiateMappedTupleType
             // behavior for variadic tuple types).
+            //
+            // Two cardinality gates are layered here:
+            //   * `MAX_TUPLE_SPREAD_FLATTEN_ELEMENTS` (soft): keeps the rest
+            //     unflattened to preserve the type as a finite-shape variadic
+            //     when individual-element flatten would be wasteful but the
+            //     overall tuple is still representable.
+            //   * `MAX_TUPLE_LENGTH` (hard, tsc parity): refuses to
+            //     materialize the tuple at all and surfaces TS2799/TS2800
+            //     through the `tuple_too_large` flag. This is the only gate
+            //     that fires for recursive conditional types whose tuple
+            //     argument grows exponentially per recursion level — without
+            //     it, each level adds two rest entries pointing at the
+            //     previous level's tuple, and the soft cap alone never
+            //     terminates the cycle.
             TypeData::Tuple(elements) => {
+                use crate::intern::MAX_TUPLE_LENGTH;
+
                 let elements = self.interner.tuple_list(*elements);
                 let mut instantiated: Vec<TupleElement> = Vec::with_capacity(elements.len());
                 for e in elements.iter() {
@@ -908,6 +924,10 @@ impl<'a> TypeInstantiator<'a> {
                         if let Some(TypeData::Tuple(inner_elems)) = self.interner.lookup(inst_type)
                         {
                             let inner = self.interner.tuple_list(inner_elems);
+                            if instantiated.len().saturating_add(inner.len()) > MAX_TUPLE_LENGTH {
+                                self.interner.mark_tuple_too_large();
+                                return TypeId::ERROR;
+                            }
                             if instantiated.len().saturating_add(inner.len())
                                 > MAX_TUPLE_SPREAD_FLATTEN_ELEMENTS
                             {

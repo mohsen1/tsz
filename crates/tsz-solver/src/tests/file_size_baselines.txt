@@ -18,13 +18,13 @@ solver_max_loc      3381
 solver_oversized    20
 solver_file_generic_call_resolve 3381
 solver_file_eval_conditional 3069
-solver_file_evaluate 3083
-solver_file_instantiate 2853
+solver_file_evaluate 3122
+solver_file_instantiate 2873
 solver_file_subtype_core 2860
 solver_file_type_queries_flow 2834
 solver_file_diag_format_compound 2763
 solver_file_eval_infer_pattern_helpers 2728
-solver_file_narrowing_core 2474
+solver_file_narrowing_core 2702
 solver_file_relations_compat 2559
 solver_file_constraints_walker 2348
 solver_file_diag_format_mod 2312
@@ -33,14 +33,14 @@ solver_file_subtype_generics 2125
 solver_file_call_args 2122
 solver_file_eval_index_access 2077
 solver_file_def_core 2064
-solver_file_visitor_predicates 2140
+solver_file_visitor_predicates 2165
 solver_file_types 2018
 
 binder_max_loc        2890
 binder_oversized      1
 
 emitter_max_loc     5724
-emitter_oversized   34
+emitter_oversized   35
 
 parser_max_loc      3304
 parser_oversized    11
