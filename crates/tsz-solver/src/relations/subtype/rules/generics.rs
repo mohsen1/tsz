@@ -1775,6 +1775,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         let mapped = self.interner.get_mapped(mapped_id);
 
+        // Do not expand when the constraint is an intersection that contains
+        // `keyof TypeParam` AND the template is an indexed access into that same
+        // type parameter (i.e. `{ [K in keyof T & keyof C]: T[K] }`).
+        // The key-set derived from T's upper-bound constraint is not definitive:
+        // a concrete T could have fewer keys (if it is a proper subtype of its
+        // constraint). Expanding here would prematurely collapse the mapped type
+        // to the constraint shape (e.g. `Stuff`) and produce wrong error messages.
+        // The homomorphic-mapped-to-target path handles the correct assignability
+        // check without full expansion.
+        if self.mapped_intersection_constraint_has_generic_keyof(mapped_id) {
+            return None;
+        }
+
         // Get concrete keys from the constraint
         let keys = self.try_evaluate_mapped_constraint(mapped.constraint)?;
         if keys.is_empty() {
@@ -2021,6 +2034,33 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         None
+    }
+
+    /// Guard for `try_expand_mapped`: true when constraint is an intersection
+    /// containing `keyof TypeParam` AND the template is `TypeParam[K]`.
+    ///
+    /// Expansion is blocked because the key-set of T is unknown until T is
+    /// substituted — expanding early would collapse the mapped type to the
+    /// concrete intersection member (e.g. the limit type `C`), losing T's
+    /// contribution and producing wrong assignability errors.
+    fn mapped_intersection_constraint_has_generic_keyof(&self, mapped_id: MappedTypeId) -> bool {
+        let mapped = self.interner.get_mapped(mapped_id);
+        let Some(TypeData::Intersection(members)) = self.interner.lookup(mapped.constraint) else {
+            return false;
+        };
+        if !self.interner.type_list(members).iter().any(|&m| {
+            matches!(self.interner.lookup(m), Some(TypeData::KeyOf(s)) if
+                matches!(self.interner.lookup(s), Some(TypeData::TypeParameter(_) | TypeData::Infer(_))))
+        }) {
+            return false;
+        }
+        let Some((obj, _idx)) = index_access_parts(self.interner, mapped.template) else {
+            return false;
+        };
+        matches!(
+            self.interner.lookup(obj),
+            Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
+        )
     }
 }
 
