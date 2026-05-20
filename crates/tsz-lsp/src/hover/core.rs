@@ -4,9 +4,7 @@
 //! building display strings, and extracting symbol metadata.
 
 use super::{HoverInfo, HoverProvider, format};
-use crate::jsdoc::link::{
-    LinkUriResolver, expand_links_to_markdown, expand_links_to_plain, iter_inline_links,
-};
+use crate::jsdoc::link::{LinkUriResolver, expand_links_to_markdown, expand_links_to_plain};
 use crate::jsdoc::{jsdoc_for_node, parse_jsdoc};
 use crate::resolver::{ScopeCache, ScopeCacheStats, ScopeWalker};
 use crate::utils::{
@@ -1925,8 +1923,8 @@ impl<'a> HoverProvider<'a> {
     /// declaration. Targets that fail to resolve fall back to plain text so a
     /// broken `@link` never crashes hover.
     fn expand_jsdoc_inline_links(&self, root: NodeIndex, anchor: NodeIndex, doc: &str) -> String {
-        if doc.is_empty() || iter_inline_links(doc).is_empty() {
-            return doc.to_string();
+        if doc.is_empty() {
+            return String::new();
         }
         let mut resolver = HoverLinkResolver::new(self, root, anchor);
         expand_links_to_markdown(doc, &mut resolver)
@@ -1935,11 +1933,10 @@ impl<'a> HoverProvider<'a> {
     /// Plain-text counterpart used for the tsserver-style `documentation`
     /// field, which carries no Markdown.
     fn expand_jsdoc_inline_links_plain(&self, doc: &str) -> String {
-        if doc.is_empty() || iter_inline_links(doc).is_empty() {
-            return doc.to_string();
+        if doc.is_empty() {
+            return String::new();
         }
-        let mut resolver = NeverResolver;
-        expand_links_to_plain(doc, &mut resolver)
+        expand_links_to_plain(doc)
     }
 
     /// Build a `file://` URI that addresses a symbol's declaration location.
@@ -2015,16 +2012,6 @@ impl LinkUriResolver for HoverLinkResolver<'_, '_> {
     fn resolve_link_uri(&mut self, target: &str) -> Option<String> {
         let symbol_id = self.resolve(target)?;
         self.provider.symbol_declaration_link_uri(symbol_id)
-    }
-}
-
-/// Resolver used when only plain-text rewriting is needed; never produces a
-/// URI so the renderer falls back to label text only.
-struct NeverResolver;
-
-impl LinkUriResolver for NeverResolver {
-    fn resolve_link_uri(&mut self, _target: &str) -> Option<String> {
-        None
     }
 }
 

@@ -157,11 +157,7 @@ fn markdown_falls_back_keeps_code_voice_for_linkcode() {
 
 #[test]
 fn plain_drops_uri_and_keeps_label() {
-    let mut resolver = StubResolver {
-        allow: &["Foo"],
-        uri: "file:///x.ts#L1,1",
-    };
-    let out = expand_links_to_plain("see {@link Foo|alias} and {@linkcode Bar}", &mut resolver);
+    let out = expand_links_to_plain("see {@link Foo|alias} and {@linkcode Bar}");
     assert_eq!(out, "see alias and Bar");
 }
 

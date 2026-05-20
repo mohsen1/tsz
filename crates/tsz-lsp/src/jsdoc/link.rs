@@ -78,38 +78,33 @@ pub fn iter_inline_links(text: &str) -> Vec<InlineLink<'_>> {
 }
 
 /// Recognize one of `link`, `linkcode`, `linkplain` immediately following
-/// `{@`. Returns the link style and the byte length of the keyword followed
-/// by exactly one separator (whitespace). The keyword must be terminated by
-/// whitespace or `}`; `{@linkable}` is not a link tag.
+/// `{@`. Returns the link style and the byte length to advance past the
+/// keyword and its terminator. The keyword must be terminated by whitespace
+/// or `}`; `{@linkable}` is not a link tag.
+///
+/// Candidates are checked longest-first so `linkcode` and `linkplain` are
+/// matched as themselves rather than being shadowed by the `link` prefix.
 fn match_tag_keyword(after_at: &[u8]) -> Option<(LinkStyle, usize)> {
     const CANDIDATES: &[(&[u8], LinkStyle)] = &[
         (b"linkcode", LinkStyle::Code),
         (b"linkplain", LinkStyle::Plain),
         (b"link", LinkStyle::Plain),
     ];
-    for (kw, style) in CANDIDATES {
-        if after_at.len() >= kw.len() && after_at.starts_with(kw) {
-            let next = after_at.get(kw.len()).copied();
-            match next {
-                Some(b'}') => return Some((*style, kw.len())),
-                Some(b) if b.is_ascii_whitespace() => return Some((*style, kw.len() + 1)),
-                _ => continue,
-            }
-        }
+    let (kw, style) = CANDIDATES.iter().find(|(kw, _)| after_at.starts_with(kw))?;
+    match after_at.get(kw.len())? {
+        b'}' => Some((*style, kw.len())),
+        b if b.is_ascii_whitespace() => Some((*style, kw.len() + 1)),
+        _ => None,
     }
-    None
 }
 
-/// Split the body inside `{@link …}` into `(target, display)`.
+/// Split the body inside `{@link …}` into `(target, display)`. Display may
+/// be separated from the target by whitespace or `|`.
 fn split_target_and_display(body: &str) -> (&str, Option<&str>) {
+    let is_sep = |c: char| c.is_whitespace() || c == '|';
     let trimmed = body.trim();
-    let (target, rest) = match trimmed.find(|c: char| c.is_whitespace() || c == '|') {
-        Some(sep) => (&trimmed[..sep], &trimmed[sep..]),
-        None => (trimmed, ""),
-    };
-    let display = rest
-        .trim_start_matches(|c: char| c.is_whitespace() || c == '|')
-        .trim_end();
+    let (target, rest) = trimmed.split_once(is_sep).unwrap_or((trimmed, ""));
+    let display = rest.trim_start_matches(is_sep).trim_end();
     (target, (!display.is_empty()).then_some(display))
 }
 
@@ -138,56 +133,35 @@ where
 /// don't process Markdown links still see the human-readable form, and so a
 /// broken target never crashes hover (acceptance criterion).
 pub fn expand_links_to_markdown(text: &str, resolver: &mut impl LinkUriResolver) -> String {
-    rewrite_links(text, resolver, RenderMode::Markdown)
+    splice_links(text, |link| {
+        let label = link.display.unwrap_or(link.target);
+        match (resolver.resolve_link_uri(link.target), link.style) {
+            (Some(uri), LinkStyle::Code) => format!("[`{label}`]({uri})"),
+            (Some(uri), LinkStyle::Plain) => format!("[{label}]({uri})"),
+            (None, LinkStyle::Code) => format!("`{label}`"),
+            (None, LinkStyle::Plain) => label.to_string(),
+        }
+    })
 }
 
 /// Rewrite inline link tokens in `text` into plain text for hovers that do
-/// not surface Markdown (e.g. tsserver-style `documentation` field).
-pub fn expand_links_to_plain(text: &str, resolver: &mut impl LinkUriResolver) -> String {
-    rewrite_links(text, resolver, RenderMode::Plain)
+/// not surface Markdown (e.g. tsserver-style `documentation` field). The
+/// rewrite never queries a resolver: it strips the tag, keeping only the
+/// display label (or the target as label when no display is given).
+pub fn expand_links_to_plain(text: &str) -> String {
+    splice_links(text, |link| link.display.unwrap_or(link.target).to_string())
 }
 
-#[derive(Copy, Clone)]
-enum RenderMode {
-    Markdown,
-    Plain,
-}
-
-fn rewrite_links(text: &str, resolver: &mut impl LinkUriResolver, mode: RenderMode) -> String {
+fn splice_links(text: &str, mut render: impl FnMut(&InlineLink<'_>) -> String) -> String {
     let links = iter_inline_links(text);
     if links.is_empty() {
         return text.to_string();
     }
     let mut out = String::with_capacity(text.len());
     let mut cursor = 0;
-    for link in links {
+    for link in &links {
         out.push_str(&text[cursor..link.span.start]);
-        let label = link.display.unwrap_or(link.target);
-        let uri = match mode {
-            RenderMode::Markdown => resolver.resolve_link_uri(link.target),
-            RenderMode::Plain => None,
-        };
-        let code_voice =
-            matches!(link.style, LinkStyle::Code) && matches!(mode, RenderMode::Markdown);
-        if let Some(uri) = uri {
-            out.push('[');
-            if code_voice {
-                out.push('`');
-            }
-            out.push_str(label);
-            if code_voice {
-                out.push('`');
-            }
-            out.push_str("](");
-            out.push_str(&uri);
-            out.push(')');
-        } else if code_voice {
-            out.push('`');
-            out.push_str(label);
-            out.push('`');
-        } else {
-            out.push_str(label);
-        }
+        out.push_str(&render(link));
         cursor = link.span.end;
     }
     out.push_str(&text[cursor..]);
