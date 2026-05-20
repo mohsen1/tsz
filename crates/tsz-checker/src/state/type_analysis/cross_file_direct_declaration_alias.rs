@@ -108,15 +108,21 @@ impl<'a> CheckerState<'a> {
         }
 
         let (decl_idx, type_alias) = alias_decl?;
+        let builtin_lib_alias = symbol_arena
+            .source_files
+            .first()
+            .is_some_and(|source_file| is_builtin_lib_file_name(&source_file.file_name));
         if Self::source_file_type_node_contains_kind(
             symbol_arena,
             type_alias.type_node,
             syntax_kind_ext::TYPE_QUERY,
-        ) || Self::source_file_type_node_contains_identifier_name(
-            symbol_arena,
-            type_alias.type_node,
-            &name,
-        ) {
+        ) || (!builtin_lib_alias
+            && Self::source_file_type_node_contains_identifier_name(
+                symbol_arena,
+                type_alias.type_node,
+                &name,
+            ))
+        {
             return None;
         }
 

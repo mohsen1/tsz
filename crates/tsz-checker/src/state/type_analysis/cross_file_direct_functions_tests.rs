@@ -177,6 +177,47 @@ fn direct_source_file_function_declaration_lowers_readonly_array_signature() {
 }
 
 #[test]
+fn direct_source_file_function_declaration_lowers_opaque_local_interface_signature() {
+    let (arena, binder, types) = parse_bound_source(
+        r#"
+                interface DashboardInput { title: string; }
+                interface DashboardModel extends DashboardInput {
+                    summary: ReturnType<typeof summarize>;
+                }
+                declare function summarize(input: DashboardInput): { mean: number };
+                export function render(model: DashboardModel): string {
+                    return model.title;
+                }
+            "#,
+    );
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "fixture.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let state = CheckerState { ctx };
+    let render_sym = binder.file_locals.get("render").expect("function symbol");
+
+    let result = state
+        .direct_source_file_function_declaration_type(
+            render_sym,
+            binder.as_ref(),
+            arena.as_ref(),
+            true,
+        )
+        .expect("same-file non-generic interface references can lower opaquely in signatures");
+    let shape = function_shape_for_type(&types, result)
+        .expect("direct source function lowering should produce a function type");
+
+    assert_eq!(shape.params.len(), 1);
+    assert_ne!(shape.params[0].type_id, TypeId::UNKNOWN);
+    assert_ne!(shape.params[0].type_id, TypeId::ERROR);
+    assert_eq!(shape.return_type, TypeId::STRING);
+}
+
+#[test]
 fn direct_source_file_function_declaration_rejects_keyof_operator_signature() {
     let result = direct_function_type_for_source(
         r#"
@@ -277,6 +318,24 @@ fn direct_source_file_function_declaration_rejects_generic_signature() {
     assert!(
         result.is_none(),
         "generic source functions need the child checker for scoped type parameters",
+    );
+}
+
+#[test]
+fn direct_source_file_function_declaration_rejects_generic_local_interface_reference() {
+    let result = direct_function_type_for_source(
+        r#"
+                interface Box<T> { value: T; }
+                export function render(model: Box): string {
+                    return "";
+                }
+            "#,
+        "render",
+    );
+
+    assert!(
+        result.is_none(),
+        "generic local interfaces without type arguments need the normal diagnostic path",
     );
 }
 

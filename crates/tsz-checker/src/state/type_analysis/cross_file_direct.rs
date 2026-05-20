@@ -454,7 +454,11 @@ impl<'a> CheckerState<'a> {
             })
     }
 
-    fn lib_declaration_name_matches(arena: &NodeArena, decl_idx: NodeIndex, name: &str) -> bool {
+    pub(super) fn lib_declaration_name_matches(
+        arena: &NodeArena,
+        decl_idx: NodeIndex,
+        name: &str,
+    ) -> bool {
         let Some(node) = arena.get(decl_idx) else {
             return false;
         };
@@ -1918,31 +1922,49 @@ impl<'a> CheckerState<'a> {
         let (direct_type, params, symbol_declarations) = {
             let symbol_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
             let delegate_binder = self.ctx.binder;
-            if !is_direct_lowering_declaration_arena(symbol_arena) {
-                return None;
-            }
-            let declarations =
-                self.cross_file_interface_declarations(sym_id, delegate_binder, symbol_arena)?;
-            if Self::interface_declarations_have_computed_names(&declarations)
-                || !Self::interface_declarations_have_simple_heritage(&declarations)
-            {
-                return None;
-            }
-
-            let symbol = delegate_binder.get_symbol(sym_id)?;
-            let symbol_declarations = symbol.declarations.clone();
-            let (direct_type, params) = self.direct_cross_file_interface_lowering(
+            self.direct_cross_file_interface_lowering_with_simple_heritage_for_arena(
                 sym_id,
                 delegate_binder,
                 symbol_arena,
-                true,
-                false,
-            )?;
-            (direct_type, params, symbol_declarations)
+            )?
         };
         let direct_type = self.merge_cross_file_heritage(&symbol_declarations, sym_id, direct_type);
         (direct_type != TypeId::UNKNOWN && direct_type != TypeId::ERROR)
             .then_some((direct_type, params))
+    }
+
+    pub(super) fn direct_cross_file_interface_lowering_with_simple_heritage_for_arena(
+        &self,
+        sym_id: SymbolId,
+        delegate_binder: &BinderState,
+        symbol_arena: &NodeArena,
+    ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>, Vec<NodeIndex>)> {
+        if !is_direct_lowering_declaration_arena(symbol_arena)
+            && !is_dom_builtin_lib_declaration_arena(symbol_arena)
+        {
+            return None;
+        }
+        let symbol = delegate_binder.get_symbol(sym_id)?;
+        if symbol.flags & symbol_flags::INTERFACE == 0 {
+            return None;
+        }
+        let declarations =
+            self.cross_file_interface_declarations(sym_id, delegate_binder, symbol_arena)?;
+        if Self::interface_declarations_have_computed_names(&declarations)
+            || !Self::interface_declarations_have_simple_heritage(&declarations)
+        {
+            return None;
+        }
+
+        let symbol_declarations = symbol.declarations.clone();
+        let (direct_type, params) = self.direct_cross_file_interface_lowering(
+            sym_id,
+            delegate_binder,
+            symbol_arena,
+            true,
+            false,
+        )?;
+        Some((direct_type, params, symbol_declarations))
     }
 
     pub(super) fn direct_cross_file_interface_member_simple_types(

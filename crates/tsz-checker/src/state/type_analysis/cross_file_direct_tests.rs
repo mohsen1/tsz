@@ -506,6 +506,86 @@ fn direct_declaration_file_interface_lowering_merges_simple_heritage() {
 }
 
 #[test]
+fn direct_dom_interface_lowering_merges_simple_heritage() {
+    let lib_files = load_lib_files(&["es5.d.ts", "dom.d.ts"]);
+    let mut parser = ParserState::new("src/main.ts".to_string(), "let value;".to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+    let arena = Arc::new(parser.get_arena().clone());
+    let binder = Arc::new(binder);
+    let types = TypeInterner::new();
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "src/main.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    let lib_contexts: Vec<LibContext> = lib_files
+        .iter()
+        .map(|lib| LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    let all_arenas = Arc::new(
+        std::iter::once(Arc::clone(&arena))
+            .chain(lib_files.iter().map(|lib| Arc::clone(&lib.arena)))
+            .collect(),
+    );
+    let all_binders = Arc::new(
+        std::iter::once(Arc::clone(&binder))
+            .chain(lib_files.iter().map(|lib| Arc::clone(&lib.binder)))
+            .collect(),
+    );
+    state.ctx.set_all_arenas(all_arenas);
+    state.ctx.set_all_binders(all_binders);
+    state.ctx.set_lib_contexts(lib_contexts);
+    state.ctx.set_actual_lib_file_count(lib_files.len());
+
+    let window_event_map_sym = binder
+        .file_locals
+        .get("WindowEventMap")
+        .expect("WindowEventMap should resolve to a DOM lib symbol");
+    let dom_file_idx = lib_files
+        .iter()
+        .position(|lib| lib.file_name.ends_with("dom.d.ts"))
+        .map(|idx| idx + 1)
+        .expect("DOM declaration file should be indexed after the source file");
+    let delegate_arena = state.ctx.get_arena_for_file(dom_file_idx as u32);
+    assert!(super::is_dom_builtin_lib_declaration_arena(delegate_arena));
+    let declarations = state
+        .cross_file_interface_declarations(window_event_map_sym, binder.as_ref(), delegate_arena)
+        .expect("WindowEventMap declaration should be discoverable");
+    assert!(CheckerState::interface_declarations_have_simple_heritage(
+        &declarations
+    ));
+
+    let (event_map_type, params) = state
+        .direct_cross_file_interface_lowering_with_simple_heritage_for_file(
+            window_event_map_sym,
+            Some(dom_file_idx),
+        )
+        .expect("DOM simple heritage should lower without a child checker");
+
+    assert!(params.is_empty());
+    for property in ["DOMContentLoaded", "abort", "afterprint"] {
+        let key = types.intern_string(property);
+        assert!(
+            crate::query_boundaries::common::raw_property_type(
+                state.ctx.types.as_type_database(),
+                event_map_type,
+                key,
+            )
+            .is_some(),
+            "{property} should be present after DOM heritage merge",
+        );
+    }
+}
+
+#[test]
 fn source_file_direct_interface_lowering_rejects_generic_sibling_refs() {
     let (arena, binder, _types) = parse_bound_source(
         r#"

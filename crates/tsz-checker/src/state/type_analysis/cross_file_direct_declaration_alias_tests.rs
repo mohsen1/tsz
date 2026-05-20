@@ -123,4 +123,41 @@ fn direct_declaration_file_type_alias_lowers_builtin_dom_alias_body() {
             "{literal_union_alias} should populate the built-in lib delegation cache",
         );
     }
+
+    let idb_valid_key_sym = state
+        .ctx
+        .binder
+        .file_locals
+        .get("IDBValidKey")
+        .expect("IDBValidKey should resolve to a DOM lib symbol");
+    let idb_valid_key_arena = state
+        .ctx
+        .binder
+        .symbol_arenas
+        .get(&idb_valid_key_sym)
+        .map(std::convert::AsRef::as_ref)
+        .expect("IDBValidKey should have a delegate arena");
+    let (idb_valid_key, params) = state
+        .direct_declaration_file_type_alias_result(idb_valid_key_sym, idb_valid_key_arena)
+        .expect("recursive built-in lib aliases should resolve through the canonical lib path");
+    assert!(params.is_empty(), "IDBValidKey is non-generic");
+    assert_ne!(idb_valid_key, TypeId::UNKNOWN);
+    assert_ne!(idb_valid_key, TypeId::ERROR);
+    if let Some(def_id) = get_lazy_def_id(state.ctx.types, idb_valid_key) {
+        let body = state
+            .ctx
+            .definition_store
+            .get_body(def_id)
+            .expect("IDBValidKey should register its alias body");
+        assert_ne!(body, TypeId::UNKNOWN);
+        assert_ne!(body, TypeId::ERROR);
+    }
+    assert!(
+        state
+            .ctx
+            .lib_delegation_cache
+            .symbol_type(idb_valid_key_sym)
+            .is_some(),
+        "IDBValidKey should populate the built-in lib delegation cache",
+    );
 }

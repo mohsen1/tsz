@@ -11,6 +11,77 @@ use tsz_solver::TypeId;
 use super::cross_file_direct::is_direct_lowering_source_file_arena;
 
 impl<'a> CheckerState<'a> {
+    fn source_file_function_signature_type_is_direct_lowerable<'b>(
+        &self,
+        symbol_arena: &'b NodeArena,
+        delegate_binder: &BinderState,
+        node_idx: NodeIndex,
+        seen_type_names: &mut Vec<&'b str>,
+    ) -> bool {
+        if Self::source_file_type_node_is_option_bag_lowerable(
+            symbol_arena,
+            delegate_binder,
+            node_idx,
+            seen_type_names,
+        ) {
+            return true;
+        }
+
+        let Some(type_ref) = symbol_arena
+            .get(node_idx)
+            .filter(|node| node.kind == syntax_kind_ext::TYPE_REFERENCE)
+            .and_then(|node| symbol_arena.get_type_ref(node))
+        else {
+            return false;
+        };
+        if type_ref
+            .type_arguments
+            .as_ref()
+            .is_some_and(|args| !args.nodes.is_empty())
+        {
+            return false;
+        }
+        let Some(type_name) = symbol_arena
+            .get(type_ref.type_name)
+            .and_then(|name_node| symbol_arena.get_identifier(name_node))
+            .map(|ident| ident.escaped_text.as_str())
+        else {
+            return false;
+        };
+        let Some(sym_id) = delegate_binder.file_locals.get(type_name) else {
+            return false;
+        };
+        let Some(symbol) = delegate_binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let allowed_flags = symbol_flags::INTERFACE;
+        let disallowed_flags = symbol_flags::VALUE
+            | symbol_flags::CLASS
+            | symbol_flags::VALUE_MODULE
+            | symbol_flags::NAMESPACE_MODULE
+            | symbol_flags::ALIAS;
+        if symbol.flags & allowed_flags == 0 || symbol.flags & disallowed_flags != 0 {
+            return false;
+        }
+        if !symbol
+            .declarations
+            .iter()
+            .any(|&decl_idx| Self::lib_declaration_name_matches(symbol_arena, decl_idx, type_name))
+        {
+            return false;
+        }
+        symbol.declarations.iter().all(|&decl_idx| {
+            symbol_arena.get(decl_idx).is_some_and(|node| {
+                symbol_arena.get_interface(node).is_some_and(|interface| {
+                    interface
+                        .type_parameters
+                        .as_ref()
+                        .is_none_or(|params| params.nodes.is_empty())
+                })
+            })
+        })
+    }
+
     pub(super) fn direct_source_file_function_declaration_type(
         &self,
         sym_id: SymbolId,
@@ -48,7 +119,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let mut seen_type_names = Vec::new();
-        if !Self::source_file_type_node_is_option_bag_lowerable(
+        if !self.source_file_function_signature_type_is_direct_lowerable(
             symbol_arena,
             delegate_binder,
             function.type_annotation,
@@ -60,7 +131,7 @@ impl<'a> CheckerState<'a> {
             let param = symbol_arena
                 .get(param_idx)
                 .and_then(|param_node| symbol_arena.get_parameter(param_node))?;
-            if !Self::source_file_type_node_is_option_bag_lowerable(
+            if !self.source_file_function_signature_type_is_direct_lowerable(
                 symbol_arena,
                 delegate_binder,
                 param.type_annotation,

@@ -765,6 +765,63 @@ impl<'a> CheckerState<'a> {
                 return Some((direct_type, direct_params));
             }
 
+            let simple_heritage_result = {
+                let direct_target = if let Some(file_idx) = cross_file_idx {
+                    let arena = self.ctx.get_arena_for_file(file_idx as u32);
+                    let binder = self
+                        .ctx
+                        .get_binder_for_file(file_idx)
+                        .unwrap_or(self.ctx.binder);
+                    Some((arena, binder, Some(file_idx)))
+                } else {
+                    delegate_arena.map(|arena| {
+                        let binder = if std::ptr::eq(arena, self.ctx.arena) {
+                            self.ctx.binder
+                        } else {
+                            self.ctx
+                                .get_binder_for_arena(arena)
+                                .unwrap_or(self.ctx.binder)
+                        };
+                        let file_idx = if std::ptr::eq(arena, self.ctx.arena) {
+                            Some(self.ctx.current_file_idx)
+                        } else {
+                            self.ctx.get_file_idx_for_arena(arena)
+                        };
+                        (arena, binder, file_idx)
+                    })
+                };
+                direct_target.and_then(|(symbol_arena, delegate_binder, _delegate_file_idx)| {
+                    self.direct_cross_file_interface_lowering_with_simple_heritage_for_arena(
+                        sym_id,
+                        delegate_binder,
+                        symbol_arena,
+                    )
+                })
+            };
+            if let Some((direct_type, direct_params, symbol_declarations)) = simple_heritage_result
+            {
+                let direct_type =
+                    self.merge_cross_file_heritage(&symbol_declarations, sym_id, direct_type);
+                if direct_type != TypeId::UNKNOWN && direct_type != TypeId::ERROR {
+                    self.ctx.symbol_types.insert(sym_id, direct_type);
+                    if let Some(file_idx) = symbol_type_cache_file_idx {
+                        self.cache_symbol_arena_or_cross_file_symbol_type(
+                            sym_id,
+                            file_idx,
+                            source_cache_scope,
+                            symbol_type_cache_from_symbol_arena,
+                            direct_type,
+                            direct_params.clone(),
+                        );
+                    }
+                    if symbol_type_cache_file_idx.is_none() && !needs_cross_file_delegation {
+                        self.ctx
+                            .lib_delegation_cache
+                            .insert_symbol_type(sym_id, (direct_type, direct_params.clone()));
+                    }
+                    return Some((direct_type, direct_params));
+                }
+            }
             let direct_target = if let Some(file_idx) = cross_file_idx {
                 let arena = self.ctx.get_arena_for_file(file_idx as u32);
                 let binder = self
