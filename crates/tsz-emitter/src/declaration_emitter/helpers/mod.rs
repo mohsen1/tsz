@@ -224,7 +224,7 @@ impl tsz_solver::def::resolver::TypeResolver for DtsStructuralResolver<'_> {
     fn resolve_ref(
         &self,
         _symbol: tsz_solver::types::SymbolRef,
-        _interner: &dyn tsz_solver::TypeDatabase,
+        _interner: &dyn tsz_solver::construction::TypeDatabase,
     ) -> Option<tsz_solver::types::TypeId> {
         None
     }
@@ -232,7 +232,7 @@ impl tsz_solver::def::resolver::TypeResolver for DtsStructuralResolver<'_> {
     fn resolve_lazy(
         &self,
         def_id: tsz_solver::DefId,
-        _interner: &dyn tsz_solver::TypeDatabase,
+        _interner: &dyn tsz_solver::construction::TypeDatabase,
     ) -> Option<tsz_solver::types::TypeId> {
         self.cache.def_types.get(&def_id.0).copied()
     }

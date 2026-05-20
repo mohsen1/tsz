@@ -840,11 +840,12 @@ impl<'a> DeclarationEmitter<'a> {
         let interner = self.type_interner?;
         let evaluated = if let Some(cache) = &self.type_cache {
             let resolver = DtsStructuralResolver { cache };
-            let mut evaluator = tsz_solver::TypeEvaluator::with_resolver(interner, &resolver);
+            let mut evaluator =
+                tsz_solver::computation::TypeEvaluator::with_resolver(interner, &resolver);
             evaluator.set_max_mapped_keys(1_024);
             evaluator.evaluate(type_id)
         } else {
-            let mut evaluator = tsz_solver::TypeEvaluator::new(interner);
+            let mut evaluator = tsz_solver::computation::TypeEvaluator::new(interner);
             evaluator.set_max_mapped_keys(1_024);
             evaluator.evaluate(type_id)
         };
