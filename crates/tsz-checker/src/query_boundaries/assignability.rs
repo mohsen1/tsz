@@ -80,52 +80,54 @@ pub(crate) fn homomorphic_mapped_projection_target<R: TypeResolver>(
     }
 }
 
-/// Returns true for contextually typed function expressions whose target is a
-/// generic application that evaluates to a union with a callable member.
+/// Returns callable union members that a contextually typed function expression
+/// may be checked against directly.
 ///
 /// This models tsc's applicability path for shapes such as
 /// `ComponentClass<P> | StatelessComponent<P>`: the returned function is allowed
 /// to satisfy the callable member even when generic mapped props expand to a
 /// different but equivalent structural form during contextual typing.
-pub(crate) fn contextual_function_can_defer_callable_union_relation(
+pub(crate) fn contextual_function_callable_union_member_candidates(
     db: &dyn TypeDatabase,
     source: TypeId,
     target: TypeId,
-) -> bool {
+) -> Vec<TypeId> {
     if !tsz_solver::contains_type_parameters(db, source)
         || !tsz_solver::contains_type_parameters(db, target)
     {
-        return false;
+        return Vec::new();
     }
 
     let Some(source_shape) = tsz_solver::type_queries::get_callable_shape_for_type(db, source)
     else {
-        return false;
+        return Vec::new();
     };
     if source_shape.call_signatures.is_empty() || !source_shape.construct_signatures.is_empty() {
-        return false;
+        return Vec::new();
     }
 
     let evaluated_target = tsz_solver::evaluate_type(db, target);
-    [target, evaluated_target].into_iter().any(|candidate| {
-        tsz_solver::type_queries::get_union_members(db, candidate).is_some_and(|members| {
-            members.iter().any(|&member| {
+    [target, evaluated_target]
+        .into_iter()
+        .filter_map(|candidate| tsz_solver::type_queries::get_union_members(db, candidate))
+        .flat_map(|members| {
+            members.iter().filter_map(|&member| {
                 let evaluated_member = tsz_solver::evaluate_type(db, member);
-                tsz_solver::type_queries::get_callable_shape_for_type(db, member)
-                    .or_else(|| {
-                        (evaluated_member != member)
-                            .then(|| {
-                                tsz_solver::type_queries::get_callable_shape_for_type(
-                                    db,
-                                    evaluated_member,
-                                )
-                            })
-                            .flatten()
-                    })
+                if tsz_solver::type_queries::get_callable_shape_for_type(db, member)
                     .is_some_and(|shape| !shape.call_signatures.is_empty())
+                {
+                    Some(member)
+                } else if evaluated_member != member
+                    && tsz_solver::type_queries::get_callable_shape_for_type(db, evaluated_member)
+                        .is_some_and(|shape| !shape.call_signatures.is_empty())
+                {
+                    Some(evaluated_member)
+                } else {
+                    None
+                }
             })
         })
-    })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------

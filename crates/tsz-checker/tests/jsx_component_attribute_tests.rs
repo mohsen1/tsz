@@ -3681,6 +3681,52 @@ export function createBad<WrappedProps extends ReactSelectProps<any>>(
 }
 
 #[test]
+fn react_component_type_return_rejects_incompatible_contextual_arrow_signature() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+declare namespace React {{
+    interface ReactElement<P = any> {{}}
+    class Component<P, S = {{}}> {{
+        constructor(props: Readonly<P>);
+        constructor(props: P, context?: any);
+        props: P;
+    }}
+    interface ComponentClass<P = {{}}, S = {{}}> {{
+        new(props: P, context?: any): Component<P, S>;
+    }}
+    interface StatelessComponent<P = {{}}> {{
+        (props: P, context?: any): ReactElement<any> | null;
+    }}
+    type ComponentType<P = {{}}> = ComponentClass<P> | StatelessComponent<P>;
+}}
+
+export function createBad<WrappedProps extends {{ value: string }}>(
+): React.ComponentType<WrappedProps> {{
+    return (props: WrappedProps & {{ value: number }}) => {{
+        return {{}};
+    }};
+}}
+"#
+    );
+
+    let diags = jsx_diagnostics_with_options(
+        &source,
+        CheckerOptions {
+            jsx_mode: JsxMode::React,
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "contextual callable-union return should still reject incompatible function signatures, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_react_component_type_missing_required_prop_emits_ts2741() {
     let source = format!(
         r#"

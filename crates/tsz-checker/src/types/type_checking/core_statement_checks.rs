@@ -376,16 +376,24 @@ impl<'a> CheckerState<'a> {
                         .is_some_and(|body| body.kind == syntax_kind_ext::BLOCK)
                     && {
                         let evaluated_expected = self.evaluate_type_with_env(expected_type);
-                        crate::query_boundaries::assignability::contextual_function_can_defer_callable_union_relation(
+                        let mut candidates =
+                            crate::query_boundaries::assignability::contextual_function_callable_union_member_candidates(
                                 self.ctx.types,
                                 return_type,
                                 expected_type,
-                            ) || (evaluated_expected != expected_type
-                                && crate::query_boundaries::assignability::contextual_function_can_defer_callable_union_relation(
+                            );
+                        if evaluated_expected != expected_type {
+                            candidates.extend(
+                                crate::query_boundaries::assignability::contextual_function_callable_union_member_candidates(
                                     self.ctx.types,
                                     return_type,
                                     evaluated_expected,
-                                ))
+                                ),
+                            );
+                        }
+                        candidates
+                            .into_iter()
+                            .any(|candidate| self.is_assignable_to(return_type, candidate))
                     };
                 let ok = can_defer_contextual_callable_union
                     || self.check_assignable_or_report_at_exact_anchor(
