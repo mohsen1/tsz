@@ -898,8 +898,15 @@ impl<'a> TypeInstantiator<'a> {
             // elements `A, B, C` (matching tsc's instantiateMappedTupleType
             // behavior for variadic tuple types).
             TypeData::Tuple(elements) => {
+                use tsz_common::limits::MAX_REPRESENTABLE_TUPLE_LENGTH;
                 let elements = self.interner.tuple_list(*elements);
                 let mut instantiated: Vec<TupleElement> = Vec::with_capacity(elements.len());
+                // Tracks the semantic (represented) cardinality — sum of each
+                // spread arm's inner element count, not the physical slot count.
+                // Needed to catch the case where a large spread is kept as a
+                // single physical rest element by the soft gate but the total
+                // represented length still exceeds `MAX_REPRESENTABLE_TUPLE_LENGTH`.
+                let mut represented_len: usize = 0;
                 for e in elements.iter() {
                     let inst_type = self.instantiate(e.type_id);
                     if e.rest {
@@ -908,9 +915,18 @@ impl<'a> TypeInstantiator<'a> {
                         if let Some(TypeData::Tuple(inner_elems)) = self.interner.lookup(inst_type)
                         {
                             let inner = self.interner.tuple_list(inner_elems);
-                            if instantiated.len().saturating_add(inner.len())
-                                > MAX_TUPLE_SPREAD_FLATTEN_ELEMENTS
-                            {
+                            let represented_after =
+                                represented_len.saturating_add(inner.len());
+                            // Hard gate: refuse to materialize tuples wider than
+                            // MAX_REPRESENTABLE_TUPLE_LENGTH. Fires before the soft gate
+                            // so the unbounded Vec is never allocated.
+                            if represented_after > MAX_REPRESENTABLE_TUPLE_LENGTH {
+                                self.interner.mark_tuple_too_large();
+                                return TypeId::ERROR;
+                            }
+                            // Soft gate: keep very large spreads as a single rest
+                            // element to avoid exponential physical slot growth.
+                            if represented_after > MAX_TUPLE_SPREAD_FLATTEN_ELEMENTS {
                                 instantiated.push(TupleElement {
                                     type_id: inst_type,
                                     name: e.name,
@@ -927,6 +943,7 @@ impl<'a> TypeInstantiator<'a> {
                                     });
                                 }
                             }
+                            represented_len = represented_after;
                         } else {
                             instantiated.push(TupleElement {
                                 type_id: inst_type,
@@ -934,6 +951,7 @@ impl<'a> TypeInstantiator<'a> {
                                 optional: e.optional,
                                 rest: true,
                             });
+                            represented_len = represented_len.saturating_add(1);
                         }
                     } else {
                         instantiated.push(TupleElement {
@@ -942,6 +960,7 @@ impl<'a> TypeInstantiator<'a> {
                             optional: e.optional,
                             rest: false,
                         });
+                        represented_len = represented_len.saturating_add(1);
                     }
                 }
                 self.interner.tuple(instantiated)
