@@ -229,6 +229,19 @@ struct ApplicationEvalContext {
     prefer_application_display_alias: bool,
 }
 
+/// Common opening preamble for the homomorphic-mapped shortcuts:
+/// `try_homomorphic_mapped_passthrough` and `try_distribute_mapped_union_arg`
+/// both require `body == { [P in keyof Tᵢ]: ... }` with `Tᵢ` resolvable in
+/// `type_params`. Sharing the destructure protects against drift between
+/// the two call sites and avoids re-evaluating the same argument twice.
+struct HomomorphicMappedArg {
+    mapped: MappedType,
+    source: TypeId,
+    tp: TypeParamInfo,
+    idx: usize,
+    resolved_arg: TypeId,
+}
+
 /// Distinguishes shortcut paths in `evaluate_application` (cache hits,
 /// homomorphic passthrough, mapped-union distribution) from the full
 /// instantiation path.
@@ -825,12 +838,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // apparent conditional branch.
         let ctx = self.application_evaluation_context(def_id, app.base);
 
-        // NOTE: the early-exit paths below (raw-args cache hit, the
-        // body-aware shortcut paths inside `evaluate_application_body`)
-        // deliberately do NOT restore this slot — the historical
-        // decrement-and-return shape leaves it as `None` so the cached
-        // result is canonical and the outer caller observes `None`. Only
-        // the `Computed` outcome restores `_saved_apparent`.
+        // See `ApplicationEvalOutcome` for why ShortCircuit branches do not
+        // restore `_saved_apparent` — outer caller observes `None`.
         let _saved_apparent = self.apparent_conditional_branch.take();
 
         // Phase 4 — raw-args cache shortcut. Lite resolvers (e.g. inside
@@ -1087,6 +1096,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             effective_body,
             type_params,
             prefer_application_display_alias,
+            /* record_structural_back_reference */ true,
             no_unchecked_indexed_access,
         );
         ApplicationEvalOutcome::Computed(evaluated)
@@ -1118,7 +1128,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return ApplicationEvalOutcome::ShortCircuit(cached);
         }
 
-        let evaluated = self.instantiate_application_with_fallback_params(
+        let evaluated = self.instantiate_and_finalize_application(
             def_id,
             original_type_id,
             args,
@@ -1126,6 +1136,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             resolved,
             type_params,
             prefer_application_display_alias,
+            /* record_structural_back_reference */ false,
             no_unchecked_indexed_access,
         );
         ApplicationEvalOutcome::Computed(evaluated)
@@ -1192,22 +1203,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         expanded_args: &[TypeId],
         no_unchecked_indexed_access: bool,
     ) -> Option<TypeId> {
-        let TypeData::Mapped(mapped_id) = self.interner.lookup(body)? else {
-            return None;
-        };
-        let mapped = self.interner.get_mapped(mapped_id);
-        let TypeData::KeyOf(source) = self.interner.lookup(mapped.constraint)? else {
-            return None;
-        };
-        let TypeData::TypeParameter(tp) = self.interner.lookup(source)? else {
-            return None;
-        };
-        let idx = type_params.iter().position(|p| p.name == tp.name)?;
-        if idx >= expanded_args.len() {
-            return None;
-        }
-        let arg = expanded_args[idx];
-        let resolved_arg = self.evaluate(arg);
+        let preamble = self.homomorphic_mapped_arg(body, type_params, expanded_args)?;
+        let HomomorphicMappedArg {
+            mapped,
+            source,
+            tp,
+            resolved_arg,
+            ..
+        } = preamble;
 
         // Passthrough for genuine primitives. For `any`/`unknown`/`never`/
         // `error`: only passthrough when the type parameter is constrained
@@ -1231,14 +1234,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             Self::is_primitive_or_primitive_union(self.interner, resolved_arg)
         };
         if should_passthrough {
-            if let Some(db) = self.query_db {
-                db.insert_application_eval_cache(
-                    def_id,
-                    expanded_args,
-                    no_unchecked_indexed_access,
-                    resolved_arg,
-                );
-            }
+            self.insert_application_eval_cache_if_some(
+                def_id,
+                expanded_args,
+                no_unchecked_indexed_access,
+                resolved_arg,
+            );
             return Some(resolved_arg);
         }
 
@@ -1274,18 +1275,75 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }),
                 symbol: None,
             });
-            if let Some(db) = self.query_db {
-                db.insert_application_eval_cache(
-                    def_id,
-                    expanded_args,
-                    no_unchecked_indexed_access,
-                    result,
-                );
-            }
+            self.insert_application_eval_cache_if_some(
+                def_id,
+                expanded_args,
+                no_unchecked_indexed_access,
+                result,
+            );
             return Some(result);
         }
 
         None
+    }
+
+    /// Shared opening preamble for the two body-aware homomorphic-mapped
+    /// shortcuts. Returns the structured `(mapped, source, tp, idx,
+    /// resolved_arg)` tuple when `body` is `{ [P in keyof Tᵢ]: ... }` and
+    /// the argument for `Tᵢ` resolves cleanly. Returns `None` if any guard
+    /// in the chain fails.
+    ///
+    /// Extracted from the two call sites so a future change to the
+    /// guard cannot drift between passthrough and union-distribute.
+    fn homomorphic_mapped_arg(
+        &mut self,
+        body: TypeId,
+        type_params: &[TypeParamInfo],
+        expanded_args: &[TypeId],
+    ) -> Option<HomomorphicMappedArg> {
+        let TypeData::Mapped(mapped_id) = self.interner.lookup(body)? else {
+            return None;
+        };
+        let mapped = self.interner.get_mapped(mapped_id);
+        let TypeData::KeyOf(source) = self.interner.lookup(mapped.constraint)? else {
+            return None;
+        };
+        let TypeData::TypeParameter(tp) = self.interner.lookup(source)? else {
+            return None;
+        };
+        let idx = type_params.iter().position(|p| p.name == tp.name)?;
+        if idx >= expanded_args.len() {
+            return None;
+        }
+        let arg = expanded_args[idx];
+        let resolved_arg = self.evaluate(arg);
+        Some(HomomorphicMappedArg {
+            mapped,
+            source,
+            tp,
+            idx,
+            resolved_arg,
+        })
+    }
+
+    /// Insert into the application-eval cache iff `query_db` is connected.
+    /// Folds the two-line `if let Some(db) = self.query_db { … }` idiom
+    /// repeated in every body-aware shortcut and finalize helper.
+    fn insert_application_eval_cache_if_some(
+        &self,
+        def_id: DefId,
+        expanded_args: &[TypeId],
+        no_unchecked_indexed_access: bool,
+        evaluated: TypeId,
+    ) {
+        if let Some(db) = self.query_db {
+            db.insert_application_eval_cache(
+                def_id,
+                expanded_args,
+                no_unchecked_indexed_access,
+                evaluated,
+            );
+        }
     }
 
     /// Extract the instance side of a class-shaped resolved body.
@@ -1330,33 +1388,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         expanded_args: &[TypeId],
         no_unchecked_indexed_access: bool,
     ) -> Option<TypeId> {
-        let TypeData::Mapped(mapped_id) = self.interner.lookup(effective_body)? else {
-            return None;
-        };
-        let mapped = self.interner.get_mapped(mapped_id);
-        let TypeData::KeyOf(source) = self.interner.lookup(mapped.constraint)? else {
-            return None;
-        };
-        let TypeData::TypeParameter(tp) = self.interner.lookup(source)? else {
-            return None;
-        };
-        let idx = type_params.iter().position(|p| p.name == tp.name)?;
-        if idx >= expanded_args.len() {
-            return None;
-        }
-        let arg = expanded_args[idx];
-        let resolved_arg = self.evaluate(arg);
+        let HomomorphicMappedArg {
+            idx, resolved_arg, ..
+        } = self.homomorphic_mapped_arg(effective_body, type_params, expanded_args)?;
         let TypeData::Union(list_id) = self.interner.lookup(resolved_arg)? else {
             return None;
         };
-        // Array/tuple sources are handled by the mapped evaluator directly,
-        // not by union distribution here.
-        if matches!(
-            self.interner.lookup(resolved_arg),
-            Some(TypeData::Array(_) | TypeData::Tuple(_))
-        ) {
-            return None;
-        }
         let members = self.interner.type_list(list_id).to_vec();
         let mut distributed = Vec::with_capacity(members.len());
         for member in members {
@@ -1371,26 +1408,28 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             distributed.push(self.evaluate(instantiated));
         }
         let evaluated = self.interner.union(distributed);
-        if let Some(db) = self.query_db {
-            db.insert_application_eval_cache(
-                def_id,
-                expanded_args,
-                no_unchecked_indexed_access,
-                evaluated,
-            );
-        }
+        self.insert_application_eval_cache_if_some(
+            def_id,
+            expanded_args,
+            no_unchecked_indexed_access,
+            evaluated,
+        );
         Some(evaluated)
     }
 
-    /// Instantiate + evaluate the body for the known-params path and
-    /// record the appropriate display-alias provenance.
+    /// Instantiate + evaluate the body for an application and record the
+    /// appropriate display-alias provenance.
     ///
-    /// * Type-alias applications whose evaluation produces an intermediate
-    ///   `Application` form store a forward display alias so diagnostics
-    ///   show the apparent name (e.g. `DeepReadonlyObject<Part>`).
-    /// * Parametric structural (interface/class) applications instead
-    ///   record a back-reference so `reduce_alias_body_to_application_form`
-    ///   can recover the `Application` shape later.
+    /// Display-alias storage is gated on `prefer_application_display_alias`:
+    /// type-alias applications whose evaluation produces an intermediate
+    /// `Application` form store a forward display alias so diagnostics show
+    /// the apparent name (e.g. `DeepReadonlyObject<Part>`).
+    ///
+    /// `record_structural_back_reference` is `true` only on the known-params
+    /// path where the resolver surfaced a nominal interface/class signal
+    /// strong enough to back-reference from the evaluated structural form to
+    /// the original `Application`. The lite-resolver fallback path keeps
+    /// this off because it cannot prove the nominal origin.
     #[allow(clippy::too_many_arguments)]
     fn instantiate_and_finalize_application(
         &mut self,
@@ -1398,13 +1437,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         original_type_id: TypeId,
         original_args: &[TypeId],
         expanded_args: &[TypeId],
-        effective_body: TypeId,
+        body: TypeId,
         type_params: &[TypeParamInfo],
         prefer_application_display_alias: bool,
+        record_structural_back_reference: bool,
         no_unchecked_indexed_access: bool,
     ) -> TypeId {
-        let mut instantiated =
-            instantiate_generic(self.interner, effective_body, type_params, expanded_args);
+        let mut instantiated = instantiate_generic(self.interner, body, type_params, expanded_args);
         // Rebind polymorphic `this` to the concrete application so
         // interface bodies like `constraint: Constraint<this>` preserve
         // their receiver-specific invariance.
@@ -1434,71 +1473,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 evaluated,
                 original_args,
             );
-        } else {
+        } else if record_structural_back_reference {
             self.store_parametric_structural_back_reference(evaluated, original_type_id);
         }
-        if let Some(db) = self.query_db {
-            db.insert_application_eval_cache(
-                def_id,
-                expanded_args,
-                no_unchecked_indexed_access,
-                evaluated,
-            );
-        }
-        evaluated
-    }
-
-    /// Instantiate + evaluate the body for the lite-resolver fallback
-    /// path. Display-alias storage is gated on
-    /// `prefer_application_display_alias`; no back-reference is recorded
-    /// because the fallback path is reserved for resolvers that lack the
-    /// nominal interface/class signal required to safely back-reference.
-    #[allow(clippy::too_many_arguments)]
-    fn instantiate_application_with_fallback_params(
-        &mut self,
-        def_id: DefId,
-        original_type_id: TypeId,
-        original_args: &[TypeId],
-        expanded_args: &[TypeId],
-        resolved: TypeId,
-        type_params: &[TypeParamInfo],
-        prefer_application_display_alias: bool,
-        no_unchecked_indexed_access: bool,
-    ) -> TypeId {
-        let mut instantiated =
-            instantiate_generic(self.interner, resolved, type_params, expanded_args);
-        if crate::contains_this_type(self.interner, instantiated) {
-            instantiated = crate::instantiation::instantiate::substitute_this_type_cached(
-                self.interner,
-                self.query_db,
-                instantiated,
-                original_type_id,
-            );
-        }
-        let evaluated = if crate::type_queries::is_discriminated_object_intersection(
-            self.interner,
-            instantiated,
-        ) {
-            instantiated
-        } else {
-            self.evaluate(instantiated)
-        };
-        if prefer_application_display_alias {
-            self.store_intermediate_application_display_alias(
-                instantiated,
-                original_type_id,
-                evaluated,
-                original_args,
-            );
-        }
-        if let Some(db) = self.query_db {
-            db.insert_application_eval_cache(
-                def_id,
-                expanded_args,
-                no_unchecked_indexed_access,
-                evaluated,
-            );
-        }
+        self.insert_application_eval_cache_if_some(
+            def_id,
+            expanded_args,
+            no_unchecked_indexed_access,
+            evaluated,
+        );
         evaluated
     }
 

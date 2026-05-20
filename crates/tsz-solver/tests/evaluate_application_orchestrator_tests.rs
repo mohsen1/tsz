@@ -13,6 +13,31 @@ use crate::def::{DefId, DefKind};
 use crate::evaluation::evaluate::TypeEvaluator;
 use crate::relations::subtype::TypeEnvironment;
 
+fn unconstrained_param(interner: &TypeInterner, name: &str) -> TypeParamInfo {
+    TypeParamInfo {
+        name: interner.intern_string(name),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }
+}
+
+/// Register `def_id` against `kind` and `body` (with the given `params`) in
+/// `env` and produce `app = body<args>` as a `Lazy(def_id)` application.
+fn alias_application(
+    interner: &TypeInterner,
+    env: &mut TypeEnvironment,
+    def_id: DefId,
+    kind: DefKind,
+    body: TypeId,
+    params: Vec<TypeParamInfo>,
+    args: Vec<TypeId>,
+) -> TypeId {
+    env.insert_def_with_params(def_id, body, params);
+    env.insert_def_kind(def_id, kind);
+    interner.application(interner.lazy(def_id), args)
+}
+
 /// Phase 1 — callee normalization. An application whose base does not
 /// normalize to a `DefId` must stay opaque rather than collapse to its
 /// body, so later resolver passes can expand it correctly.
@@ -39,23 +64,21 @@ fn evaluate_application_base_without_def_id_stays_opaque() {
 #[test]
 fn evaluate_application_known_params_instantiates_alias_body() {
     let interner = TypeInterner::new();
-    let t_name = interner.intern_string("T");
-    let t_param = TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    };
+    let t_param = unconstrained_param(&interner, "T");
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let value_name = interner.intern_string("value");
     let body = interner.object(vec![PropertyInfo::new(value_name, t_type)]);
-    let def_id = DefId(101);
-    let lazy = interner.lazy(def_id);
-    let app = interner.application(lazy, vec![TypeId::STRING]);
 
     let mut env = TypeEnvironment::new();
-    env.insert_def_with_params(def_id, body, vec![t_param]);
-    env.insert_def_kind(def_id, DefKind::TypeAlias);
+    let app = alias_application(
+        &interner,
+        &mut env,
+        DefId(101),
+        DefKind::TypeAlias,
+        body,
+        vec![t_param],
+        vec![TypeId::STRING],
+    );
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(app);
@@ -74,21 +97,19 @@ fn evaluate_application_known_params_instantiates_alias_body() {
 #[test]
 fn evaluate_application_unknown_body_keeps_application_opaque() {
     let interner = TypeInterner::new();
-    let t_name = interner.intern_string("T");
-    let t_param = TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    };
-    let def_id = DefId(202);
-    let lazy = interner.lazy(def_id);
-    let app = interner.application(lazy, vec![TypeId::STRING]);
+    let t_param = unconstrained_param(&interner, "T");
 
     let mut env = TypeEnvironment::new();
-    // Body is the unknown sentinel — mirrors the cross-file race condition.
-    env.insert_def_with_params(def_id, TypeId::UNKNOWN, vec![t_param]);
-    env.insert_def_kind(def_id, DefKind::TypeAlias);
+    let app = alias_application(
+        &interner,
+        &mut env,
+        DefId(202),
+        DefKind::TypeAlias,
+        // Unknown sentinel mirrors the cross-file race condition.
+        TypeId::UNKNOWN,
+        vec![t_param],
+        vec![TypeId::STRING],
+    );
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(app);
@@ -110,20 +131,8 @@ fn evaluate_application_unknown_body_keeps_application_opaque() {
 fn evaluate_application_homomorphic_passthrough_returns_primitive() {
     for (param_name, iter_name) in [("T", "P"), ("U", "K"), ("Source", "Key")] {
         let interner = TypeInterner::new();
-        let t_atom = interner.intern_string(param_name);
-        let p_atom = interner.intern_string(iter_name);
-        let t_param = TypeParamInfo {
-            name: t_atom,
-            constraint: None,
-            default: None,
-            is_const: false,
-        };
-        let p_param = TypeParamInfo {
-            name: p_atom,
-            constraint: None,
-            default: None,
-            is_const: false,
-        };
+        let t_param = unconstrained_param(&interner, param_name);
+        let p_param = unconstrained_param(&interner, iter_name);
         let t_type = interner.intern(TypeData::TypeParameter(t_param));
         let p_type = interner.intern(TypeData::TypeParameter(p_param));
         let keyof_t = interner.intern(TypeData::KeyOf(t_type));
@@ -138,13 +147,16 @@ fn evaluate_application_homomorphic_passthrough_returns_primitive() {
             readonly_modifier: None,
         });
 
-        let def_id = DefId(303);
-        let lazy = interner.lazy(def_id);
-        let app = interner.application(lazy, vec![TypeId::NUMBER]);
-
         let mut env = TypeEnvironment::new();
-        env.insert_def_with_params(def_id, mapped_body, vec![t_param]);
-        env.insert_def_kind(def_id, DefKind::TypeAlias);
+        let app = alias_application(
+            &interner,
+            &mut env,
+            DefId(303),
+            DefKind::TypeAlias,
+            mapped_body,
+            vec![t_param],
+            vec![TypeId::NUMBER],
+        );
 
         let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
         let result = evaluator.evaluate(app);
@@ -165,13 +177,7 @@ fn evaluate_application_homomorphic_passthrough_returns_primitive() {
 #[test]
 fn evaluate_application_class_uses_construct_signature_return_type() {
     let interner = TypeInterner::new();
-    let t_name = interner.intern_string("T");
-    let t_param = TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    };
+    let t_param = unconstrained_param(&interner, "T");
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     let value_name = interner.intern_string("value");
@@ -194,13 +200,16 @@ fn evaluate_application_class_uses_construct_signature_return_type() {
         ..Default::default()
     });
 
-    let def_id = DefId(404);
-    let lazy = interner.lazy(def_id);
-    let app = interner.application(lazy, vec![TypeId::STRING]);
-
     let mut env = TypeEnvironment::new();
-    env.insert_def_with_params(def_id, class_body, vec![t_param]);
-    env.insert_def_kind(def_id, DefKind::Class);
+    let app = alias_application(
+        &interner,
+        &mut env,
+        DefId(404),
+        DefKind::Class,
+        class_body,
+        vec![t_param],
+        vec![TypeId::STRING],
+    );
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(app);
