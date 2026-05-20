@@ -920,6 +920,12 @@ impl<'a> TC39DecoratorEmitter<'a> {
             .map(|(i, _)| i)
             .collect();
 
+        if source_ctor.is_none()
+            && let Some(output) = &constructor_output
+        {
+            out.push_str(output);
+        }
+
         let class_close = self.find_class_close_brace(class_node);
         for &emit_i in &emittable {
             let (member_idx, member_node) = all_members[emit_i];
@@ -1070,12 +1076,6 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 push_indented_lines(out, indent, &member_text);
             }
         }
-        if source_ctor.is_none()
-            && let Some(output) = &constructor_output
-        {
-            out.push_str(output);
-        }
-
         // Handle remaining assignments
         let mut external_assignments: Vec<String> = Vec::new();
         let mut post_iife_assignments: Vec<String> = Vec::new();
@@ -1474,7 +1474,14 @@ impl<'a> TC39DecoratorEmitter<'a> {
             }
             output.push_str(&format!("{indent}}}\n"));
         } else {
-            output.push_str(") {\n");
+            // Synthetic constructor: derived classes need a pass-through to super.
+            // tsc always uses `...args` / `super(...args)` for the forwarding form.
+            if has_extends {
+                output.push_str("...args) {\n");
+                output.push_str(&format!("{inner_indent}super(...args);\n"));
+            } else {
+                output.push_str(") {\n");
+            }
             for call in &ctor_init_calls {
                 output.push_str(call);
             }
