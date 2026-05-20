@@ -968,7 +968,8 @@ impl<'a> ES5ClassTransformer<'a> {
                         if self.use_define_for_class_fields {
                             deferred_static_prop_inits.push(IRNode::DefineProperty {
                                 target: Box::new(IRNode::id(self.class_name.clone())),
-                                property_name: self.get_method_name_ir(prop_data.name),
+                                property_name: self
+                                    .get_field_define_property_name_ir(prop_data.name),
                                 descriptor: IRPropertyDescriptor {
                                     get: None,
                                     set: None,
