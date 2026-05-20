@@ -3,12 +3,136 @@
 
 use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::{CheckerState, EnumKind};
+use crate::symbols_domain::name_text::property_access_chain_text_in_arena;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeId;
+use tsz_solver::{SymbolRef, TypeId};
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn expando_element_key_name(&mut self, key_expr_idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(key_expr_idx)?;
+        match node.kind {
+            k if k == SyntaxKind::Identifier as u16 => {
+                let ident = self.ctx.arena.get_identifier(node)?;
+                let name = &ident.escaped_text;
+
+                // Resolve through the binder the same way detect_expando_assignment
+                // does, so the key matches what was stored at bind time.
+                let binder_sym = self
+                    .ctx
+                    .binder
+                    .get_node_symbol(key_expr_idx)
+                    .or_else(|| {
+                        self.ctx
+                            .binder
+                            .resolve_identifier(self.ctx.arena, key_expr_idx)
+                    })
+                    .or_else(|| self.ctx.binder.file_locals.get(name));
+                if let Some(sym_id) = binder_sym
+                    && let Some(key) = self.resolved_const_expando_key_from_binder(sym_id, 0)
+                {
+                    return Some(key);
+                }
+
+                // Fallback: resolve through the type system for non-binder cases.
+                let prev = self.ctx.preserve_literal_types;
+                self.ctx.preserve_literal_types = true;
+                let key_type = self.get_type_of_node(key_expr_idx);
+                self.ctx.preserve_literal_types = prev;
+
+                if let Some(lit) =
+                    crate::query_boundaries::common::literal_value(self.ctx.types, key_type)
+                {
+                    return Some(match lit {
+                        tsz_solver::LiteralValue::String(s) => self.ctx.types.resolve_atom(s),
+                        tsz_solver::LiteralValue::Number(n) => n.0.to_string(),
+                        tsz_solver::LiteralValue::Boolean(b) => b.to_string(),
+                        tsz_solver::LiteralValue::BigInt(b) => self.ctx.types.resolve_atom(b),
+                    });
+                }
+
+                if let Some(sym_ref) =
+                    crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, key_type)
+                {
+                    return Some(format!("__unique_{}", sym_ref.0));
+                }
+
+                Some(name.clone())
+            }
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NumericLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                self.ctx.arena.get_literal(node).map(|lit| lit.text.clone())
+            }
+            _ => None,
+        }
+    }
+
+    pub(crate) fn is_direct_expando_element_write_base(&self, object_expr_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(object_expr_idx) else {
+            return false;
+        };
+        node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+    }
+
+    pub(crate) fn is_expando_element_access_read(
+        &mut self,
+        object_expr_idx: NodeIndex,
+        key_expr_idx: NodeIndex,
+    ) -> bool {
+        let Some(obj_key) = property_access_chain_text_in_arena(self.ctx.arena, object_expr_idx)
+        else {
+            return false;
+        };
+        let Some(prop_key) = self.expando_element_key_name(key_expr_idx) else {
+            return false;
+        };
+
+        if self
+            .ctx
+            .binder
+            .expando_properties
+            .get(&obj_key)
+            .is_some_and(|props| {
+                props
+                    .iter()
+                    .any(|prop| self.canonical_expando_property_name(prop) == prop_key)
+            })
+        {
+            return true;
+        }
+
+        // Use global expando index for O(1) lookup instead of O(N) binder scan.
+        if let Some(expando_idx) = &self.ctx.global_expando_index {
+            if expando_idx.get(&obj_key).is_some_and(|props| {
+                props
+                    .iter()
+                    .any(|prop| self.canonical_expando_property_name(prop) == prop_key)
+            }) {
+                return true;
+            }
+        } else if let Some(all_binders) = &self.ctx.all_binders {
+            for binder in all_binders.iter() {
+                if binder
+                    .expando_properties
+                    .get(&obj_key)
+                    .is_some_and(|props| {
+                        props
+                            .iter()
+                            .any(|prop| self.canonical_expando_property_name(prop) == prop_key)
+                    })
+                {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
     pub(crate) fn get_number_value_from_element_index(&self, idx: NodeIndex) -> Option<f64> {
         let node = self.ctx.arena.get(idx)?;
 
@@ -810,5 +934,35 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    /// When `index_node` is a `symbol`-typed identifier, follow its import
+    /// chain to the canonical binding and return
+    /// `UniqueSymbol(SymbolRef(canonical_id))`.
+    ///
+    /// Returns `None` when the node is not a plain identifier.  The caller
+    /// uses this to override the `index_type_for_access` so the solver's
+    /// property-lookup loop can match `__unique_<id>` entries produced by
+    /// `get_property_name_resolved` for non-unique symbol computed properties.
+    pub(crate) fn nonunique_symbol_index_type(&self, index_node: NodeIndex) -> Option<TypeId> {
+        let node = self.ctx.arena.get(index_node)?;
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let sym_id = self.resolve_identifier_symbol_without_tracking(index_node)?;
+        // Follow import aliases to the canonical declaration symbol.
+        let mut current = sym_id;
+        let mut hops = 0usize;
+        while hops < 32 {
+            hops += 1;
+            let Some(next) = self.ctx.binder.resolve_import_symbol(current) else {
+                break;
+            };
+            if next == current {
+                break;
+            }
+            current = next;
+        }
+        Some(self.ctx.types.unique_symbol(SymbolRef(current.0)))
     }
 }
