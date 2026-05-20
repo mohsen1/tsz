@@ -249,9 +249,6 @@ pub(crate) use operations::{
     AssignabilityChecker, BinaryOpEvaluator, BinaryOpResult, CallEvaluator, CallResult,
 };
 pub use relations::compat::{AssignabilityOverrideProvider, CompatChecker, NoopOverrideProvider};
-pub use relations::judge::{
-    CallableKind, DefaultJudge, IterableKind, Judge, JudgeConfig, PropertyResult, TruthinessKind,
-};
 pub use relations::lawyer::AnyPropagationRules;
 pub use relations::relation_queries::{
     AssignabilityFailureAnalysis, RelationContext, RelationKind, RelationPolicy,
