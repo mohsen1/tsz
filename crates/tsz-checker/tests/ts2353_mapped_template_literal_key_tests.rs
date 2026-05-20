@@ -7,8 +7,9 @@
 //! source property name against the template literal pattern.
 //!
 //! Issue #8725 (`templateLiteralTypes6`): same rule entered through the
-//! `Record<\`pattern\`, V>` alias; coverage at the bottom of this file pins
-//! the `Record<K, T>` -> `{ [P in K]: T }` lowering path.
+//! `Record` alias when the key is a template-literal pattern; coverage at
+//! the bottom of this file pins the `Record<K, T>` -> `{ [P in K]: T }`
+//! lowering path.
 
 use std::sync::{Arc, OnceLock};
 use tsz_binder::lib_loader::LibFile;
