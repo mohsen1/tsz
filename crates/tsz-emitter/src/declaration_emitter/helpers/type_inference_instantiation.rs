@@ -238,13 +238,72 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
         let expr_idx = self.skip_parenthesized_expression_via_parent_node(expr_idx)?;
-        self.preferred_expression_type_text(expr_idx)
+        self.short_circuit_const_literal_reference_type_text(expr_idx)
+            .or_else(|| self.preferred_expression_type_text(expr_idx))
             .or_else(|| self.infer_fallback_type_text_at(expr_idx, 0))
             .or_else(|| {
                 let expr_idx = self.skip_parenthesized_expression_via_parent_node(expr_idx)?;
-                self.preferred_expression_type_text(expr_idx)
+                self.short_circuit_const_literal_reference_type_text(expr_idx)
+                    .or_else(|| self.preferred_expression_type_text(expr_idx))
                     .or_else(|| self.infer_fallback_type_text_at(expr_idx, 0))
             })
+    }
+
+    fn short_circuit_const_literal_reference_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let sym_id = self.value_reference_symbol(expr_idx)?;
+        let binder = self.binder?;
+        let symbol = binder.symbols.get(sym_id)?;
+        for decl_idx in symbol.declarations.iter().copied() {
+            let decl_node = self.arena.get(decl_idx)?;
+            let var_decl = self.arena.get_variable_declaration(decl_node)?;
+            if self.arena.is_const_variable_declaration(decl_idx)
+                && var_decl.type_annotation.is_none()
+                && var_decl.initializer.is_some()
+            {
+                return self
+                    .short_circuit_widened_literal_initializer_type_text(var_decl.initializer);
+            }
+        }
+        None
+    }
+
+    fn short_circuit_widened_literal_initializer_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_idx = self.skip_parenthesized_expression_via_parent_node(expr_idx)?;
+        let expr_node = self.arena.get(expr_idx)?;
+        match expr_node.kind {
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                Some("string".to_string())
+            }
+            k if k == SyntaxKind::NumericLiteral as u16 => Some("number".to_string()),
+            k if k == SyntaxKind::BigIntLiteral as u16 => Some("bigint".to_string()),
+            k if k == SyntaxKind::TrueKeyword as u16 || k == SyntaxKind::FalseKeyword as u16 => {
+                Some("boolean".to_string())
+            }
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                && self.is_negative_literal(expr_node) =>
+            {
+                let unary = self.arena.get_unary_expr(expr_node)?;
+                let operand = self.arena.get(unary.operand)?;
+                match operand.kind {
+                    k if k == SyntaxKind::NumericLiteral as u16 => Some("number".to_string()),
+                    k if k == SyntaxKind::BigIntLiteral as u16 => Some("bigint".to_string()),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
     }
 
     fn skip_parenthesized_expression_via_parent_node(
