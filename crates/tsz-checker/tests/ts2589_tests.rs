@@ -336,6 +336,46 @@ type B7 = [...B6, ...B6];
     );
 }
 
+/// When a rest element in a tuple type evaluates to a union of tuples, the
+/// solver distributes it into per-alternative extensions. The cardinality guard
+/// must apply to the union-spread path, not only the concrete-tuple path.
+///
+/// Structural rule: if the largest distributed alternative (prefix length +
+/// largest union-member tuple length) exceeds `MAX_REPRESENTABLE_TUPLE_LENGTH`,
+/// the solver sets `tuple_too_large` and the checker emits TS2799.
+#[test]
+fn union_spread_arm_crossing_limit_emits_ts2799() {
+    // P12 = 2^12 = 4096 elements; P13 = 2^13 = 8192 elements.
+    // Distributing `[...P12, ...(P13 | P12)]`:
+    //   largest arm = P12-prefix + P13-arm = 4096 + 8192 = 12288 > 10000 → TS2799
+    let source = r#"
+type P0 = [any];
+type P1 = [...P0, ...P0];
+type P2 = [...P1, ...P1];
+type P3 = [...P2, ...P2];
+type P4 = [...P3, ...P3];
+type P5 = [...P4, ...P4];
+type P6 = [...P5, ...P5];
+type P7 = [...P6, ...P6];
+type P8 = [...P7, ...P7];
+type P9 = [...P8, ...P8];
+type P10 = [...P9, ...P9];
+type P11 = [...P10, ...P10];
+type P12 = [...P11, ...P11];
+type P13 = [...P12, ...P12];
+type UnionSpreadLarge = [...P12, ...(P13 | P12)];
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2799),
+        "union spread with 12288-element arm must emit TS2799: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().all(|d| d.code != 2589),
+        "union spread overflow must not surface as TS2589: {diagnostics:?}"
+    );
+}
+
 /// Aliases whose body is not a tuple spread (e.g. a type reference to a
 /// too-large alias, or a non-tuple type) must NOT inherit TS2799.
 ///

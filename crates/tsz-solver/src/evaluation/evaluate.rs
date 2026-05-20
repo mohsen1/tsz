@@ -2933,6 +2933,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         return TypeId::ERROR;
                     }
 
+                    let max_prefix = alternatives.iter().map(|p| p.len()).max().unwrap_or(0);
+                    let max_spread = spread_alternatives
+                        .iter()
+                        .map(|s| s.len())
+                        .max()
+                        .unwrap_or(0);
+                    if max_prefix.saturating_add(max_spread) > MAX_REPRESENTABLE_TUPLE_LENGTH {
+                        self.interner.mark_tuple_too_large();
+                        return TypeId::ERROR;
+                    }
+
                     let mut distributed = Vec::with_capacity(alternative_count);
                     for prefix in alternatives {
                         for spread in &spread_alternatives {
