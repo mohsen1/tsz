@@ -1,6 +1,6 @@
 use tsz_common::Atom;
 use tsz_solver::classes::inheritance::InheritanceGraph;
-use tsz_solver::computation::{TypeSubstitution, evaluate_type};
+use tsz_solver::computation::{TypeSubstitution, evaluate_type, instantiate_type_cached};
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::relations::subtype::TypeResolver;
 use tsz_solver::{ObjectShape, PropertyInfo, SubtypeFailureReason, TypeId};
@@ -250,12 +250,8 @@ pub(crate) fn homomorphic_mapped_source_assignable_to_target<R: TypeResolver>(
         let mut target_template = target_mapped.template;
         let target_key_substitution =
             TypeSubstitution::single(target_mapped.type_param.name, source_key);
-        target_template = tsz_solver::instantiate_type_cached(
-            type_db,
-            Some(db),
-            target_template,
-            &target_key_substitution,
-        );
+        target_template =
+            instantiate_type_cached(type_db, Some(db), target_template, &target_key_substitution);
         if target_mapped.optional_modifier == Some(tsz_solver::MappedModifier::Add)
             && source_mapped.optional_modifier != Some(tsz_solver::MappedModifier::Add)
         {
@@ -313,7 +309,7 @@ fn instantiate_alias_candidate<R: TypeResolver>(
     }
     let body = resolver.resolve_lazy(def_id, type_db)?;
     let substitution = TypeSubstitution::from_args(type_db, &type_params, &app.args);
-    Some(tsz_solver::instantiate_type_cached(
+    Some(instantiate_type_cached(
         type_db,
         Some(db),
         body,
@@ -333,11 +329,7 @@ fn instantiate_mapped_candidate<R: TypeResolver>(
     instantiate_alias_candidate(db, resolver, type_id)
 }
 
-fn homomorphic_sources_match(
-    db: &dyn tsz_solver::TypeDatabase,
-    left: TypeId,
-    right: TypeId,
-) -> bool {
+fn homomorphic_sources_match(db: &dyn TypeDatabase, left: TypeId, right: TypeId) -> bool {
     if left == right {
         return true;
     }
@@ -352,7 +344,7 @@ fn homomorphic_sources_match(
 }
 
 fn mapped_template_structurally_assignable(
-    db: &dyn tsz_solver::TypeDatabase,
+    db: &dyn TypeDatabase,
     source: TypeId,
     target: TypeId,
 ) -> bool {
@@ -389,7 +381,7 @@ fn mapped_template_structurally_assignable(
 }
 
 fn mapped_templates_structurally_assignable(
-    db: &dyn tsz_solver::TypeDatabase,
+    db: &dyn TypeDatabase,
     source: TypeId,
     source_eval: TypeId,
     target: TypeId,
