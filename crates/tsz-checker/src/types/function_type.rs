@@ -2731,8 +2731,7 @@ impl<'a> CheckerState<'a> {
             // Fall back to synthetic PROMISE_BASE only without lib files.
             let promise_base = self
                 .ctx
-                .lib_promise_sym_id()
-                .map(|sym_id| self.ctx.create_lazy_type_ref(sym_id))
+                .lib_promise_type_ref()
                 .unwrap_or(TypeId::PROMISE_BASE);
             final_return_type = self
                 .ctx

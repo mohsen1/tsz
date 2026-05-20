@@ -77,3 +77,36 @@ function foo() {
         "Continue state is ignored by the caller because the loop call is the whole iteration body.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn class_declaration_in_captured_loop_keeps_iife_local_name() {
+    let output = emit_es5(
+        r#"
+var classesByRow = {};
+for (let row of ['1', '2']) {
+    class RowClass {
+        row = row;
+        static factory() { return new RowClass(); }
+    }
+    classesByRow[row] = RowClass;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("var RowClass = /** @class */ (function () {"),
+        "Class declaration at the loop helper function level should keep its local binding name.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("RowClass.factory = function () { return new RowClass(); };"),
+        "Static members should reference the same unrenamed local class binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("classesByRow[row] = RowClass;"),
+        "Loop body references should use the helper-local class binding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("RowClass_1"),
+        "The class binding should not be renamed as if it leaked outside the loop helper function.\nOutput:\n{output}"
+    );
+}

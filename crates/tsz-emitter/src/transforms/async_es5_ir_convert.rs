@@ -5,7 +5,10 @@
 //! traversals of the `NodeArena` with no async-transform-specific state.
 
 use crate::transforms::ir::{IRNode, IRParam};
+use crate::transforms::ir_printer::IRPrinter;
+use tsz_common::common::ModuleKind;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::NodeList;
 use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -172,6 +175,12 @@ impl<'a> AsyncES5Transformer<'a> {
 
             k if k == syntax_kind_ext::CALL_EXPRESSION => {
                 if let Some(call) = self.arena.get_call_expr(node) {
+                    if let Some(callee_node) = self.arena.get(call.expression)
+                        && callee_node.kind == SyntaxKind::ImportKeyword as u16
+                        && self.module_needs_dynamic_import_lowering()
+                    {
+                        return self.convert_dynamic_import_call(call.arguments.as_ref());
+                    }
                     let mut args = Vec::new();
                     if let Some(arg_list) = &call.arguments {
                         for &arg_idx in &arg_list.nodes {
@@ -1006,5 +1015,91 @@ impl<'a> AsyncES5Transformer<'a> {
             when_true: Box::new(when_true),
             when_false: Box::new(when_false),
         }
+    }
+
+    // =========================================================================
+    // Dynamic import() lowering
+    // =========================================================================
+
+    /// Whether the current module kind requires lowering dynamic `import()`.
+    /// ESM and module:none pass through as native `import()`; everything else
+    /// (CJS, AMD, UMD, System) needs a module-specific transformation.
+    const fn module_needs_dynamic_import_lowering(&self) -> bool {
+        !matches!(
+            self.module_kind,
+            ModuleKind::None
+                | ModuleKind::ES2015
+                | ModuleKind::ES2020
+                | ModuleKind::ES2022
+                | ModuleKind::ESNext
+                | ModuleKind::Preserve
+        )
+    }
+
+    fn convert_dynamic_import_call(&self, args: Option<&NodeList>) -> IRNode {
+        let first_arg = self.first_dynamic_import_argument(args);
+        let is_string_like = first_arg.is_none_or(|a| {
+            crate::transforms::emit_utils::dynamic_import_arg_is_string_like(self.arena, a)
+        });
+
+        let mut specifier = first_arg
+            .map(|a| self.render_ir_to_string(&self.expression_to_ir(a)))
+            .unwrap_or_default();
+        let mut prefix = String::new();
+
+        if first_arg.is_some() && !is_string_like {
+            let temp = self.generate_hoisted_temp();
+            self.push_lowering_hoist(temp.clone());
+            prefix = format!("{temp} = {specifier}, ");
+            specifier = temp;
+        }
+
+        match self.module_kind {
+            ModuleKind::System => {
+                IRNode::Raw(format!("{prefix}context_1.import({specifier})").into())
+            }
+            ModuleKind::UMD => {
+                let cjs = self.dynamic_import_cjs_branch(&specifier);
+                let amd = self.dynamic_import_amd_branch(&specifier);
+                IRNode::Raw(format!("{prefix}__syncRequire ? {cjs} : {amd}").into())
+            }
+            ModuleKind::AMD => {
+                let amd = self.dynamic_import_amd_branch(&specifier);
+                IRNode::Raw(format!("{prefix}{amd}").into())
+            }
+            _ => {
+                let cjs = self.dynamic_import_cjs_branch(&specifier);
+                IRNode::Raw(format!("{prefix}{cjs}").into())
+            }
+        }
+    }
+
+    fn first_dynamic_import_argument(&self, args: Option<&NodeList>) -> Option<NodeIndex> {
+        args?
+            .nodes
+            .iter()
+            .copied()
+            .find(|&idx| crate::transforms::emit_utils::call_argument_should_emit(self.arena, idx))
+    }
+
+    fn render_ir_to_string(&self, ir: &IRNode) -> String {
+        let mut printer = if let Some(text) = self.source_text {
+            IRPrinter::with_arena_and_source(self.arena, text)
+        } else {
+            IRPrinter::with_arena(self.arena)
+        };
+        printer.emit(ir).to_string()
+    }
+
+    fn dynamic_import_cjs_branch(&self, specifier: &str) -> String {
+        crate::transforms::emit_utils::dynamic_import_cjs_form(specifier)
+    }
+
+    fn dynamic_import_amd_branch(&self, specifier: &str) -> String {
+        let id = self.dynamic_import_promise_counter.get();
+        self.dynamic_import_promise_counter.set(id + 1);
+        format!(
+            "new Promise(function (resolve_{id}, reject_{id}) {{ require([{specifier}], resolve_{id}, reject_{id}); }}).then(__importStar)"
+        )
     }
 }

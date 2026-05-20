@@ -843,6 +843,13 @@ impl<'a> ES5ClassTransformer<'a> {
         result
     }
 
+    fn convert_expression_this_captured(&self, idx: NodeIndex) -> IRNode {
+        let converter = self.make_converter().with_this_captured(true);
+        let result = converter.convert_expression(idx);
+        self.collect_from_converter(&converter);
+        result
+    }
+
     /// Convert an AST statement to IR in static context (super uses `_super.X` not `_super.prototype.X`)
     fn convert_statement_static(&self, idx: NodeIndex) -> IRNode {
         let converter = self
@@ -1861,15 +1868,6 @@ impl<'a> ES5ClassTransformer<'a> {
         self.convert_block_body_with_alias_impl(block_idx, class_alias, false)
     }
 
-    /// Convert a block body to IR statements in static context
-    fn convert_block_body_with_alias_static(
-        &self,
-        block_idx: NodeIndex,
-        class_alias: Option<String>,
-    ) -> Vec<IRNode> {
-        self.convert_block_body_with_alias_impl(block_idx, class_alias, true)
-    }
-
     fn convert_block_body_with_alias_impl(
         &self,
         block_idx: NodeIndex,
@@ -2519,8 +2517,9 @@ impl<'a> ES5ClassTransformer<'a> {
                 {
                     return None;
                 }
-                self.property_initializer_has_equals(member_node, prop_data)
-                    .then_some(member_idx)
+                (self.use_define_for_class_fields
+                    || self.property_initializer_has_equals(member_node, prop_data))
+                .then_some(member_idx)
             })
             .collect();
 
@@ -2581,7 +2580,17 @@ impl<'a> ES5ClassTransformer<'a> {
                     &instance_props,
                 );
             }
-            if self.constructor_contains_new_target(ctor.body, &ctor.parameters, &instance_props) {
+            let constructor_scope_contains_new_target =
+                self.constructor_body_or_params_contain_new_target(ctor.body, &ctor.parameters);
+            let moved_initializers_contain_new_target =
+                self.moved_instance_initializers_contain_new_target(&instance_props);
+            if constructor_scope_contains_new_target {
+                ctor_body.insert(0, Self::class_constructor_new_target_capture_ir());
+            }
+            if moved_initializers_contain_new_target
+                && (!constructor_scope_contains_new_target
+                    || (self.has_extends && !self.extends_null))
+            {
                 self.insert_class_new_target_capture(&mut ctor_body);
             }
         } else {
@@ -3471,6 +3480,22 @@ impl<'a> ES5ClassTransformer<'a> {
         self.get_method_name_ir(name_idx)
     }
 
+    pub(super) fn get_field_define_property_name_ir(&self, name_idx: NodeIndex) -> IRMethodName {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return self.get_method_name_ir(name_idx);
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return self.get_method_name_ir(name_idx);
+        }
+        let Some(computed) = self.arena.get_computed_property(name_node) else {
+            return self.get_method_name_ir(name_idx);
+        };
+        if let Some(temp) = self.computed_prop_temp_map.get(&computed.expression) {
+            return IRMethodName::Computed(Box::new(IRNode::id(temp.clone())));
+        }
+        self.get_method_name_ir(name_idx)
+    }
+
     fn render_ir_expression(&self, expr: &IRNode) -> String {
         let mut printer = IRPrinter::with_arena(self.arena);
         printer.set_target_es5(true);
@@ -3488,10 +3513,8 @@ impl<'a> ES5ClassTransformer<'a> {
         let prop_node = self.arena.get(prop_idx)?;
         let prop_data = self.arena.get_property_decl(prop_node)?;
 
-        if prop_data.initializer.is_none() {
-            return None;
-        }
-        if !self.property_initializer_has_equals(prop_node, prop_data) {
+        let has_initializer_equals = self.property_initializer_has_equals(prop_node, prop_data);
+        if !self.use_define_for_class_fields && !has_initializer_equals {
             return None;
         }
 
@@ -3503,14 +3526,23 @@ impl<'a> ES5ClassTransformer<'a> {
 
         let prop_name = self.get_property_name_ir(prop_data.name)?;
 
-        let value = self
-            .convert_async_arrow_property_initializer(prop_data.initializer)
-            .unwrap_or_else(|| self.convert_expression(prop_data.initializer));
+        let value = if has_initializer_equals {
+            self.convert_async_arrow_property_initializer(prop_data.initializer)
+                .unwrap_or_else(|| {
+                    if use_this {
+                        self.convert_expression_this_captured(prop_data.initializer)
+                    } else {
+                        self.convert_expression(prop_data.initializer)
+                    }
+                })
+        } else {
+            IRNode::void_0()
+        };
 
         if self.use_define_for_class_fields {
             Some(IRNode::DefineProperty {
                 target: Box::new(receiver),
-                property_name: self.get_method_name_ir(prop_data.name),
+                property_name: self.get_field_define_property_name_ir(prop_data.name),
                 descriptor: IRPropertyDescriptor {
                     get: None,
                     set: None,
@@ -3566,6 +3598,7 @@ impl<'a> ES5ClassTransformer<'a> {
         if let Some(source_text) = self.source_text {
             async_transformer.set_source_text(source_text);
         }
+        async_transformer.set_module_kind(self.module_kind);
         self.configure_async_disposable_context(&mut async_transformer);
         let has_await = async_transformer.body_contains_await(arrow.body);
         let mut generator_body = async_transformer.transform_generator_body(arrow.body, has_await);
@@ -3892,28 +3925,6 @@ impl<'a> ES5ClassTransformer<'a> {
         Some(self.convert_expression(expr_idx))
     }
 
-    /// Check if a static method body contains arrow functions with `class_alias`,
-    /// and return the alias if found
-    fn get_class_alias_for_static_method(&self, body_idx: NodeIndex) -> Option<String> {
-        if let Some(ref transforms) = self.transforms {
-            // Get all arrow function nodes in the method body
-            let arrow_indices = self.collect_arrow_functions_in_block(body_idx);
-            // Check if any arrow function has a class_alias directive
-            for &arrow_idx in &arrow_indices {
-                if let Some(dir) = transforms.get(arrow_idx)
-                    && let crate::context::transform::TransformDirective::ES5ArrowFunction {
-                        class_alias,
-                        ..
-                    } = dir
-                    && let Some(alias) = class_alias
-                {
-                    return Some(alias.to_string());
-                }
-            }
-        }
-        None
-    }
-
     /// Collect all arrow function node indices in a block
     fn collect_arrow_functions_in_block(&self, block_idx: NodeIndex) -> Vec<NodeIndex> {
         let mut arrows = Vec::new();
@@ -3954,11 +3965,10 @@ impl<'a> ES5ClassTransformer<'a> {
         false
     }
 
-    fn constructor_contains_new_target(
+    fn constructor_body_or_params_contain_new_target(
         &self,
         body_idx: NodeIndex,
         params: &NodeList,
-        instance_props: &[NodeIndex],
     ) -> bool {
         (body_idx.is_some() && contains_new_target_reference(self.arena, body_idx))
             || params.nodes.iter().any(|&param_idx| {
@@ -3970,7 +3980,6 @@ impl<'a> ES5ClassTransformer<'a> {
                             && contains_new_target_reference(self.arena, param.initializer)
                     })
             })
-            || self.moved_instance_initializers_contain_new_target(instance_props)
     }
 
     fn class_constructor_new_target_capture_ir() -> IRNode {

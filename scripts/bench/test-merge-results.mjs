@@ -139,6 +139,7 @@ function withTempDir(fn) {
 function writeInput(dir, name, results, extraPayload = {}) {
   const input = path.join(dir, name);
   const payload = {
+    benchmark_runner: "scripts/bench/bench-vs-tsgo.sh",
     quick_mode: false,
     validation: { hyperfine_exit_codes_required: true },
     totals: { benchmarks_run: results.length },
@@ -292,6 +293,57 @@ withTempDir((dir) => {
 });
 
 withTempDir((dir) => {
+  const canaryRow = COMPILE_ONLY_CANARY_PROJECT_ROWS[0];
+  const compatibility = {
+    ...SAMPLE_COMPATIBILITY,
+    state: "red",
+    exit_class: "nonzero exit",
+    first_failure_class: null,
+    known_blockers: ["relations-assignability"],
+  };
+  const result = runMerge(dir, [projectRow(canaryRow, compatibility)]);
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    new RegExp(`${canaryRow}: red/yellow compatibility\\.first_failure_class must name the first blocker`),
+  );
+});
+
+withTempDir((dir) => {
+  const canaryRow = COMPILE_ONLY_CANARY_PROJECT_ROWS[0];
+  const compatibility = {
+    ...SAMPLE_COMPATIBILITY,
+    state: "yellow",
+    diagnostic_status: "diagnostic mismatch",
+    first_failure_class: "relations-assignability",
+    known_blockers: [],
+  };
+  const result = runMerge(dir, [projectRow(canaryRow, compatibility)]);
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    new RegExp(`${canaryRow}: red/yellow compatibility\\.known_blockers must name at least one blocker`),
+  );
+});
+
+withTempDir((dir) => {
+  const canaryRow = COMPILE_ONLY_CANARY_PROJECT_ROWS[0];
+  const compatibility = {
+    ...SAMPLE_COMPATIBILITY,
+    state: "yellow",
+    diagnostic_status: "diagnostic mismatch",
+    first_failure_class: "relations-assignability",
+    known_blockers: ["evaluation-inference-instantiation", "relations-assignability"],
+  };
+  const result = runMerge(dir, [projectRow(canaryRow, compatibility)]);
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    new RegExp(`${canaryRow}: red/yellow compatibility\\.first_failure_class must match the first known blocker`),
+  );
+});
+
+withTempDir((dir) => {
   const runner_environment = {
     platform: "linux",
     arch: "x64",
@@ -433,6 +485,45 @@ withTempDir((dir) => {
   assert.equal(result.status, 1);
   assert.match(result.stderr, /bench-results-missing-shard\.json: missing shard\.label/);
   assert.match(result.stderr, /bench-results-missing-shard\.json: missing shard\.filter/);
+});
+
+withTempDir((dir) => {
+  const input = writeInput(
+    dir,
+    "bench-results-missing-runner.json",
+    [projectRow("standalone")],
+    {
+      ...SAMPLE_RUN_METADATA,
+      benchmark_runner: undefined,
+      runner_environment: SAMPLE_RUNNER_ENVIRONMENT,
+      shard: { label: "standalone", filter: "standalone" },
+      filter: "standalone",
+    },
+  );
+  const result = runMergeInputs(dir, [input], ["--require-runner-signature"]);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /bench-results-missing-runner\.json: missing benchmark_runner/);
+});
+
+withTempDir((dir) => {
+  const input = writeInput(
+    dir,
+    "bench-results-wrong-runner.json",
+    [projectRow("standalone")],
+    {
+      ...SAMPLE_RUN_METADATA,
+      benchmark_runner: "scripts/bench/other-runner.sh",
+      runner_environment: SAMPLE_RUNNER_ENVIRONMENT,
+      shard: { label: "standalone", filter: "standalone" },
+      filter: "standalone",
+    },
+  );
+  const result = runMergeInputs(dir, [input], ["--require-runner-signature"]);
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /bench-results-wrong-runner\.json: benchmark_runner "scripts\/bench\/other-runner\.sh" does not match "scripts\/bench\/bench-vs-tsgo\.sh"/,
+  );
 });
 
 withTempDir((dir) => {

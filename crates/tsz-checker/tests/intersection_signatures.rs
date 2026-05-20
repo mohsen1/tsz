@@ -136,6 +136,59 @@ fn discriminated_union_intersection_property_access() {
 }
 
 #[test]
+fn discriminated_union_intersection_generic_handler_call() {
+    // Reading the discriminant from `Options & { kind: K }` produces a union of
+    // `K & key` members. Indexing the mapped handlers with that value should keep
+    // the generic K correlation instead of exposing an uncallable concrete union.
+    let source = r#"
+        type OptionOne = { kind: "one"; s: string; };
+        type OptionTwo = { kind: "two"; x: number; y: number; };
+        type Options = OptionOne | OptionTwo;
+
+        type OptionHandlers = {
+            [K in Options['kind']]: (option: Options & { kind: K }) => string;
+        }
+
+        declare const optionHandlers: OptionHandlers;
+
+        function handleOption<K extends Options['kind']>(option: Options & { kind: K }): string {
+            const kind = option.kind;
+            const handler = optionHandlers[kind];
+            return handler(option);
+        }
+    "#;
+    assert!(
+        !has_error_code(source, 2345),
+        "Mapped handler call should preserve the discriminant key correlation"
+    );
+}
+
+#[test]
+fn discriminated_union_intersection_generic_handler_call_renamed() {
+    let source = r#"
+        type Left = { tag: "left"; left: string; };
+        type Right = { tag: "right"; right: number; };
+        type Choice = Left | Right;
+
+        type Visitors = {
+            [Slot in Choice['tag']]: (value: Choice & { tag: Slot }) => string;
+        }
+
+        declare const visitors: Visitors;
+
+        function visit<X extends Choice['tag']>(value: Choice & { tag: X }): string {
+            const slot = value.tag;
+            const visitor = visitors[slot];
+            return visitor(value);
+        }
+    "#;
+    assert!(
+        !has_error_code(source, 2345),
+        "Renamed mapped handler call should not depend on binder spelling"
+    );
+}
+
+#[test]
 fn discriminated_union_intersection_simple() {
     // Simple case: direct intersection of a union with a discriminant literal object.
     let source = r#"

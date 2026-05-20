@@ -542,6 +542,11 @@ impl<'a> CheckerState<'a> {
             // (e.g., `type MyPromise<T> = Promise<T>` with `declare var MyPromise: typeof Promise`).
             // The merged symbol prevents is_global_promise_type from recognizing it.
             false
+        } else if self.return_type_annotation_is_exactly_promise(type_annotation) {
+            // The declared annotation resolves to the lib Promise symbol. Some
+            // evaluated Promise<T> forms lose the lazy base identity and arrive
+            // as an Application over an object shape; tsc still accepts them.
+            false
         } else if self.is_non_promise_application_type(return_type) {
             // Return type is an Application with a non-Promise base (e.g., MyPromise<T>).
             // TSC requires exactly Promise<T>, not subclasses.
@@ -723,7 +728,9 @@ impl<'a> CheckerState<'a> {
             .into_iter()
             .chain(self.ctx.binder.file_locals.get("Promise"))
         {
-            if !self.ctx.sym_id_is_lib_promise(sym_id) {
+            if !self.ctx.sym_id_is_lib_promise(sym_id)
+                && !self.ctx.sym_id_is_current_cloned_lib_promise(sym_id)
+            {
                 return false;
             }
         }
@@ -820,14 +827,7 @@ impl<'a> CheckerState<'a> {
         } = query::classify_promise_type(self.ctx.types, body_type)
         {
             // Check if the body's base is Promise
-            return self.is_global_promise_type(body_base)
-                || match query::classify_promise_type(self.ctx.types, body_base) {
-                    query::PromiseTypeKind::Lazy(body_def_id) => self
-                        .ctx
-                        .def_to_symbol_id(body_def_id)
-                        .is_some_and(|body_sym_id| self.ctx.sym_id_is_lib_promise(body_sym_id)),
-                    _ => false,
-                };
+            return self.is_global_promise_type(body_base);
         }
 
         false

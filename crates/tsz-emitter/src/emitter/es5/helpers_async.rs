@@ -678,6 +678,7 @@ impl<'a> Printer<'a> {
             // ES5 path: __awaiter + __generator state machine
             let mut async_emitter = crate::transforms::async_es5::AsyncES5Emitter::new(self.arena);
             async_emitter.set_system_import_meta(self.in_system_execute_body);
+            async_emitter.set_module_kind(self.ctx.outer_module_kind());
             // The generator body is nested inside `function () { ... }` in the __awaiter
             // callback, so render it at one extra indent level (matching tsc multi-line format).
             async_emitter.set_indent_level(self.writer.indent_level() + 1);
@@ -1094,6 +1095,7 @@ impl<'a> Printer<'a> {
         if let Some(text) = self.source_text {
             transformer.set_source_text(text);
         }
+        transformer.set_module_kind(self.ctx.outer_module_kind());
         let ir = transformer.transform_generator_function(function_node);
         let mut printer = IRPrinter::with_arena(self.arena);
         printer.set_transforms(self.transforms.clone());
