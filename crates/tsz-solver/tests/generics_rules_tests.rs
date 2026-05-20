@@ -1,7 +1,7 @@
 use super::*;
-use crate::CompatChecker;
 use crate::TypeInterner;
 use crate::def::{DefId, DefKind};
+use crate::relations::compat::CompatChecker;
 use crate::visitor::application_id;
 use std::sync::Arc;
 

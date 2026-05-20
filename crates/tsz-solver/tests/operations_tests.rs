@@ -1,11 +1,11 @@
 //! Tests for type operations.
 
 use super::*;
-use crate::CompatChecker;
 use crate::def::DefId;
 use crate::intern::TypeInterner;
 use crate::operations::core::MAX_CONSTRAINT_STEPS;
 use crate::operations::property::{PropertyAccessEvaluator, PropertyAccessResult};
+use crate::relations::compat::CompatChecker;
 use crate::types::{CallableShape, MappedType, TypeData, Visibility};
 
 /// Build a `<param_name>(arg_name: param_name): param_name` identity `FunctionShape`.
