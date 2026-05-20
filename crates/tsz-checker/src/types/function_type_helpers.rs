@@ -728,7 +728,9 @@ impl<'a> CheckerState<'a> {
             .into_iter()
             .chain(self.ctx.binder.file_locals.get("Promise"))
         {
-            if !self.ctx.sym_id_is_lib_promise(sym_id) {
+            if !self.ctx.sym_id_is_lib_promise(sym_id)
+                && !self.ctx.sym_id_is_current_cloned_lib_promise(sym_id)
+            {
                 return false;
             }
         }
@@ -825,14 +827,7 @@ impl<'a> CheckerState<'a> {
         } = query::classify_promise_type(self.ctx.types, body_type)
         {
             // Check if the body's base is Promise
-            return self.is_global_promise_type(body_base)
-                || match query::classify_promise_type(self.ctx.types, body_base) {
-                    query::PromiseTypeKind::Lazy(body_def_id) => self
-                        .ctx
-                        .def_to_symbol_id(body_def_id)
-                        .is_some_and(|body_sym_id| self.ctx.sym_id_is_lib_promise(body_sym_id)),
-                    _ => false,
-                };
+            return self.is_global_promise_type(body_base);
         }
 
         false
