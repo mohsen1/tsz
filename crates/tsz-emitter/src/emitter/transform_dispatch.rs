@@ -575,13 +575,13 @@ impl<'a> Printer<'a> {
                         node.kind == syntax_kind_ext::FUNCTION_DECLARATION && !is_default;
                     if is_hoisted_func {
                         let prev_module = self.ctx.options.module;
-                        let prev_original = self.ctx.original_module_kind;
+                        let prev_outer = self.ctx.cjs_export_body_outer_module;
                         self.ctx.options.module = ModuleKind::None;
-                        self.ctx.original_module_kind = Some(prev_module);
+                        self.ctx.cjs_export_body_outer_module = Some(prev_module);
                         let export_name = names.first().copied();
                         self.emit_commonjs_inner(node, idx, inner.as_ref(), export_name);
                         self.ctx.options.module = prev_module;
-                        self.ctx.original_module_kind = prev_original;
+                        self.ctx.cjs_export_body_outer_module = prev_outer;
                     } else if !is_default
                         && node.kind == syntax_kind_ext::VARIABLE_STATEMENT
                         && let Some(schedule) = self.collect_cjs_export_variable_schedule(idx, node)
@@ -608,13 +608,13 @@ impl<'a> Printer<'a> {
                                 Some((idx, ident.escaped_text.clone()));
                         }
                         let prev_module = self.ctx.options.module;
-                        let prev_original = self.ctx.original_module_kind;
+                        let prev_outer = self.ctx.cjs_export_body_outer_module;
                         self.ctx.options.module = ModuleKind::None;
-                        self.ctx.original_module_kind = Some(prev_module);
+                        self.ctx.cjs_export_body_outer_module = Some(prev_module);
                         let export_name = names.first().copied();
                         self.emit_commonjs_inner(node, idx, inner.as_ref(), export_name);
                         self.ctx.options.module = prev_module;
-                        self.ctx.original_module_kind = prev_original;
+                        self.ctx.cjs_export_body_outer_module = prev_outer;
                         // If the deferred export was NOT consumed (e.g. the class had no
                         // static blocks/fields, so emit_class_es6_with_options was not
                         // reached, or the class was ambient), emit it now as a fallback.
@@ -945,11 +945,7 @@ impl<'a> Printer<'a> {
             es5_emitter.set_tslib_import_binding(self.commonjs_tslib_import_binding.clone());
         }
         es5_emitter.set_printer_options(self.ctx.options.clone());
-        es5_emitter.set_module_kind(
-            self.ctx
-                .original_module_kind
-                .unwrap_or(self.ctx.options.module),
-        );
+        es5_emitter.set_module_kind(self.ctx.outer_module_kind());
         if let Some(text) = self.source_text_for_map() {
             if self.writer.has_source_map() {
                 es5_emitter.set_source_map_context(text, self.writer.current_source_index());
@@ -1693,9 +1689,9 @@ impl<'a> Printer<'a> {
                             Some((idx, ident.escaped_text.clone()));
                     }
                     let prev_module = self.ctx.options.module;
-                    let prev_original = self.ctx.original_module_kind;
+                    let prev_outer = self.ctx.cjs_export_body_outer_module;
                     self.ctx.options.module = ModuleKind::None;
-                    self.ctx.original_module_kind = Some(prev_module);
+                    self.ctx.cjs_export_body_outer_module = Some(prev_module);
                     let export_name = names.first().copied();
                     if index == 0 {
                         self.emit_commonjs_inner(node, idx, inner.as_ref(), export_name);
@@ -1703,7 +1699,7 @@ impl<'a> Printer<'a> {
                         self.emit_chained_directive(node, idx, directives, index - 1);
                     }
                     self.ctx.options.module = prev_module;
-                    self.ctx.original_module_kind = prev_original;
+                    self.ctx.cjs_export_body_outer_module = prev_outer;
                     if let Some((_, class_name)) = self.pending_commonjs_class_export_name.take() {
                         if !self.writer.is_at_line_start() {
                             self.write_line();

@@ -503,7 +503,18 @@ impl<'a> Printer<'a> {
         // before the `return { setters, execute }` block.  TSC does the same:
         // function declarations are syntactically hoisted, so they (and their
         // corresponding `exports_1` calls) live outside `execute`.
+        //
+        // Set up the System wrapper module-kind context for the hoisted
+        // function bodies as well: any `import()` inside a hoisted function
+        // body must lower to `context_1.import(...)`, which the dispatch
+        // selects by reading `original_module_kind = Some(System)`.
+        let prev_module = self.ctx.options.module;
+        let prev_original = self.ctx.original_module_kind;
+        self.ctx.original_module_kind = Some(prev_module);
+        self.ctx.options.module = ModuleKind::CommonJS;
         let hoisted_func_stmts = self.emit_system_hoisted_functions(source);
+        self.ctx.options.module = prev_module;
+        self.ctx.original_module_kind = prev_original;
         self.emit_system_export_star_helpers_if_needed(source, &system_plan);
 
         self.write("return {");
