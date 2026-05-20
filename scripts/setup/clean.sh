@@ -23,6 +23,7 @@
 #
 # Protected (never deleted):
 #   .env, .env.local, .env.* — environment config files
+#   TypeScript symlink — shared TypeScript checkout in sibling worktrees
 #
 # Examples:
 #   ./scripts/setup/clean.sh --dry-run    # Preview what would be removed
@@ -57,6 +58,7 @@ Protected (never deleted without --full):
 
 Protected (never deleted):
   .env, .env.local, .env.* — environment config files
+  TypeScript symlink — shared TypeScript checkout in sibling worktrees
 
 Examples:
   scripts/setup/clean.sh --dry-run    # Preview what would be removed
@@ -124,6 +126,9 @@ filter_candidates() {
     # git clean -n outputs "Would remove <path>"
     local path="${line#Would remove }"
     if [[ "$path" =~ $PROTECTED_RE ]]; then
+      continue
+    fi
+    if [[ "$path" == "TypeScript" && -L "$REPO_ROOT/TypeScript" ]]; then
       continue
     fi
     echo "$line"
@@ -205,10 +210,17 @@ find "$REPO_ROOT" -name "package-lock.json" -not -path "*/TypeScript/*" -delete 
 # Phase 7: Remove bench/profiling leftovers
 # - typescript/ (lowercase) is a tsc build clone from bench scripts (not the TypeScript/ submodule)
 # - perf.data*, flamegraph.svg, *.actual from conformance/profiling
-if [[ -d "$REPO_ROOT/typescript" ]]; then
+LOWERCASE_TYPESCRIPT=""
+while IFS= read -r entry; do
+  if [[ "$(basename "$entry")" == "typescript" ]]; then
+    LOWERCASE_TYPESCRIPT="$entry"
+    break
+  fi
+done < <(find "$REPO_ROOT" -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null)
+if [[ -n "$LOWERCASE_TYPESCRIPT" ]]; then
   # May contain read-only files from node_modules/.git — force writable first
-  chmod -R u+w "$REPO_ROOT/typescript" 2>/dev/null || true
-  rm -rf "$REPO_ROOT/typescript"
+  chmod -R u+w "$LOWERCASE_TYPESCRIPT" 2>/dev/null || true
+  rm -rf "$LOWERCASE_TYPESCRIPT"
 fi
 rm -f "$REPO_ROOT"/perf.data* "$REPO_ROOT"/*.svg "$REPO_ROOT"/flamegraph* 2>/dev/null || true
 rm -f "$REPO_ROOT"/*.actual "$REPO_ROOT"/*v8.log 2>/dev/null || true
