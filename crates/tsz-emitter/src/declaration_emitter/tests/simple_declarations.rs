@@ -3643,6 +3643,46 @@ if (holder.guard.isLeader()) {
 }
 
 #[test]
+fn test_object_shorthand_definite_assignment_uses_non_nullish_declared_type() {
+    let source = r#"
+const a: string | undefined = 'ff';
+const foo = { a! };
+
+const b: string | undefined = 'plain';
+const plain = { b };
+
+const c: number | null | undefined = 1;
+const numeric = { c! };
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+    let (parser, _) = parse_test_source(source);
+    let shorthand_exclamation_count = parser
+        .arena
+        .nodes
+        .iter()
+        .filter_map(|node| parser.arena.get_shorthand_property(node))
+        .filter(|data| data.exclamation_token_pos != 0)
+        .count();
+    assert_eq!(
+        shorthand_exclamation_count, 2,
+        "Expected parser recovery to preserve two shorthand definite-assignment markers"
+    );
+
+    assert!(
+        output.contains("declare const foo: {\n    a: string;\n};"),
+        "Expected recovered `{{a!}}` shorthand to use the non-nullish declared type: {output}"
+    );
+    assert!(
+        output.contains("declare const plain: {\n    b: string | undefined;\n};"),
+        "Expected plain shorthand to preserve the declared union type: {output}"
+    );
+    assert!(
+        output.contains("declare const numeric: {\n    c: number;\n};"),
+        "Expected recovered shorthand to remove both null and undefined from top-level unions: {output}"
+    );
+}
+
+#[test]
 fn test_object_shorthand_mixed_members_keep_resolved_member_types() {
     let source = r#"
 class RoyalGuard {
